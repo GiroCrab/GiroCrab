@@ -650,6 +650,7 @@ struct SplitSheet: View {
                                 .disabled(true)
                                 .help("Bekommt automatisch, was die anderen Teile übrig lassen")
                                 .accessibilityLabel("Rest")
+                                .sensitive(.amounts)
                         } else {
                             TextField(Money.plain(0), text: $p.amount)
                                 .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
@@ -657,6 +658,7 @@ struct SplitSheet: View {
                                 .focused($focusedPart, equals: p.id)
                                 .onSubmit { settle(p.id) }
                                 .help("Betrag oder Anteil, z. B. „50 %“")
+                                .sensitive(.amounts)
                         }
                         TextField("Notiz", text: $p.note).textFieldStyle(.roundedBorder)
                         if !isRest, parts.count > 2 {
