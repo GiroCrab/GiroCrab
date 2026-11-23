@@ -92,7 +92,7 @@ The SEPA account list (`HKSPA`) is empty ("keine Einträge").
 | TAN medium editable on an existing connection | `ConnectionsUI.swift` |
 | Directory row, search words | `data/fints_directory.tsv`, `bank_directory.rs` |
 | Add-form hints, required TAN medium, colour and monogram | `FinTsAddForm.swift`, `Formatting.swift` |
-| First-fetch period (90 days / 1 year / 2 years) in the settings | `SettingsView.swift` (core setting `sync.days_back`) |
+| First-fetch period (90 days / 1 year / 2 years / Maximum) in the settings | `SettingsView.swift` (core setting `sync.days_back`) |
 | Bank matrix row | `catalog.rs` (`BANK_MATRIX`), README regenerated with `scripts/sync_docs.py` |
 | Database import: card logins filed under a pseudo bank code get this bank code, a FinTS login named after the card, card numbers decide between several cards | `is_deutsche_bank_card_login`, `SrcBank::card_only`, `adopt_account`, `find_existing_accounts` in `importers/moneymoney_db.rs` |
 
