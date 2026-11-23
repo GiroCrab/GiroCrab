@@ -440,6 +440,17 @@
         }
       }
     },
+    "%@ – Sharinbox" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ – Sharinbox"
+          }
+        }
+      }
+    },
     "%@ – quirion" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4885,6 +4896,17 @@
         }
       }
     },
+    "Angemeldet – der Bestand kann abgerufen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signed in – the holdings can be fetched."
+          }
+        }
+      }
+    },
     "Angemeldet – verfügbare und gesperrte Bestände können abgerufen werden." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7609,6 +7631,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Special"
+          }
+        }
+      }
+    },
+    "Bestand abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch holdings"
+          }
+        }
+      }
+    },
+    "Bestand abrufen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetching holdings …"
           }
         }
       }
@@ -10867,13 +10911,13 @@
         }
       }
     },
-    "Der gewählte Ordner enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen." : {
+    "Der gewählte Ordner „%@“ enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The selected folder does not contain a GiroCrab vault yet. A new vault will be created there. If you expect your data in another folder, cancel and choose that one."
+            "value" : "The selected folder “%@” does not contain a GiroCrab vault yet. A new vault will be created there. If you expect your data in another folder, cancel and choose that one."
           }
         }
       }
@@ -16724,6 +16768,17 @@
         }
       }
     },
+    "Großzügig zeigt Kontoname, Inhaber, neue Buchungen und Saldo in einer Zeile. Kompakt braucht weniger Breite und zeigt den Saldo unter dem Namen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spacious shows account name, owner, new transactions and balance in one line. Compact needs less width and shows the balance below the name."
+          }
+        }
+      }
+    },
     "Grundstück" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22303,6 +22358,17 @@
         }
       }
     },
+    "Melden Sie sich bei Sharinbox an (E-Mail, Passwort und Authenticator-App)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in to Sharinbox (e-mail, password and authenticator app)."
+          }
+        }
+      }
+    },
     "Melden Sie sich bei quirion an und bestätigen Sie gegebenenfalls die Anmeldung." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25708,6 +25774,17 @@
         }
       }
     },
+    "PDF-Postbox abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch PDF mailbox"
+          }
+        }
+      }
+    },
     "PDF-Postbox inkl. Archiv" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26392,6 +26469,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Postbox"
+          }
+        }
+      }
+    },
+    "Postbox auflisten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listing the mailbox …"
           }
         }
       }
@@ -28323,6 +28411,17 @@
         }
       }
     },
+    "Seitenleiste" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sidebar"
+          }
+        }
+      }
+    },
     "Selbst hinzugefügte Rechnungen, Kassenbons und Fotos. PDF oder Foto hierher ziehen: GiroCrab sucht den passenden Umsatz." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28341,6 +28440,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sets the sequence type FNAL; the mandate is deactivated afterwards."
+          }
+        }
+      }
+    },
+    "Sharinbox: %u Depot aktualisiert, %lld neue PDFs." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sharinbox: %u depot updated, %lld new PDFs."
+          }
+        }
+      }
+    },
+    "Sharinbox: Die Portalantwort konnte nicht gelesen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sharinbox: The portal response could not be read."
           }
         }
       }

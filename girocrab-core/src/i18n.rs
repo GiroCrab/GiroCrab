@@ -421,6 +421,22 @@ fn english(de: &str) -> Option<&'static str> {
         "Bitte bei Schwäbisch Hall im Browserfenster anmelden und die Daten abrufen." => {
             "Please sign in to Schwäbisch Hall in the browser window and fetch your data."
         }
+        "Sharinbox: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "Sharinbox: Incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte bei Sharinbox im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to Sharinbox in the browser window and fetch your data."
+        }
+        "Bitte bei Sharinbox im Browserfenster abrufen." => {
+            "Please fetch your data in the Sharinbox browser window."
+        }
+        "Sharinbox: Dokument {0} abgelehnt, Feld {1} ungültig." => {
+            "Sharinbox: document {0} rejected, field {1} invalid."
+        }
+        "Mitarbeiteraktien" => "Employee shares",
+        "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
+            "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
+        }
         "Schwäbisch Hall Dokument" => "Schwäbisch Hall document",
         "Bausparkasse Schwäbisch Hall: Bausparverträge mit Saldo und Umsätzen, optional die PDF-Dokumente aus dem Postfach. Anmeldung im Browserfenster von „Mein Konto“. Interne Portal-API; Änderungen sind möglich." => {
             "Bausparkasse Schwäbisch Hall: building savings contracts with balance and transactions, optionally the PDF documents from the mailbox. Sign in in the “Mein Konto” browser window. Internal portal API; subject to change."

@@ -16,6 +16,9 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
         private weak var splitView: NSSplitView?
         private weak var background: NSView?
         private var observers: [NSObjectProtocol] = []
+        /// The toolbar line's layers: AppKit moves a line back to its old start a moment after the
+        /// window opens without changing any view frame, so the layers themselves are watched.
+        private var lineObservers: [ObjectIdentifier: [NSKeyValueObservation]] = [:]
         private var applying = false
 
         override func viewDidMoveToWindow() {
@@ -52,6 +55,7 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
                 // Not the backing layer of a subview: a layer the container draws itself.
                 for layer in containerLayer.sublayers ?? [] where (layer.delegate as? NSView)?.layer !== layer
                     && layer.contents != nil && layer.frame.height <= 1.5 {
+                    watchLine(layer)
                     guard let frame = Self.trimmed(layer.frame, to: lineStart) else { continue }
                     CATransaction.begin()
                     CATransaction.setDisableActions(true)
@@ -99,6 +103,23 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
         private func stopObserving() {
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
+            lineObservers.values.joined().forEach { $0.invalidate() }
+            lineObservers = [:]
+        }
+
+        /// Trims again whenever AppKit moves or resizes the line layer. The trim itself also
+        /// reports a change; the second pass then finds the line in place and leaves it.
+        private func watchLine(_ layer: CALayer) {
+            let id = ObjectIdentifier(layer)
+            guard lineObservers[id] == nil else { return }
+            let changed: @Sendable (CALayer, NSKeyValueObservedChange<CGPoint>) -> Void = { [weak self] _, _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.apply() } }
+            }
+            let resized: @Sendable (CALayer, NSKeyValueObservedChange<CGRect>) -> Void = { [weak self] _, _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.apply() } }
+            }
+            lineObservers[id] = [layer.observe(\.position, changeHandler: changed),
+                                 layer.observe(\.bounds, changeHandler: resized)]
         }
 
         /// The `NavigationSplitView`'s split view: the one with a sidebar item.
