@@ -627,6 +627,9 @@ extension AppModel {
     /// contains falls back to the first row, unless it is sticky (kept in the
     /// inspector after an edit moved it out of the filter).
     func publish(_ p: BookingPage) {
+        // taken first: the fallback selection below would otherwise cancel it
+        let selectAll = selectAllAfterReload
+        selectAllAfterReload = false
         page = p
         var balances = ListBalances(currency: balanceCurrency)
         balances.merge(p)
@@ -637,6 +640,7 @@ extension AppModel {
             selectedBookingID = sidebarSelection == .newBookings ? nil : p.transactions.first?.id
         }
         pruneMultiSelection()
+        if selectAll { selectAllShownBookings() }
     }
 
     /// Running balances (#577) fit only a selection of accounts (one account, a
@@ -742,6 +746,7 @@ extension AppModel {
                 guard !Task.isCancelled, let self else { return }
                 // a page requested while this scope was loading belongs to no list
                 self.dropPendingPage()
+                self.scopeLoadTask = nil // done: a ⌘A taken over by `publish` may load the rest
                 self.publish(p)
                 // selectionFlow always uses scope .all and is unchanged here.
             } catch {

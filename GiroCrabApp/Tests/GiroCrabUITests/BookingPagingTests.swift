@@ -120,10 +120,11 @@ final class BookingPagingTests: XCTestCase {
     }
 
     private func awaitSelectAll() async throws {
-        for _ in 0..<300 where model.isSelectingAllBookings {
+        for _ in 0..<300 where model.isSelectingAllBookings || model.selectAllAfterReload {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(model.isSelectingAllBookings)
+        XCTAssertFalse(model.selectAllAfterReload)
     }
 
     func testANewerSelectionSupersedesSelectAll() async throws {
@@ -154,13 +155,21 @@ final class BookingPagingTests: XCTestCase {
         XCTAssertEqual(model.selectedBookingIDs.count, 1, "the ⌘-click is not overwritten")
     }
 
-    func testSelectAllWaitsForAListStillLoading() throws {
+    /// ⌘A while the search still loads: it waits for the new list instead of
+    /// selecting the previous list's rows.
+    func testSelectAllWaitsForAListStillLoading() async throws {
         loadFirstPage(of: 20)
-        model.searchText = "x" // the search reloads after a short pause
+        let name = try XCTUnwrap(model.bookings.first { !$0.counterparty.isEmpty }?.counterparty)
+        model.searchText = name // the search reloads after a short pause
         XCTAssertTrue(model.isReloadingList)
         model.selectAllBookings()
-        XCTAssertFalse(model.isSelectingAllBookings)
+        XCTAssertTrue(model.selectAllAfterReload)
         XCTAssertFalse(model.isMultiSelection, "the previous list's rows are not selected")
+        try await awaitSelectAll()
+        XCTAssertFalse(model.isReloadingList)
+        let matching = try allMatching()
+        XCTAssertFalse(matching.isEmpty)
+        XCTAssertEqual(model.selectedBookingIDs, Set(matching.map(\.id)), "the new list's bookings")
     }
 
     /// A checked row kept in place in „Neu“ does not match the filter: the next page starts

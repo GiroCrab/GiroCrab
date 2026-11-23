@@ -1117,7 +1117,7 @@ private struct SelectionSummaryBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if model.isSelectingAllBookings {
+        if model.isSelectingAllBookings || model.selectAllAfterReload {
             // ⌘A loads the rest of the list first (#1696): no partial count or sum meanwhile
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)

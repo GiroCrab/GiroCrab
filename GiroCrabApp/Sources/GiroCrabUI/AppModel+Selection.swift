@@ -91,8 +91,17 @@ extension AppModel {
     /// filter, not only the loaded pages (#1696). The rest loads in the background first,
     /// so count, sum and every action on the selection cover all of them.
     func selectAllBookings() {
-        // the previous list may still show while the new one loads: never select its rows
-        guard !isReloadingList else { return }
+        // the previous list may still show while the new one loads: never select its rows,
+        // select the new one's as soon as it is published
+        if isReloadingList {
+            selectAllAfterReload = true
+            return
+        }
+        selectAllShownBookings()
+    }
+
+    /// ⌘A on the list as published now (`publish` calls it for a ⌘A that waited for it).
+    func selectAllShownBookings() {
         if hasMoreBookings {
             guard !isSelectingAllBookings else { return }
             isSelectingAllBookings = true
@@ -114,11 +123,12 @@ extension AppModel {
         selectLoadedBookings()
     }
 
-    /// A new list is on its way (selection, scope or search): the rows on screen belong to the
+    /// A new list is on its way (selection, edit, scope or search): the rows on screen belong to the
     /// previous filter, so ⌘A must neither select them nor append the new filter's tail to them.
     var isReloadingList: Bool {
         selectionLoadTask != nil || scopeLoadTask.map { !$0.isCancelled } == true
             || searchTask.map { !$0.isCancelled } == true
+            || categoryRefreshTask.map { !$0.isCancelled } == true
     }
 
     /// Another account, group, category or period: a multiple selection made in the previous
@@ -126,6 +136,7 @@ extension AppModel {
     /// new list's first page that happen to be in both – neither „all“ nor what was chosen (#1696).
     func dropMultiSelection() {
         isSelectingAllBookings = false
+        selectAllAfterReload = false
         guard isMultiSelection else { return }
         selectedBookingIDs = selectedBookingID.map { [$0] } ?? []
     }

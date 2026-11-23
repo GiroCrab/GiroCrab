@@ -132,6 +132,7 @@ extension AppModel {
                     )
                 }
                 guard !Task.isCancelled, let self, self.vault === vault else { return }
+                self.categoryRefreshTask = nil // done (a newer edit cancels this one first)
                 if generation == self.listGeneration {
                     self.dropPendingPage()
                     self.publish(r.page)

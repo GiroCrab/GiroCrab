@@ -469,7 +469,7 @@ public final class AppModel {
         didSet {
             if stickyBooking?.id != selectedBookingID { stickyBooking = nil }
             // a newer selection (click, arrow keys) supersedes a pending ⌘A (#1696)
-            if selectedBookingID != oldValue { isSelectingAllBookings = false }
+            if selectedBookingID != oldValue { isSelectingAllBookings = false; selectAllAfterReload = false }
             if let id = lingeringBookingID, id != selectedBookingID {
                 lingeringBookingID = nil
                 bookings.removeAll { $0.id == id }
@@ -512,7 +512,11 @@ public final class AppModel {
     /// ⌘A all visible). `selectedBookingID` is the one shown in the inspector.
     var selectedBookingIDs: Set<Booking.ID> = [] {
         // a newer selection (also a ⌘-click) supersedes a pending ⌘A (#1696)
-        didSet { if isSelectingAllBookings, selectedBookingIDs != oldValue { isSelectingAllBookings = false } }
+        didSet {
+            guard selectedBookingIDs != oldValue else { return }
+            if isSelectingAllBookings { isSelectingAllBookings = false }
+            if selectAllAfterReload { selectAllAfterReload = false }
+        }
     }
 
     /// A booking that left the filtered list because the user just edited it
@@ -905,6 +909,9 @@ public final class AppModel {
     var isLoadingMoreBookings = false
     /// ⌘A is loading the rest of the list before it selects everything (#1696).
     var isSelectingAllBookings = false
+    /// ⌘A came while a new list was on its way (edit, search, scope): it runs on that list
+    /// once it is published, not on the rows of the previous one (#1696).
+    var selectAllAfterReload = false
     @ObservationIgnored var loadMoreTask: Task<Void, Never>?
     /// Bumped by every full reload of the list; a page requested before is dropped.
     @ObservationIgnored var listGeneration = 0
