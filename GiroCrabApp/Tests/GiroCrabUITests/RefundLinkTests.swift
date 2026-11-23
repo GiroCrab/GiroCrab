@@ -39,6 +39,30 @@ final class RefundLinkTests: XCTestCase {
             candidate: candidate(originalID ?? original, cents: -6000))
     }
 
+    func testNormalWriteKeepsBusyWhileHistoryIsPending() async throws {
+        model.refundHistoryPending = 1
+        await model.linkRefund(pair())
+        XCTAssertEqual(model.refundHistoryPending, 1)
+        XCTAssertTrue(model.refundBusy)
+        model.refundHistoryPending = 0
+        model.refundBusy = false
+    }
+
+    func testCounterpartsOnDistantDaysRemainAvailable() async throws {
+        let account = try XCTUnwrap(bookings[second]).accountId
+        let target = second
+        _ = try await model.requireVaultOffMain { vault in
+            try vault.saveManualBooking(accountId: account, bookingId: target,
+                setup: ManualBookingSetup(bookingDate: "2020-01-01", amountCents: -7000,
+                    counterparty: "Earlier", purpose: "", categoryId: nil, note: ""))
+        }
+        await model.linkRefund(pair())
+        await model.linkRefund(pair(second))
+        let data = try await snapshot()
+        XCTAssertEqual(data.counterparts[second]?.bookingDate, "2020-01-01")
+        XCTAssertNotNil(data.counterparts[original])
+    }
+
     private func candidate(_ id: Int64, part: String = "", cents: Int64, open: Int64 = 6000) -> RefundCandidate {
         RefundCandidate(transactionId: id, part: part, partLabel: "", accountId: 0, bookingDate: "2026-04-01",
             counterparty: "Test", merchantName: "", amountCents: cents, openCents: open, currency: "EUR", categoryId: nil)

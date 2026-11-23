@@ -68,19 +68,24 @@ extension AppModel {
     }
 
     nonisolated private static func refundBookings(in vault: Vault, ids: Set<Int64>) throws -> [Int64: Booking] {
-        let dates = try ids.compactMap { try vault.bookingDate(bookingId: $0) }
-        guard let from = dates.min(), let to = dates.max() else { return [:] }
-        let filter = BookingFilter(accountIds: [], categoryId: nil, includeSubcategories: true,
-            uncategorizedOnly: false, search: nil, dateFrom: from, dateTo: to,
-            limit: 0, offset: 0, scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
-        let bookings = try vault.listTransactions(filter: filter).transactions.filter { ids.contains($0.id) }
-        return Dictionary(uniqueKeysWithValues: bookings.map { ($0.id, $0) })
+        let dates = Set(try ids.compactMap { try vault.bookingDate(bookingId: $0) })
+        var bookings: [Int64: Booking] = [:]
+        for date in dates.sorted() {
+            let filter = BookingFilter(accountIds: [], categoryId: nil, includeSubcategories: true,
+                uncategorizedOnly: false, search: nil, dateFrom: date, dateTo: date,
+                limit: 0, offset: 0, scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
+            for booking in try vault.listTransactions(filter: filter).transactions where ids.contains(booking.id) {
+                bookings[booking.id] = booking
+            }
+        }
+        return bookings
     }
 
     func linkRefund(_ pair: RefundEndpointPair) async {
         guard !refundBusy, let pin = pinVault() else { return }
+        refundHistoryPending += 1
         refundBusy = true
-        defer { refundBusy = false }
+        defer { refundHistoryPending -= 1; refundBusy = refundHistoryPending > 0 }
         do {
             try await pin.run { try $0.linkRefund(refundId: pair.refundID, refundPart: pair.refundPart, originalId: pair.originalID, originalPart: pair.originalPart) }
             guard isCurrent(pin) else { return }
@@ -93,8 +98,9 @@ extension AppModel {
 
     func unlinkRefund(_ pair: RefundEndpointPair) async {
         guard !refundBusy, let pin = pinVault() else { return }
+        refundHistoryPending += 1
         refundBusy = true
-        defer { refundBusy = false }
+        defer { refundHistoryPending -= 1; refundBusy = refundHistoryPending > 0 }
         do {
             let token = try await pin.run { try $0.unlinkRefund(refundId: pair.refundID, refundPart: pair.refundPart, originalId: pair.originalID, originalPart: pair.originalPart) }
             guard isCurrent(pin) else { return }
@@ -108,8 +114,9 @@ extension AppModel {
 
     func restoreRefund(_ undo: RefundUndo) async {
         guard !refundBusy, isCurrent(undo.pin) else { return }
+        refundHistoryPending += 1
         refundBusy = true
-        defer { refundBusy = false }
+        defer { refundHistoryPending -= 1; refundBusy = refundHistoryPending > 0 }
         do {
             let pair = undo.pair
             try await undo.pin.run { try $0.restoreRefund(refundId: pair.refundID, refundPart: pair.refundPart, originalId: pair.originalID, originalPart: pair.originalPart, token: undo.token) }
