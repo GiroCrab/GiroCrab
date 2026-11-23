@@ -277,6 +277,13 @@ pub struct ConnectContext {
     /// (#1124): the result is cut down to it in [`FetchResult::keep_only`];
     /// connectors that request accounts one by one (FinTS) ask only for it.
     pub only_account: Option<String>,
+    /// Asks the user for a TAN or an app approval during `fetch` (#1730). Set
+    /// by `SyncSession` for syncs the user started; `None` at login, for
+    /// transfers and for automatic syncs, which must not ask.
+    pub prompt: Option<super::FetchPrompt>,
+    /// Set once the user cancelled the sync (#1730): send no further order.
+    /// `SyncSession` sets it for every fetch, with or without a prompt.
+    pub cancelled: super::CancelFlag,
 }
 
 /// Document retrieval of one sync, set from the connection's settings.

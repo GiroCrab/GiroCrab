@@ -1986,6 +1986,50 @@ fn hispas_advertises_pain_001_09_for_hkccs() {
     assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V09));
 }
 
+#[test]
+fn hispas_advertises_pain_001_09_for_standing_order_query() {
+    // #1647: a bank that lists its SEPA schemas only in HISPAS (no HICDBS) must get
+    // pain.001.001.09 for HKCDB too, not the .03 fallback ("SEPA-Deskriptor laut BPD nicht zugelassen").
+    let mut c = FinTsConnector::new("50010517");
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V03));
+    c.learn_bpd(&reply(
+        b"HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd:urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.008.001.08'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+}
+
+#[test]
+fn a_new_bpd_version_drops_a_withdrawn_pain_format() {
+    // The bank withdraws .001.09 from HISPAS with a new BPD version: HKCDB and HKCCS
+    // must fall back to .03 instead of keeping the stored .09.
+    let mut c = FinTsConnector::new("50010517");
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+6+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+7+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.03.xsd'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V03));
+    assert_eq!(c.pain_version("HKCCS"), Some(super::sepa::PainVersion::V03));
+}
+
+#[test]
+fn partial_replies_and_the_same_bpd_version_keep_learned_pain_formats() {
+    let mut c = FinTsConnector::new("50010517");
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+6+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.09.xsd'",
+    ));
+    // a reply without HIBPA/HISPAS (e.g. the TAN media list) removes nothing
+    c.learn_bpd(&reply(b"HITAB:4:4:3+0'"));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+    // a second message of the same BPD version (other dialog) is merged, not replaced
+    c.learn_bpd(&reply(
+        b"HIBPA:5:3:3+6+280:50010517+Testbank+1'HISPAS:11:1:3+1+1+0+J:N:N:sepade.pain.001.001.03.xsd'",
+    ));
+    assert_eq!(c.pain_version("HKCDB"), Some(super::sepa::PainVersion::V09));
+}
+
 #[tokio::test]
 async fn a_rejected_account_list_is_no_warning_when_the_upd_lists_the_accounts() {
     // #1083 (flatex): HKSPA is answered with 9380 on every sync; the UPD lists
@@ -2005,4 +2049,241 @@ async fn a_rejected_account_list_is_no_warning_when_the_upd_lists_the_accounts()
     let (url, _) = mock_bank(vec![NO_PERMISSION]);
     let e = order_connector(&url).fetch(&test_ctx()).await.unwrap_err();
     assert!(e.to_string().contains("HKSPA"), "{e}");
+}
+
+// ------------------------------------------------- TAN prompts during the fetch (#1730)
+
+/// flatex's answer to `HKSAL` + `HKTAN` (#1083): a TAN to type for task TASK1.
+const SAL_TAN_DEMANDED: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+3060::Bitte beachten Sie die enthaltenen Warnungen/Hinweise.'HIRMS:3:2:4+3060::Die bereits reservierte TAN wurde entwertet.+0030::Auftrag empfangen - TAN erforderlich.'HITAN:4:6:4+4++TASK1+Bitte geben Sie die TAN ein.'";
+/// An app approval for task TASK1, and the status query's answer while it is open.
+const SAL_APPROVAL_DEMANDED: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+3060::Bitte beachten Sie die enthaltenen Warnungen/Hinweise.'HIRMS:3:2:4+3955::Sicherheitsfreigabe erfolgt über anderen Kanal.'HITAN:4:6:4+4++TASK1+Bitte in der App freigeben.'";
+const APPROVAL_OPEN: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+3060::Bitte beachten Sie die enthaltenen Warnungen/Hinweise.'HIRMS:3:2:3+3956::Starke Kundenauthentifizierung noch ausstehend.'";
+/// Account A's balance 1234,56 EUR, the reply to the TAN or the approved status query.
+const SAL_A: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISAL:3:7:3+DE89370400440532013000+Tagesgeld+EUR+C:1234,56:EUR:20261118'";
+
+/// A prompt whose questions `answer` decides; the questions asked are returned
+/// by the handle once the prompt is dropped.
+fn answering_prompt(
+    mut answer: impl FnMut(&Phase) -> Option<crate::connectors::PromptAnswer> + Send + 'static,
+) -> (
+    crate::connectors::FetchPrompt,
+    tokio::task::JoinHandle<Vec<Phase>>,
+) {
+    let (prompt, mut questions) = crate::connectors::FetchPrompt::channel();
+    let asked = tokio::spawn(async move {
+        let mut asked = Vec::new();
+        while let Some((q, reply)) = questions.recv().await {
+            // `None`: no answer, as when the user cancels
+            if let Some(a) = answer(&q) {
+                let _ = reply.send(a);
+            }
+            asked.push(q);
+        }
+        asked
+    });
+    (prompt, asked)
+}
+
+fn challenge(phase: &Phase) -> &Challenge {
+    match phase {
+        Phase::Challenge(c) | Phase::Pending(c) => c,
+        _ => panic!("no challenge"),
+    }
+}
+
+/// One savings account that allows only HKSAL, which needs a TAN at the bank.
+fn savings_needing_sca(url: &str) -> FinTsConnector {
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKTAN": [6]}, "tan_required": {"HKSAL": true}});
+    let mut c = two_step_connector(url, state);
+    let mut savings = upd_acc("0532013000", "", IBAN_A, "Tagesgeld", &["HKSAL"]);
+    savings.kind_code = 10;
+    c.upd = vec![savings];
+    // a task left from the login must not be answered
+    c.task_reference = Some("LOGINTASK".into());
+    c
+}
+
+#[tokio::test]
+async fn a_tan_the_bank_wants_during_the_fetch_is_asked_for_and_sent() {
+    // #1083 (flatex): HKSAL gets 0030; the user types the TAN, the bank answers
+    // the HKTAN process 2 with the balance
+    let (url, seen) = mock_bank(vec![SAL_TAN_DEMANDED, SAL_A]);
+    let mut c = savings_needing_sca(&url);
+    let (prompt, asked) = answering_prompt(|_| {
+        Some(crate::connectors::PromptAnswer::Code(SecretString::new(
+            "123456".into(),
+        )))
+    });
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        ..test_ctx()
+    };
+    let r = c.fetch(&ctx).await.unwrap();
+    drop(ctx);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(r.accounts[0].balance_cents, 123_456);
+    assert!(r.balances_unknown.is_empty());
+    let asked = asked.await.unwrap();
+    assert_eq!(asked.len(), 1);
+    let q = challenge(&asked[0]);
+    assert!(matches!(asked[0], Phase::Challenge(_)));
+    assert_eq!(q.kind, crate::connectors::ChallengeKind::Code);
+    assert_eq!(q.title, trf("TAN für {0}", &[&tr("Saldo")]));
+    assert_eq!(q.message, "Bitte geben Sie die TAN ein.");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    // the TAN goes with HKTAN alone, the order is not sent again
+    assert!(
+        has_hktan(&seen[1]) && !seen[1].iter().any(|i| i == "HKSAL"),
+        "{seen:?}"
+    );
+    assert_eq!(c.task_reference.as_deref(), Some("TASK1"));
+}
+
+#[tokio::test]
+async fn a_skipped_tan_is_reported_and_the_rest_of_the_fetch_goes_on() {
+    // #1730: "Überspringen" leaves out the camt request of account B; its MT940
+    // is not tried either (it would only ask again), A's balance is stored
+    let (url, seen) = mock_bank(vec![BALANCE, TAN_DEMANDED]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKCAZ": [1], "HKKAZ": [7]}, "tan_required": {"HKCAZ": true, "HKKAZ": true}, "camt_formats": ["urn:iso:std:iso:20022:tech:xsd:camt.052.001.08"]});
+    let mut c = two_step_connector(&url, state);
+    c.upd = vec![
+        upd_acc("0532013000", "", IBAN_A, "Girokonto", &["HKSAL"]),
+        upd_acc(
+            "0000202051",
+            "",
+            IBAN_B,
+            "Verrechnungskonto",
+            &["HKCAZ", "HKKAZ"],
+        ),
+    ];
+    let (prompt, asked) = answering_prompt(|_| Some(crate::connectors::PromptAnswer::Skip));
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        since: days_ago(30),
+        ..test_ctx()
+    };
+    let r = c.fetch(&ctx).await.unwrap();
+    drop(ctx);
+    let asked = asked.await.unwrap();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(
+        challenge(&asked[0]).title,
+        trf("TAN für {0}", &[&tr("Umsätze")])
+    );
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+    assert!(r.warnings[0].starts_with(IBAN_B), "{:?}", r.warnings);
+    assert!(r.warnings[0].contains("HKCAZ"), "{:?}", r.warnings);
+    assert_eq!(r.balances_unknown, vec![IBAN_B.to_string()]);
+}
+
+#[tokio::test]
+async fn an_app_approval_during_the_fetch_is_shown_and_polled_by_the_front_end() {
+    // #1730: the approval is shown (no silent three-minute wait) and every poll
+    // of the front end is one status query
+    let (url, seen) = mock_bank(vec![SAL_APPROVAL_DEMANDED, APPROVAL_OPEN, SAL_A]);
+    let mut c = savings_needing_sca(&url);
+    let (prompt, asked) = answering_prompt(|_| Some(crate::connectors::PromptAnswer::Poll));
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        ..test_ctx()
+    };
+    let r = c.fetch(&ctx).await.unwrap();
+    drop(ctx);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(r.accounts[0].balance_cents, 123_456);
+    let asked = asked.await.unwrap();
+    assert_eq!(asked.len(), 2);
+    assert!(matches!(asked[0], Phase::Challenge(_)));
+    assert!(matches!(asked[1], Phase::Pending(_)));
+    let q = challenge(&asked[0]);
+    assert_eq!(q.kind, crate::connectors::ChallengeKind::DecoupledPush);
+    assert_eq!(
+        q.title,
+        trf("{0} in der Banking-App freigeben", &[&tr("Saldo")])
+    );
+    assert_eq!(seen.lock().unwrap().len(), 3);
+}
+
+/// The user's side of a cancel: sets the session's flag when the first
+/// question comes, then answers it with `answer` (`None`: no answer).
+fn cancelling_prompt(
+    answer: Option<crate::connectors::PromptAnswer>,
+) -> (
+    crate::connectors::FetchPrompt,
+    crate::connectors::CancelFlag,
+    tokio::task::JoinHandle<()>,
+) {
+    let flag = crate::connectors::CancelFlag::default();
+    let (prompt, mut questions) = crate::connectors::FetchPrompt::cancelled_by(flag.clone());
+    let cancel = flag.clone();
+    let user = tokio::spawn(async move {
+        let (_, reply) = questions.recv().await.unwrap();
+        cancel.set();
+        if let Some(a) = answer {
+            let _ = reply.send(a);
+        }
+    });
+    (prompt, flag, user)
+}
+
+#[tokio::test]
+async fn after_a_cancel_during_the_fetch_nothing_more_goes_to_the_bank() {
+    // #1730: the first account's TAN is cancelled; the second account's
+    // requests fail before they are sent
+    let (url, seen) = mock_bank(vec![SAL_TAN_DEMANDED]);
+    let mut c = savings_needing_sca(&url);
+    c.upd
+        .push(upd_acc("0000202051", "", IBAN_B, "Tagesgeld", &["HKSAL"]));
+    let (prompt, cancelled, user) = cancelling_prompt(None);
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        cancelled,
+        ..test_ctx()
+    };
+    let r = c.fetch(&ctx).await;
+    user.await.unwrap();
+    assert!(r.is_err(), "nothing was read");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_cancel_right_after_the_answer_sends_no_tan() {
+    // review of #1733: the TAN was typed, the cancel came before it was sent
+    let (url, seen) = mock_bank(vec![SAL_TAN_DEMANDED, SAL_A]);
+    let mut c = savings_needing_sca(&url);
+    let (prompt, cancelled, user) = cancelling_prompt(Some(crate::connectors::PromptAnswer::Code(
+        SecretString::new("123456".into()),
+    )));
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        cancelled,
+        ..test_ctx()
+    };
+    let r = c.fetch(&ctx).await;
+    user.await.unwrap();
+    assert!(r.is_err(), "nothing was read");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_cancelled_automatic_fetch_sends_nothing_more() {
+    // review of #1733: an automatic sync has no prompt, the cancel reaches it anyway
+    let (url, seen) = mock_bank(vec![SAL_A]);
+    let mut c = savings_needing_sca(&url);
+    let ctx = test_ctx();
+    ctx.cancelled.set();
+    assert!(c.fetch(&ctx).await.is_err());
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn without_a_prompt_a_tan_during_the_fetch_still_fails_the_request() {
+    // automatic syncs (`begin_quiet_sync`) ask nobody: as before #1730
+    let (url, seen) = mock_bank(vec![SAL_TAN_DEMANDED]);
+    let mut c = savings_needing_sca(&url);
+    let e = c.fetch(&test_ctx()).await.unwrap_err().to_string();
+    assert!(e.contains("HKSAL"), "{e}");
+    assert_eq!(seen.lock().unwrap().len(), 1);
 }

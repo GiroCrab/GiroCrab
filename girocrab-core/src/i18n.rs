@@ -746,6 +746,20 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ connectors/fints
         "Bitte in der Banking-App freigeben" => "Approve in your banking app",
         "TAN eingeben" => "Enter TAN",
+        // TAN prompts during the fetch (#1730)
+        "TAN für {0}" => "TAN for {0}",
+        "{0} in der Banking-App freigeben" => "Approve {0} in your banking app",
+        "Saldo" => "balance",
+        "Umsätze" => "transactions",
+        "Kartenumsätze" => "card transactions",
+        "Depotbestand" => "holdings",
+        "Daueraufträge" => "standing orders",
+        "Kontoauszüge" => "statements",
+        "diesen Auftrag" => "this order",
+        "Die TAN-Eingabe für {0} wurde übersprungen." => "The TAN for {0} was skipped.",
+        "Die Bank hat die TAN für {0} nicht angenommen." => {
+            "The bank did not accept the TAN for {0}."
+        }
         "Dieses Konto oder diese Bank erlaubt keine Echtzeitüberweisungen per FinTS (HKIPZ). Bitte in der Banking-App überweisen." => {
             "This account or bank doesn’t allow instant transfers via FinTS (HKIPZ). Please make the transfer in your banking app."
         }
@@ -1874,6 +1888,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Gutschrift" => "Credit",
         "Bestellung" => "Order",
         "Erstattung" => "Refund",
+        "Zahlung" => "Payment",
         "Überweisung" => "Transfer",
         "Buchung" => "Transaction",
         "Ordner nicht gefunden: {0}" => "Folder not found: {0}",

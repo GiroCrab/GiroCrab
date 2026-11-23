@@ -937,8 +937,9 @@ extension AppModel {
 
     var allAccounts: [Account] { groups.flatMap(\.accounts) }
     var hasArchivedAccounts: Bool { allAccounts.contains(where: \.isArchived) }
-    /// Everyday accounts counted in "Verfügbar" (skips groups excluded from the total).
-    var liquidAccounts: [Account] { allAccounts.filter { $0.inTotal && [.checking, .savings, .paymentService, .creditCard, .cash].contains($0.kind) } }
+    /// Everyday accounts counted in "Verfügbar" (skips groups excluded from the total): the kinds of
+    /// liquidity grade 1 in the wealth view (#1632), card debts included.
+    var liquidAccounts: [Account] { allAccounts.filter { $0.inTotal && LiquidityGrade.of($0.kind) == .immediate } }
     var liquidBalance: Int64 { liquidAccounts.reduce(0) { $0 + $1.balanceCents } }
     var newCount: Int { allAccounts.reduce(0) { $0 + Int($1.newCount) } }
     /// Bookings without a category (badge of „Ohne Kategorie“): the number the „Ohne Kategorie“ list shows for the
