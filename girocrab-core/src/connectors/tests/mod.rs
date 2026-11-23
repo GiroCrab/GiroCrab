@@ -1521,6 +1521,23 @@ async fn account_sync_stores_only_that_account() {
     assert!(accounts.iter().all(|a| !stored(a.id).access_revoked));
     // the login counts as synced only after a full sync (automatic sync)
     assert_eq!(last_sync(&v), synced_before);
+    // the fetched account notes its own time (#1716), the others keep theirs
+    let now = crate::dates::now_ms() / 1000;
+    let fetched = stored(other.id)
+        .last_fetch_unix
+        .expect("fetch time of the account");
+    assert!(
+        (now - 10..=now + 10).contains(&fetched),
+        "{fetched} vs {now}"
+    );
+    for a in accounts.iter().filter(|a| a.id != other.id) {
+        assert_eq!(
+            stored(a.id).last_fetch_unix,
+            a.last_fetch_unix,
+            "{}",
+            a.name
+        );
+    }
     let s = v
         .clone()
         .begin_account_sync(giro.id, "pin".into(), true)
