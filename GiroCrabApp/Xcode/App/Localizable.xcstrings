@@ -10637,6 +10637,17 @@
         }
       }
     },
+    "Der Rest in der ersten Zeile ist negativ und bucht die anderen Teile gegen. Ist das nicht gewollt, bitte die Beträge prüfen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The rest in the first row is negative and offsets the other parts. If that is not intended, please check the amounts."
+          }
+        }
+      }
+    },
     "Der SMS-Code konnte nicht sicher übermittelt werden. Bitte die Bankseite öffnen und dort bestätigen." : {
       "localizations" : {
         "en" : {

@@ -36,6 +36,9 @@ Sheet {
     readonly property var splitOff: { revision; return parts.slice(1).map(p => cents(p)) }
     /// What the first part keeps; null while a part is unreadable.
     readonly property var rest: splitOff.some(c => c === null) ? null : total - splitOff.reduce((s, c) => s + c, 0)
+    /// The rest is below 0 and counter-books the other parts: allowed (#427), but computed
+    /// (#1663), so a typo gets there unnoticed. Warn, never block.
+    readonly property bool restIsNegative: rest !== null && rest < 0
     readonly property bool valid: parts.length >= 2 && rest !== null && rest !== 0 && splitOff.every(c => c !== 0)
     /// Why "Speichern" is greyed out (#383): say so instead of leaving it silent.
     readonly property string problem: {
@@ -157,6 +160,7 @@ Sheet {
                     horizontalAlignment: TextInput.AlignRight
                     font.features: { "tnum": 1 }
                     Accessible.name: qsTr("Rest")
+                    Binding on color { when: sheet.restIsNegative; value: Theme.warning }
                     HoverHandler { id: restHover }
                     ToolTip.visible: restHover.hovered; ToolTip.delay: 600
                     ToolTip.text: qsTr("Bekommt automatisch, was die anderen Teile übrig lassen")
@@ -210,6 +214,11 @@ Sheet {
             visible: sheet.problem !== ""
             text: sheet.problem
             font.pixelSize: Theme.callout + 1; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+        }
+        Text {
+            visible: sheet.restIsNegative && sheet.error === ""
+            text: qsTr("Der Rest in der ersten Zeile ist negativ und bucht die anderen Teile gegen. Ist das nicht gewollt, bitte die Beträge prüfen.")
+            font.pixelSize: Theme.callout + 1; color: Theme.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true
         }
         Text { visible: sheet.error !== ""; text: sheet.error; font.pixelSize: Theme.callout + 1; color: Theme.negative; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         RowLayout {

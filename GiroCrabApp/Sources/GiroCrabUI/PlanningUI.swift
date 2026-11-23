@@ -600,6 +600,9 @@ struct SplitSheet: View {
         }
     }
     private var rest: Int64? { SplitMath.rest(total: total, splitOff: splitOff) }
+    /// The rest is below 0 and counter-books the other parts. That stays allowed (#427), but the
+    /// rest is computed (#1663), so a typo gets there unnoticed: warn, never block.
+    private var restIsNegative: Bool { (rest ?? 0) < 0 }
     /// The amounts to save, in the order of `parts`; nil while a part is unreadable.
     private var amounts: [Int64]? { rest.map { [$0] + splitOff.compactMap { $0 } } }
     private var valid: Bool { amounts.map { SplitMath.isValid(total: total, parts: $0) } ?? false }
@@ -637,6 +640,7 @@ struct SplitSheet: View {
                             TextField(Money.plain(0), text: .constant(rest.map(Money.plain) ?? "–"))
                                 .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
                                 .appFont(.body, monospacedDigit: true).frame(width: 90)
+                                .foregroundStyle(restIsNegative ? Theme.warning : Theme.secondary)
                                 .disabled(true)
                                 .help("Bekommt automatisch, was die anderen Teile übrig lassen")
                                 .accessibilityLabel("Rest")
@@ -667,6 +671,11 @@ struct SplitSheet: View {
             }
             .buttonStyle(.borderless)
             if let problem { Text(problem).appFont(.callout).foregroundStyle(Theme.secondary) }
+            if restIsNegative, error == nil {
+                Text("Der Rest in der ersten Zeile ist negativ und bucht die anderen Teile gegen. Ist das nicht gewollt, bitte die Beträge prüfen.")
+                    .appFont(.callout).foregroundStyle(Theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let error { Text(error).appFont(.callout).foregroundStyle(Theme.negative) }
             HStack {
                 if hasSplits {
