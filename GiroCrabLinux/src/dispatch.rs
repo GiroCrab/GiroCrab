@@ -1502,8 +1502,7 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         "cashflow_by_period" => Some(cashflow_by_period_totals(v, a)),
         "refund_sheet" => Some(crate::refunds::sheet(v, a)),
         "refund_card" => Some(crate::refunds::card(v, a)),
-        "seed_refund_demo" => Some(crate::refunds::seed(v, a)),
-        "edit_refund" => Some((|| {
+        "seed_refund_demo" | "edit_refund" => Some((|| {
             let identity: String = arg(a, "vault_identity")?;
             let target = REFUND_TARGET
                 .lock()
@@ -1516,7 +1515,11 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
             {
                 return Err(crate::i18n::tr("Tresor ist gesperrt"));
             }
-            crate::refunds::edit(v, a)
+            if method == "seed_refund_demo" {
+                crate::refunds::seed(v, a)
+            } else {
+                crate::refunds::edit(v, a)
+            }
         })()),
         _ => dispatch_vault_methods(v, method, a),
     }
@@ -1726,6 +1729,41 @@ mod tests {
         assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_err());
         args.as_object_mut().unwrap().remove("vault_identity");
         assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
+    }
+
+    #[test]
+    fn refund_demo_seed_rejects_replaced_vault_before_writing() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let old = vault().unwrap();
+        let args = json!({"vault_identity":pin_refund_target(&old)});
+        call_ok("open_demo", json!({}));
+        let new = vault().unwrap();
+        let before = new.list_accounts().unwrap().len();
+        for args in [args.clone(), json!({}), json!({"vault_identity":""})] {
+            assert!(
+                dispatch_vault(&new, "seed_refund_demo", &args)
+                    .unwrap()
+                    .is_err()
+            );
+            assert_eq!(new.list_accounts().unwrap().len(), before);
+        }
+        assert!(
+            dispatch_vault(&old, "seed_refund_demo", &args)
+                .unwrap()
+                .is_ok()
+        );
+        let current = json!({"vault_identity":pin_refund_target(&new)});
+        assert!(
+            dispatch_vault(&old, "seed_refund_demo", &args)
+                .unwrap()
+                .is_err()
+        );
+        assert!(
+            dispatch_vault(&new, "seed_refund_demo", &current)
+                .unwrap()
+                .is_ok()
+        );
     }
 
     /// Sets (`Some`) or removes (`None`) an environment variable for a test that holds

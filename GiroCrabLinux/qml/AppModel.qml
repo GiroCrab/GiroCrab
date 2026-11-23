@@ -4226,14 +4226,16 @@ QtObject {
     function presentDemoSheet(name) {
         const top = categories.find(c => c.depth === 0)
         switch (name) {
-        case "refund": case "refund-reverse": case "refund-before": case "refund-linked":
-            loadOffMain("refundDemo", () => [["seed_refund_demo", { date: new Date().toISOString().slice(0, 10), linked: name === "refund-linked" }]], r => {
+        case "refund": case "refund-reverse": case "refund-before": case "refund-linked": {
+            const vaultIdentity = core("refund_vault_identity")
+            loadOffMain("refundDemo", () => [["seed_refund_demo", { vault_identity: vaultIdentity, date: new Date().toISOString().slice(0, 10), linked: name === "refund-linked" }]], r => {
                 reloadAll()
                 sidebarSelection = "account:" + r[0].account
                 reloadBookings()
                 if (name === "refund" || name === "refund-reverse") refundBooking = { id: name === "refund" ? r[0].refund : r[0].original }
             }, undefined, true)
             break
+        }
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.length ? connections[connections.length - 1] : null

@@ -54,6 +54,21 @@ test("refund edits capture a vault token before queuing the worker", () => {
     assert.equal(typeof applied, "function");
 });
 
+test("refund demo seeding captures a vault token before queuing the worker", () => {
+    let queued;
+    const s = {
+        categories: [],
+        core(method) { assert.equal(method, "refund_vault_identity"); return "old-vault"; },
+        loadOffMain(channel, request) { assert.equal(channel, "refundDemo"); queued = request; },
+    };
+    vm.createContext(s);
+    vm.runInContext(`(function(name) {${bodyAfter("function presentDemoSheet(")}})("refund-linked")`, s);
+    s.core = () => "new-vault";
+    assert.equal(queued()[0][0], "seed_refund_demo");
+    assert.equal(queued()[0][1].vault_identity, "old-vault");
+    assert.equal(queued()[0][1].linked, true);
+});
+
 function fixture() {
     const pending = [], selected = [], cancelled = [];
     let publish;
