@@ -57,7 +57,7 @@ type MatchingIds = HashMap<
 pub(crate) struct Projection {
     base: Vec<Row>,
     pub info: HashMap<i64, Info>,
-    parts: HashMap<Endpoint, (Option<i64>, FlowKind, KpiSide)>,
+    parts: HashMap<Endpoint, (Option<i64>, FlowKind, KpiSide, usize)>,
     parents: HashMap<i64, Option<i64>>,
     refunds: Arc<Refunds>,
     rows: Mutex<ScopedRows>,
@@ -172,8 +172,10 @@ impl Projection {
             if book.parts.is_empty() {
                 let side = kpi_side(b.flow, b.amount_cents);
                 let category_id = b.category_id.filter(|id| live_categories.contains_key(id));
-                out.parts
-                    .insert(Endpoint(b.id, String::new()), (category_id, b.flow, side));
+                out.parts.insert(
+                    Endpoint(b.id, String::new()),
+                    (category_id, b.flow, side, out.base.len()),
+                );
                 out.base.push(Row {
                     booking_id: b.id,
                     category_id,
@@ -192,7 +194,7 @@ impl Projection {
                     let category_id = p.category_id.filter(|id| live_categories.contains_key(id));
                     out.parts.insert(
                         Endpoint(b.id, p.uuid.clone()),
-                        (category_id, part.flow, side),
+                        (category_id, part.flow, side, out.base.len()),
                     );
                     out.base.push(Row {
                         booking_id: b.id,
@@ -225,16 +227,26 @@ impl Projection {
             Some(accounts) => self.refunds.scoped_allocations(accounts)?,
             None => self.refunds.allocations.clone(),
         };
+        let directed: HashSet<_> = allocations
+            .iter()
+            .filter(|a| a.cents > 0)
+            .filter_map(|a| a.original.as_ref())
+            .filter_map(|e| self.parts.get(e).map(|p| p.3))
+            .collect();
         let mut rows: Vec<Row> = self
             .base
             .iter()
-            .filter(|r| {
+            .enumerate()
+            .filter(|(_, r)| {
                 allowed
                     .as_ref()
                     .is_none_or(|a| a.contains(&self.info[&r.booking_id].account_id))
             })
-            .map(|r| {
+            .map(|(index, r)| {
                 let mut r = *r;
+                if directed.contains(&index) {
+                    r.direction = r.amount_cents.signum() as i8;
+                }
                 if r.flow == FlowKind::Loan
                     && allowed.as_ref().is_some_and(|a| {
                         self.info[&r.booking_id]
@@ -277,8 +289,8 @@ impl Projection {
                 continue;
             };
             let (
-                Some(&(source_category, source_flow, source_side)),
-                Some(&(target_category, target_flow, target_side)),
+                Some(&(source_category, source_flow, source_side, _)),
+                Some(&(target_category, target_flow, target_side, _)),
             ) = (self.parts.get(refund), self.parts.get(original))
             else {
                 continue;
@@ -324,14 +336,18 @@ impl Projection {
             .parts
             .iter()
             .filter(|(e, _)| remaining[*e] != 0 || !shifted.contains(*e))
-            .map(|(e, &(category, flow, side))| {
+            .map(|(e, &(category, flow, side, index))| {
                 let (flow, side) = scoped(e.0, flow, side);
                 (
                     e.0,
                     category,
                     flow,
                     side as u8,
-                    self.refunds.books()[&e.0].amount.signum() as i8,
+                    if directed.contains(&index) {
+                        self.base[index].amount_cents.signum() as i8
+                    } else {
+                        self.base[index].direction
+                    },
                 )
             })
             .collect();

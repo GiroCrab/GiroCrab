@@ -33,6 +33,35 @@ fn round6_expense_direction_keeps_refund_adjustments() {
 }
 
 #[test]
+fn round6_direction_keeps_the_base_of_a_linked_expense_part() {
+    for amount in [0, 10000] {
+        let f = Fixture::new();
+        let original = f.add(amount, None);
+        let parts = f.split(
+            original,
+            &[(-10000, Some(f.cost)), (10000 + amount, Some(f.income))],
+        );
+        let refund = f.add(3000, Some(f.income));
+        f.link(refund, "", original, &parts[0]);
+        for direction in [BookingDirection::All, BookingDirection::Expense] {
+            let report =
+                f.v.analytics_report(
+                    BookingFilter {
+                        direction,
+                        ..Default::default()
+                    },
+                    false,
+                )
+                .unwrap();
+            assert_eq!(
+                report.expense_cents, 7000,
+                "booking amount {amount}, {direction:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn round6_analytics_does_not_compute_the_unused_untagged_bucket() {
     let f = Fixture::new();
     f.add(i64::MAX, Some(f.income));
