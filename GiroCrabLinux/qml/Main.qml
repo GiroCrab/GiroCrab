@@ -94,8 +94,14 @@ ApplicationWindow {
                      shortcut: "Ctrl+Alt+I"; enabled: AppModel.isUnlocked; onTriggered: AppModel.showInspector = !AppModel.showInspector }
             Action { text: qsTr("Auswertungen anzeigen"); checkable: true; checked: AppModel.showStatistics; onToggled: AppModel.showStatistics = checked }
             Action { text: qsTr("Budgets anzeigen"); checkable: true; checked: AppModel.showBudgets; enabled: AppModel.isUnlocked; onToggled: AppModel.showBudgets = checked }
+            // RootView.swift › Toggle("Saldo anzeigen") (#577)
+            Action { text: qsTr("Saldo anzeigen"); checkable: true; checked: ListBalances.shown; enabled: AppModel.isUnlocked
+                     onToggled: { ListBalances.setShown(checked); checked = Qt.binding(() => ListBalances.shown) } }
             // RootView.swift › Toggle("Kopfbereich minimieren") (#358)
             Action { text: qsTr("Kopfbereich minimieren"); checkable: true; checked: AppModel.compactHeader; enabled: AppModel.isUnlocked; onToggled: AppModel.compactHeader = checked }
+            // RootView.swift › Toggle("Letzten Abruf anzeigen") (#815)
+            Action { text: qsTr("Letzten Abruf anzeigen"); checkable: true; checked: LastFetch.shown; enabled: AppModel.isUnlocked
+                     onToggled: { LastFetch.setShown(checked); checked = Qt.binding(() => LastFetch.shown) } }
             // the header chart (#634): same switches as the row below it
             Action { text: qsTr("Diagramm anzeigen"); checkable: true; checked: !BalanceChartPrefs.collapsed; enabled: AppModel.isUnlocked
                      onToggled: { BalanceChartPrefs.setCollapsed(!checked); checked = Qt.binding(() => !BalanceChartPrefs.collapsed) } }

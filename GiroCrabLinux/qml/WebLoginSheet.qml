@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import QtWebEngine
 
 // RootView.swift › .sheet(item: $model.webLoginConnection): WebLoginSheet (Trade Republic,
-// ConnectionsUI.swift), AmazonWebSheet, FnzWebSheet, QuirionWebSheet, SchwaebischHallWebSheet, EquatePlusWebSheet or PortalWebSheet
+// ConnectionsUI.swift), AmazonWebSheet, FnzWebSheet, QuirionWebSheet, SchwaebischHallWebSheet, EquatePlusWebSheet,
+// the Advanzia browser (AdvanziaUI.swift) or PortalWebSheet
 // (Amex / Amazon Visa). The browser part is PortalBrowser (PortalUI.swift); the flow of
 // each login lives in its *WebLoginFlow.qml (texts, buttons, what is read from the page).
 // Main.qml loads this file on demand, so the app starts without QtWebEngine.
@@ -123,21 +124,42 @@ Item {
         /// collected in the page and drained into `flow.captured` (main frame of the portal only).
         readonly property string captureHook: `(function(){
   if (window.__gcHooked) return; window.__gcHooked = true;
-  var post = function(url, body) { try {
+  var queue = function(url, body, card) {
+    var q = window.__gcBodies || (window.__gcBodies = []);
+    q.push({url: String(url), body: body, card: card}); if (q.length > 400) q.splice(0, q.length - 400);
+  };
+  // PortalBrowser.cardKey (#243): the card token is hashed here (SHA-256, first 8 bytes,
+  // hex), so only the short key ever leaves the page.
+  var post = function(url, body, card) { try {
     if (!body || body.length > 3000000) return;
     var t = body.trim().charAt(0); if (t !== '{' && t !== '[') return;
-    var q = window.__gcBodies || (window.__gcBodies = []);
-    q.push({url: String(url), body: body}); if (q.length > 400) q.splice(0, q.length - 400);
+    if (!card || !(window.crypto && crypto.subtle)) { queue(url, body, ''); return; }
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(card)).then(function(d) {
+      queue(url, body, Array.prototype.map.call(new Uint8Array(d).slice(0, 8), function(b) { return ('0' + b.toString(16)).slice(-2); }).join(''));
+    }, function() { queue(url, body, ''); });
   } catch (e) {} };
+  // Which card a request is for (Amex: an account token header, #243).
+  var isCard = function(k) { return /account.?(token|key)/i.test(String(k)); };
+  var cardOf = function(h) { var c = ''; try {
+    var f = function(k, v) { if (!c && v && isCard(k)) c = String(v); };
+    if (!h || typeof h !== 'object') return '';
+    if (typeof Headers !== 'undefined' && h instanceof Headers) h.forEach(function(v, k) { f(k, v); });
+    else if (Array.isArray(h)) h.forEach(function(p) { f(p[0], p[1]); });
+    else Object.keys(h).forEach(function(k) { f(k, h[k]); });
+  } catch (e) {} return c; };
   var of = window.fetch;
   if (of) { window.fetch = function() {
     var a = arguments, p = of.apply(this, a);
-    p.then(function(r) { try { var u = (a[0] && a[0].url) || a[0]; r.clone().text().then(function(b) { post(u, b); }); } catch (e) {} }).catch(function(){});
+    var c = cardOf(a[1] && a[1].headers) || cardOf(a[0] && a[0].headers);
+    p.then(function(r) { try { var u = (a[0] && a[0].url) || a[0]; r.clone().text().then(function(b) { post(u, b, c); }); } catch (e) {} }).catch(function(){});
     return p; }; }
-  var ox = XMLHttpRequest.prototype.open;
+  var ox = XMLHttpRequest.prototype.open, oh = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.setRequestHeader = function(k, v) {
+    try { if (isCard(k)) this.__gcc = String(v); } catch (e) {}
+    return oh.apply(this, arguments); };
   XMLHttpRequest.prototype.open = function(m, u) {
-    this.__gcu = u;
-    this.addEventListener('load', function() { try { if (this.responseType === '' || this.responseType === 'text') post(this.__gcu, this.responseText); } catch (e) {} });
+    this.__gcu = u; this.__gcc = undefined;   // a reused request must not keep the previous card's key
+    this.addEventListener('load', function() { try { if (this.responseType === '' || this.responseType === 'text') post(this.__gcu, this.responseText, this.__gcc); } catch (e) {} });
     return ox.apply(this, arguments); };
 })();`
         function drainCaptures(done) {
@@ -145,7 +167,7 @@ Item {
                 if (onPortal && flow) {
                     let list = []
                     try { list = JSON.parse(r || "[]") } catch (e) {}
-                    for (const c of list) if (c && typeof c.body === "string") flow.captured(c.body, String(c.url || ""))
+                    for (const c of list) if (c && typeof c.body === "string") flow.captured(c.body, String(c.url || ""), String(c.card || ""))
                 }
                 if (done) done()
             })
@@ -185,10 +207,13 @@ Item {
         Timer { id: restoreSettle; interval: 300; onTriggered: sheet.cookiesRestored = true }
         function startFlow() {
             if (!connection) return
+            // Advanzia: one session per login (AdvanziaLocalSession: a data store per profile);
+            // another login's cookies leave the profile before this login's come back.
+            if (kind === "Advanzia") AppModel.clearPortalSession(kind)
             AppModel.restoreWebCookies(connection)
             restoreSettle.restart()
             const files = { TradeRepublic: "TrWebLoginFlow.qml", AmazonOrders: "AmazonWebLoginFlow.qml", Fnz: "FnzWebLoginFlow.qml", Quirion: "QuirionWebLoginFlow.qml",
-                            SchwaebischHall: "SchwaebischHallWebLoginFlow.qml", EquatePlus: "EquatePlusWebLoginFlow.qml" }
+                            SchwaebischHall: "SchwaebischHallWebLoginFlow.qml", EquatePlus: "EquatePlusWebLoginFlow.qml", Advanzia: "AdvanziaWebLoginFlow.qml" }
             flowLoader.setSource(files[kind] || "PortalWebLoginFlow.qml", { browser: sheet, connection: connection })
         }
         Component.onCompleted: if (connection) { lastConnection = connection; Qt.callLater(startFlow) }
@@ -259,6 +284,12 @@ Item {
                         // pop-ups and target=_blank: same view (AmazonUIDelegate)
                         onNewWindowRequested: request => { webView.url = request.requestedUrl }
                     }
+                }
+                // PortalUI.swift (Amex cards, #243), AdvanziaUI.swift (account choice): over the page
+                Loader {
+                    anchors.fill: parent
+                    active: !!sheet.flow && sheet.flow.covering && sheet.flow.cover !== null
+                    sourceComponent: sheet.flow ? sheet.flow.cover : null
                 }
                 // FnzUI.swift: AccountSelectionPanel over the page while a fetch asks (#346)
                 Loader {

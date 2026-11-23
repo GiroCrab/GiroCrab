@@ -14,8 +14,8 @@ export { RecLine }
 
 export struct AccountRow { id: int, name: string, bank: string, iban: string, header: string, monogram: string, dot: color, balance: string, currency: string, negative: bool, archived: bool }
 export struct CategoryRow { id: int, name: string, depth: int, color: color }
-export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string }
-export struct DayGroup { title: string, sum: string, negative: bool, rows: [BookingRow], show-month: bool, month: string, month-income: string, month-expense: string }
+export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, balance: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string }
+export struct DayGroup { title: string, sum: string, balance: string, negative: bool, rows: [BookingRow], show-month: bool, month: string, month-income: string, month-expense: string }
 export struct BarGroup { label: string, income: float, expense: float }
 export struct BudgetLine { name: string, amount: string, progress: float, color: color, over: bool }
 export struct TileRow { index: int, name: string, color: color }
@@ -394,6 +394,7 @@ component BookingLine inherits Rectangle {
     in property <bool> active;
     in property <bool> multi-select-active;
     in property <bool> compact: false;
+    in property <bool> show-balance: true;
     callback clicked();
     callback toggle-checked();
     callback toggle-mark();
@@ -481,13 +482,23 @@ component BookingLine inherits Rectangle {
                 if b.category == "" && b.tags-text == "" && b.detail != "": Text { text: b.detail; color: Theme.muted; font-size: 11px; overflow: elide; horizontal-stretch: 1; }
             }
         }
-        Text {
-            text: b.amount;
-            color: b.negative ? Theme.amount : Theme.positive;
-            font-size: 13px;
-            font-weight: 600;
-            horizontal-alignment: right;
-            vertical-alignment: center;
+        VerticalLayout {
+            alignment: center;
+            spacing: 0px;
+            Text {
+                text: b.amount;
+                color: b.negative ? Theme.amount : Theme.positive;
+                font-size: 13px;
+                font-weight: 600;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+            if root.show-balance && b.balance != "": Text {
+                text: b.balance;
+                color: Theme.muted;
+                font-size: 11px;
+                horizontal-alignment: right;
+            }
         }
     }
 }
@@ -498,6 +509,7 @@ component DayCard inherits Rectangle {
     in property <int> selected-booking;
     in property <bool> multi-select-active;
     in property <bool> compact: false;
+    in property <bool> show-balance: true;
     callback select(int);
     callback toggle-checked(int);
     callback toggle-mark(int);
@@ -515,10 +527,12 @@ component DayCard inherits Rectangle {
                 padding-right: 10px;
                 Text { text: day.title; color: Theme.text; font-size: 13px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide; }
                 Text { text: day.sum; color: day.negative ? Theme.muted : Theme.positive; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-alignment: right; }
+                if root.show-balance && day.balance != "": Text { text: "Saldo " + day.balance; color: Theme.muted; font-size: 11px; vertical-alignment: center; horizontal-alignment: right; }
             }
         }
         for b in day.rows: BookingLine {
             b: b;
+            show-balance: root.show-balance;
             active: root.selected-booking == b.id;
             multi-select-active: root.multi-select-active;
             compact: root.compact;
@@ -762,6 +776,8 @@ export component MainWindow inherits Window {
     in-out property <bool> uncategorized-only: false;
     in-out property <bool> documents-only: false;
     in-out property <bool> compact-rows: false;
+    // Saldo-Spalte der Buchungsliste ein/aus (#577); Sitzungszustand wie `compact-rows`.
+    in-out property <bool> show-balance: true;
     in-out property <int> status-index: 0;
     in-out property <int> range-index: 0;
     in-out property <int> tag-index: 0;
@@ -1035,6 +1051,8 @@ export component MainWindow inherits Window {
     in-out property <bool> cat-sub: false;
     in property <bool> cat-armed: false;
     in property <string> cat-status;
+    in property <bool> cat-can-up: false;
+    in property <bool> cat-can-down: false;
     callback account-new();
     callback account-edit();
     callback account-save(string, int);
@@ -1045,6 +1063,7 @@ export component MainWindow inherits Window {
     callback category-add(string, int, bool);
     callback category-save(string, int);
     callback category-delete();
+    callback category-move(int);
     callback shortcut(string, bool) -> bool;
     in property <int> search-focus-tick: 0;
     public function refocus() { fs.focus(); }
@@ -1424,6 +1443,10 @@ export component MainWindow inherits Window {
                     text: "Kompakt";
                     checked <=> root.compact-rows;
                 }
+                PillToggle {
+                    text: "Saldo";
+                    checked <=> root.show-balance;
+                }
                 GhostButton { horizontal-stretch: 0; text: root.cards-open ? "Übersicht ausblenden ▴" : "Cashflow & Budgets ▾"; clicked => { root.cards-open = !root.cards-open; } }
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: root.booking-count; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
@@ -1565,6 +1588,7 @@ export component MainWindow inherits Window {
                                 selected-booking: root.selected-booking;
                                 multi-select-active: root.marked-count > 0;
                                 compact: root.compact-rows;
+                                show-balance: root.show-balance;
                                 select(id) => { root.select-booking(id); }
                                 toggle-checked(id) => { root.toggle-booking-checked(id); }
                                 toggle-mark(id) => { root.toggle-booking-mark(id); }
@@ -2160,6 +2184,8 @@ export component MainWindow inherits Window {
         HorizontalLayout {
             spacing: 8px;
             Button { text: "Neu anlegen"; clicked => { root.category-add(root.cat-name, root.cat-color, root.cat-sub); } }
+            Button { text: "▲"; enabled: root.cat-can-up; clicked => { root.category-move(-1); } }
+            Button { text: "▼"; enabled: root.cat-can-down; clicked => { root.category-move(1); } }
             Button { text: "Speichern"; enabled: root.cat-selected >= 0; clicked => { root.category-save(root.cat-name, root.cat-color); } }
             Button { text: root.cat-armed ? "Wirklich löschen?" : "Löschen"; enabled: root.cat-selected >= 0; clicked => { root.category-delete(); } }
             Rectangle { horizontal-stretch: 1; }

@@ -72,6 +72,31 @@ const EXT_PREFIX: &str = "moneymoney-db:";
 /// (found with a real database: ticking and unticking the checkbox flips only it).
 const MM_CLOSED: i64 = 16;
 
+/// Imported accounts whose archive state nobody chose (`accounts.archive_unknown`, ordered by
+/// id): the next import gives them MoneyMoney's. The #998 repair (schema step 38) reactivates
+/// accounts the import of v0.8.5 archived wrongly, and some of them are closed in MoneyMoney
+/// after all. The mark belongs to the archive state: the vault merge carries it with
+/// `archived_ms`, and every archive choice ends it ([`crate::user_groups::set_archived_inner`]).
+#[cfg(test)]
+pub(crate) fn archive_unknown(conn: &Connection) -> CoreResult<Vec<i64>> {
+    Ok(conn
+        .prepare("SELECT id FROM accounts WHERE archive_unknown != 0 ORDER BY id")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?)
+}
+
+/// Marks `ids` as step 38 does (tests set the state up with it).
+#[cfg(test)]
+pub(crate) fn note_archive_unknown(conn: &Connection, ids: &[i64]) -> CoreResult<()> {
+    for id in ids {
+        conn.execute(
+            "UPDATE accounts SET archive_unknown = 1 WHERE id = ?1",
+            [id],
+        )?;
+    }
+    Ok(())
+}
+
 /// Archives an account closed in MoneyMoney (offline, stays readable).
 fn archive_closed(conn: &Connection, account_id: i64) -> CoreResult<()> {
     crate::user_groups::set_archived_inner(conn, account_id, true)?;
@@ -487,6 +512,9 @@ struct SrcAccount {
     /// `accounts.refresh` (the low bits are its refresh settings). MoneyMoney
     /// keeps no date for it. Not `cancel_tsp`, a cancelled refresh (#998).
     closed: bool,
+    /// The database has `refresh` (MoneyMoney always fills it): without the column
+    /// `closed` is `false` for lack of knowledge, not because the account is in use.
+    closed_known: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1234,6 +1262,11 @@ fn read_source(path: &str, password: &SecretString) -> CoreResult<Source> {
 
 /// Accounts – never cred / userdata / transientdata / web_ops.
 fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
+    let closed_known: bool = conn.query_row(
+        "SELECT count(*) > 0 FROM pragma_table_info('accounts') WHERE lower(name) = 'refresh'",
+        [],
+        |r| r.get(0),
+    )?;
     let sql = select(
         conn,
         "accounts",
@@ -1277,6 +1310,7 @@ fn read_accounts(conn: &Connection) -> CoreResult<Vec<SrcAccount>> {
             balance_ts: vint(get(r, 12)?).filter(|t| *t > 0),
             bic: vtext(get(r, 13)?),
             closed: vint(get(r, 14)?).is_some_and(|f| f & MM_CLOSED != 0),
+            closed_known,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -3251,10 +3285,78 @@ impl ImportCtx<'_> {
             None => reused_account(conn, a)?,
         };
         if let Some(id) = target {
+            let revived = crate::sync_merge::revive_account_if_deleted(conn, id)?;
             // Nobody chose the archive state of a revived account (it comes back
-            // active): MoneyMoney's applies.
-            if crate::sync_merge::revive_account_if_deleted(conn, id)? && a.closed {
+            // active) or of one the #998 repair reactivated: MoneyMoney's applies –
+            // for the latter only from the MoneyMoney account it came from (its
+            // reference, or the same IBAN and currency once a fetch took it over and
+            // the reference is gone), not from another one merged into it. MoneyMoney
+            // may keep several accounts with one IBAN (a closed and an open one, #94):
+            // then the IBAN names no source and the state stays as it is.
+            let iban_source = if src.accounts.iter().filter(|x| x.iban == a.iban).count() == 1 {
+                a.iban.as_str()
+            } else {
+                ""
+            };
+            let (own, wrongly_archived, marked): (bool, bool, bool) = conn.query_row(
+                "SELECT external_ref = ?2
+                        OR (?3 <> '' AND external_ref NOT LIKE 'moneymoney-db:%'
+                            AND upper(replace(IFNULL(iban, ''), ' ', '')) = ?3
+                            AND upper(IFNULL(currency, '')) IN ('', ?5)),
+                        archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?4,
+                        archive_unknown != 0
+                   FROM accounts WHERE id = ?1",
+                params![
+                    id,
+                    ext,
+                    iban_source,
+                    crate::schema::ARCHIVE_STAMP_GAP_MS,
+                    a.currency.trim().to_uppercase()
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            let unknown = own && marked;
+            if a.closed && unknown {
+                // closed in its own MoneyMoney account: archived, stamped just after the
+                // repair like the repair itself, so a choice made since on any device still
+                // wins and two devices that settle it alike agree
+                conn.execute(
+                    "UPDATE accounts SET archived_unix = (archived_ms + 1) / 1000,
+                                         archived_ms = archived_ms + 1, archive_unknown = 0
+                      WHERE id = ?1",
+                    [id],
+                )?;
+            } else if a.closed && own && wrongly_archived {
+                // closed in its own MoneyMoney account and still archived by the import of
+                // v0.8.5 (step 38 could not tell, or a repair from another device has not
+                // arrived yet): recorded as that repair and this import would leave it, so
+                // the repair does not bring it back
+                conn.execute(
+                    "UPDATE accounts SET archived_unix = (archived_ms + 2) / 1000,
+                                         archived_ms = archived_ms + 2, archive_unknown = 0
+                      WHERE id = ?1",
+                    [id],
+                )?;
+            } else if a.closed && revived && !marked {
+                // a marked one (deleted with its login) waits for its own MoneyMoney account
                 archive_closed(conn, id)?;
+            } else if own && wrongly_archived && !a.closed && a.closed_known {
+                // still archived by the import of v0.8.5 and taken over by a fetch
+                // without imported bookings, so step 38 could not tell: its own
+                // MoneyMoney account says it is in use (stamped like step 38)
+                conn.execute(
+                    "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1, archive_unknown = 0
+                      WHERE id = ?1",
+                    [id],
+                )?;
+            } else if unknown && a.closed_known {
+                // in use according to its own MoneyMoney account: known from now on. The stamp
+                // stays, so a choice made since on another device still wins; with equal stamps
+                // the merge takes the known state
+                conn.execute(
+                    "UPDATE accounts SET archive_unknown = 0 WHERE id = ?1",
+                    [id],
+                )?;
             }
             let cur: String = conn
                 .query_row("SELECT currency FROM accounts WHERE id = ?1", [id], |r| {
