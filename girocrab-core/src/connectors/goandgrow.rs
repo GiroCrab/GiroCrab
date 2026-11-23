@@ -515,7 +515,13 @@ mod tests {
         assert!(parse_statement(&json!({"Type": "Return", "Amount": 1}), r).is_none());
         assert!(parse_statement(&json!({"Type": "Return", "Date": "2026-07-09"}), r).is_none());
         assert!(parse_statement(&json!({"Amount": 1, "Date": "2026-07-09"}), r).is_none());
-        assert!(parse_statement(&json!({"Type": "Mystery", "Amount": 1, "Date": "2026-07-09"}), r).is_none());
+        assert!(
+            parse_statement(
+                &json!({"Type": "Mystery", "Amount": 1, "Date": "2026-07-09"}),
+                r
+            )
+            .is_none()
+        );
     }
 
     #[test]
