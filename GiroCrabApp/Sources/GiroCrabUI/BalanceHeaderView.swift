@@ -378,14 +378,22 @@ struct StreamHeaderCard: View {
                 get: { model.categoryAccountIDs.isEmpty },
                 set: { _ in model.categoryAccountFilter = [] }
             ))
-            Divider()
-            ForEach(model.accountFilterCandidates, id: \.id) { a in
-                Toggle(isOn: Binding(
-                    get: { model.categoryAccountIDs.contains(a.id) },
-                    set: { _ in model.toggleCategoryAccount(a.id) }
-                )) {
-                    Text(verbatim: a.bankName.isEmpty || a.name.localizedCaseInsensitiveContains(a.bankName) ? a.name : "\(a.name) · \(a.bankName)")
+            let groups = model.accountFilterGroups
+            if groups.count > 1 {
+                // Grouped like the sidebar (#357): a group's entry chooses all its accounts at once.
+                ForEach(groups) { group in
+                    Divider()
+                    Toggle(isOn: Binding(
+                        get: { model.isCategoryGroupChosen(group) },
+                        set: { _ in model.toggleCategoryGroup(group) }
+                    )) {
+                        Label(group.name, systemImage: group.symbol)
+                    }
+                    ForEach(group.accounts, id: \.id) { categoryAccountToggle($0) }
                 }
+            } else {
+                Divider()
+                ForEach(model.accountFilterCandidates, id: \.id) { categoryAccountToggle($0) }
             }
         } label: {
             Label(model.categoryAccountFilterTitle,
@@ -395,6 +403,16 @@ struct StreamHeaderCard: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Nur Buchungen ausgewählter Konten anzeigen")
+    }
+
+    /// One account of the account menu.
+    private func categoryAccountToggle(_ a: Account) -> some View {
+        Toggle(isOn: Binding(
+            get: { model.categoryAccountIDs.contains(a.id) },
+            set: { _ in model.toggleCategoryAccount(a.id) }
+        )) {
+            Text(verbatim: a.bankName.isEmpty || a.name.localizedCaseInsensitiveContains(a.bankName) ? a.name : "\(a.name) · \(a.bankName)")
+        }
     }
 
     /// Amount range (#357): the pill opens the popover and shows the range while one is set;
