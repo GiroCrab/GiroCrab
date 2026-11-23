@@ -1,3 +1,244 @@
+mod survivor_matching {
+    use super::*;
+
+    fn merge(into: &Vault, from: &Vault) {
+        into.merge_other_vault(from.file_path(), vec![7; 32])
+            .unwrap();
+    }
+
+    fn state(v: &Vault, refund: i64) -> Vec<(String, String, i64, bool)> {
+        let mut rows = v
+            .refund_links(refund)
+            .unwrap()
+            .into_iter()
+            .map(|l| {
+                let external: String = v
+                    .db()
+                    .unwrap()
+                    .query_row(
+                        "SELECT external_id FROM transactions WHERE id=?1",
+                        [l.original_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                (external, l.original_part, l.allocated_cents, l.inactive)
+            })
+            .collect::<Vec<_>>();
+        rows.sort();
+        rows
+    }
+
+    #[test]
+    fn whole_targets_survive_twin_takeover_and_imported_part_consolidation_in_both_orders() {
+        for imported_parts in [false, true] {
+            for a_first in [false, true] {
+                for amounts in [
+                    vec![-5000, 1000, -1000],
+                    vec![-5000, -5000, 5000],
+                    vec![-3000, -2000],
+                ] {
+                    let f = Fixture::new();
+                    let r = f.add("refund", 2000);
+                    let o = f.add(
+                        if imported_parts {
+                            "id:REVIEW123456---bank"
+                        } else {
+                            "bank"
+                        },
+                        -5000,
+                    );
+                    f.link(r, "", o, "");
+                    let target = if imported_parts {
+                        for (i, amount) in amounts.iter().enumerate() {
+                            let id = f.add(&format!("mm-part-{i}"), *amount);
+                            raw(
+                                &f.v,
+                                &format!(
+                                    "UPDATE transactions SET purpose='EREF: REVIEW123456' WHERE id={id}"
+                                ),
+                            );
+                        }
+                        o
+                    } else {
+                        let twin = f.add("mm-twin", -5000);
+                        raw(
+                            &f.v,
+                            &format!("UPDATE transactions SET counterparty='bank' WHERE id={twin}"),
+                        );
+                        f.split(twin, &amounts);
+                        twin
+                    };
+                    let peer = Fixture::new();
+                    merge(&peer.v, &f.v);
+                    let peer_r = number(
+                        &peer.v,
+                        "SELECT id FROM transactions WHERE external_id='refund'",
+                    );
+                    if imported_parts {
+                        assert_eq!(
+                            crate::importers::portal_import::merge_imported_split_parts(
+                                &f.v.db().unwrap(),
+                                f.account
+                            )
+                            .unwrap(),
+                            1
+                        );
+                    } else {
+                        assert!(
+                            crate::importers::moneymoney_import::merge_synced_twin(
+                                &f.v.db().unwrap(),
+                                o,
+                                "2026-01-01",
+                                -5000,
+                                "",
+                                "bank",
+                                ""
+                            )
+                            .unwrap()
+                        );
+                    }
+                    let expected =
+                        f.v.list_transaction_splits(target)
+                            .unwrap()
+                            .into_iter()
+                            .filter(|p| p.amount_cents == -5000)
+                            .collect::<Vec<_>>();
+                    let expected_part = (expected.len() == 1).then(|| expected[0].uuid.clone());
+                    if a_first {
+                        merge(&f.v, &peer.v);
+                        merge(&peer.v, &f.v);
+                    } else {
+                        merge(&peer.v, &f.v);
+                        merge(&f.v, &peer.v);
+                    }
+                    let left = state(&f.v, r);
+                    assert_eq!(
+                        left,
+                        state(&peer.v, peer_r),
+                        "imported_parts={imported_parts}, a_first={a_first}, amounts={amounts:?}"
+                    );
+                    assert_eq!(
+                        left.iter().map(|row| row.2).sum::<i64>(),
+                        if expected_part.is_some() { 2000 } else { 0 }
+                    );
+                    for row in left.iter().filter(|row| row.2 > 0) {
+                        assert_eq!(Some(&row.1), expected_part.as_ref());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn refund_parts_match_by_signed_amount_and_missing_sources_never_use_snapshots() {
+        for removed in [false, true] {
+            for amounts in [
+                vec![3000, 2000],
+                vec![1000, 2000, 2000],
+                vec![2500, 2500],
+                vec![-2000, 7000],
+            ] {
+                let f = Fixture::new();
+                let o = f.add("original", -5000);
+                let r = f.add("refund", 5000);
+                let old = f.split(r, &[3000, 2000])[1].clone();
+                f.link(r, &old, o, "");
+                if removed {
+                    f.v.set_transaction_splits(r, vec![]).unwrap();
+                }
+                let survivor = f.add("survivor", 5000);
+                let uuids = f.split(survivor, &amounts);
+                let matches = amounts
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, n)| **n == 2000)
+                    .collect::<Vec<_>>();
+                let expected =
+                    (!removed && matches.len() == 1).then(|| uuids[matches[0].0].clone());
+                crate::importers::portal_import::hand_over(&f.v.db().unwrap(), r, survivor)
+                    .unwrap();
+                let links = f.v.refund_links(o).unwrap();
+                assert_eq!(links.len(), 1);
+                assert_eq!(links[0].refund_id, survivor);
+                assert_eq!(
+                    links[0].refund_part,
+                    expected.as_ref().unwrap_or(&old).clone()
+                );
+                assert_eq!(
+                    links[0].allocated_cents,
+                    if expected.is_some() { 2000 } else { 0 }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_fold_retargeting_preserves_stamps_and_later_unlinks() {
+        for unlink_first in [false, true] {
+            let f = Fixture::new();
+            let o = f.add("source", -5000);
+            let r = f.add("refund", 2000);
+            let old = f.split(o, &[-3000, -2000])[1].clone();
+            let target = f.add("target", -5000);
+            let new = f.split(target, &[-3000, -2000])[1].clone();
+            f.link(r, "", o, &old);
+            let db = f.v.db().unwrap();
+            let before = State::load(&db).unwrap().rows.remove(0);
+            db.execute_batch(
+                "ATTACH DATABASE ':memory:' AS other;
+                CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+                CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+                CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;
+                DELETE FROM main.refund_links;",
+            )
+            .unwrap();
+            let map = HashMap::from([(r, r), (o, target)]);
+            let unlink = |db: &Connection| {
+                db.execute(
+                    "UPDATE other.refund_links SET deleted_ms=?1,changed_ms=?1",
+                    [before.changed_ms + 1],
+                )
+                .unwrap();
+                store::merge_attached(db, &map).unwrap();
+                db.execute(
+                    "UPDATE other.refund_links SET deleted_ms=NULL,changed_ms=?1",
+                    [before.changed_ms],
+                )
+                .unwrap();
+            };
+            if unlink_first {
+                unlink(&db);
+            }
+            store::merge_folded(&db, &map).unwrap();
+            let row = State::load(&db)
+                .unwrap()
+                .rows
+                .into_iter()
+                .find(|row| row.key.original.1 == new)
+                .unwrap();
+            assert_eq!(
+                (row.created_ms, row.changed_ms),
+                (before.created_ms, before.changed_ms)
+            );
+            assert_eq!(
+                row.moved_from.as_ref().unwrap().original,
+                Endpoint(target, old)
+            );
+            drop(db);
+            if !unlink_first {
+                assert_eq!(f.v.refund_links(r).unwrap()[0].allocated_cents, 2000);
+                unlink(&f.v.db().unwrap());
+            }
+            assert!(
+                f.v.refund_links(r)
+                    .unwrap()
+                    .iter()
+                    .all(|l| l.allocated_cents == 0)
+            );
+        }
+    }
+}
+
 mod review_round3 {
     use super::super::{Endpoint, Key, State, store};
     #[cfg(unix)]
@@ -1598,33 +1839,94 @@ mod review_regressions {
     }
 
     #[test]
-    fn hand_over_retains_part_keys_but_does_not_guess_survivor_parts() {
-        for amounts in [
-            vec![-3000, -2000],
-            vec![-1000, -2000, -2000],
-            vec![-2500, -2500],
-        ] {
-            let (v, account, o, r) = seed();
-            v.save_manual_booking(account, Some(r), setup(2000))
+    fn hand_over_retargets_only_a_unique_signed_survivor_part_in_both_merge_orders() {
+        for a_first in [false, true] {
+            for amounts in [
+                vec![-3000, -2000],
+                vec![-1000, -2000, -2000],
+                vec![-2500, -2500],
+                vec![2000, -7000],
+                vec![],
+            ] {
+                let (v, account, o, r) = seed();
+                v.save_manual_booking(account, Some(r), setup(2000))
+                    .unwrap();
+                v.set_transaction_splits(o, vec![part(None, -3000), part(None, -2000)])
+                    .unwrap();
+                let old = splits(&v, o)[1].0.clone();
+                v.link_refund(r, String::new(), o, old.clone()).unwrap();
+                let survivor = v
+                    .save_manual_booking(
+                        account,
+                        None,
+                        setup(if amounts.is_empty() { -2000 } else { -5000 }),
+                    )
+                    .unwrap();
+                v.set_transaction_splits(
+                    survivor,
+                    amounts.iter().map(|a| part(None, *a)).collect(),
+                )
                 .unwrap();
-            v.set_transaction_splits(o, vec![part(None, -3000), part(None, -2000)])
-                .unwrap();
-            let old = splits(&v, o)[1].0.clone();
-            v.link_refund(r, String::new(), o, old.clone()).unwrap();
-            let survivor = v.save_manual_booking(account, None, setup(-5000)).unwrap();
-            v.set_transaction_splits(survivor, amounts.iter().map(|a| part(None, *a)).collect())
-                .unwrap();
-            crate::importers::portal_import::hand_over(&v.db().unwrap(), o, survivor).unwrap();
-            let links = v.refund_links(r).unwrap();
-            assert_eq!(links[0].original_id, survivor);
-            assert_eq!(links[0].original_part, old);
-            assert_eq!(links[0].allocated_cents, 0);
-            assert!(links[0].inactive);
-            let token = v
-                .unlink_refund(r, String::new(), survivor, old.clone())
-                .unwrap();
-            let restored = v.restore_refund(r, String::new(), survivor, old, token);
-            assert!(restored.is_err());
+                let matching: Vec<_> = splits(&v, survivor)
+                    .into_iter()
+                    .filter(|(_, n)| *n == -2000)
+                    .collect();
+                let expected = if amounts.is_empty() {
+                    Some(String::new())
+                } else if matching.len() == 1 {
+                    Some(matching[0].0.clone())
+                } else {
+                    None
+                };
+                let peer = vault();
+                merge(&peer, &v);
+                let peer_refund = peer_id(&peer, &v, r);
+                let peer_survivor = peer_id(&peer, &v, survivor);
+                crate::importers::portal_import::hand_over(&v.db().unwrap(), o, survivor).unwrap();
+                if a_first {
+                    merge(&v, &peer);
+                    merge(&peer, &v);
+                } else {
+                    merge(&peer, &v);
+                    merge(&v, &peer);
+                }
+                for (vault, refund, target) in
+                    [(&v, r, survivor), (&peer, peer_refund, peer_survivor)]
+                {
+                    let links = vault.refund_links(refund).unwrap();
+                    assert_eq!(links.len(), 1);
+                    assert_eq!(links[0].original_id, target);
+                    assert_eq!(
+                        links[0].original_part,
+                        expected.as_ref().unwrap_or(&old).clone()
+                    );
+                    assert_eq!(
+                        links[0].allocated_cents,
+                        if expected.is_some() { 2000 } else { 0 }
+                    );
+                    assert_eq!(links[0].inactive, expected.is_none());
+                    let token = vault
+                        .unlink_refund(
+                            refund,
+                            String::new(),
+                            target,
+                            links[0].original_part.clone(),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        vault
+                            .restore_refund(
+                                refund,
+                                String::new(),
+                                target,
+                                links[0].original_part.clone(),
+                                token
+                            )
+                            .is_ok(),
+                        expected.is_some()
+                    );
+                }
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::*;
 
@@ -100,17 +100,106 @@ pub(super) fn next_stamp(conn: &Connection) -> CoreResult<i64> {
 
 /// Plain full-row LWW. No resolver, allocation, timestamps or booking-state cleanup.
 pub(crate) fn merge_attached(conn: &Connection, bookings: &HashMap<i64, i64>) -> CoreResult<()> {
+    merge_mapped(conn, bookings, false)
+}
+
+pub(crate) fn merge_folded(conn: &Connection, bookings: &HashMap<i64, i64>) -> CoreResult<()> {
+    merge_mapped(conn, bookings, true)
+}
+
+fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -> CoreResult<()> {
     let remap = |mut key: Key| {
         key.refund.0 = *bookings.get(&key.refund.0)?;
         key.original.0 = *bookings.get(&key.original.0)?;
         Some(key)
     };
-    let rows = load_rows(conn, "other")?.into_iter().filter_map(|mut row| {
-        row.key = remap(row.key)?;
+    let mut rows = Vec::new();
+    for mut row in load_rows(conn, "other")? {
+        let source = row.key.clone();
+        let Some(mapped) = remap(row.key.clone()) else {
+            continue;
+        };
+        row.key = mapped;
         row.moved_from = row.moved_from.and_then(remap);
-        Some(row)
-    });
+        if folded && row.deleted_ms.is_none() {
+            let previous = row.key.clone();
+            for (old, target) in [
+                (&source.refund, &mut row.key.refund),
+                (&source.original, &mut row.key.original),
+            ] {
+                if old.0 != target.0
+                    && let Some(part) = survivor_part(conn, "other", old, target.0, true)?
+                {
+                    target.1 = part;
+                }
+            }
+            if previous != row.key {
+                rows.push(retire_part_key(conn, &mut row, previous)?);
+            }
+        }
+        rows.push(row);
+    }
     merge_rows(conn, rows)
+}
+
+fn survivor_part(
+    conn: &Connection,
+    schema: &str,
+    source: &Endpoint,
+    survivor: i64,
+    keep_exact: bool,
+) -> CoreResult<Option<String>> {
+    let parts = conn
+        .prepare_cached(
+            "SELECT uuid,amount_cents FROM main.transaction_splits WHERE transaction_id=?1
+        UNION ALL SELECT '',amount_cents FROM main.transactions WHERE id=?1
+        AND NOT EXISTS(SELECT 1 FROM main.transaction_splits WHERE transaction_id=?1)",
+        )?
+        .query_map([survivor], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if keep_exact && parts.iter().any(|(uuid, _)| *uuid == source.1) {
+        return Ok(Some(source.1.clone()));
+    }
+    let amount: Option<i64> = if source.1.is_empty() {
+        let split: bool = conn.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM {schema}.transaction_splits WHERE transaction_id=?1)"
+            ),
+            [source.0],
+            |r| r.get(0),
+        )?;
+        if split && !(schema == "main" && source.0 == survivor) {
+            return Ok(None);
+        }
+        conn.query_row(
+            &format!("SELECT amount_cents FROM {schema}.transactions WHERE id=?1"),
+            [source.0],
+            |r| r.get(0),
+        )
+        .optional()?
+    } else {
+        conn.query_row(&format!("SELECT amount_cents FROM {schema}.transaction_splits WHERE transaction_id=?1 AND uuid=?2"), params![source.0,source.1], |r| r.get(0)).optional()?
+    };
+    let Some(amount) = amount.filter(|n| *n != 0) else {
+        return Ok(None);
+    };
+    let mut matches = parts.into_iter().filter(|(_, cents)| *cents == amount);
+    let first = matches.next();
+    Ok(first
+        .filter(|_| matches.next().is_none())
+        .map(|(uuid, _)| uuid))
+}
+
+fn retire_part_key(conn: &Connection, row: &mut Row, previous: Key) -> CoreResult<Row> {
+    let mut retired = row.clone();
+    retired.key = previous.clone();
+    retired.deleted_ms = Some(row.changed_ms);
+    retired.moved = true;
+    row.moved_from_key = source_key(conn, &previous)?;
+    row.moved_from = Some(previous);
+    Ok(retired)
 }
 
 pub(crate) fn move_booking(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
@@ -118,7 +207,9 @@ pub(crate) fn move_booking(conn: &Connection, from: i64, to: i64) -> CoreResult<
     for row in load_rows(conn, "main")? {
         for e in [row.key.refund, row.key.original] {
             if e.0 == from {
-                endpoints.insert(e.clone(), Endpoint(to, e.1));
+                let part =
+                    survivor_part(conn, "main", &e, to, true)?.unwrap_or_else(|| e.1.clone());
+                endpoints.insert(e, Endpoint(to, part));
             }
         }
     }
@@ -147,6 +238,26 @@ pub(crate) fn fold_booking(
         }
         if let Some(source) = &mut target.moved_from {
             remap(source);
+        }
+        if target.deleted_ms.is_none() {
+            let mut previous = target.key.clone();
+            remap(&mut previous);
+            for (old, endpoint) in [
+                (&row.key.refund, &mut target.key.refund),
+                (&row.key.original, &mut target.key.original),
+            ] {
+                if old.0 == from
+                    && let Some(part) = survivor_part(conn, "main", old, to, keep_live)?
+                {
+                    *endpoint = Endpoint(to, part);
+                }
+            }
+            if target.key != previous
+                && (target.key.refund.1 != previous.refund.1
+                    || target.key.original.1 != previous.original.1)
+            {
+                folded.push(retire_part_key(conn, &mut target, previous)?);
+            }
         }
         if target == row {
             continue;

@@ -391,7 +391,7 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     booking_map.extend(moved);
     conn.execute("DELETE FROM main.refund_links WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions)
         OR moved_from_refund_id IN (SELECT id FROM other.transactions) OR moved_from_original_id IN (SELECT id FROM other.transactions)",[])?;
-    crate::refunds::merge_attached(conn, &booking_map)?;
+    crate::refunds::merge_folded(conn, &booking_map)?;
     // stamped: a device still holding the rule on the twin's key loses
     conn.execute(
         "UPDATE rules SET account_id = ?2, updated_ms = max(updated_ms + 1, ?3) WHERE account_id = ?1",

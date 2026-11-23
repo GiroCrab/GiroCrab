@@ -113,7 +113,24 @@ when remapping actual booking identities before deleting the redundant booking.
 The map addresses complete endpoints, including part UUIDs. Consolidating imported
 part bookings explicitly maps each whole part booking to the split UUID created
 from it, even when several parts have equal amounts. Other identity take-overs
-preserve UUIDs; missing survivor UUIDs do not fall back by amount.
+preserve a surviving UUID first. When an endpoint disappears on the survivor,
+the take-over persists a replacement only if exactly one survivor endpoint has
+the old endpoint's signed amount. A whole-booking source uses the booking amount;
+an unsplit survivor contributes one whole-booking endpoint. Two equal matches,
+no match, or an already missing source part leave the old part inactive. Link
+snapshots are not used to resurrect a missing source. Imported-part consolidation
+applies this rule to an existing whole-booking link on the bank booking too.
+
+This exception runs only at the identity take-over boundary, not during reads,
+ordinary snapshot merges or later split edits. It never selects a larger part,
+combines parts or reallocates by available capacity. Signed equality and uniqueness
+make the choice independent of part order and device-local ids. The persisted
+endpoint change syncs as a complete row. Canonical twin/duplicate folds preserve
+the original stamps and retain a moved tombstone at the old canonical part key,
+so an unlink from a peer still holding that part can suppress its successor.
+Booking merge installs the winning split vectors after merging all booking
+deletions. A UUID transferred to a live survivor is not also restored on its
+deleted former parent by a pre-fold peer snapshot.
 
 A remap stamps the old key as a moved tombstone and writes the mapped row with
 `moved_from` pointing to that old key, preserving creation/order. At read time,

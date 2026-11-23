@@ -2084,6 +2084,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn connection_switch_retargets_only_unique_signed_survivor_parts() {
+        for amounts in [
+            vec![-6000, -2600],
+            vec![-3400, -2600, -2600],
+            vec![-4300, -4300],
+            vec![2600, -11200],
+        ] {
+            let dir = crate::test_support::TempDir::new("refund-switch-survivor");
+            let (v, c, giro, _, live) = comdirect_vault(dir.path(), "v.db");
+            let (stale, refund) = {
+                let db = v.db().unwrap();
+                db.execute(
+                    "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents)
+                    VALUES (?1,'mm-switch-rest-1','2026-11-03',-8600)",
+                    [giro],
+                )
+                .unwrap();
+                let stale = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents)
+                    VALUES (?1,'refund','2026-11-03',2600)",
+                    [giro],
+                )
+                .unwrap();
+                (stale, db.last_insert_rowid())
+            };
+            let parts = |amounts: &[i64]| {
+                amounts
+                    .iter()
+                    .map(|amount| crate::models::TransactionSplitInput {
+                        uuid: None,
+                        amount_cents: *amount,
+                        category_id: None,
+                        note: String::new(),
+                    })
+                    .collect()
+            };
+            v.set_transaction_splits(stale, parts(&[-6000, -2600]))
+                .unwrap();
+            v.set_transaction_splits(live, parts(&amounts)).unwrap();
+            let old = v.list_transaction_splits(stale).unwrap()[1].uuid.clone();
+            let matches = v
+                .list_transaction_splits(live)
+                .unwrap()
+                .into_iter()
+                .filter(|p| p.amount_cents == -2600)
+                .collect::<Vec<_>>();
+            let expected = (matches.len() == 1).then(|| matches[0].uuid.clone());
+            v.link_refund(refund, String::new(), stale, old.clone())
+                .unwrap();
+            assert_eq!(v.switch_comdirect_access(c).unwrap(), "fints:20041155");
+            let links = v.refund_links(refund).unwrap();
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].original_id, live);
+            assert_eq!(
+                links[0].original_part,
+                expected.as_ref().unwrap_or(&old).clone()
+            );
+            assert_eq!(
+                links[0].allocated_cents,
+                if expected.is_some() { 2600 } else { 0 }
+            );
+            assert_eq!(links[0].inactive, expected.is_none());
+        }
+    }
+
     // ---------------------------------------------------------------- card holds (#1134)
 
     /// A card payment of 25,00 € the bank reports as hold `id` (no counterparty,

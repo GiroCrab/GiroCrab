@@ -4568,7 +4568,7 @@ fn twin_fold_remaps_provenance_even_when_current_link_endpoints_are_on_the_bank(
 }
 
 #[test]
-fn twin_refund_part_uuids_are_not_remapped_to_winning_vector_positions() {
+fn twin_refund_parts_match_unique_amounts_not_winning_vector_positions() {
     let dir = temp_dir("twin-refund-parts");
     let v = open(&dir, "a.db");
     let c = comdirect(&v);
@@ -4623,10 +4623,14 @@ fn twin_refund_part_uuids_are_not_remapped_to_winning_vector_positions() {
     );
     let l = v.refund_links(refund).unwrap();
     assert_eq!(l[0].original_id, destination);
-    assert_eq!(l[0].original_part, source_uuid);
-    assert!(l[0].resolved_original_part.is_none());
-    assert!(l[0].inactive);
-    assert_eq!(l[0].allocated_cents, 0);
+    assert_ne!(l[0].original_part, source_uuid);
+    assert_eq!(l[0].original_part, winners[1].0);
+    assert_eq!(
+        l[0].resolved_original_part.as_deref(),
+        Some(winners[1].0.as_str())
+    );
+    assert!(!l[0].inactive);
+    assert_eq!(l[0].allocated_cents, 70);
 }
 
 /// Issue #94: a closed MoneyMoney account and its successor share the

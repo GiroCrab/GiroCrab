@@ -1421,6 +1421,7 @@ pub(crate) fn merge_imported_split_parts(
             )
             .collect();
         crate::planning::store_splits(db, bank_id, &lines)?;
+        crate::refunds::move_booking(db, bank_id, bank_id)?;
         let uuids = db
             .prepare_cached(
                 "SELECT uuid FROM transaction_splits WHERE transaction_id=?1 ORDER BY position,id",

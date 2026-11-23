@@ -15,7 +15,9 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use store::{fold_booking, merge_attached, migrate, move_booking, move_endpoints};
+pub(crate) use store::{
+    fold_booking, merge_attached, merge_folded, migrate, move_booking, move_endpoints,
+};
 
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

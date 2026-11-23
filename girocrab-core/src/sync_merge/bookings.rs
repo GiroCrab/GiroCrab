@@ -246,6 +246,7 @@ pub(crate) fn merge_bookings(
     let mut local: HashMap<i64, BookingFields> = HashMap::new();
     let mut local_amounts: HashMap<i64, i64> = HashMap::new();
     let mut id_map = HashMap::new();
+    let mut pending_splits = HashMap::new();
     {
         let mut st = conn.prepare(
             // includes soft-deleted rows
@@ -443,6 +444,9 @@ pub(crate) fn merge_bookings(
                     }
                     continue;
                 }
+                if m.splits != old.splits {
+                    pending_splits.insert(id, m.splits.clone());
+                }
                 write_booking(conn, id, &old, &m, &cat_id, &tag_ids, &mut cleared)?;
                 if let Some(amount) = m.manual_amount {
                     local_amounts.insert(id, amount);
@@ -500,7 +504,7 @@ pub(crate) fn merge_bookings(
                 let id = conn.last_insert_rowid();
                 id_map.insert(o.id, id);
                 local_amounts.insert(id, o.amount_cents);
-                insert_splits(conn, id, &f.splits, &cat_id)?;
+                pending_splits.insert(id, f.splits.clone());
                 if !f.tags.is_empty() {
                     tag_ids.write(conn, id, &f.tags)?;
                 }
@@ -511,6 +515,35 @@ pub(crate) fn merge_bookings(
                 }
             }
         }
+    }
+
+    let live_uuids: HashSet<_> = local
+        .values()
+        .filter(|f| f.deleted_ms.is_none())
+        .flat_map(|f| f.splits.iter().map(|p| p.0.as_str()))
+        .collect();
+    for id in pending_splits.keys() {
+        conn.execute(
+            "DELETE FROM transaction_splits WHERE transaction_id=?1",
+            [id],
+        )?;
+    }
+    for (id, lines) in pending_splits {
+        let deleted = local[&id].deleted_ms.is_some();
+        let lines: Vec<_> = lines
+            .into_iter()
+            .filter(|p| !deleted || !live_uuids.contains(p.0.as_str()))
+            .collect();
+        if !deleted {
+            for line in &lines {
+                conn.execute(
+                    "DELETE FROM transaction_splits WHERE uuid=?1 AND transaction_id IN
+                    (SELECT id FROM transactions WHERE deleted_ms IS NOT NULL)",
+                    [&line.0],
+                )?;
+            }
+        }
+        insert_splits(conn, id, &lines, &cat_id)?;
     }
 
     // nothing points at a deleted category (derived, no stamps)
@@ -578,13 +611,6 @@ fn write_booking(
             )?;
             cleared.insert(id);
         }
-    }
-    if m.splits != old.splits {
-        conn.execute(
-            "DELETE FROM transaction_splits WHERE transaction_id = ?1",
-            [id],
-        )?;
-        insert_splits(conn, id, &m.splits, cat_id)?;
     }
     if m.tags != old.tags {
         tag_ids.write(conn, id, &m.tags)?;
