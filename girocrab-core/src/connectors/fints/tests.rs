@@ -605,15 +605,15 @@ fn message_has_correct_length_and_structure() {
 }
 
 #[test]
-fn card_request_starts_within_the_storage_period() {
+fn request_starts_within_the_storage_period() {
     // 775 days kept: two years back is fine, three years is cut to the limit
-    assert_eq!(card_since("2024-11-15", "2026-11-15", 775), "2024-11-15");
-    assert_eq!(card_since("2023-11-15", "2026-11-15", 775), "2024-10-01");
+    assert_eq!(stored_since("2024-11-15", "2026-11-15", 775), "2024-11-15");
+    assert_eq!(stored_since("2023-11-15", "2026-11-15", 775), "2024-10-01");
     // unknown storage period: unchanged
-    assert_eq!(card_since("2020-01-01", "2026-11-15", 0), "2020-01-01");
+    assert_eq!(stored_since("2020-01-01", "2026-11-15", 0), "2020-01-01");
     // a hostile HIKKUS value must not panic
     assert_eq!(
-        card_since("2020-01-01", "2026-11-15", i64::MAX),
+        stored_since("2020-01-01", "2026-11-15", i64::MAX),
         "2020-01-01"
     );
 }
@@ -854,6 +854,11 @@ fn negotiates_versions_from_bpd() {
     assert_eq!(c.version("HKCAZ"), 1);
     assert_eq!(c.version("HKTAN"), 7);
     assert_eq!(c.version("HKKAZ"), 7);
+    // storage periods: how far back a statement request may start (#1043)
+    assert_eq!((c.st.caz_storage_days, c.st.kaz_storage_days), (450, 90));
+    // a reply with only another version keeps what the version in use said
+    c.learn_bpd(&reply(b"HIKAZS:3:5:3+1+1+0+30:N:N'"));
+    assert_eq!(c.st.kaz_storage_days, 90);
     assert!(!c.bank_supports("HKSPA"));
     assert_eq!(
         c.st.camt_formats[0],

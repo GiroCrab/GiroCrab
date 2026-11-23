@@ -105,6 +105,7 @@ fn session(questions: usize) -> (SyncSession, Arc<Vault>, Arc<Mutex<Seen>>) {
         ConnectorKind::FinTsGeneric,
         Box::new(connector),
         ctx,
+        None,
     );
     (s, vault, seen)
 }
@@ -263,6 +264,7 @@ async fn a_cancel_while_the_tan_is_on_its_way_stores_nothing() {
         ConnectorKind::FinTsGeneric,
         Box::new(connector),
         ctx,
+        None,
     ));
     assert!(matches!(
         s.start().await.unwrap(),

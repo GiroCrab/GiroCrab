@@ -133,6 +133,9 @@ pub struct SyncSession {
     /// `None` once the sync finished, failed or was cancelled, so every
     /// later step gets `SessionClosed`.
     state: AsyncMutex<Option<State>>,
+    /// The pending full fetch (#1043) this sync reaches back for: done once
+    /// its result is stored.
+    history: Option<String>,
 }
 
 impl SyncSession {
@@ -141,6 +144,7 @@ impl SyncSession {
         kind: ConnectorKind,
         connector: Box<dyn BankConnector>,
         ctx: ConnectContext,
+        history: Option<String>,
     ) -> Self {
         Self {
             vault,
@@ -148,6 +152,7 @@ impl SyncSession {
             interactive: AtomicBool::new(true),
             cancelled: CancelFlag::default(),
             state: AsyncMutex::new(Some(State::Login(Box::new(Active { connector, ctx })))),
+            history,
         }
     }
 
@@ -291,6 +296,14 @@ impl SyncSession {
                         data.keep_only(only);
                     }
                     let summary = store_fetch(&self.vault, self.kind, f.connection_id, data)?;
+                    // Done once stored, also with warnings (an account that failed, a list cut
+                    // at its page limit): kept, every sync would ask for the whole period again,
+                    // and for a TAN, without ever finishing. The warnings say what is missing;
+                    // `request_full_history` asks for the period again.
+                    if let Some(history) = &self.history {
+                        let db = self.vault.db()?;
+                        super::history::finish(&db, f.connection_id, history)?;
+                    }
                     return Ok(SyncStep::Finished { summary });
                 }
             }

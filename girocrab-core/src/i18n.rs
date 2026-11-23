@@ -855,6 +855,9 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Die Bank hat nur einen Teil des angeforderten Zeitraums geliefert (Rückmeldung 3997)." => {
             "{0}: the bank delivered only part of the requested period (return code 3997)."
         }
+        "{0}: Die Umsatzliste war länger als 50 Seiten und wurde nicht vollständig gelesen." => {
+            "{0}: the transaction list was longer than 50 pages and was not read completely."
+        }
         // ------------------------------------------------------------ connectors/fints RAH-10 (bank_keys.rs, keyfile.rs, rah10.rs)
         "Ungültige Bankleitzahl." => "Invalid bank code.",
         "Bankschlüssel-Metadaten ungültig." => "Invalid bank key metadata.",
@@ -1864,9 +1867,9 @@ fn english(de: &str) -> Option<&'static str> {
             "Merchant logo provider: off, duckduckgo or google. Logos are cached encrypted; only the merchant domain (e.g. lidl.de) is sent. Default: off."
         }
         "Händler-Logos" => "Merchant logos",
-        "Tage beim ersten Abruf" => "Days on first sync",
-        "Ältere Umsätze werden nur einmal abgefragt." => {
-            "Older transactions are only fetched once."
+        "Zeitraum beim ersten Abruf" => "Period of the first fetch",
+        "max = so weit Bank und Anbindung es zulassen, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze." => {
+            "max = as far back as the bank and the connection allow, otherwise a number of days. Applies to new logins and to accounts without transactions."
         }
         "Allgemein" => "General",
         // ------------------------------------------------------------ vault.rs settings (same in both languages)

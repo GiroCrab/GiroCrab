@@ -125,6 +125,11 @@ struct FinTsState {
     /// HIKKUS: days of card history the bank keeps (0 = unknown).
     #[serde(default)]
     kku_storage_days: i64,
+    /// HIKAZS (MT940) / HICAZS (camt): days of bookings the bank keeps (0 = unknown).
+    #[serde(default)]
+    kaz_storage_days: i64,
+    #[serde(default)]
+    caz_storage_days: i64,
     /// pain.001 descriptors per transfer transaction (HKCCS/HKIPZ/HKCSE) from the BPD
     /// parameter segments HICCSS / HIIPZS / HICSES and HISPAS. Valid for `bpd_version`:
     /// a new BPD version replaces them (a withdrawn schema must stop being chosen).
@@ -288,6 +293,9 @@ pub struct FinTsConnector {
     /// The bank answered a statement request with 3997 ("nur teilweise
     /// ausgeführt"): it delivered less than the requested period.
     partial_statements: bool,
+    /// A statement request still had pages left after the last one GiroCrab
+    /// reads: the list is not complete (#1043).
+    truncated_statements: bool,
     /// The order was handed to the bank: from here on, an unclear reply or a
     /// lost connection means "result unknown", never "not executed".
     order_submitted: bool,
@@ -370,6 +378,7 @@ impl FinTsConnector {
             transferring: false,
             tan_medium_override: String::new(),
             partial_statements: false,
+            truncated_statements: false,
             order_submitted: false,
             result: TransferResult::default(),
             order: None,
@@ -714,6 +723,11 @@ impl BankConnector for FinTsConnector {
                             }
                             done = !empty_loan;
                             ok_any = true;
+                            if std::mem::take(&mut self.truncated_statements) {
+                                // unread pages may list holds: the stored ones stay
+                                holds_complete = false;
+                                errors.push(statements::truncated_warning(label));
+                            }
                         }
                         Err(e) => {
                             // the stored holds of this login stay as they are
@@ -740,6 +754,9 @@ impl BankConnector for FinTsConnector {
                                     "{0}: Die Bank hat nur einen Teil des angeforderten Zeitraums geliefert (Rückmeldung 3997).",
                                     &[&label],
                                 ));
+                            }
+                            if std::mem::take(&mut self.truncated_statements) {
+                                errors.push(statements::truncated_warning(label));
                             }
                         }
                         Err(e) => {
