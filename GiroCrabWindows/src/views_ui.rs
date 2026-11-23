@@ -40,7 +40,8 @@ const MODE_DOCUMENTS: i32 = 5;
 
 /// What a worker loaded for a view.
 enum Loaded {
-    Depot(Box<DepotData>),
+    /// The depot and its value history; the history is published only when the load is accepted.
+    Depot(Box<DepotData>, Vec<depot_chart::Point>),
     Wealth(WealthData),
     Planned(Vec<RecurringSeries>),
     Mandates(Vec<Mandate>),
@@ -324,7 +325,12 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
             match loaded {
                 Ok(l) => {
                     with_ui(|u| match l {
-                        Loaded::Depot(d) => u.depot = Some(*d),
+                        Loaded::Depot(d, history) => {
+                            // Only here, after the generation check: a superseded load must not
+                            // replace the series of the depot that is shown.
+                            depot_chart::store(d.account.id, history);
+                            u.depot = Some(*d);
+                        }
                         Loaded::Wealth(w) => u.wealth = Some(w),
                         Loaded::Planned(s) => u.series = s,
                         Loaded::Mandates(m) => u.mandates = m,
@@ -343,7 +349,11 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
 
 mod depot_chart;
 
-fn depot_data(vault: &Vault, account: &Account, tangible: bool) -> Result<DepotData, String> {
+fn depot_data(
+    vault: &Vault,
+    account: &Account,
+    tangible: bool,
+) -> Result<(DepotData, Vec<depot_chart::Point>), String> {
     // Value history of this one depot (its own currency, never summed across currencies);
     // the range selector filters it in `render_view` without another vault call.
     let history = if tangible {
@@ -362,7 +372,6 @@ fn depot_data(vault: &Vault, account: &Account, tangible: bool) -> Result<DepotD
             })
             .unwrap_or_default()
     };
-    depot_chart::store(account.id, history);
     let holdings = match vault.classified_assets(account.id) {
         Ok(v) => v
             .into_iter()
@@ -382,11 +391,14 @@ fn depot_data(vault: &Vault, account: &Account, tangible: bool) -> Result<DepotD
         Err(_) if tangible => Vec::new(),
         Err(e) => return Err(e.to_string()),
     };
-    Ok(DepotData {
-        account: account.clone(),
-        holdings,
-        transactions,
-    })
+    Ok((
+        DepotData {
+            account: account.clone(),
+            holdings,
+            transactions,
+        },
+        history,
+    ))
 }
 
 fn load(
@@ -402,7 +414,8 @@ fn load(
                 .iter()
                 .find(|a| a.id == id)
                 .ok_or("Konto nicht gefunden.")?;
-            depot_data(vault, account, tangible.contains(&id)).map(|d| Loaded::Depot(Box::new(d)))
+            depot_data(vault, account, tangible.contains(&id))
+                .map(|(d, history)| Loaded::Depot(Box::new(d), history))
         }
         Target::Wealth | Target::Depot => {
             let mut positions = Vec::new();
@@ -1448,9 +1461,13 @@ mod tests {
             .collect();
         for a in depots {
             match load(&vault, Target::Account(a.id), &accounts, &tangible).unwrap() {
-                Loaded::Depot(d) => {
+                Loaded::Depot(d, history) => {
                     let v = portfolio::depot_view(&d, Period::All, "2026-11-16", &eur, &date);
                     assert_eq!(v.kpis.len(), 4);
+                    // Sachwerte have no value history; the series travels with the result.
+                    if tangible.contains(&a.id) {
+                        assert!(history.is_empty());
+                    }
                 }
                 _ => panic!("depot expected"),
             }

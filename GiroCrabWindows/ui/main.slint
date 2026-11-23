@@ -276,9 +276,22 @@ component SegButton inherits Rectangle {
     callback clicked();
     height: 28px;
     border-radius: 4px;
-    border-width: checked ? 0px : 0px;
+    // Focus ring for keyboard operation (Tab, then Enter or Space).
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: #0a84ff;
     background: checked ? #FFFFFF : ta.has-hover ? Theme.text.with-alpha(0.07) : transparent;
     horizontal-stretch: 1;
+    fs := FocusScope {
+        focus-on-tab-navigation: true;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.clicked();
+                accept
+            } else {
+                reject
+            }
+        }
+    }
     ta := TouchArea { clicked => { root.clicked(); } }
     Text { text: root.text; color: checked ? #1a1a1a : #3a3a3a; font-size: 11px; font-weight: checked ? 700 : 500; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
 }
