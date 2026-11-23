@@ -375,6 +375,69 @@ extension AppModel {
         categoryAccountFilter = next.count == accountFilterCandidates.count ? [] : next
     }
 
+    /// The account filter's choices grouped like the sidebar's account section (#357):
+    /// by user group (top-level groups with their subgroups, then "Ohne Gruppe"), by
+    /// bank or by account type. Only groups that hold accounts the filter offers; empty
+    /// while a sidebar group, bank or user group is selected (the menu stays flat).
+    var accountFilterGroups: [AccountFilterGroup] {
+        if accountFilterIsRestrictedBySidebar { return [] }
+        let offered = accountFilterCandidates
+        let offeredIDs = Set(offered.map(\.id))
+        // the candidates' order (sidebar order) inside every group
+        func pick(_ ids: [Int64]) -> [Account] {
+            let wanted = Set(ids).intersection(offeredIDs)
+            return offered.filter { wanted.contains($0.id) }
+        }
+        let groups: [AccountFilterGroup]
+        switch accountView {
+        case .byGroup:
+            groups = userGroups.filter { $0.depth == 0 }.map { g in
+                AccountFilterGroup(
+                    id: "group:" + g.uuid,
+                    name: g.name.isEmpty ? String(localized: "Ohne Gruppe") : g.name,
+                    symbol: g.sfSymbol.isEmpty ? "folder" : g.sfSymbol,
+                    accounts: pick(userGroupAccountIDs(g.uuid)))
+            }
+        case .byBank:
+            groups = bankGroups.map {
+                AccountFilterGroup(id: "bank:" + $0.id, name: $0.name, symbol: $0.sfSymbol,
+                                   accounts: pick($0.accounts.map(\.id)))
+            }
+        case .byKind:
+            groups = self.groups.map {
+                AccountFilterGroup(id: "kind:\($0.id)", name: $0.name, symbol: $0.sfSymbol,
+                                   accounts: pick($0.accounts.map(\.id)))
+            }
+        }
+        return groups.filter { !$0.accounts.isEmpty }
+    }
+
+    /// The sidebar selection already limits the filter to one group, bank or user group
+    /// (`accountFilterCandidates`), so the filter menu does not group its accounts again.
+    private var accountFilterIsRestrictedBySidebar: Bool {
+        switch sidebarSelection {
+        case .group, .bank, .userGroup: true
+        default: false
+        }
+    }
+
+    /// Every account of the group is chosen (an empty filter, "Alle Konten", chooses none
+    /// on its own, like the single accounts).
+    func isCategoryGroupChosen(_ group: AccountFilterGroup) -> Bool {
+        let chosen = Set(categoryAccountIDs)
+        return !chosen.isEmpty && Set(group.accountIDs).isSubset(of: chosen)
+    }
+
+    /// Adds all accounts of the group, or removes them when all of them are chosen
+    /// already; like `toggleCategoryAccount`, choosing every account means no filter.
+    func toggleCategoryGroup(_ group: AccountFilterGroup) {
+        var next = Set(categoryAccountIDs)
+        // only accounts the filter still offers: a menu built before a reload may hold stale ids
+        let ids = Set(group.accountIDs).intersection(accountFilterCandidates.map(\.id))
+        if !next.isEmpty && ids.isSubset(of: next) { next.subtract(ids) } else { next.formUnion(ids) }
+        categoryAccountFilter = next.count == accountFilterCandidates.count ? [] : next
+    }
+
     /// What the sidebar's category sums count besides the period (#621): the same status, type and
     /// amount range as the booking list, and its accounts only in the category views (#406).
     var categorySumFilter: (accounts: [Int64], checked: Bool?, direction: BookingDirection, amount: AmountFilter) {
