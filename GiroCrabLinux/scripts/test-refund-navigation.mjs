@@ -17,6 +17,17 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("opening balance cannot commit while a refund inverse is pending", () => {
+    let commits=0, registrations=0;
+    const s={refundEditing:true, accountsByID:{1:{opening_balance_cents:0,opening_balance_date:""}}, qsTr:s=>s,
+        core(){commits++}, UndoManager:{register(){registrations++}}, reloadAccounts(){},reloadHistory(){}};
+    vm.createContext(s);
+    const save=()=>vm.runInContext(`(function(accountId,cents,date,known){${bodyAfter("function setOpeningBalance(accountId, cents, date, known)")}})(1,100,"2026-01-01")`,s);
+    assert.throws(save);
+    assert.equal(commits,0);assert.equal(registrations,0);
+    s.refundEditing=false;save();
+    assert.equal(commits,1);assert.equal(registrations,1);
+});
 test("empty direct search is visible even when suggestions remain", () => {
     const source = readFileSync(new URL("../qml/RefundSheet.qml",import.meta.url),"utf8");
     const end = source.indexOf('text: qsTr("Keine passenden Buchungen")');

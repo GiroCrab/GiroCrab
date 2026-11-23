@@ -2630,6 +2630,7 @@ QtObject {
     /// Undoable via Bearbeiten › Rückgängig. `known` ({ cents, date }): the value stored now,
     /// passed by undo/redo because the account list reloads off the GUI thread.
     function setOpeningBalance(accountId, cents, date, known) {
+        if (refundEditing) throw new Error(qsTr("Eine Änderung wird gerade gespeichert. Bitte warten Sie."))
         const a = accountsByID[accountId] || null
         const old = known || (a ? { cents: a.opening_balance_cents, date: a.opening_balance_date } : null)
         core("set_account_opening_balance", { account_id: accountId, cents: cents, date: date })
