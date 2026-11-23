@@ -63,10 +63,9 @@ SidebarRow {
                     text: row.account.name; font.pixelSize: Theme.callout; font.weight: Font.Medium; color: Theme.text
                     elide: Text.ElideRight; Layout.maximumWidth: Math.ceil(implicitWidth); Layout.fillWidth: true
                     HoverHandler { id: nameHover }
-                    ToolTip.visible: nameHover.hovered && (row.account.owner || row.account.iban || row.account.account_number); ToolTip.delay: 600
-                    ToolTip.text: row.account.owner ? row.account.owner : (row.account.iban ? Fmt.iban(row.account.iban) : (row.account.account_number || ""))
-                    ToolTip.visible: nameHover.hovered && (row.account.owner || "") !== ""; ToolTip.delay: 600
-                    ToolTip.text: AppModel.masking(row.account.owner || "")
+                    readonly property string tipRaw: row.account.owner ? row.account.owner : (row.account.iban ? Fmt.iban(row.account.iban) : (row.account.account_number || ""))
+                    ToolTip.visible: nameHover.hovered && tipRaw !== ""; ToolTip.delay: 600
+                    ToolTip.text: AppModel.masking(tipRaw)
                     Sensitive {}
                 }
                 SFIcon { visible: row.account.access_revoked; symbol: "lock.slash"; size: 10; color: Theme.warning
