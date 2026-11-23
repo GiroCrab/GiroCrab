@@ -674,9 +674,9 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
     };
     let (year, month) = cockpit::current_year_month();
     let period = win.get_cashflow_period();
-    let (target, generation, token) = with_state(|st| {
+    let (target, token) = with_state(|st| {
         st.dashboard_generation += 1;
-        (st.target, st.generation, st.dashboard_generation)
+        (st.target, st.dashboard_generation)
     });
     let weak = win.as_weak();
     std::thread::spawn(move || {
@@ -696,7 +696,7 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
                     .map(|a| a.currency.trim().to_ascii_uppercase())
             })
             .filter(|c| !c.is_empty())
-            .unwrap_or_else(|| "EUR".into());
+            .or_else(|| (!proof).then(|| "EUR".into()));
         let flow = vault
             .cashflow_by_period(
                 gran,
@@ -717,10 +717,13 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
                 ..Default::default()
             })
             .unwrap_or_default();
-        let fallback = cockpit::top_spending(&expenses, 4, &currency);
+        let fallback = currency
+            .as_deref()
+            .map(|currency| cockpit::top_spending(&expenses, 4, currency))
+            .unwrap_or_default();
         let _ = weak.upgrade_in_event_loop(move |win| {
             if !is_current(&vault)
-                || with_state(|st| st.generation != generation || st.dashboard_generation != token)
+                || with_state(|st| st.target != target || st.dashboard_generation != token)
                 || win.get_cashflow_period() != period
             {
                 return;
@@ -815,6 +818,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
         return;
     }
     views_ui::refresh_sidebar(win, &vault);
+    refresh_dashboard(win, vault.clone());
     let target = with_state(|st| st.target);
     let limit = with_state(|st| st.reveal_limit.max(ROW_LIMIT));
     let generation = with_state(|st| {
@@ -853,7 +857,6 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                     });
                     apply_filter(&win);
                     request_logos(&win, vault.clone());
-                    refresh_dashboard(&win, vault);
                 }
                 (Err(e), _) | (_, Err(e)) => win.set_sync_status(e.into()),
             }
@@ -1288,6 +1291,7 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
         win.set_busy(false);
     }
     win.set_unlocked(true);
+    refresh_dashboard(win, vault.clone());
     match render_header(win, vault, selected) {
         Ok(sel) => {
             refresh_transfer_sources(win, vault);
@@ -1298,7 +1302,8 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 // First paint: load the scope's bookings synchronously (selects the first one);
                 // the background reload in `apply_view` then refreshes them.
                 let target = with_state(|st| st.target);
-                if let Ok(rows) = load_rows(vault, target, ROW_LIMIT) {
+                let limit = with_state(|st| st.reveal_limit.max(ROW_LIMIT));
+                if let Ok(rows) = load_rows(vault, target, limit) {
                     with_state(|st| st.rows = rows);
                     apply_filter(win);
                 }
@@ -2035,7 +2040,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
                 return;
             };
-            refunds_ui::privacy_changed(&win);
+            refunds_ui::privacy_changed(&win, v.clone());
             let sel = Some(win.get_selected() as i64).filter(|s| *s >= 0);
             let _ = render_header(&win, &v, sel);
             render_bookings(&win);
@@ -2800,6 +2805,36 @@ fn strip_csv_columns(csv: &str, keep_iban: bool, keep_tags: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_reload_does_not_depend_on_booking_load_success() {
+        let source = include_str!("main.rs");
+        let reload = source
+            .split("fn reload(win:")
+            .nth(1)
+            .unwrap()
+            .split("fn ")
+            .next()
+            .unwrap();
+        assert!(
+            reload
+                .find("refresh_dashboard(win, vault.clone())")
+                .unwrap()
+                < reload.find("load_rows(").unwrap()
+        );
+        let show = source
+            .split("fn show(win:")
+            .nth(1)
+            .unwrap()
+            .split("fn ")
+            .next()
+            .unwrap();
+        assert!(show.contains("st.reveal_limit.max(ROW_LIMIT)"));
+        assert!(
+            show.find("refresh_dashboard(win, vault.clone())").unwrap()
+                < show.find("match render_header").unwrap()
+        );
+    }
 
     #[test]
     fn transfer_url_is_parsed() {

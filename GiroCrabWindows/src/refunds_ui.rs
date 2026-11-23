@@ -81,11 +81,8 @@ impl Ui {
         self.loaded = None;
         self.actions.clear();
     }
-    fn edit_failed(&mut self, error: String, restoring: bool) {
+    fn edit_failed(&mut self, error: String, _restoring: bool) {
         self.invalidate();
-        if restoring {
-            self.undo = None;
-        }
         self.edit_error = error;
     }
 }
@@ -397,9 +394,13 @@ pub fn reset(win: &MainWindow) {
     clear(win);
 }
 
-pub fn privacy_changed(win: &MainWindow) {
+pub fn privacy_changed(win: &MainWindow, vault: Arc<Vault>) {
     with_ui(|u| u.invalidate());
+    win.set_rf_loading(false);
     clear(win);
+    if win.get_refunds_open() {
+        refresh(win, vault);
+    }
 }
 
 fn render(win: &MainWindow) {
@@ -1012,7 +1013,25 @@ mod tests {
     }
 
     #[test]
-    fn failed_edits_keep_the_error_during_reload_and_discard_stale_undo() {
+    fn round5_retryable_restore_error_preserves_undo() {
+        let mut ui = Ui {
+            undo: Some((
+                Pair {
+                    refund: 1,
+                    refund_part: String::new(),
+                    original: 2,
+                    original_part: String::new(),
+                },
+                "token".into(),
+            )),
+            ..Default::default()
+        };
+        ui.edit_failed("database is busy".into(), true);
+        assert!(ui.undo.is_some());
+    }
+
+    #[test]
+    fn failed_edits_keep_the_error_and_undo_during_reload() {
         let mut ui = Ui {
             undo: Some((
                 Pair {
@@ -1030,7 +1049,7 @@ mod tests {
         ui.edit_failed("stale token".into(), true);
         ui.invalidate();
         assert_eq!(ui.edit_error, "stale token");
-        assert!(ui.undo.is_none());
+        assert!(ui.undo.is_some());
         assert!(ui.loaded.is_none());
     }
 
