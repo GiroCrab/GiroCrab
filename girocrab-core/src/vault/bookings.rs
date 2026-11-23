@@ -2564,6 +2564,22 @@ mod list_cache_tests {
         assert_eq!(b.category_id, Some(cat[3].id));
     }
 
+    #[test]
+    fn moneymoney_security_purchase_category_is_specific() {
+        assert!(super::is_imported_security_purchase_category(
+            "Ausgaben › Sparen & Anlegen › Wertpapieranlage"
+        ));
+        assert!(super::is_imported_security_purchase_category(
+            "Sparen & Anlegen › Wertpapieranlage"
+        ));
+        assert!(!super::is_imported_security_purchase_category(
+            "Ausgaben › Sparen & Anlegen › Tagesgeld"
+        ));
+        assert!(!super::is_imported_security_purchase_category(
+            "Ausgaben › Einkaufen › Wertpapieranlage"
+        ));
+    }
+
     /// #357: the category sums of the sidebar follow the same amount range as the list.
     #[test]
     fn category_sums_follow_the_amount_range() {
