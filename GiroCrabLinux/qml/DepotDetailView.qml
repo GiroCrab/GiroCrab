@@ -151,7 +151,7 @@ AssetAccountFrame {
         wide: dv.wide
         currency: dv.currency
         onSortRequested: s => dv.sort = s
-        onCopyAll: AppModel.copyToClipboard(dv.positions.map(p => DepotMetrics.clipboardLine(p.holding)).join("\n"))
+        onCopyAll: AppModel.copyToClipboard(dv.positions.map(p => DepotMetrics.clipboardLine(p.holding, dv.currency)).join("\n"))
     }
 
     // activities
