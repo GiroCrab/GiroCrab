@@ -96,6 +96,7 @@ fn candidates(
     own: &Endpoint,
     query: &str,
     limit: usize,
+    include_exhausted: bool,
 ) -> CoreResult<Vec<RefundCandidate>> {
     let book = p
         .state
@@ -143,6 +144,10 @@ fn candidates(
             if index.linked.contains(&key) {
                 continue;
             }
+            let open_cents = p.open(&endpoint);
+            if open_cents == 0 && (!include_exhausted || exhausted.len() >= limit) {
+                continue;
+            }
             let label = b.label_of(&endpoint.1);
             if !query.is_empty()
                 && !format!(
@@ -159,7 +164,6 @@ fn candidates(
                 .iter()
                 .find(|p| p.uuid == endpoint.1)
                 .map_or(b.category_id, |p| p.category_id);
-            let open_cents = p.open(&endpoint);
             let rows = if open_cents == 0 {
                 &mut exhausted
             } else {
@@ -206,6 +210,7 @@ impl Vault {
             &Endpoint(transaction_id, own_part),
             &query,
             limit as usize,
+            true,
         )
     }
 
@@ -217,10 +222,7 @@ impl Vault {
         let db = self.db()?;
         let p = self.refund_projection(&db)?;
         let own = Endpoint(transaction_id, own_part);
-        let pool: Vec<_> = candidates(self, &db, &p, &own, "", usize::MAX)?
-            .into_iter()
-            .filter(|c| c.open_cents > 0)
-            .collect();
+        let pool = candidates(self, &db, &p, &own, "", usize::MAX, false)?;
         if pool.is_empty() {
             return Ok(Vec::new());
         }

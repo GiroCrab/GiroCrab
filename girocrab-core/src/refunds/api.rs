@@ -22,6 +22,27 @@ fn direct(state: &State, e: &Endpoint, positive: bool) -> CoreResult<i64> {
     Ok(amount)
 }
 
+fn descends_from(rows: &[Row], row: &Row, ancestor: &Key) -> bool {
+    if row.key == *ancestor {
+        return true;
+    }
+    let mut key = row.moved_from.as_ref();
+    let mut visited = std::collections::HashSet::new();
+    while let Some(current) = key {
+        if current == ancestor {
+            return true;
+        }
+        if !visited.insert(current) {
+            break;
+        }
+        key = rows
+            .iter()
+            .find(|row| row.key == *current)
+            .and_then(|row| row.moved_from.as_ref());
+    }
+    false
+}
+
 #[uniffi::export]
 impl Vault {
     pub fn link_refund(
@@ -31,6 +52,9 @@ impl Vault {
         original_id: i64,
         original_part: String,
     ) -> CoreResult<()> {
+        if refund_id == original_id {
+            return Err(invalid());
+        }
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
         let state = State::load(&tx)?;
@@ -46,9 +70,6 @@ impl Vault {
                 return Err(invalid());
             }
             return Ok(());
-        }
-        if refund_id == original_id {
-            return Err(invalid());
         }
         let refund_cents = direct(&state, &key.refund, true)?;
         let original_cents = direct(&state, &key.original, false)?;
@@ -130,9 +151,7 @@ impl Vault {
         row.deleted_ms = None;
         let restored = row.clone();
         if !resolve(&state).iter().any(|a| {
-            (a.row.key == key || a.row.moved_from.as_ref() == Some(&key))
-                && a.refund.is_some()
-                && a.original.is_some()
+            descends_from(&state.rows, &a.row, &key) && a.refund.is_some() && a.original.is_some()
         }) {
             return Err(invalid());
         }

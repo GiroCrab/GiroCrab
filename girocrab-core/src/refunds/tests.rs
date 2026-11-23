@@ -300,6 +300,12 @@ mod review_round3 {
             let bo = peer_id(&b, &a, o);
             store::move_booking(&a.db().unwrap(), o, next).unwrap();
             store::move_booking(&a.db().unwrap(), next, last).unwrap();
+            let moved = a.refund_links(r).unwrap();
+            assert_eq!(moved.len(), 1);
+            assert_eq!(
+                (moved[0].original_id, moved[0].allocated_cents),
+                (last, 2000)
+            );
             b.unlink_refund(br, "".into(), bo, "".into()).unwrap();
             let later = store::next_stamp(&a.db().unwrap()).unwrap() + 1;
             b.db()
@@ -338,6 +344,12 @@ mod review_round3 {
         let peer_r = peer_id(&peer, &v, r);
         let peer_o = peer_id(&peer, &v, o);
         store::move_booking(&v.db().unwrap(), o, next).unwrap();
+        let moved = v.refund_links(r).unwrap();
+        assert_eq!(moved.len(), 1);
+        assert_eq!(
+            (moved[0].original_id, moved[0].allocated_cents),
+            (next, 2000)
+        );
         peer.unlink_refund(peer_r, "".into(), peer_o, "".into())
             .unwrap();
         let later = store::next_stamp(&v.db().unwrap()).unwrap() + 1;
@@ -454,6 +466,143 @@ mod review_round3 {
                 .iter()
                 .all(|s| s.candidate.transaction_id != o)
         );
+    }
+
+    #[test]
+    fn handover_self_links_cannot_return_idempotent_success() {
+        let (v, _, o, r) = seed();
+        v.set_transaction_splits(o, vec![part(None, -7000), part(None, 2000)])
+            .unwrap();
+        let parts = parts(&v, o);
+        let negative = parts.iter().find(|(_, n)| *n < 0).unwrap().0.clone();
+        let positive = parts.iter().find(|(_, n)| *n > 0).unwrap().0.clone();
+        assert!(
+            v.link_refund(o, positive.clone(), o, negative.clone())
+                .is_err()
+        );
+        v.link_refund(r, String::new(), o, negative.clone())
+            .unwrap();
+        crate::importers::portal_import::hand_over(&v.db().unwrap(), r, o).unwrap();
+        let before = State::load(&v.db().unwrap()).unwrap().rows;
+        assert!(v.refund_links(o).unwrap()[0].inactive);
+        assert!(v.link_refund(o, positive, o, negative).is_err());
+        assert_eq!(State::load(&v.db().unwrap()).unwrap().rows, before);
+    }
+
+    #[test]
+    fn undo_finds_chained_successors_in_both_merge_orders_but_requires_a_live_one() {
+        for unlink_first in [false, true] {
+            for live in [false, true] {
+                let (a, account, o, r) = seed();
+                let next = a.save_manual_booking(account, None, setup(-5000)).unwrap();
+                let last = a.save_manual_booking(account, None, setup(-5000)).unwrap();
+                a.link_refund(r, String::new(), o, String::new()).unwrap();
+                let b = vault();
+                merge(&b, &a);
+                let br = peer_id(&b, &a, r);
+                let bo = peer_id(&b, &a, o);
+                for (from, to) in [(o, next), (next, last)] {
+                    crate::importers::portal_import::hand_over(&a.db().unwrap(), from, to).unwrap();
+                }
+                assert_eq!(a.refund_links(r).unwrap()[0].allocated_cents, 2000);
+                b.unlink_refund(br, String::new(), bo, String::new())
+                    .unwrap();
+                let token = store::next_stamp(&a.db().unwrap()).unwrap() + 1;
+                b.db()
+                    .unwrap()
+                    .execute(
+                        "UPDATE refund_links SET changed_ms=?1,deleted_ms=?1",
+                        [token],
+                    )
+                    .unwrap();
+                if !live {
+                    crate::sync_merge::soft_delete_booking(&a.db().unwrap(), last).unwrap();
+                }
+                if unlink_first {
+                    merge(&a, &b);
+                    merge(&b, &a);
+                } else {
+                    merge(&b, &a);
+                    merge(&a, &b);
+                }
+                assert!(
+                    a.refund_links(r)
+                        .unwrap()
+                        .iter()
+                        .all(|l| l.allocated_cents == 0)
+                );
+                let before = State::load(&a.db().unwrap()).unwrap().rows;
+                assert!(
+                    a.restore_refund(r, String::new(), o, String::new(), token + 1)
+                        .is_err()
+                );
+                assert_eq!(State::load(&a.db().unwrap()).unwrap().rows, before);
+                assert_eq!(
+                    a.restore_refund(r, String::new(), o, String::new(), token)
+                        .is_ok(),
+                    live
+                );
+                if live {
+                    assert!(
+                        a.refund_links(r)
+                            .unwrap()
+                            .iter()
+                            .any(|l| l.original_id == last && l.allocated_cents == 2000)
+                    );
+                    merge(&b, &a);
+                    assert_eq!(
+                        b.refund_links(br)
+                            .unwrap()
+                            .iter()
+                            .map(|l| l.allocated_cents)
+                            .sum::<i64>(),
+                        2000
+                    );
+                } else {
+                    assert_eq!(State::load(&a.db().unwrap()).unwrap().rows, before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn candidate_limits_keep_open_matches_ahead_of_many_exhausted_matches() {
+        let (v, account, o, r) = seed();
+        let full = v.save_manual_booking(account, None, setup(50000)).unwrap();
+        v.link_refund(full, String::new(), o, String::new())
+            .unwrap();
+        for _ in 0..9 {
+            let exhausted = v.save_manual_booking(account, None, setup(-5000)).unwrap();
+            v.link_refund(full, String::new(), exhausted, String::new())
+                .unwrap();
+        }
+        let open = v.save_manual_booking(account, None, setup(-2000)).unwrap();
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET booking_date='2025-12-31' WHERE id=?1",
+                [open],
+            )
+            .unwrap();
+        let rows = v
+            .refund_candidates(r, String::new(), String::new(), 2)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].transaction_id, rows[0].open_cents), (open, 2000));
+        assert_eq!(rows[1].open_cents, 0);
+        assert!(
+            v.refund_candidates(r, String::new(), String::new(), 0)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            v.refund_candidates(r, String::new(), "no such merchant".into(), 2)
+                .unwrap()
+                .is_empty()
+        );
+        let suggestions = v.refund_suggestions(r, String::new()).unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].candidate.transaction_id, open);
     }
 
     fn merge(into: &Vault, from: &Vault) {
