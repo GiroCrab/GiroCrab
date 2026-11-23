@@ -600,7 +600,7 @@ struct DayCardRow: View {
                     #if os(macOS)
                     // onto a sidebar category (#366) or into another app (BookingDragItem);
                     // the payload is read when the drag starts
-                    .draggable(model.dragItem(for: b))
+                    .onDrag { model.dragItem(for: b).itemProvider() }
                     #endif
             if !isLast || density == .compact {
                 Divider()
