@@ -132,7 +132,8 @@ Sheet {
                     visible: sheet.kind === "sell"
                     label: qsTr("Anzahl")
                     TextField { Layout.preferredWidth: 200; placeholderText: NumberText.format(sheet.entryHeld)
-                                text: sheet.entryText; onTextEdited: sheet.entryText = text }
+                                text: sheet.entryText; onTextEdited: sheet.entryText = text
+                                Sensitive { amounts: true } }
                 }
                 FormRow {
                     visible: sheet.kind === "sell" && sheet.manual
