@@ -101,9 +101,12 @@ enum BerghausCieScripts {
             .sort((a, b) => String(a.datetimeStatusUpdate).localeCompare(String(b.datetimeStatusUpdate))).pop();
           if (status && GONE.test(String(status.status))) continue;
           const v = p.vintage || {};
-          const valuations = (v.valuationRel || []).filter(x => x && x.sourceOfValuation === SOURCE && Number.isFinite(x.value) && x.datetimeCreated)
+          // the newest valuation of the source decides; an unusable newest one is an error, never
+          // a reason to fall back to an older value
+          const valuations = (v.valuationRel || []).filter(x => x && x.sourceOfValuation === SOURCE && x.datetimeCreated)
             .sort((a, b) => String(a.datetimeCreated).localeCompare(String(b.datetimeCreated)));
-          const last = valuations[valuations.length - 1];
+          const newest = valuations[valuations.length - 1];
+          const last = newest && Number.isFinite(newest.value) && newest.value >= 0 ? newest : null;
           const factor = p.bottleSize && p.bottleSize.factorForLiterPrices;
           // a case holds `caskOf` bottles, `amount` is the number of cases
           if (!whole(p.amount) || !whole(p.caskOf)) { problem('Menge'); continue; }

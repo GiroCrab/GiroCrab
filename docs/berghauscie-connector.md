@@ -9,6 +9,9 @@ The wine investment portal of Berghaus & Cie shows the bottles a customer holds 
 Weindepot". Sign in through **Add bank → Berghaus & Cie (Weindepot)**. The login (e-mail and password)
 happens in the embedded browser. After login, choose **Bestand abrufen**.
 
+The sign-in needs the macOS app (embedded browser). The Linux client only knows the connector's
+name and its import call; it has no sign-in for it yet.
+
 ## What is imported
 
 - One securities account ("Weindepot") with one position per portal entry: wine name (with

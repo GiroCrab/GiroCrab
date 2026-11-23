@@ -91,6 +91,10 @@ test('an empty depot is a valid, empty list', async () => {
 test('a position that cannot be read stops the import; it never leaves positions out', async () => {
   for (const [broken, reason] of [
     [entry('1', {valuations: [{sourceOfValuation: 'OTHER', datetimeCreated: '2026-07-01T00:00:00+00:00', value: 5}]}), /Bewertung/],
+    // the newest valuation is unusable: the older one must not be used instead
+    [entry('1', {valuations: [{sourceOfValuation: SRC, datetimeCreated: '2025-07-01T00:00:00+00:00', value: 100},
+      {sourceOfValuation: SRC, datetimeCreated: '2026-07-01T00:00:00+00:00', value: null}]}), /Bewertung/],
+    [entry('1', {valuations: [{sourceOfValuation: SRC, datetimeCreated: '2026-07-01T00:00:00+00:00', value: -5}]}), /Bewertung/],
     [entry('1', {amount: 0}), /Menge/],
     [entry('1', {cask: 1.5}), /Menge/],
     [entry('1', {buy: 'x'}), /Einstandspreis/],
