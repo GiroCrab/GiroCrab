@@ -166,7 +166,7 @@ Sheet {
                 // the rest: what the parts below leave, never typed (#1663)
                 TextField {
                     visible: row.isRest
-                    Layout.preferredWidth: 90
+                    Layout.preferredWidth: 120 * Theme.textScale   // holds "−1.234.567,89" at every text size
                     text: sheet.rest === null ? "–" : Fmt.plain(sheet.rest)
                     readOnly: true
                     enabled: false
@@ -182,7 +182,7 @@ Sheet {
                 TextField {
                     id: amountField
                     visible: !row.isRest
-                    Layout.preferredWidth: 90
+                    Layout.preferredWidth: 120 * Theme.textScale   // holds "−1.234.567,89" at every text size
                     text: row.modelData.amount
                     placeholderText: Fmt.plain(0)
                     horizontalAlignment: TextInput.AlignRight

@@ -568,6 +568,7 @@ enum SplitMath {
 struct SplitSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     /// Share (percent) for the second part of a fresh split, from the row menu (#1663).
     var presetPercent: Int64? = nil
@@ -596,6 +597,8 @@ struct SplitSheet: View {
 
     private var total: Int64 { abs(booking.amountCents) }
     private var sign: Int64 { booking.amountCents < 0 ? -1 : 1 }
+    /// Amount fields hold up to "−1.234.567,89" at every text size (#343).
+    private var amountWidth: CGFloat { 120 * textScale }
     // Amounts are entered in the booking's direction: a negative part counter-books the others
     // (+59 = +200 and -141, #427). The first part takes what is left; no part may be 0.
     /// The parts split off as typed; nil = unreadable. An empty field counts as 0, so the rest
@@ -645,19 +648,21 @@ struct SplitSheet: View {
                             // what the parts below leave, never typed (#1663)
                             TextField(Money.plain(0), text: .constant(rest.map(Money.plain) ?? "–"))
                                 .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
-                                .appFont(.body, monospacedDigit: true).frame(width: 90)
+                                .appFont(.body, monospacedDigit: true).frame(width: amountWidth)
                                 .foregroundStyle(restIsNegative ? Theme.warning : Theme.secondary)
                                 .disabled(true)
                                 .help("Bekommt automatisch, was die anderen Teile übrig lassen")
                                 .accessibilityLabel("Rest")
                                 .sensitive(.amounts)
+                                .sensitive(.amounts)
                         } else {
                             TextField(Money.plain(0), text: $p.amount)
                                 .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
-                                .appFont(.body, monospacedDigit: true).frame(width: 90)
+                                .appFont(.body, monospacedDigit: true).frame(width: amountWidth)
                                 .focused($focusedPart, equals: p.id)
                                 .onSubmit { settle(p.id) }
                                 .help("Betrag oder Anteil, z. B. „50 %“")
+                                .sensitive(.amounts)
                                 .sensitive(.amounts)
                         }
                         TextField("Notiz", text: $p.note).textFieldStyle(.roundedBorder)
