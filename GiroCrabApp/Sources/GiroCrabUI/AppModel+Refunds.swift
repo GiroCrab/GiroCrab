@@ -123,7 +123,7 @@ extension AppModel {
 
     private func registerRefundHistory(_ step: RefundHistoryStep, pin: VaultPin, manager: UndoManager? = nil) {
         guard let manager = manager ?? windowUndoManager else { return }
-        manager.registerUndo(withTarget: step) { [weak self, weak manager] step in
+        manager.registerUndo(withTarget: step) { [step, weak self, weak manager] _ in
             guard let self, self.isCurrent(pin) else { return }
             let inverse = RefundHistoryStep()
             self.registerRefundHistory(inverse, pin: pin, manager: manager)
