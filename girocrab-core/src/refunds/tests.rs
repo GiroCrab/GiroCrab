@@ -72,6 +72,24 @@ mod round7 {
                     -100
                 );
             }
+            let next = a.add("next", -100);
+            raw(
+                &a.v,
+                &format!(
+                    "UPDATE transaction_splits SET transaction_id={next} WHERE transaction_id={old}; UPDATE transactions SET splits_ms=100 WHERE id={old}; UPDATE transactions SET splits_ms=400 WHERE id={next}"
+                ),
+            );
+            merge(&a.v, &b.v);
+            merge(&b.v, &a.v);
+            assert_eq!(
+                number(
+                    &a.v,
+                    &format!(
+                        "SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id={old}"
+                    )
+                ),
+                -100
+            );
         }
     }
 

@@ -543,7 +543,13 @@ pub(crate) fn merge_bookings(
                 .push((id, position));
         }
     }
-    for entries in owners.values().filter(|entries| entries.len() > 1) {
+    let mut reserved: HashSet<String> = owners.keys().cloned().collect();
+    let mut collisions: Vec<_> = owners
+        .iter()
+        .filter(|(_, entries)| entries.len() > 1)
+        .collect();
+    collisions.sort_unstable_by_key(|(uuid, _)| *uuid);
+    for (_, entries) in collisions {
         for &(id, _) in entries {
             keys.insert(id, super::booking_key(conn, id)?);
         }
@@ -566,13 +572,26 @@ pub(crate) fn merge_bookings(
                 })
             })
             .unwrap();
-        for &(id, position) in entries.iter().filter(|(id, _)| *id != winner) {
+        let mut losers: Vec<_> = entries
+            .iter()
+            .copied()
+            .filter(|(id, _)| *id != winner)
+            .collect();
+        losers.sort_unstable_by(|(a, ap), (b, bp)| (&keys[a], ap).cmp(&(&keys[b], bp)));
+        for (id, position) in losers {
             let fields = local.get_mut(&id).unwrap();
-            fields.splits[position].0 = uuid::Uuid::new_v5(
-                &super::NAMESPACE,
-                format!("split-owner|{}|{position}", keys[&id]).as_bytes(),
-            )
-            .to_string();
+            let seed = format!("split-owner|{}|{position}", keys[&id]);
+            fields.splits[position].0 = (0u64..)
+                .find_map(|attempt| {
+                    let key = if attempt == 0 {
+                        seed.clone()
+                    } else {
+                        format!("{seed}|{attempt}")
+                    };
+                    let uuid = uuid::Uuid::new_v5(&super::NAMESPACE, key.as_bytes()).to_string();
+                    reserved.insert(uuid.clone()).then_some(uuid)
+                })
+                .unwrap();
             pending_splits.insert(id, fields.splits.clone());
         }
     }
