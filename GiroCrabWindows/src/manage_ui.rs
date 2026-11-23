@@ -79,6 +79,7 @@ fn modals(win: &MainWindow) -> Modals {
         transfer: win.get_transfer_open(),
         add_bank: win.get_add_open(),
         account: win.get_acct_open(),
+        offline: win.get_offline_open(),
         categories: win.get_cat_open(),
         rules: win.get_rules_open(),
         link: win.get_link_open(),
@@ -98,6 +99,7 @@ fn close_modal(win: &MainWindow, m: Modal) {
             with_ui(|u| u.account_gate.reset());
             win.set_acct_open(false);
         }
+        Modal::Offline => crate::offline_ui::reset(win),
         Modal::Categories => {
             with_ui(|u| u.category_gate.reset());
             win.set_cat_open(false);

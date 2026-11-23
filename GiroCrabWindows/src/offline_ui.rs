@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use girocrab_core::{AccountKind, Vault};
 use slint::{ComponentHandle, SharedString};
 
-use crate::{MainWindow, daily, offline, privacy_on, refresh};
+use crate::{MainWindow, offline, privacy_on, refresh};
 
 type VaultSlot = Arc<Mutex<Option<Arc<Vault>>>>;
 
@@ -107,13 +107,14 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
                 let ours = DIALOG.is_current(generation);
                 match result {
                     Ok(id) => {
-                        let label = daily::mask(&form.name, privacy_on(&win));
                         if ours {
                             reset(&win);
                         }
                         // The account exists either way: refresh the lists, keep private mode.
                         refresh(&win, &current, Some(id));
-                        win.set_sync_status(format!("Offline-Konto „{label}“ angelegt.").into());
+                        // No account name: `sync-status` is not re-rendered when private mode
+                        // is switched on later.
+                        win.set_sync_status("Offline-Konto angelegt.".into());
                         if ours {
                             win.invoke_refocus();
                         }
@@ -133,6 +134,24 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manage::{Modal, Modals};
+
+    #[test]
+    fn offline_dialog_is_a_modal() {
+        let open = Modals {
+            offline: true,
+            ..Modals::default()
+        };
+        assert_eq!(open.top(), Some(Modal::Offline));
+        // A PIN / TAN prompt still covers it.
+        let covered = Modals {
+            tan: true,
+            offline: true,
+            ..Modals::default()
+        };
+        assert_eq!(covered.top(), Some(Modal::Tan));
+        assert_eq!(Modals::default().top(), None);
+    }
 
     #[test]
     fn reopened_dialog_outdates_running_save() {
