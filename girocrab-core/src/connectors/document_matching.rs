@@ -295,6 +295,9 @@ fn match_by_amounts(
         return BookingMatch::None;
     }
     let mut best: Vec<(i64, i64)> = Vec::new();
+    // Candidates of different amounts (gross and net of a taxed sale) compete: a nearer booking
+    // of the one amount must not beat a booking of the other.
+    let mut stated = BTreeSet::new();
     for (id, date, cents, counterparty) in bookings {
         if !amounts.contains(&cents.abs()) || !squash(counterparty).contains(&subject) {
             continue;
@@ -312,7 +315,11 @@ fn match_by_amounts(
             && distance <= slack_days
         {
             best.push((distance, *id));
+            stated.insert(cents.abs());
         }
+    }
+    if stated.len() > 1 {
+        return BookingMatch::Ambiguous;
     }
     best.sort();
     match best.as_slice() {
@@ -326,20 +333,29 @@ fn match_by_amounts(
 /// The amount a text states after one of the labels: the first amount of the rest of the label's
 /// line or, when the label heads a column (`IBAN  Valuta  Zu Ihren Lasten vor Steuern` and the
 /// values below), of the next line. Dates are no amounts ("19.07.2023" holds a "19.07"). The settled
-/// amount of a trade confirmation, not the price, a fee or a tax amount.
-fn settled_amounts(text: &str, label_groups: &[&[&str]]) -> Vec<(i64, String)> {
+/// amount of a trade confirmation, not the price, a fee or a tax amount. Only the first group present
+/// counts, except for a credit (`inflow == Some(true)`: a taxed sale, a dividend): there every group
+/// present is read, so the gross and the net amount both stay candidates.
+fn settled_amounts(
+    text: &str,
+    label_groups: &[&[&str]],
+    inflow: Option<bool>,
+) -> Vec<(i64, String)> {
     static DATE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\b\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})\b").unwrap());
     // ASCII lower case keeps the byte positions of the original
     let lower = text.to_ascii_lowercase();
-    let Some(labels) = label_groups
+    let present = label_groups
         .iter()
-        .find(|labels| labels.iter().any(|&label| lower.contains(label)))
-    else {
-        return Vec::new();
+        .copied()
+        .filter(|labels| labels.iter().any(|&label| lower.contains(label)));
+    let labels: Vec<&&str> = if inflow == Some(true) {
+        present.flat_map(|group| group.iter()).collect()
+    } else {
+        present.take(1).flat_map(|group| group.iter()).collect()
     };
     let mut out = Vec::new();
-    for label in *labels {
+    for label in labels {
         let mut from = 0;
         while let Some(at) = lower[from..].find(label).map(|i| i + from) {
             let first_amount = |line: &str| {
@@ -554,7 +570,7 @@ fn extract_days(bytes: &[u8], title: &str, rules: &DocumentMatchRules) -> Extrac
     let (amounts, currencies) = if rules.amount_labels.is_empty() {
         (unambiguous_amounts(&text), amounts_with_currency(&text))
     } else {
-        let settled = settled_amounts(&text, rules.amount_labels);
+        let settled = settled_amounts(&text, rules.amount_labels, inflow);
         (settled.iter().map(|(c, _)| *c).collect(), settled)
     };
     let usable = !days.is_empty()
@@ -1010,7 +1026,7 @@ mod tests {
             Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
             Steuerabzug   EUR   52,75\n\
             Zu Ihren Gunsten nach Steuern:   EUR   4.947,25\n";
-        let amounts: Vec<i64> = settled_amounts(sale, COMDIRECT.amount_labels)
+        let amounts: Vec<i64> = settled_amounts(sale, COMDIRECT.amount_labels, Some(true))
             .into_iter()
             .map(|(cents, _)| cents)
             .collect();
@@ -1030,7 +1046,7 @@ mod tests {
         let purchase = "Wertpapierabrechnung Kauf\n\
             Zu Ihren Lasten vor Steuern   EUR   1.000,00\n\
             Zu Ihren Lasten nach Steuern:   EUR   1.000,00\n";
-        let amounts: Vec<i64> = settled_amounts(purchase, COMDIRECT.amount_labels)
+        let amounts: Vec<i64> = settled_amounts(purchase, COMDIRECT.amount_labels, Some(false))
             .into_iter()
             .map(|(cents, _)| cents)
             .collect();
@@ -1042,20 +1058,20 @@ mod tests {
     fn only_the_amount_after_the_label_is_the_settled_one() {
         let text = "Kurs 100,00 EUR\nProvision 1,50 EUR\nAusmachender Betrag  500,00- EUR\nAUSMACHENDER BETRAG 7,00 EUR";
         assert_eq!(
-            settled_amounts(text, &[&["ausmachender betrag"]]),
+            settled_amounts(text, &[&["ausmachender betrag"]], None),
             [(500_00, "EUR".to_owned()), (7_00, "EUR".to_owned())]
         );
-        assert!(settled_amounts("Kurs 100,00 EUR", &[&["ausmachender betrag"]]).is_empty());
-        assert!(settled_amounts("", &[&["ausmachender betrag"]]).is_empty());
+        assert!(settled_amounts("Kurs 100,00 EUR", &[&["ausmachender betrag"]], None).is_empty());
+        assert!(settled_amounts("", &[&["ausmachender betrag"]], None).is_empty());
         // comdirect: the label heads a column and the values stand below; a date is no amount at the line's end
         let trade = "Kurswert : EUR 24,57\nProvision : EUR 0,37\nIBAN Valuta Zu Ihren Lasten vor Steuern\nDE00 0000 0000 0000 0000 00 EUR 19.07.2023 EUR 24,94\nVerwahrungs-Art: X";
         assert_eq!(
-            settled_amounts(trade, COMDIRECT.amount_labels),
+            settled_amounts(trade, COMDIRECT.amount_labels, Some(false)),
             [(24_94, "EUR".to_owned())]
         );
         let dividend = "Bruttobetrag: USD 6,09\nzum Devisenkurs: EUR/USD 1,058500 EUR 5,75\nVerrechnung \u{fc}ber Konto (IBAN) Valuta Zu Ihren Gunsten vor Steuern\nDE00 0000 0000 0000 0000 00 EUR 29.09.2023 EUR 5,75";
         assert_eq!(
-            settled_amounts(dividend, COMDIRECT.amount_labels),
+            settled_amounts(dividend, COMDIRECT.amount_labels, Some(true)),
             [(5_75, "EUR".to_owned())]
         );
         // a price is no candidate for a booking when the settled amount is known
@@ -1080,6 +1096,60 @@ mod tests {
                 5,
                 Some(false)
             ),
+            BookingMatch::Unique(1)
+        );
+    }
+
+    #[test]
+    fn a_taxed_sale_keeps_gross_and_net_next_to_the_settled_amount() {
+        let sale = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
+            Ausmachender Betrag   EUR   4.947,25\n";
+        let cents = |inflow| {
+            settled_amounts(sale, COMDIRECT.amount_labels, inflow)
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect::<Vec<_>>()
+        };
+        let credit = cents(Some(true));
+        assert!(
+            credit.contains(&494_725) && credit.contains(&500_000),
+            "{credit:?}"
+        );
+        // a purchase keeps reading only the first group present
+        assert_eq!(cents(Some(false)), [494_725]);
+    }
+
+    #[test]
+    fn a_booking_of_the_net_amount_does_not_beat_a_gross_booking_a_day_later() {
+        let bookings = vec![
+            (
+                1,
+                "2025-12-04".to_string(),
+                4_947_25,
+                "A1JX52 ETF".to_string(),
+            ),
+            (
+                2,
+                "2025-12-05".to_string(),
+                5_000_00,
+                "A1JX52 ETF".to_string(),
+            ),
+        ];
+        let days = vec![crate::dates::parse_iso("2025-12-04").unwrap()];
+        assert_eq!(
+            match_by_amounts(
+                &[4_947_25, 5_000_00],
+                &days,
+                "A1JX52",
+                &bookings,
+                5,
+                Some(true)
+            ),
+            BookingMatch::Ambiguous
+        );
+        assert_eq!(
+            match_by_amounts(&[4_947_25], &days, "A1JX52", &bookings, 5, Some(true)),
             BookingMatch::Unique(1)
         );
     }
