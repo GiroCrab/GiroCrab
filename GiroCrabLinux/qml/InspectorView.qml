@@ -26,6 +26,13 @@ Rectangle {
     // InspectorSectionCard: one card per section, for the selected booking. In the edit mode
     // (`placeholderWhenEmpty`) a card that would not show for this booking stands in as a placeholder.
     property Component receiptCard: Component { ReceiptCard { booking: inspector.cardBooking } }
+    property Component refundCard: Component {
+        RefundLinksCard {
+            readonly property bool sectionVisible: inspector.showsBookingCards && (rows.length > 0 || error !== "")
+            visible: sectionVisible
+            booking: inspector.b
+        }
+    }
     property Component noteCard: Component { NoteCard { booking: inspector.cardBooking } }
     // TagsUI.swift › TagsCard (#228)
     property Component tagsCard: Component { Card { TagsSection { width: parent.width; bookings: inspector.cardBooking ? [inspector.cardBooking] : [] } } }
@@ -40,6 +47,7 @@ Rectangle {
     property Component mandateInspector: Component { MandateInspector {} }
     function cardComponent(section, placeholderWhenEmpty) {
         switch (section) {
+        case "refunds": return refundCard
         case "receipt": return receiptCard
         case "note": return noteCard
         case "tags": return tagsCard
@@ -77,12 +85,6 @@ Rectangle {
             }
 
             // Keine Buchung ausgewählt
-            RefundLinksCard {
-                visible: inspector.showsBookingCards && (rows.length > 0 || error !== "")
-                booking: inspector.b
-                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
-            }
-
             Card {
                 visible: inspector.bookingPage && !AppModel.isMultiSelection && inspector.b === null
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
@@ -154,7 +156,7 @@ Rectangle {
                 Loader {
                     required property string modelData
                     Layout.fillWidth: true
-                    visible: status === Loader.Ready
+                    visible: status === Loader.Ready && (modelData !== "refunds" || item.sectionVisible)
                     sourceComponent: inspector.cardComponent(modelData, false)
                 }
             }

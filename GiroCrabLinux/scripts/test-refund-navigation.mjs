@@ -17,6 +17,18 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("refund inspector card participates in layout order and visibility", () => {
+    const layout=readFileSync(new URL("../qml/InspectorLayout.qml",import.meta.url),"utf8");
+    const view=readFileSync(new URL("../qml/InspectorView.qml",import.meta.url),"utf8");
+    assert.match(layout,/id: "refunds"/);
+    assert.match(view,/case "refunds": return refundCard/);
+    const s={allIDs:["receipt","refunds"],formerStandardValues:[],standard:{order:["receipt","refunds"],hidden:{}}};
+    vm.createContext(s);
+    vm.runInContext(`function make(order,hidden){${bodyAfter("function make(order, hidden)",layout)}};function parse(value){${bodyAfter("function parse(value)",layout)}}`,s);
+    assert.equal(vm.runInContext('parse("-refunds,receipt").hidden.refunds',s),true);
+    assert.equal(vm.runInContext('parse("refunds,receipt").order[0]',s),"refunds");
+    assert.equal((view.match(/RefundLinksCard\s*\{/g)||[]).length,1);
+});
 test("split-booking editor focuses an enabled field", () => {
     const text=readFileSync(new URL("../qml/ManualBookingSheet.qml",import.meta.url),"utf8");
     const expression=text.match(/Qt.callLater\(\(\) => (.+)\)/)[1];
