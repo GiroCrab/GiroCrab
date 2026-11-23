@@ -1,5 +1,6 @@
-GiroCrab iOS 0.7.5 (Build 24) – enthält den kompletten Funktionsumfang von GiroCrab v0.8.7:
+Neu in Build 25 (v0.7.5):
 
-• Neue Banken: BHW Bausparkasse (inkl. Postfach-PDFs) und Kontist-Geschäftskonto (GraphQL-API) sowie aktualisierte FinTS-Adresse für 1822direkt.
-• Zahlungen & Buchungsliste: Bekannte Empfänger verwalten/ausblenden, direktes Notiz-Symbol an Buchungen zum schnellen Öffnen der Notiz, Auto-Fokus im TAN-Dialog sowie FinTS-Überweisungskorrekturen (Volksbanken/Postbank & HISPAS pain.001.001.09).
-• Verbesserungen: Saubere VR- und Rechtsform-Erkennung bei Händlern, keine Kurz-Akronym-Fehltreffer ohne Gegenpartei, Fremdwährungs-Zusatzsummen und iCloud-Abgleich für Konto-Notizen.
+• 🔐 Enable Banking & iCloud-Schlüsselbund: Eigene Enable-Banking-Anwendung pro Bankzugang über den iCloud-Schlüsselbund synchronisieren, Konflikte beim Speichern gezielt auflösen und zuverlässiges Zurücksetzen/Sperren ohne Datenverlust.
+• ₿ Bitcoin Core & neue Kontoarten: Eigene Bitcoin-Core-Wallet als Depot anbinden, neue Kontoarten Bausparen und Festgeld, nach Kontoart gruppierte Übersichten im Vermögens- und Kontobereich sowie Überweisungslinks (`girocrab://transfer`).
+• 🧾 Belegabgleich, Händlererkennung & Regeln: Bankbelege automatisch nach Inhalt mit Buchungen verknüpfen und neu einsortieren, manuell gelöste Verknüpfungen bewahren, eigene Händler & Regeln mit Anwendungsbereich/Tags pflegen sowie Regeleditor im eigenen Fenster.
+• 🏦 FinTS, Überweisungen & plattformübergreifende Verbesserungen: Tagesgeld-Umbuchungen (`HKCUM`), Banknamen zur IBAN in Zahlungsformularen, lückenlose Montagsbuchungen ohne Bis-Datum, individuelle Abrufintervalle je Zugang sowie erweiterter CSV-Export, Lesestatus für Belege unter Windows und Android-Keystore-Integration.

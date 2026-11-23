@@ -76,6 +76,24 @@ enum ICloudFolderMigration {
         return nil
     }
 
+    /// What a folder from „Ordner wählen …“ holds.
+    enum PickedFolder: Equatable {
+        case found
+        /// The vault is in this direct subfolder (the user picked a parent, #456).
+        case subfolder(String)
+        case empty
+    }
+
+    /// Looks into a folder the user picked (security scope included); waits up to
+    /// `wait` seconds for iCloud to list it before calling it empty.
+    static func inspectPicked(_ url: URL, wait: TimeInterval = 6) async -> PickedFolder {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if await waitForVault(in: url, wait: wait) { return .found }
+        if let sub = vaultSubfolder(in: url) { return .subfolder(sub) }
+        return .empty
+    }
+
     /// Whether the picked folder holds a vault. A folder iCloud is still listing looks empty at
     /// first: it is asked to download, and checked again for up to `wait` seconds.
     static func waitForVault(in dir: URL, wait: TimeInterval, fm: FileManager = .default) async -> Bool {
@@ -157,5 +175,33 @@ enum ICloudFolderMigration {
     /// texts does not apply; hiding it made the label "iCloud Drive / iCloud Drive".
     static func displayName(for url: URL) -> String {
         url.lastPathComponent
+    }
+
+    /// Where a folder is, readable (#909): "iCloud Drive/Backup/GiroCrab" inside iCloud Drive,
+    /// on the Mac the path with "~" for the home folder. The bare name can't tell two folders
+    /// called "GiroCrab" apart. iOS paths outside iCloud Drive are app containers, so there
+    /// only the folder's name is shown.
+    static func readablePath(_ path: String, home: String = homePath) -> String {
+        let path = URL(fileURLWithPath: path).standardizedFileURL.path
+        if let r = path.range(of: "/Library/Mobile Documents/com~apple~CloudDocs") {
+            let owner = path[..<r.lowerBound], rest = path[r.upperBound...]
+            if rest.isEmpty || rest.hasPrefix("/"), [home, "/private/var/mobile", "/var/mobile"].contains(String(owner)) {
+                return "iCloud Drive" + rest
+            }
+        }
+        #if os(macOS)
+        if !home.isEmpty, path == home || path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
+        return path
+        #else
+        return URL(fileURLWithPath: path).lastPathComponent
+        #endif
+    }
+
+    private static var homePath: String {
+        #if os(macOS)
+        FileManager.default.homeDirectoryForCurrentUser.path
+        #else
+        ""
+        #endif
     }
 }

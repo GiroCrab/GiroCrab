@@ -22,7 +22,7 @@ Sheet {
     property var revealed: ({})
     property var status: null
     property bool showAdvanced: false
-    /// comdirect via FinTS: PostBox through the bank's API as well (#838).
+    /// comdirect via FinTS: Postbox through the bank's API as well (#838).
     property bool postbox: false
 
     readonly property string kind: connection ? connection.connector : ""
@@ -48,13 +48,14 @@ Sheet {
         case "PayPal": return ["paypal.client_id", "paypal.client_secret", "paypal.environment"]
         case "Kontist": return ["kontist.client_id", "kontist.client_secret"]
         case "Bunq": return ["bunq.environment"]
+        case "BitcoinCore": return ["bitcoin_core.datadir", "bitcoin_core.rpc_url"]
         case "EnableBanking": return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
         default: return []
         }
     }
     // With GiroCrab's own registration built in, it is chosen in Settings, not per bank.
     readonly property var keys: AppModel.fintsBuiltinAvailable ? allKeys.filter(k => k !== "fints.product_id") : allKeys
-    /// comdirect via FinTS: the API credentials for the PostBox (#838), shown in its section.
+    /// comdirect via FinTS: the API credentials for the Postbox (#838), shown in its section.
     readonly property var postboxKeys: isComdirect && kind === "FinTsGeneric" ? ["comdirect.client_id", "comdirect.client_secret"] : []
     /// Optional power-user PSD2 credentials (collapsed "Erweitert" section).
     readonly property var advancedKeys: kind === "AmericanExpress"
@@ -70,6 +71,7 @@ Sheet {
         case "Kontist": return "Kontist OAuth2-Client"
         case "Bunq": return "bunq API"
         case "Ibkr": return "Interactive Brokers Flex Web Service"
+        case "BitcoinCore": return "Bitcoin Core"
         default: return "Enable Banking (PSD2)"
         }
     }
@@ -158,7 +160,7 @@ Sheet {
         close()
     }
     function current() { return AppModel.connections.find(c => c.id === connection.id) || connection }
-    /// The other save-and-go actions (log in, PostBox, reconnect, import): like `saveAll`, the
+    /// The other save-and-go actions (log in, Postbox, reconnect, import): like `saveAll`, the
     /// action starts only once the account selection is stored, never with the old one.
     function saveThen(action) {
         save()
@@ -197,7 +199,7 @@ Sheet {
     }
     ConfirmDialog {
         id: confirmRemove
-        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(sheet.connection.display_name) : ""
+        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(AppModel.masking(sheet.connection.display_name)) : ""
         message: qsTr("Alle Konten dieses Bankzugangs werden samt Buchungen, Belegen und gespeicherten Zugangsdaten aus dem Tresor gelöscht. Das lässt sich nicht widerrufen.")
         actionTitle: qsTr("Entfernen")
         onConfirmed: { const id = sheet.connection.id; sheet.close(); AppModel.removeConnection(id) }
@@ -243,7 +245,7 @@ Sheet {
             spacing: 10
             SymbolTile { symbol: sheet.connection ? sheet.connection.sf_symbol : ""; size: 34; tint: Theme.accent }
             ColumnLayout { spacing: 2; Layout.fillWidth: true
-                Text { text: sheet.connection ? sheet.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text }
+                Text { text: sheet.connection ? sheet.connection.display_name : ""; font.pixelSize: Theme.body + 1; font.weight: Font.DemiBold; color: Theme.text; Sensitive {} }
                 Text { text: sheet.descriptor ? sheet.descriptor.protocol : ""; font.pixelSize: Theme.caption; color: Theme.secondary } }
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
@@ -261,10 +263,10 @@ Sheet {
                 SettingsFormSection {
                     title: qsTr("Zugang")
                     SettingsFormRow { label: qsTr("Anzeigename")
-                        TextField { text: sheet.name; onTextEdited: sheet.name = text; Layout.fillWidth: true; Layout.preferredWidth: 300 } }
+                        TextField { text: sheet.name; onTextEdited: sheet.name = text; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
                     SettingsFormRow { label: sheet.descriptor ? sheet.descriptor.login_label : qsTr("Benutzerkennung")
-                        TextField { text: sheet.login; onTextEdited: sheet.login = text; enabled: !sheet.isRah10; Layout.fillWidth: true; Layout.preferredWidth: 300 } }
-                    SettingsFormRow { visible: sheet.isTR && sheet.login !== ""; label: qsTr("Gespeichert als")
+                        TextField { text: sheet.login; onTextEdited: sheet.login = text; enabled: !sheet.isRah10; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
+                    SettingsFormRow { visible: sheet.isTR && sheet.login !== ""; label: qsTr("Gespeichert als"); personal: true
                               value: sheet.isTR && sheet.login !== "" ? AppModel.core("normalize_phone_number", { input: sheet.login }) : "" }
                     SettingsFormRow {
                         readonly property string blz: !sheet.connection ? "" : sheet.connection.bank_code !== "" ? sheet.connection.bank_code : (sheet.descriptor ? sheet.descriptor.bank_code : "")
@@ -344,11 +346,11 @@ Sheet {
                 }
                 SettingsFormSection {
                     visible: sheet.isComdirect && sheet.kind === "FinTsGeneric"
-                    title: qsTr("PostBox")
-                    footer: qsTr("Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-PostBox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & PostBox“ lässt sich ein Dokument einem anderen Konto zuordnen.")
+                    title: qsTr("Postbox")
+                    footer: qsTr("Kontoauszüge, Finanzreport und Wertpapierabrechnungen aus der comdirect-Postbox, höchstens einmal pro Woche beim Abruf. Dafür sind Client-ID und Client-Secret der comdirect-API nötig und eine eigene Freigabe in der photoTAN-App. Wertpapierdokumente kommen ans Depot, die übrigen auf das erste Girokonto. Über das Kontextmenü in „Belege & Postbox“ lässt sich ein Dokument einem anderen Konto zuordnen.")
                     Repeater { model: sheet.postboxKeys; KeyField { required property string modelData; key: modelData } }
                     CheckBox {
-                        text: qsTr("PostBox über die Schnittstelle der Bank abrufen")
+                        text: qsTr("Postbox über die Schnittstelle der Bank abrufen")
                         checked: sheet.postbox
                         onToggled: {
                             // the switch needs the credentials stored
@@ -360,7 +362,7 @@ Sheet {
                     }
                     Button {
                         visible: sheet.postbox
-                        text: qsTr("PostBox jetzt abrufen")
+                        text: qsTr("Postbox jetzt abrufen")
                         enabled: AppModel.syncingConnectionID === null
                         onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
                     }
@@ -465,6 +467,7 @@ Sheet {
                 echoMode: kf.secret && !kf.isRevealed ? TextInput.Password : TextInput.Normal
                 text: sheet.values[kf.key] || ""
                 placeholderText: kf.label
+                Accessible.name: kf.label   // TextField(label, …).labelsHidden() (ff91866)
                 onTextEdited: sheet.setValue(kf.key, text)
             }
             IconButton {

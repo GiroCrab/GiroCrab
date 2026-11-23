@@ -107,7 +107,7 @@ struct SidebarView: View {
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
                 Image(systemName: "doc.on.doc").foregroundStyle(Theme.secondary).frame(width: 20)
-                Text("Belege & PostBox").fontWeight(.medium).appDefaultFont()
+                Text("Belege & Postbox").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
             .badge(model.unseenDocumentCount)
@@ -164,9 +164,11 @@ struct SidebarView: View {
                 Group {
                     HStack(spacing: DisclosureChevron.gap) {
                         SidebarLeadingSlot()
-                        Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                        Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
-                        Spacer()
+                        HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
+                            Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                            Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                            Spacer()
+                        }
                     }
                     .contextMenu {
                         Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
@@ -186,10 +188,6 @@ struct SidebarView: View {
         .refreshable { await model.refreshCurrentView() }
         .background(Theme.sidebar)
         .navigationTitle("GiroCrab")
-        #if os(macOS)
-        // Keep traffic lights / sidebar toggle clear of the first row.
-        .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 28) }
-        #endif
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 6) {
                 // Marketing screenshots (`--screenshot`) look like a real vault: no demo banner.
@@ -282,7 +280,7 @@ struct SidebarView: View {
                 isLoanGroup: !group.accounts.isEmpty && group.accounts.allSatisfy { $0.kind == .loan },
                 open: open, toggle: toggle
             )
-                .padding(.top, 10)
+                .padding(.vertical, 6) // as the „Gruppen“ headers: room above and below the text alike (#1534)
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.group(group.id), toggle: toggle)
                 #if os(iOS)
@@ -292,6 +290,8 @@ struct SidebarView: View {
                 #endif
             ForEach(open ? listed : []) { account in
                 accountRow(account)
+                    // icon on the section header's icon axis, as under „Gruppen“ (#1534)
+                    .padding(.leading, DisclosureChevron.iconInset)
             }
             }
         }
@@ -316,7 +316,7 @@ struct SidebarView: View {
                     nameRedaction: [],
                     open: open, toggle: toggle
                 )
-                .padding(.top, 10)
+                .padding(.vertical, 6)
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.bank(group.id), toggle: toggle)
                 #if os(iOS)
@@ -326,6 +326,8 @@ struct SidebarView: View {
                 #endif
                 ForEach(open ? listed : []) { account in
                     accountRow(account)
+                        // icon on the bank header's icon axis, as under „Gruppen“ (#1534)
+                        .padding(.leading, DisclosureChevron.iconInset)
                 }
             }
         }
@@ -340,7 +342,9 @@ struct SidebarView: View {
             let toggle = { withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { model.toggleCollapsed(group) } }
             let indent = CGFloat(group.depth) * DisclosureChevron.indentStep
             UserGroupHeader(group: group, open: open, toggle: toggle)
-                .padding(.vertical, 3) // taller hit area for the drop zones
+                // The same room above and below, so the selection pill sits around the text, and a taller
+                // hit area for the drop zones (#1534)
+                .padding(.vertical, group.depth == 0 ? 6 : 4)
                 // an account goes to the top of this group; a group above it
                 // (upper half) or into it as a subgroup (lower half)
                 .modifier(DropSlot(key: "g:" + group.uuid, inset: 0, line: $dropLine, edge: { half in
@@ -350,7 +354,6 @@ struct SidebarView: View {
                 }, perform: { items, edge in
                     handleDrop(items, into: group, row: nil, edge: edge)
                 }, freeLeading: DisclosureChevron.width))  // the expand/collapse arrow
-                .padding(.top, group.depth == 0 ? 10 : 4)
                 .padding(.leading, indent)
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.userGroup(group.uuid), toggle: toggle)
@@ -444,7 +447,7 @@ struct SidebarView: View {
     /// `drop` sits inside the context menu (and the caller's drag), so its drop
     /// zones don't cover the row for clicks.
     private func accountRow(_ account: Account, drop: DropSlot? = nil) -> some View {
-        AccountRow(account: account, syncing: model.syncingConnectionID != nil && model.syncingConnectionID == account.connectionId)
+        AccountRow(account: account, syncing: model.isSyncing(account))
             .dropSlot(drop)
             .background {
                 if dialogAccountID == account.id {
@@ -472,6 +475,15 @@ struct SidebarView: View {
         Button("Einstellungen …", systemImage: "gearshape") { editedAccount = IDBox(id: account.id) }
         CategoryChipToggle(accountID: account.id)
         AccountGroupMenu(account: account)
+        // the account's own switch for the overall money totals (#337); the
+        // group (or a group that group is in) and archiving can still keep it
+        // out — the row's tooltip explains that precedence
+        Toggle(isOn: Binding(
+            get: { account.includeInTotal },
+            set: { model.setAccountIncludeInTotal(account, $0) }
+        )) {
+            Label("In Gesamtsummen zählen", systemImage: "plus.forwardslash.minus")
+        }
         Divider()
         Button("Alle Buchungen als gelesen markieren", systemImage: "checkmark.circle") { model.markAllChecked(accountIDs: [account.id]) }
         ManualLoanAccountMenu(model: model, account: account)
@@ -636,7 +648,16 @@ private struct SidebarSelectionList<Content: View>: View {
 
     var body: some View {
         #if os(macOS)
-        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) { content }
+        List(selection: Binding(get: { model.sidebarSelection }, set: { model.selectFromSidebar($0) })) {
+            // The first row starts at the height of the middle column's heading (#1544), e.g. „Belege & Postbox“:
+            // just below the toolbar, which also keeps the traffic lights / sidebar toggle clear.
+            // The list's own top margin does that; an extra row (the earlier 28 pt one) could not be
+            // made smaller, as the list gives every row a minimum height. A content margin, not a
+            // safe-area padding: the padding moved the scroll view itself 14 pt down, so the line
+            // AppKit shows once the list is scrolled sat below the toolbar line, with a band above it.
+            content
+        }
+        .contentMargins(.top, 14, for: .scrollContent)
         #else
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) { content }
@@ -725,6 +746,7 @@ struct AccountRow: View {
     /// stay dark there). `backgroundProminence` is not set in a macOS sidebar.
     private var onSelection: Bool { model.sidebarRowSelection(for: .account(account.id)).isSelected }
     @Environment(\.reportRedaction) private var redaction
+    @AppStorage(SidebarDensity.defaultsKey) private var density: SidebarDensity = .defaultValue
     let account: Account
     var syncing: Bool = false
 
@@ -734,93 +756,217 @@ struct AccountRow: View {
     }
 
     var body: some View {
+        Group {
+            switch density {
+            case .spacious: spaciousRow
+            case .compact: compactRow
+            }
+        }
+        .padding(.vertical, 1)
+        .opacity(account.isArchived ? 0.55 : (account.showsTotalExclusionIndicator ? 0.6 : 1))
+        // reachable explanation (#337): why the account stays out of the totals
+        // although its own switch is on — the group that wins, or archiving
+        .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
+        // one element per account: name, unread count, bank / loan progress, balance
+        .accessibilityElement(children: .combine)
+    }
+
+    /// What a row shows below the name: one source for both layouts.
+    private enum SecondLine {
+        case archived(Date)
+        case loan(Double)
+        case subtitle(String)
+    }
+
+    private var secondLine: SecondLine {
+        if let repaid { return .loan(repaid) }
+        if let date = account.archivedDate { return .archived(date) }
+        return .subtitle(searchAwareSubtitle)
+    }
+
+    /// Name, owner initials, count and balance in one line, bank below (#884).
+    /// The name truncates first; count and balance keep their width.
+    private var spaciousRow: some View {
+        let line2 = secondLine
+        return HStack(spacing: 9) {
+            // tinted like the account's marker in the booking list
+            AccountSignet(account: account, size: 24, color: model.accountColor(account.id), onSelection: onSelection)
+            // name and balance share the first line: aligned on its baseline, not centred on the row
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(account.name).appFont(.body, weight: .medium).lineLimit(1).truncationMode(.tail).sensitive()
+                            .help(redaction.masking(account.owner))
+                        if showsInitials(line2) {
+                            Text(verbatim: SidebarDensity.initials(of: account.owner))
+                                .appFont(.caption2, weight: .semibold)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 4)
+                                .background(.secondary.opacity(0.15), in: Capsule())
+                                .fixedSize()
+                                .sensitive()
+                        }
+                        revokedIcon
+                        NewCountBadge(count: Int(account.newCount), onSelection: onSelection)
+                            .layoutPriority(1)
+                        // in the name line, centred on it like in the compact row
+                        if syncing {
+                            ProgressView().controlSize(.mini)
+                                .accessibilityLabel(Text("Wird synchronisiert"))
+                        }
+                        exclusionIndicator
+                    }
+                    switch line2 {
+                    case .archived(let date):
+                        archivedLabel(date)
+                    case .loan(let repaid):
+                        ProgressView(value: repaid)
+                            .progressViewStyle(.linear)
+                            .tint(Theme.loan.opacity(0.7))
+                            .controlSize(.mini)
+                            .frame(maxWidth: 110)
+                            .sensitive(.amounts)
+                            .help(redaction.masking(repaidText(repaid), .amounts))
+                    case .subtitle(let text):
+                        subtitle(text)
+                    }
+                }
+                Spacer(minLength: 4)
+                // archived accounts show no balance (#667), nor how far a loan was repaid
+                if !account.isArchived {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        balance(.callout)
+                        if let repaid {
+                            Text(repaidText(repaid))
+                                .sensitive(.amounts)
+                                .appFont(.caption2).foregroundStyle(.secondary)
+                                .fixedSize()
+                        }
+                    }
+                    .layoutPriority(1)
+                }
+            }
+        }
+    }
+
+    /// Name and count above, bank and balance below (#624, #884).
+    private var compactRow: some View {
         HStack(spacing: DisclosureChevron.gap) {
             // tinted like the account's marker in the booking list
             AccountSignet(account: account, size: 20, color: model.accountColor(account.id), onSelection: onSelection)
-                .overlay(alignment: .topTrailing) {
-                    // unread count pinned to the icon's corner, so the subtitle stays untruncated
-                    if let text = NewCountBadge.label(for: Int(account.newCount)) {
-                        Text(verbatim: text)
-                            .appFont(.caption2, weight: .bold, monospacedDigit: true)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 4)
-                            .frame(minWidth: 14, minHeight: 14)
-                            .background(Capsule().fill(Theme.accent))
-                            .overlay(Capsule().strokeBorder(.background, lineWidth: 1.5))
-                            .fixedSize()
-                            .offset(x: 5, y: -4)
-                            .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
-                    }
-                }
             VStack(alignment: .leading, spacing: 1) {
                 // row 1: the whole width for the name
                 HStack(spacing: 4) {
                     // the owner takes no room in the title line: tooltip only
                     Text(account.name).appFont(.callout, weight: .medium).lineLimit(1).sensitive()
                         .help(redaction.masking(account.owner))
-                    if account.accessRevoked {
-                        Image(systemName: "lock.slash")
-                            .appFont(.caption2)
-                            .foregroundStyle(Theme.warning)
-                            .help("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.")
-                            .accessibilityLabel(Text("Zugriff entzogen"))
-                    }
+                    revokedIcon
+                    // a count bubble in the row: the icon (and its colour, #175) stays free
+                    NewCountBadge(count: Int(account.newCount), onSelection: onSelection)
                     Spacer(minLength: 4)
                     if syncing {
                         ProgressView().controlSize(.mini)
                             .accessibilityLabel(Text("Wird synchronisiert"))
                     }
+                    exclusionIndicator
                 }
                 // row 2: bank / loan progress left, balance right
                 HStack(spacing: 6) {
-                    if let repaid {
+                    switch secondLine {
+                    case .archived(let date):
+                        archivedLabel(date)
+                    case .loan(let repaid):
                         ProgressView(value: repaid)
                             .progressViewStyle(.linear)
                             .tint(Theme.loan.opacity(0.7))
                             .controlSize(.mini)
                             .frame(maxWidth: 44)
                             .sensitive(.amounts)
-                            .help(redaction.masking("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt", .amounts))
-                        Text("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+                            .help(redaction.masking(repaidText(repaid), .amounts))
+                        Text(repaidText(repaid))
                             .sensitive(.amounts)
                             .appFont(.caption2).foregroundStyle(.secondary).lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
-                    } else if let date = account.archivedDate {
-                        Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
-                            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            .help("Archiviert – wird nicht mehr abgerufen")
-                    } else {
-                        Text(searchAwareSubtitle)
-                            .sensitive(searchAwareSubtitle == account.bankName ? [] : .personal) // owner / IBAN hits
-                            .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                    case .subtitle(let text):
+                        subtitle(text)
                     }
                     Spacer(minLength: 4)
                     // archived accounts show no balance (#667)
                     if !account.isArchived {
-                        Text(Money.format(account.balanceCents, currency: account.currency))
-                            .sensitive(.amounts)
-                            .appFont(.subheadline, monospacedDigit: true)
-                            .fixedSize() // the subtitle truncates, never the balance (#343)
-                            .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
+                        balance(.subheadline)
                     }
                 }
             }
         }
-        .padding(.vertical, 1)
-        .opacity(account.isArchived ? 0.55 : 1)
-        // one element per account: unread count, name, bank / loan progress, balance
-        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: parts both layouts share
+
+    private func repaidText(_ repaid: Double) -> String {
+        String(localized: "\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+    }
+
+    @ViewBuilder private var revokedIcon: some View {
+        if account.accessRevoked {
+            Image(systemName: "lock.slash")
+                .appFont(.caption2)
+                .foregroundStyle(Theme.warning)
+                .help("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.")
+                .accessibilityLabel(Text("Zugriff entzogen"))
+        }
+    }
+
+    /// Outside the overall money totals (#337): like a group's eye.slash —
+    /// the effective flag (own switch, group, archiving).
+    @ViewBuilder private var exclusionIndicator: some View {
+        if account.showsTotalExclusionIndicator {
+            AccountTotalExclusionIndicator(
+                help: model.totalExclusionIconHelp(account, redaction: redaction))
+        }
+    }
+
+    private func archivedLabel(_ date: Date) -> some View {
+        Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
+            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            .help("Archiviert – wird nicht mehr abgerufen")
+    }
+
+    /// Bank, note or search hit below the name. Only the plain bank name stays
+    /// visible in reports: owner / IBAN hits and the user's own bank label are personal.
+    private func subtitle(_ text: String) -> some View {
+        Text(text)
+            .sensitive(text == account.bankName && account.bankLabel == nil ? [] : .personal)
+            .appFont(.caption2, design: model.isSidebarAccountSearching && text == formatIBAN(account.iban) ? .monospaced : .default)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    private func balance(_ style: Font.TextStyle) -> some View {
+        Text(Money.format(account.balanceCents, currency: account.currency))
+            .sensitive(.amounts)
+            .appFont(style, monospacedDigit: true)
+            .fixedSize() // the name / subtitle truncates, never the balance (#343)
+            .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
+    }
+
+    /// The initials chip, unless the subtitle the row shows already names the owner
+    /// (accounts of the same name told apart by owner, or an owner hit while searching).
+    /// Archived accounts and loans show a date or the repayment bar there, so they keep it.
+    private func showsInitials(_ line2: SecondLine) -> Bool {
+        guard !SidebarDensity.initials(of: account.owner).isEmpty else { return false }
+        guard case .subtitle(let text) = line2 else { return true }
+        if text == account.owner { return false } // owner hit while searching
+        // same-named accounts told apart by owner: the distinction is the owner itself
+        return !(model.accountDistinction(account) == account.owner && text.contains(account.owner))
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
-    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
+    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
         let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
         // the owner tells accounts of the same name apart
         let owner = model.accountDistinction(account)
-        return [account.bankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        return [account.sidebarBankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private var searchAwareSubtitle: String {
@@ -839,20 +985,18 @@ struct AccountRow: View {
         }
         return baseSubtitle
     }
-
-    private var ibanSubtitle: Bool {
-        model.isSidebarAccountSearching && searchAwareSubtitle == formatIBAN(account.iban)
-    }
 }
 
 struct CategoryRow: View {
+    /// Gap between a category's symbol and its name.
+    static let symbolGap: CGFloat = 8
     @Environment(AppModel.self) private var model
     let category: GiroCrabCore.Category
 
     var body: some View {
         // "Zusätzlich" (#1049): what the category holds in currencies other than EUR, under its total.
         let other = (model.categoryOtherTotals[category.id] ?? []).map { Money.format($0.cents, currency: $0.currency) }.joined(separator: " · ")
-        HStack(spacing: 8) {
+        HStack(spacing: Self.symbolGap) {
             Image(systemName: category.sfSymbol)
                 .foregroundStyle(Color.readable(hex: category.colorHex).opacity(0.85))
                 .frame(width: 20)

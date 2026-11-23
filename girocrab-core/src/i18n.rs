@@ -174,11 +174,16 @@ pub fn display_path_in(lang: Lang, path: &str) -> String {
 /// the vault.
 fn default_name_en(de: &str) -> Option<&'static str> {
     Some(match de {
-        // Account groups (sidebar sections).
-        "Giro & Tagesgeld" => "Checking & savings",
+        // Account groups (sidebar sections). "Bargeld" is the same word
+        // as a starter category below and shares its translation.
+        "Girokonten" => "Checking accounts",
+        "Tagesgeld / Sparen" => "Savings",
+        "Festgeld" => "Time deposits",
+        "Zahlungsdienste" => "Payment services",
         "Kreditkarten" => "Credit cards",
         "Depots & ETFs" => "Portfolios & ETFs",
         "Darlehen & Kredite" => "Loans",
+        "Bausparen" => "Building savings",
         "Importierte Konten" => "Imported accounts",
         // Starter categories.
         "Einnahmen" => "Income",
@@ -294,6 +299,18 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Dokumentenabruf ist für diesen Zugang ausgeschaltet." => {
             "Document retrieval is switched off for this connection."
         }
+        "Der Name des Händlers fehlt." => "The merchant name is missing.",
+        "Der Name des Händlers ist länger als 80 Zeichen." => {
+            "The merchant name is longer than 80 characters."
+        }
+        "Diesen Händler gibt es in der eingebauten Liste nicht." => {
+            "This merchant is not in the built-in list."
+        }
+        "Diesen eigenen Händler gibt es nicht mehr." => "This custom merchant no longer exists.",
+        "Ein Suchwort ist länger als 60 Zeichen." => "A search word is longer than 60 characters.",
+        "Mindestens ein Suchwort mit zwei oder mehr Buchstaben oder Ziffern angeben." => {
+            "Enter at least one search word with two or more letters or digits."
+        }
         "Der Name des Tags fehlt." => "The tag name is missing.",
         "Der Name des Tags ist länger als 64 Zeichen." => {
             "The tag name is longer than 64 characters."
@@ -380,11 +397,14 @@ fn english(de: &str) -> Option<&'static str> {
         "EquatePlus: Unvollständige oder nicht unterstützte Bestandsdaten. Es wurden keine Daten übernommen." => {
             "EquatePlus: Incomplete or unsupported inventory data. No data was imported."
         }
+        "EquatePlus: Neue Programmkennungen konnten den bisherigen Depots nicht eindeutig zugeordnet werden. Prüfen und archivieren Sie die alten Depots vor einem erneuten Abruf." => {
+            "EquatePlus: The new program IDs could not be reliably matched to your existing depots. Review and archive the old depots before trying again."
+        }
         "Bitte bei EquatePlus im Browserfenster anmelden und die Bestände abrufen." => {
             "Please sign in to EquatePlus in the browser window and fetch your holdings."
         }
-        "Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & PostBox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet." => {
-            "Employee share plans with available and restricted holdings. Sign in in the browser window with EquateAccess or SMS. Unofficial portal interface; subject to change and restrictions under the terms of use. PDF documents can optionally be loaded; they are kept under “Belege & PostBox” and are not assigned to bookings or activities automatically."
+        "Mitarbeiteraktien und Programme mit verfügbaren und gesperrten Beständen. Anmeldung im Browserfenster mit EquateAccess oder SMS. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. PDF-Dokumente lassen sich optional laden; sie liegen unter „Belege & Postbox“ und werden nicht automatisch Umsätzen oder Aktivitäten zugeordnet." => {
+            "Employee share plans with available and restricted holdings. Sign in in the browser window with EquateAccess or SMS. Unofficial portal interface; subject to change and restrictions under the terms of use. PDF documents can optionally be loaded; they are kept under “Documents & Postbox” and are not assigned to bookings or activities automatically."
         }
         "quirion: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
             "quirion: Incomplete or invalid portal response. No data was imported."
@@ -400,6 +420,22 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Bitte bei Schwäbisch Hall im Browserfenster anmelden und die Daten abrufen." => {
             "Please sign in to Schwäbisch Hall in the browser window and fetch your data."
+        }
+        "Sharinbox: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "Sharinbox: Incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte bei Sharinbox im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to Sharinbox in the browser window and fetch your data."
+        }
+        "Bitte bei Sharinbox im Browserfenster abrufen." => {
+            "Please fetch your data in the Sharinbox browser window."
+        }
+        "Sharinbox: Dokument {0} abgelehnt, Feld {1} ungültig." => {
+            "Sharinbox: document {0} rejected, field {1} invalid."
+        }
+        "Mitarbeiteraktien" => "Employee shares",
+        "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
+            "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }
         "Schwäbisch Hall Dokument" => "Schwäbisch Hall document",
         "Bausparkasse Schwäbisch Hall: Bausparverträge mit Saldo und Umsätzen, optional die PDF-Dokumente aus dem Postfach. Anmeldung im Browserfenster von „Mein Konto“. Interne Portal-API; Änderungen sind möglich." => {
@@ -738,8 +774,11 @@ fn english(de: &str) -> Option<&'static str> {
         "PIN ist leer" => "PIN is empty",
         "TAN-Verfahren {0}" => "TAN method {0}",
         "{0}: Freigabe ohne Auftragsreferenz" => "{0}: approval without task reference",
-        "Die Bank verlangt für {0} eine TAN-Eingabe. Bitte ein Push-/App-Verfahren (z. B. SecureGo plus) verwenden oder „Tage beim ersten Abruf“ auf höchstens 90 setzen." => {
-            "The bank requires a TAN for {0}. Use a push/app method (e.g. SecureGo plus) or set “Days on first sync” to 90 or less."
+        "Die Bank verlangt für {0} eine TAN-Eingabe, die während des Abrufs nicht möglich ist. Bitte ein App-Verfahren der Bank (Freigabe in der Banking-App) verwenden." => {
+            "The bank requires a TAN for {0}, which can’t be entered during a sync. Please use one of the bank’s app methods (approval in the banking app)."
+        }
+        "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen." => {
+            "Banks usually hand out the last 90 days of bookings without a TAN. For a new account, the period of the first fetch can be set to 90 days in Settings."
         }
         "Kontenliste (HKSPA) – {0}" => "Account list (HKSPA) – {0}",
         "Kontoauszug {0}" => "Statement {0}",
@@ -752,7 +791,7 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Umsätze (HKCAZ/camt.052) – {1}" => "{0}: transactions (HKCAZ/camt.052) – {1}",
         "{0}: Umsätze (HKKAZ/MT940) – {1}" => "{0}: transactions (HKKAZ/MT940) – {1}",
         "{0}: Kartenumsätze ({1}) – {2}" => "{0}: card transactions ({1}) – {2}",
-        "PostBox" => "PostBox",
+        "Postbox" => "Postbox",
         "Online-Archiv" => "Online archive",
         "QR-Code mit dem TAN-Generator scannen" => "Scan the QR code with the TAN generator",
         "Scannen Sie den QR-Code mit dem SecurePlus Generator und geben Sie die angezeigte TAN ein. GiroCrab lädt danach die Dokumente aus dem Online-Archiv." => {
@@ -787,11 +826,11 @@ fn english(de: &str) -> Option<&'static str> {
         "Freigabe erhalten. {0} von {1} Dokumenten geladen, danach folgt der Abruf der Konten." => {
             "Approved. {0} of {1} documents loaded, then the accounts are fetched."
         }
-        "Die PostBox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen." => {
-            "The PostBox can only be fetched additionally for comdirect logins via FinTS."
+        "Die Postbox lässt sich nur für comdirect-Zugänge per FinTS zusätzlich abrufen." => {
+            "The Postbox can only be fetched additionally for comdirect logins via FinTS."
         }
-        "Der PostBox-Abruf ist für diesen Zugang nicht eingeschaltet." => {
-            "Fetching the PostBox is not switched on for this login."
+        "Der Postbox-Abruf ist für diesen Zugang nicht eingeschaltet." => {
+            "Fetching the Postbox is not switched on for this login."
         }
         "{0}: Die Freigabe in der Banking-App ist nicht rechtzeitig erfolgt. Bitte erneut abrufen und in der App bestätigen." => {
             "{0}: the approval in the banking app did not arrive in time. Please fetch again and confirm in the app."
@@ -939,8 +978,8 @@ fn english(de: &str) -> Option<&'static str> {
             "OAuth device login + GraphQL API of the official CLI"
         }
         "(nicht nötig – Anmeldung im Browser)" => "(not needed – sign in in the browser)",
-        "Vorher auf scalable.capital unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff." => {
-            "First enable CLI access on scalable.capital under Profile → Security → “Agentic Investing”. You sign in in the browser; the login has to be renewed every 7 days. Read-only."
+        "Vorher im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den CLI-Zugriff einschalten. Die Anmeldung läuft im Browser und muss alle 7 Tage erneuert werden. Nur Lesezugriff." => {
+            "First enable CLI access in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”. You sign in in the browser; the login has to be renewed every 7 days. Read-only."
         }
         "Keine Scalable-Sitzung – bitte anmelden." => "No Scalable session – please sign in.",
         "Scalable-Sitzung abgelaufen ({0}) – bitte erneut anmelden." => {
@@ -953,14 +992,16 @@ fn english(de: &str) -> Option<&'static str> {
             "Scalable Capital: could not start the login ({0}: {1})."
         }
         "Bei Scalable Capital im Browser anmelden" => "Sign in to Scalable Capital in the browser",
-        "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe." => {
-            "Open {0} and confirm the code {1} there. GiroCrab then waits for the approval automatically."
+        "Öffnen Sie {0} und bestätigen Sie dort den Code {1}. Danach wartet GiroCrab automatisch auf die Freigabe. Erscheint dort „Aktivierung abgelehnt – Wir können Ihr Gerät nicht aktivieren“, schalten Sie zuerst im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ den Zugriff ein und starten Sie die Anmeldung neu." => {
+            "Open {0} and confirm the code {1} there. GiroCrab then waits for the approval automatically. If it shows “Activation denied – We are not able to activate your device”, first switch on access in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”, and start the login again."
         }
         "Browser-Anmeldung" => "Browser login",
         "Die Browser-Anmeldung ist abgelaufen – bitte erneut starten." => {
             "The browser login expired – please start again."
         }
-        "Die Anmeldung wurde im Browser abgelehnt." => "The login was declined in the browser.",
+        "Die Anmeldung wurde im Browser abgelehnt. Prüfen Sie, ob im Browser auf scalable.capital (nicht in der Scalable-App) unter Profil → Sicherheit → „Agentic Investing“ der Zugriff eingeschaltet ist, und starten Sie die Anmeldung neu." => {
+            "The login was declined in the browser. Check that access is switched on in the browser on scalable.capital (not in the Scalable app) under Profile → Security → “Agentic Investing”, and start the login again."
+        }
         "Anmeldung in der Scalable-App freigeben" => "Approve the login in the Scalable app",
         "Scalable Capital hat eine Freigabe-Anfrage an Ihr verknüpftes Gerät gesendet. Bitte dort bestätigen." => {
             "Scalable Capital sent an approval request to your linked device. Please confirm it there."
@@ -1184,6 +1225,103 @@ fn english(de: &str) -> Option<&'static str> {
             "Kontist: The list of bookings was not delivered completely. Please start the sync again."
         }
         // ------------------------------------------------------------ connectors/uberspace.rs
+        // ------------------------------------------------------------ connectors/bitcoin_core.rs
+        "Bitcoin Core: Die RPC-Adresse ist ungültig." => {
+            "Bitcoin Core: The RPC address is invalid."
+        }
+        "Bitcoin Core: Zugang abgelehnt. Die .cookie-Datei ist veraltet oder Benutzer:Passwort stimmt nicht." => {
+            "Bitcoin Core: Access denied. The .cookie file is outdated or user:password is wrong."
+        }
+        "Bitcoin Core: unerwartete Antwort des Knotens." => {
+            "Bitcoin Core: unexpected answer from the node."
+        }
+        "Bitcoin Core ist nicht erreichbar. Läuft der Knoten, und ist der RPC-Server eingeschaltet (server=1)?" => {
+            "Bitcoin Core cannot be reached. Is the node running, with the RPC server switched on (server=1)?"
+        }
+        "Bitcoin Core meldet: {0}" => "Bitcoin Core reports: {0}",
+        "Bitcoin Core: Die RPC-Adresse muss auf diesem Rechner liegen (127.0.0.1 oder localhost)." => {
+            "Bitcoin Core: The RPC address must be on this computer (127.0.0.1 or localhost)."
+        }
+        "Bitcoin Core: Die Wallet „{0}“ ist im Knoten nicht geladen." => {
+            "Bitcoin Core: The wallet “{0}” is not loaded in the node."
+        }
+        "Bitcoin Core: Im Knoten ist keine Wallet geladen." => {
+            "Bitcoin Core: The node has no wallet loaded."
+        }
+        "Bitcoin Core: Der Knoten hat mehrere Wallets geladen. Bitte den Wallet-Namen eintragen." => {
+            "Bitcoin Core: The node has several wallets loaded. Please enter the wallet name."
+        }
+        "Bitcoin-Kurs nicht abrufbar. Der Bestand wurde nicht aktualisiert." => {
+            "Bitcoin price not available. The holdings were not updated."
+        }
+        "Bitcoin Core: Keine .cookie-Datei in {0}. Läuft der Knoten mit eingeschaltetem RPC-Server (server=1)?" => {
+            "Bitcoin Core: No .cookie file in {0}. Is the node running with the RPC server switched on (server=1)?"
+        }
+        "Bitcoin Core: Die .cookie-Datei ist unlesbar." => {
+            "Bitcoin Core: The .cookie file cannot be read."
+        }
+        "Eigener Knoten (lokale JSON-RPC-Schnittstelle)" => "Own node (local JSON-RPC interface)",
+        "Wallet-Name (leer = einzige geladene Wallet)" => {
+            "Wallet name (empty = the only loaded wallet)"
+        }
+        "(nicht nötig – nutzt die .cookie-Datei des Knotens)" => {
+            "(not needed – uses the node's .cookie file)"
+        }
+        "Bitcoin Core: der Bestand einer Wallet im eigenen Knoten als Depot mit der Position Bitcoin, bewertet zum aktuellen Euro-Kurs. Der Knoten muss beim Abruf laufen, mit eingeschaltetem RPC-Server (server=1); die Anmeldung erfolgt über seine .cookie-Datei. Über Adressen und Bestand verlässt nichts den Rechner, nur der Kurs wird öffentlich abgefragt." => {
+            "Bitcoin Core: the balance of a wallet in your own node as a depot with the position Bitcoin, valued at the current euro price. The node must be running during the sync, with the RPC server switched on (server=1); it logs in with the node's .cookie file. Nothing about addresses or holdings leaves the computer; only the price is queried publicly."
+        }
+        "Bitcoin-Core-Datenverzeichnis" => "Bitcoin Core data directory",
+        "Ordner des eigenen Knotens mit der .cookie-Datei; leer = Standardordner (Mac: ~/Library/Application Support/Bitcoin)." => {
+            "Folder of your own node with the .cookie file; empty = default folder (Mac: ~/Library/Application Support/Bitcoin)."
+        }
+        "Bitcoin-Core-RPC-Adresse" => "Bitcoin Core RPC address",
+        "Adresse des RPC-Servers auf diesem Rechner; leer = http://127.0.0.1:8332." => {
+            "Address of the RPC server on this computer; empty = http://127.0.0.1:8332."
+        }
+        // ------------------------------------------------------------ connectors/hanseatic.rs
+        "Online-Banking (Direkt-Login, Freigabe in der App)" => {
+            "Online banking (direct login, approval in the app)"
+        }
+        "Hanseatic Bank: Kreditkarten mit vorgemerkten Umsätzen sowie SparBriefe, Tages- und Festgeld mit Saldo und Umsätzen. Ältere Umsätze, für die die Bank eine zusätzliche Freigabe verlangt, werden nicht abgerufen. Die erste Anmeldung wird in der App der Hanseatic Bank (oder per smsTAN) bestätigt; danach merkt sich GiroCrab das Gerät. Kontoauszüge und weitere Dokumente aus der Postbox lassen sich abrufen; ungelesene Dokumente gelten danach bei der Bank als gelesen. Inoffiziell: nutzt die Schnittstelle des Online-Bankings, Änderungen sind möglich." => {
+            "Hanseatic Bank: credit cards with pending transactions as well as SparBrief, instant-access and fixed-term savings with balance and transactions. Older transactions for which the bank requires an additional approval are not fetched. The first login is approved in the Hanseatic Bank app (or via smsTAN); GiroCrab then remembers the device. Statements and other Postbox documents can be fetched; unread documents then count as read at the bank. Unofficial: uses the interface of the online banking, changes are possible."
+        }
+        "Hanseatic Bank: Antwort nicht erkannt (Online-Banking geändert?)." => {
+            "Hanseatic Bank: response not recognised (online banking changed?)."
+        }
+        "Hanseatic Bank: Unvollständige oder ungültige Antwort. Es wurden keine Daten übernommen." => {
+            "Hanseatic Bank: Incomplete or invalid response. No data was imported."
+        }
+        "Hanseatic Bank: Anmeldung fehlgeschlagen. Bitte Kundennummer und Passwort prüfen." => {
+            "Hanseatic Bank: Login failed. Please check customer number and password."
+        }
+        "Hanseatic Bank: Der Zugang ist gesperrt. Bitte an die Bank wenden." => {
+            "Hanseatic Bank: Access is locked. Please contact the bank."
+        }
+        "Hanseatic Bank: Die Sitzung wurde beendet. Bitte den Abruf erneut starten." => {
+            "Hanseatic Bank: The session has ended. Please start the sync again."
+        }
+        "Hanseatic Bank: Die Anmeldung wurde in der App nicht bestätigt." => {
+            "Hanseatic Bank: The login was not approved in the app."
+        }
+        "Hanseatic Bank: Die Freigabe in der App ist abgelaufen. Bitte den Abruf erneut starten." => {
+            "Hanseatic Bank: The approval in the app has expired. Please start the sync again."
+        }
+        "Hanseatic Bank: Die smsTAN ist ungültig." => "Hanseatic Bank: The smsTAN is invalid.",
+        "Hanseatic Bank: Die Anfrage wurde abgelehnt." => {
+            "Hanseatic Bank: The request was rejected."
+        }
+        "Hanseatic Bank: Unerwartete Weiterleitung zu einer fremden Adresse – abgebrochen." => {
+            "Hanseatic Bank: Unexpected redirect to another address – aborted."
+        }
+        "Hanseatic Bank: Kundennummer und Passwort erforderlich." => {
+            "Hanseatic Bank: Customer number and password required."
+        }
+        "Bitte die Anmeldung in der App der Hanseatic Bank bestätigen." => {
+            "Please approve the login in the Hanseatic Bank app."
+        }
+        "Bitte die smsTAN eingeben, die die Hanseatic Bank an die hinterlegte Mobilnummer gesendet hat." => {
+            "Please enter the smsTAN the Hanseatic Bank sent to your registered mobile number."
+        }
         "Web-Dashboard (Direkt-Login)" => "Web dashboard (direct login)",
         "E-Mail-Adresse" => "Email address",
         "Uberspace-Hosting: Guthaben und Buchungen aller Asteroids, die zur E-Mail-Adresse des Dashboards gehören. Inoffiziell: liest die Seiten des Dashboards, Änderungen sind möglich." => {
@@ -1630,6 +1768,7 @@ fn english(de: &str) -> Option<&'static str> {
             "Only needed if kontist.dev shows a secret for the client; otherwise leave empty."
         }
         "Kontist" => "Kontist",
+        "Bitcoin Core" => "Bitcoin Core",
         "comdirect Client-Secret" => "comdirect client secret",
         "Wird beim Freischalten des API-Zugangs einmalig angezeigt." => {
             "Shown once when API access is activated."
@@ -1930,12 +2069,39 @@ mod tests {
         assert_eq!(tr_in(Lang::En, "Gibt es nicht"), "Gibt es nicht");
     }
 
+    /// Every kind's sidebar section (#1003) has an English name and a place of its own, in the
+    /// order the "Kontoart" view lists them; other views take both from here (#1631).
+    #[test]
+    fn every_account_kind_section_has_an_english_name_and_its_own_place() {
+        use crate::connectors::account_kind_section_in as section;
+        use crate::models::AccountKind::*;
+        let kinds = [
+            Checking,
+            Savings,
+            TimeDeposit,
+            Cash,
+            PaymentService,
+            CreditCard,
+            Brokerage,
+            Loan,
+            BuildingSavings,
+        ];
+        let orders: Vec<i32> = kinds
+            .iter()
+            .map(|&k| section(Lang::En, k).sort_order)
+            .collect();
+        assert!(orders.windows(2).all(|w| w[0] < w[1]), "{orders:?}");
+        for kind in kinds {
+            let (de, en) = (section(Lang::De, kind).name, section(Lang::En, kind).name);
+            assert_ne!(de, en, "{kind:?} has no English section name");
+        }
+        assert_eq!(section(Lang::De, Checking).name, "Girokonten");
+        assert_eq!(section(Lang::En, PaymentService).name, "Payment services");
+    }
+
     #[test]
     fn default_names_translate() {
-        assert_eq!(
-            display_name_in(Lang::En, "Giro & Tagesgeld"),
-            "Checking & savings"
-        );
+        assert_eq!(display_name_in(Lang::En, "Girokonten"), "Checking accounts");
         assert_eq!(display_name_in(Lang::En, "Lebensmittel"), "Food");
         assert_eq!(
             display_name_in(Lang::En, "Meine Kategorie"),

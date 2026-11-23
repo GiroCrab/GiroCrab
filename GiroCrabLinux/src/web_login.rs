@@ -56,6 +56,9 @@ pub fn handles(method: &str) -> bool {
             | "import_quirion_snapshot"
             | "pending_quirion_documents"
             | "import_quirion_document"
+            | "import_sharinbox_snapshot"
+            | "pending_sharinbox_documents"
+            | "import_sharinbox_document"
             | "import_schwaebisch_hall_snapshot"
             | "pending_schwaebisch_hall_documents"
             | "import_schwaebisch_hall_document"
@@ -78,6 +81,20 @@ fn ok<T: serde::Serialize>(v: T) -> R {
 
 fn err(e: girocrab_core::CoreError) -> String {
     e.to_string()
+}
+
+fn equateplus_import_error(error: girocrab_core::CoreError) -> String {
+    match error {
+        girocrab_core::CoreError::Bank { code, message }
+            if code == "EQUATEPLUS_PROGRAM_MAPPING" =>
+        {
+            format!(
+                "\u{1}{}",
+                serde_json::json!({ "kind": "Bank", "code": code, "message": message })
+            )
+        }
+        other => err(other),
+    }
 }
 
 fn bytes(a: &Value) -> Result<Vec<u8>, String> {
@@ -215,6 +232,15 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
         "import_quirion_document" => ok(vault()?
             .import_quirion_document(id()?, arg(a, "document_json")?, bytes(a)?)
             .map_err(err)?),
+        "import_sharinbox_snapshot" => ok(vault()?
+            .import_sharinbox_snapshot(id()?, arg(a, "snapshot_json")?)
+            .map_err(err)?),
+        "pending_sharinbox_documents" => ok(vault()?
+            .pending_sharinbox_documents(id()?, arg(a, "documents_json")?)
+            .map_err(err)?),
+        "import_sharinbox_document" => ok(vault()?
+            .import_sharinbox_document(id()?, arg(a, "document_json")?, bytes(a)?)
+            .map_err(err)?),
         "import_schwaebisch_hall_snapshot" => ok(vault()?
             .import_schwaebisch_hall_snapshot(id()?, arg(a, "snapshot_json")?)
             .map_err(err)?),
@@ -226,7 +252,7 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
             .map_err(err)?),
         "import_equateplus_snapshot" => ok(vault()?
             .import_equateplus_snapshot(id()?, arg(a, "snapshot_json")?)
-            .map_err(err)?),
+            .map_err(equateplus_import_error)?),
         "pending_equateplus_documents" => ok(vault()?
             .pending_equateplus_documents(id()?, arg(a, "documents_json")?)
             .map_err(err)?),
@@ -487,8 +513,8 @@ mod tests {
             call(m, &a, equateplus_vault).unwrap_or_else(|e| panic!("{m}: {e}"))
         };
         assert!(handles("import_equateplus_snapshot"));
-        let snapshot = json!({"version":1,"date":"2026-11-15","user":{"participant":{"userId":"test-user"},"reportingCurrency":{"code":"EUR"}},
-          "plans":[{"id":"plan-a","name":"Test Programm","details":{"totals":[{"type":"TOTAL","quantity":{"amount":6.875},"value":{"amount":848.72}}],"entries":[{"entries":[{
+        let mut snapshot = json!({"version":2,"date":"2026-11-15","user":{"participant":{"userId":"test-user"},"reportingCurrency":{"code":"EUR"}},
+          "plans":[{"id":"plan-a","moduleId":"module-a","name":"Test Programm","details":{"totals":[{"type":"TOTAL","quantity":{"amount":6.875},"value":{"amount":848.72}}],"entries":[{"entries":[{
             "marketPrice":{"amount":123.45,"unit":{"code":"EUR"}},"canTrade":true,
             "entries":[{"VEHICLE":"Test Aktien","QUANTITY":{"amount":2.5},"LOCKED_QTY":{"amount":3.25},"SELL_PURCHASE_PRICE":{"amount":100}},
                        {"VEHICLE":"Test RSU","LOCKED_PERF_QTY":{"amount":1.125}}]}]}]}}]});
@@ -497,6 +523,24 @@ mod tests {
             json!({ "connection_id": id, "snapshot_json": snapshot.to_string() }),
         );
         assert_eq!(s["accounts_updated"], json!(1));
+        let depot = equateplus_vault().unwrap().list_accounts().unwrap()[0].id;
+        snapshot["plans"][0]["id"] = json!("new-session-plan");
+        call_ok(
+            "import_equateplus_snapshot",
+            json!({ "connection_id": id, "snapshot_json": snapshot.to_string() }),
+        );
+        let accounts = equateplus_vault().unwrap().list_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id, depot);
+
+        let encoded = equateplus_import_error(girocrab_core::CoreError::Bank {
+            code: "EQUATEPLUS_PROGRAM_MAPPING".into(),
+            message: "Zuordnung nötig.".into(),
+        });
+        assert_eq!(
+            serde_json::from_str::<Value>(encoded.strip_prefix('\u{1}').unwrap()).unwrap(),
+            json!({"kind": "Bank", "code": "EQUATEPLUS_PROGRAM_MAPPING", "message": "Zuordnung nötig."}),
+        );
         let library =
             json!([{"id": "d1", "date": "2011-05-26T00:00:00", "description": "Test Bestätigung",
           "documentType": "Dividendenbestätigung", "plan": "Test Programm",

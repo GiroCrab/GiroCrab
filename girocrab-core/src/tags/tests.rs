@@ -192,6 +192,66 @@ fn bookings_carry_and_filter_by_tags() {
     assert!(v.set_booking_tags(ids[0], vec![999]).is_err());
 }
 
+/// #1469: the category sums follow the list's tag filter (every tag, or no tag at all).
+#[test]
+fn category_sums_follow_the_tag_filter() {
+    use crate::models::BookingDirection;
+    let dir = TempDir::new("tags-category-sums");
+    let v = open(&dir, "a.db");
+    let ids = seed(&v, 3);
+    let cat: i64 = {
+        let db = v.db().unwrap();
+        db.execute("INSERT INTO categories(name) VALUES ('Reisen')", [])
+            .unwrap();
+        let cat = db.last_insert_rowid();
+        db.execute("UPDATE transactions SET category_id = ?1", [cat])
+            .unwrap();
+        cat
+    };
+    let trip = v.create_tag("Urlaub".into(), String::new()).unwrap().id;
+    let tax = v.create_tag("Steuer".into(), String::new()).unwrap().id;
+    v.set_booking_tags(ids[0], vec![trip, tax]).unwrap();
+    v.set_booking_tags(ids[1], vec![trip]).unwrap();
+    let sum = |tag_ids: Vec<i64>, untagged_only: bool| {
+        let c = v
+            .list_categories_filtered_amount(
+                None,
+                None,
+                vec![],
+                None,
+                BookingDirection::All,
+                None,
+                None,
+                tag_ids,
+                untagged_only,
+            )
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == cat)
+            .unwrap();
+        (c.total_cents, c.transaction_count)
+    };
+    assert_eq!(sum(vec![], false), (-600, 3), "no tag filter = everything");
+    assert_eq!(sum(vec![trip], false), (-300, 2));
+    assert_eq!(sum(vec![trip, tax], false), (-100, 1), "several tags: AND");
+    assert_eq!(sum(vec![tax, tax], false), (-100, 1));
+    assert_eq!(sum(vec![], true), (-300, 1), "untagged only");
+    assert_eq!(
+        sum(vec![trip], true),
+        (-300, 1),
+        "untagged wins, like the list"
+    );
+    // the same bookings the list shows for the same filter
+    let list = |tag_ids: Vec<i64>| {
+        v.count_transactions(BookingFilter {
+            tag_ids,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    assert_eq!(list(vec![trip]) as u32, sum(vec![trip], false).1);
+}
+
 #[test]
 fn tags_survive_closing_and_reopening_the_vault() {
     let dir = TempDir::new("tags-reopen");
