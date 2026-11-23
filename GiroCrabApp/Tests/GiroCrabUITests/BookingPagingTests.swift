@@ -137,6 +137,32 @@ final class BookingPagingTests: XCTestCase {
         XCTAssertEqual(model.selectedBookingIDs, [row.id], "the click is not overwritten")
     }
 
+    func testACommandClickSupersedesSelectAll() async throws {
+        loadFirstPage(of: 20)
+        let first = try XCTUnwrap(model.bookings.first)
+        let second = try XCTUnwrap(model.bookings.dropFirst().first)
+        model.selectBooking(first.id)
+        model.selectBooking(second.id, toggle: true)
+        XCTAssertEqual(model.selectedBookingIDs, [first.id, second.id])
+        model.selectAllBookings()
+        XCTAssertTrue(model.isSelectingAllBookings)
+        // ⌘-click removes a row other than the one in the inspector: only the set changes
+        let removed = model.selectedBookingID == first.id ? second.id : first.id
+        model.selectBooking(removed, toggle: true)
+        XCTAssertFalse(model.isSelectingAllBookings)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.selectedBookingIDs.count, 1, "the ⌘-click is not overwritten")
+    }
+
+    func testSelectAllWaitsForAListStillLoading() throws {
+        loadFirstPage(of: 20)
+        model.searchText = "x" // the search reloads after a short pause
+        XCTAssertTrue(model.isReloadingList)
+        model.selectAllBookings()
+        XCTAssertFalse(model.isSelectingAllBookings)
+        XCTAssertFalse(model.isMultiSelection, "the previous list's rows are not selected")
+    }
+
     /// A checked row kept in place in „Neu“ does not match the filter: the next page starts
     /// at the right booking and ⌘A selects exactly the matching ones.
     func testSelectAllSkipsTheLingeringRowAndNoMatchingBooking() async throws {

@@ -510,7 +510,10 @@ public final class AppModel {
 
     /// All selected bookings (⌘-click adds/removes, ⇧-click selects a range,
     /// ⌘A all visible). `selectedBookingID` is the one shown in the inspector.
-    var selectedBookingIDs: Set<Booking.ID> = []
+    var selectedBookingIDs: Set<Booking.ID> = [] {
+        // a newer selection (also a ⌘-click) supersedes a pending ⌘A (#1696)
+        didSet { if isSelectingAllBookings, selectedBookingIDs != oldValue { isSelectingAllBookings = false } }
+    }
 
     /// A booking that left the filtered list because the user just edited it
     /// (e.g. "kein Gehalt" in the salary period). It stays selected and visible

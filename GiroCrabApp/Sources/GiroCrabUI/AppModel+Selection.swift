@@ -92,7 +92,7 @@ extension AppModel {
     /// so count, sum and every action on the selection cover all of them.
     func selectAllBookings() {
         // the previous list may still show while the new one loads: never select its rows
-        guard selectionLoadTask == nil else { return }
+        guard !isReloadingList else { return }
         if hasMoreBookings {
             guard !isSelectingAllBookings else { return }
             isSelectingAllBookings = true
@@ -114,6 +114,13 @@ extension AppModel {
         selectLoadedBookings()
     }
 
+    /// A new list is on its way (selection, scope or search): the rows on screen belong to the
+    /// previous filter, so ⌘A must neither select them nor append the new filter's tail to them.
+    var isReloadingList: Bool {
+        selectionLoadTask != nil || scopeLoadTask.map { !$0.isCancelled } == true
+            || searchTask.map { !$0.isCancelled } == true
+    }
+
     /// Another account, group, category or period: a multiple selection made in the previous
     /// list ends (like a folder change in Finder). Kept, it would cover only the rows of the
     /// new list's first page that happen to be in both – neither „all“ nor what was chosen (#1696).
@@ -127,7 +134,11 @@ extension AppModel {
         // a checked row kept in place no longer matches the filter (#1696)
         let outside = lingeringRowOutsideFilterID
         let ids = visibleBookings.map(\.id).filter { $0 != outside }
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty else {
+            // only the lingering row is left: nothing matches, so nothing is selected
+            if outside != nil { selectedBookingID = nil }
+            return
+        }
         selectedBookingIDs = Set(ids)
         if selectedBookingID.map({ !selectedBookingIDs.contains($0) }) ?? true { selectedBookingID = ids.first }
     }
@@ -385,6 +396,8 @@ extension AppModel {
         searchTask?.cancel()
         let query = searchText
         searchTask = Task { [weak self] in
+            // a newer search cancels this one first: not cancelled = still the current task
+            defer { if !Task.isCancelled { self?.searchTask = nil } }
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled, let self else { return }
             guard self.naturalSearch?.query != query, query != self.literalSearchQuery,

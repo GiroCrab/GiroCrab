@@ -319,6 +319,12 @@ extension AppModel {
             self.loadMoreTask = nil
             self.isLoadingMoreBookings = false
             if case .success(let next) = result, !next.transactions.isEmpty {
+                // the lingering row was put in place without being on the loaded pages: when
+                // it matches after all, its own place in the list takes over (#1696)
+                if let id = self.lingeringRowOutsideFilterID, next.transactions.contains(where: { $0.id == id }) {
+                    self.bookings.removeAll { $0.id == id }
+                    self.lingeringRowOutsideFilter = false
+                }
                 Perf.interval("publishBookings") {
                     self.listBalances.merge(next)
                     self.bookings.append(contentsOf: next.transactions)
@@ -718,6 +724,8 @@ extension AppModel {
         guard let vault else { return }
         let filter = listFilter
         scopeLoadTask = Task { [weak self] in
+            // a newer request cancels this one first: not cancelled = still the current task
+            defer { if !Task.isCancelled { self?.scopeLoadTask = nil } }
             guard !Task.isCancelled else { return }
             let load = Task.detached(priority: .userInitiated) {
                 try Task.checkCancellation()
