@@ -123,6 +123,7 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
         Some(key)
     };
     let mut rows = Vec::new();
+    let mut direct = Vec::new();
     let mut remapped = HashSet::new();
     for mut row in load_rows(conn, "other")? {
         let source = row.key.clone();
@@ -137,6 +138,13 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                 (&source.refund, &mut row.key.refund),
                 (&source.original, &mut row.key.original),
             ] {
+                if old.1.is_empty()
+                    && is_split(conn, "other", old.0)?
+                    && !is_split(conn, "main", target.0)?
+                {
+                    *target = old.clone();
+                    continue;
+                }
                 if old.0 != target.0
                     && let Some(part) = survivor_part(conn, "other", old, target.0, true)?
                 {
@@ -146,6 +154,9 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
             if previous != row.key {
                 remapped.insert(row.key.clone());
                 rows.push(retire_part_key(conn, &mut row, previous)?);
+            } else {
+                direct.push(row);
+                continue;
             }
         }
         rows.push(row);
@@ -153,6 +164,7 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
     if folded {
         let occupied: HashSet<_> = load_rows(conn, "main")?
             .into_iter()
+            .chain(direct.iter().cloned())
             .filter(|r| r.deleted_ms.is_none())
             .map(|r| r.key)
             .collect();
@@ -161,6 +173,7 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
         });
         inactivate_collisions(&mut rows);
     }
+    rows.extend(direct);
     merge_rows(conn, rows)
 }
 
@@ -191,6 +204,12 @@ fn survivor_part(
     survivor: i64,
     keep_exact: bool,
 ) -> CoreResult<Option<String>> {
+    if source.1.is_empty()
+        && !(schema == "main" && source.0 == survivor)
+        && is_split(conn, schema, source.0)?
+    {
+        return Ok(None);
+    }
     let parts = conn
         .prepare_cached(
             "SELECT uuid,amount_cents FROM main.transaction_splits WHERE transaction_id=?1
@@ -205,16 +224,6 @@ fn survivor_part(
         return Ok(Some(source.1.clone()));
     }
     let amount: Option<i64> = if source.1.is_empty() {
-        let split: bool = conn.query_row(
-            &format!(
-                "SELECT EXISTS(SELECT 1 FROM {schema}.transaction_splits WHERE transaction_id=?1)"
-            ),
-            [source.0],
-            |r| r.get(0),
-        )?;
-        if split && !(schema == "main" && source.0 == survivor) {
-            return Ok(None);
-        }
         conn.query_row(
             &format!("SELECT amount_cents FROM {schema}.transactions WHERE id=?1"),
             [source.0],
@@ -232,6 +241,16 @@ fn survivor_part(
     Ok(first
         .filter(|_| matches.next().is_none())
         .map(|(uuid, _)| uuid))
+}
+
+fn is_split(conn: &Connection, schema: &str, id: i64) -> CoreResult<bool> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM {schema}.transaction_splits WHERE transaction_id=?1)"
+        ),
+        [id],
+        |r| r.get(0),
+    )?)
 }
 
 fn retire_part_key(conn: &Connection, row: &mut Row, previous: Key) -> CoreResult<Row> {
@@ -256,6 +275,9 @@ pub(crate) fn move_booking(conn: &Connection, from: i64, to: i64) -> CoreResult<
     for row in load_rows(conn, "main")? {
         for e in [row.key.refund, row.key.original] {
             if e.0 == from {
+                if from != to && e.1.is_empty() && is_split(conn, "main", from)? {
+                    continue;
+                }
                 let part =
                     survivor_part(conn, "main", &e, to, true)?.unwrap_or_else(|| e.1.clone());
                 endpoints.insert(e, Endpoint(to, part));
@@ -281,10 +303,20 @@ pub(crate) fn fold_booking(
         }
     };
     let mut folded = Vec::new();
+    let mut direct = Vec::new();
     for row in load_rows(conn, "main")? {
         let mut target = row.clone();
+        let mut retargeted = false;
         if keep_live || target.deleted_ms.is_some() {
             remap(&mut target.key);
+        }
+        if target.deleted_ms.is_none() && source_had_splits && !is_split(conn, "main", to)? {
+            if row.key.refund.0 == from && row.key.refund.1.is_empty() {
+                target.key.refund = row.key.refund.clone();
+            }
+            if row.key.original.0 == from && row.key.original.1.is_empty() {
+                target.key.original = row.key.original.clone();
+            }
         }
         if let Some(source) = &mut target.moved_from {
             remap(source);
@@ -307,7 +339,10 @@ pub(crate) fn fold_booking(
                 && (target.key.refund.1 != previous.refund.1
                     || target.key.original.1 != previous.original.1)
             {
+                let snapshot = source_key(conn, &row.key)?;
                 folded.push(retire_part_key(conn, &mut target, previous)?);
+                target.moved_from_key = snapshot;
+                retargeted = true;
             }
         }
         if target == row {
@@ -315,9 +350,21 @@ pub(crate) fn fold_booking(
         }
         conn.execute("DELETE FROM refund_links WHERE refund_id=?1 AND refund_part=?2 AND original_id=?3 AND original_part=?4",
             params![row.key.refund.0,row.key.refund.1,row.key.original.0,row.key.original.1])?;
-        folded.push(target);
+        if retargeted {
+            folded.push(target);
+        } else {
+            direct.push(target);
+        }
     }
+    let occupied: HashSet<_> = load_rows(conn, "main")?
+        .into_iter()
+        .chain(direct.iter().cloned())
+        .filter(|r| r.deleted_ms.is_none())
+        .map(|r| r.key)
+        .collect();
+    folded.retain(|r| r.deleted_ms.is_some() || !occupied.contains(&r.key));
     inactivate_collisions(&mut folded);
+    folded.extend(direct);
     merge_rows(conn, folded)
 }
 

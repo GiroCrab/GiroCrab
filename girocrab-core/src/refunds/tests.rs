@@ -1,3 +1,215 @@
+mod round5 {
+    use super::*;
+
+    #[test]
+    fn inactive_whole_booking_does_not_reactivate_on_hand_over() {
+        for split in [false, true] {
+            let f = Fixture::new();
+            let r = f.add("refund", 100);
+            let old = f.add("old", -100);
+            let next = f.add("next", -100);
+            f.link(r, "", old, "");
+            if split {
+                f.split(old, &[-60, -40]);
+            }
+            crate::importers::portal_import::hand_over(&f.v.db().unwrap(), old, next).unwrap();
+            assert_eq!(
+                f.v.refund_links(r)
+                    .unwrap()
+                    .iter()
+                    .map(|l| l.allocated_cents)
+                    .sum::<i64>(),
+                if split { 0 } else { 100 }
+            );
+        }
+    }
+
+    #[test]
+    fn staged_direct_link_with_provenance_survives_a_fold_collision() {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let bank = f.add("bank", -100);
+        let twin = f.add("twin", -100);
+        let u = f.split(bank, &[-60, -40])[0].clone();
+        let v = f.split(twin, &[-60, -40])[0].clone();
+        f.link(r, "", bank, &u);
+        f.link(r, "", twin, &v);
+        let db = f.v.db().unwrap();
+        db.execute("UPDATE refund_links SET moved_from_refund_id=?1,moved_from_refund_part='',moved_from_original_id=?2,moved_from_original_part='old',moved_from_key='old-key' WHERE original_id=?3", params![r,twin,bank]).unwrap();
+        let direct = State::load(&db)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|l| l.key.original.0 == bank)
+            .unwrap();
+        db.execute_batch(
+            "ATTACH DATABASE ':memory:' AS other;
+            CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+            CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+            CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;
+            DELETE FROM main.refund_links;",
+        )
+        .unwrap();
+        store::merge_folded(&db, &HashMap::from([(r, r), (twin, bank), (bank, bank)])).unwrap();
+        let rows = State::load(&db).unwrap().rows;
+        let kept = rows
+            .iter()
+            .find(|l| l.key.original == Endpoint(bank, u.clone()))
+            .unwrap();
+        assert_eq!(kept.changed_ms, direct.changed_ms);
+        assert_eq!(kept.moved_from_key, direct.moved_from_key);
+        drop(db);
+        assert_eq!(
+            f.v.refund_links(r)
+                .unwrap()
+                .iter()
+                .map(|l| l.allocated_cents)
+                .sum::<i64>(),
+            60
+        );
+    }
+
+    #[test]
+    fn imported_bank_and_part_collisions_are_inactive_together() {
+        for reverse in [false, true] {
+            let f = Fixture::new();
+            let r = f.add("refund", 200);
+            let bank = f.add("id:REVIEW123456---bank", -100);
+            let mut parts = vec![-100, -50, 50];
+            if reverse {
+                parts.reverse();
+            }
+            let mut original = 0;
+            for (i, amount) in parts.into_iter().enumerate() {
+                let id = f.add(&format!("mm-part-{i}"), amount);
+                raw(
+                    &f.v,
+                    &format!("UPDATE transactions SET purpose='EREF: REVIEW123456' WHERE id={id}"),
+                );
+                if amount == -100 {
+                    original = id;
+                }
+            }
+            f.link(r, "", bank, "");
+            f.link(r, "", original, "");
+            assert_eq!(
+                crate::importers::portal_import::merge_imported_split_parts(
+                    &f.v.db().unwrap(),
+                    f.account
+                )
+                .unwrap(),
+                1
+            );
+            assert!(
+                f.v.refund_links(r)
+                    .unwrap()
+                    .iter()
+                    .all(|l| l.allocated_cents == 0)
+            );
+        }
+    }
+
+    #[test]
+    fn synced_twin_preserves_link_stamps_and_source_identity() {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let bank = f.add("bank", -100);
+        let twin = f.add("mm-twin", -100);
+        raw(
+            &f.v,
+            &format!("UPDATE transactions SET counterparty='bank' WHERE id={twin}"),
+        );
+        f.split(twin, &[-100, -50, 50]);
+        f.link(r, "", bank, "");
+        let db = f.v.db().unwrap();
+        let before = State::load(&db).unwrap().rows.remove(0);
+        let source_identity = crate::sync_merge::booking_key(&db, bank).unwrap();
+        assert!(
+            crate::importers::moneymoney_import::merge_synced_twin(
+                &db,
+                bank,
+                "2026-01-01",
+                -100,
+                "",
+                "bank",
+                ""
+            )
+            .unwrap()
+        );
+        let after = State::load(&db)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|l| l.deleted_ms.is_none())
+            .unwrap();
+        assert_eq!(after.changed_ms, before.changed_ms);
+        assert_eq!(after.created_ms, before.created_ms);
+        assert!(after.moved_from_key.contains(&source_identity));
+    }
+}
+
+mod self_review {
+    use super::*;
+
+    #[test]
+    fn staged_fold_does_not_reactivate_an_inactive_whole_endpoint() {
+        let f = Fixture::new();
+        let r = f.add("refund", 100);
+        let old = f.add("old", -100);
+        let next = f.add("next", -100);
+        f.link(r, "", old, "");
+        f.split(old, &[-60, -40]);
+        let db = f.v.db().unwrap();
+        db.execute_batch(
+            "ATTACH DATABASE ':memory:' AS other;
+            CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+            CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+            CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;
+            DELETE FROM main.refund_links;",
+        )
+        .unwrap();
+        store::merge_folded(&db, &HashMap::from([(r, r), (old, next)])).unwrap();
+        drop(db);
+        assert!(f.v.refund_links(r).unwrap().iter().all(|l| l.inactive));
+    }
+
+    #[test]
+    fn fold_does_not_reactivate_an_inactive_whole_endpoint() {
+        let f = Fixture::new();
+        let r = f.add("refund", 100);
+        let old = f.add("old", -100);
+        let next = f.add("next", -100);
+        f.link(r, "", old, "");
+        f.split(old, &[-60, -40]);
+        store::fold_booking(&f.v.db().unwrap(), old, next, true, true).unwrap();
+        assert!(f.v.refund_links(r).unwrap().iter().all(|l| l.inactive));
+    }
+
+    #[test]
+    fn local_fold_keeps_a_direct_link_with_older_provenance() {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let bank = f.add("bank", -100);
+        let twin = f.add("twin", -100);
+        let u = f.split(bank, &[-60, -40])[0].clone();
+        let v = f.split(twin, &[-60, -40])[0].clone();
+        f.link(r, "", bank, &u);
+        f.link(r, "", twin, &v);
+        let db = f.v.db().unwrap();
+        db.execute("UPDATE refund_links SET moved_from_refund_id=?1,moved_from_refund_part='',moved_from_original_id=?2,moved_from_original_part='old',moved_from_key='old-key' WHERE original_id=?3",params![r,twin,bank]).unwrap();
+        store::fold_booking(&db, twin, bank, true, true).unwrap();
+        drop(db);
+        assert_eq!(
+            f.v.refund_links(r)
+                .unwrap()
+                .iter()
+                .map(|l| l.allocated_cents)
+                .sum::<i64>(),
+            60
+        );
+    }
+}
+
 mod survivor_matching {
     use super::*;
 

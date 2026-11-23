@@ -686,8 +686,8 @@ impl Vault {
                 .collect();
             out.sort_by(|a, b| {
                 b.net_cents
-                    .abs()
-                    .cmp(&a.net_cents.abs())
+                    .unsigned_abs()
+                    .cmp(&a.net_cents.unsigned_abs())
                     .then_with(|| a.category_path.cmp(&b.category_path))
             });
             out

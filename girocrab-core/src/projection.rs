@@ -833,7 +833,9 @@ impl Selection {
                 FlowKind::Consumption => consumption += n,
                 FlowKind::Investment => {
                     investment += n;
-                    invested -= n;
+                    if r.side == KpiSide::Expense {
+                        invested -= n;
+                    }
                 }
                 FlowKind::Perk => {
                     perk += n;

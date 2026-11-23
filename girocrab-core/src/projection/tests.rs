@@ -5,6 +5,44 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 #[test]
+fn round5_api_summary_sorts_minimum_signed_category_total() {
+    let f = Fixture::new();
+    let transfer = f.transfer_category();
+    f.add(-i64::MAX, Some(transfer));
+    f.add(-1, Some(transfer));
+    let r = f.add(1, Some(transfer));
+    let o = f.add(-1, Some(f.cost));
+    f.link(r, "", o, "");
+    f.share(&[f.account]);
+    assert_eq!(f.summary()["by_category"][0]["net_cents"], json!(i64::MIN));
+}
+
+#[test]
+fn round5_invested_ignores_sale_proceeds_but_includes_refunds() {
+    let f = Fixture::new();
+    let investment =
+        f.v.create_category("Invest".into(), None, "chart.bar".into(), "#ff0000".into())
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET builtin_role='Investitionen' WHERE id=?1",
+            [investment],
+        )
+        .unwrap();
+    let purchase = f.add(-1000, Some(investment));
+    f.add(1500, Some(investment));
+    let r = f.add(200, None);
+    f.link(r, "", purchase, "");
+    assert_eq!(
+        f.v.selection_flow_for_totals(vec![], None, None)
+            .unwrap()
+            .invested_cents,
+        800
+    );
+}
+
+#[test]
 fn scoped_loan_refund_offsets_only_a_shared_repayment() {
     let f = Fixture::new();
     let original = f.add(-500, Some(f.cost));

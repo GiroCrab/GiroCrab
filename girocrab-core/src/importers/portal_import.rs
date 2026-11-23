@@ -1421,23 +1421,34 @@ pub(crate) fn merge_imported_split_parts(
             )
             .collect();
         crate::planning::store_splits(db, bank_id, &lines)?;
-        crate::refunds::move_booking(db, bank_id, bank_id)?;
         let uuids = db
             .prepare_cached(
                 "SELECT uuid FROM transaction_splits WHERE transaction_id=?1 ORDER BY position,id",
             )?
             .query_map([bank_id], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        let endpoints = parts
+        let mut endpoints: std::collections::HashMap<_, _> = parts
             .iter()
-            .zip(uuids)
+            .zip(uuids.iter())
             .map(|(part, uuid)| {
                 (
                     crate::refunds::Endpoint(part.0, String::new()),
-                    crate::refunds::Endpoint(bank_id, uuid),
+                    crate::refunds::Endpoint(bank_id, uuid.clone()),
                 )
             })
             .collect();
+        let matching: Vec<_> = lines
+            .iter()
+            .zip(uuids)
+            .filter(|(line, _)| line.amount_cents == bank_cents)
+            .map(|(_, uuid)| uuid)
+            .collect();
+        if let [uuid] = matching.as_slice() {
+            endpoints.insert(
+                crate::refunds::Endpoint(bank_id, String::new()),
+                crate::refunds::Endpoint(bank_id, uuid.clone()),
+            );
+        }
         crate::refunds::move_endpoints(db, &endpoints)?;
         crate::planning::clear_split_category(db, bank_id)?;
         if !bank_checked && parts.iter().all(|p| p.4) {
