@@ -97,6 +97,24 @@ pub(super) fn pain_formats(reply: &BankReply, seg_id: &str) -> Vec<String> {
     out
 }
 
+/// Storage period (days) of a statement parameter segment (HIKAZS / HICAZS):
+/// the first value of its parameters, from the segment of `version`. Another
+/// version's segment only while nothing is `known` yet (0): it must not
+/// replace what the version in use said. `None`: nothing to learn here.
+pub(super) fn storage_days(
+    reply: &BankReply,
+    seg_id: &str,
+    version: u32,
+    known: i64,
+) -> Option<i64> {
+    let days = |s: &Segment| s.get(4, 0).parse().unwrap_or(0);
+    match reply.all(seg_id).filter(|s| s.version() == version).last() {
+        Some(seg) => Some(days(seg)),
+        None if known == 0 => reply.all(seg_id).last().map(days),
+        None => None,
+    }
+}
+
 /// Picks the TAN function from the codes allowed by 3920: app/decoupled
 /// methods first (SecureGo plus, pushTAN …), then a fixed preference list,
 /// never 999 (one-step).
@@ -343,6 +361,15 @@ impl FinTsConnector {
             self.st.kku_storage_days = p.get(4, 0).parse().unwrap_or(0);
             self.st.kku_no_date_range = p.get(4, 2) == "N";
             self.st.kku_no_account = p.get(4, 3) == "N";
+        }
+        // HIKAZS / HICAZS: storage days : … of the version in use (#1043)
+        let kaz = self.st.kaz_storage_days;
+        if let Some(days) = storage_days(reply, "HIKAZS", self.version("HKKAZ"), kaz) {
+            self.st.kaz_storage_days = days;
+        }
+        let caz = self.st.caz_storage_days;
+        if let Some(days) = storage_days(reply, "HICAZS", self.version("HKCAZ"), caz) {
+            self.st.caz_storage_days = days;
         }
         if crate::depot_debug::enabled() && reply.all("HIPINS").next().is_some() {
             let card: Vec<String> = ["HKKKU", "DKKKU"]
