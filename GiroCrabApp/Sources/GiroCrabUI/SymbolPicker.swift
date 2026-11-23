@@ -37,7 +37,7 @@ enum SymbolCatalog {
         Section(title: "Finanzen", items: [
             i("banknote", "Geld"), i("creditcard", "Kreditkarte"), i("eurosign.circle", "Bargeld"),
             i("dollarsign.circle", "Dollar"), i("building.columns", "Bank"), i("envelope.circle", "Bezahldienst"), i("wallet.bifold", "Geldbörse"),
-            i("chart.pie", "Vermögen"), i("chart.line.uptrend.xyaxis", "Depot"), i("diamond", "Sachwerte"), i("percent", "Zinsen"),
+            i("chart.pie", "Vermögen"), i("chart.line.uptrend.xyaxis", "Depot"), i("diamond", "Sachwerte"), i("percent", "Zinsen"), i("list.clipboard", "Steuern"), i("chair.lounge", "Rente"),
             i("bitcoinsign.circle", "Krypto"), i("giftcard", "Gutschein"), i("arrow.left.arrow.right", "Umbuchung"),
             i("lock.shield", "Sicherheit"), i("doc.text", "Vertrag"), i("building.2", "Firma"),
         ]),
@@ -46,7 +46,7 @@ enum SymbolCatalog {
             i("fork.knife", "Essen"), i("cup.and.saucer", "Café"), i("lightbulb", "Strom"), i("flame", "Heizung"),
             i("drop", "Wasser"), i("wifi", "Internet"), i("phone", "Telefon"), i("tv", "Fernsehen"),
             i("sofa", "Möbel"), i("washer", "Waschmaschine"), i("wrench.and.screwdriver", "Reparatur"),
-            i("leaf", "Garten"), i("trash", "Müll"),
+            i("leaf", "Garten"), i("trash", "Müll"), i("divide.circle", "Umlagen"),
         ]),
         Section(title: "Mobilität", items: [
             i("car", "Auto"), i("fuelpump", "Tanken"), i("bolt.car", "Elektroauto"), i("bus", "Bus"),

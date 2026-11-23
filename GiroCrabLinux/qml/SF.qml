@@ -67,7 +67,8 @@ QtObject {
         "cloud": "weather-overcast", "questionmark.circle": "dialog-question",
         "motorcycle": "car", "pianokeys": "folder-music", "guitars": "folder-music", "dog": "im-user-online",
         "cat": "im-user-online", "fish": "im-user-online", "chevron.left.forwardslash.chevron.right": "code-context",
-        "suitcase.rolling": "view-financial-account",
+        "suitcase.rolling": "view-financial-account", "list.clipboard": "view-list-text",
+        "chair.lounge": "view-financial-account-savings", "divide.circle": "accessories-calculator",
         // rule editor / category menu
         "arrow.turn.down.right": "go-next", "arrow.up.to.line": "go-top", "pause": "media-playback-pause",
         "plus.circle": "list-add",

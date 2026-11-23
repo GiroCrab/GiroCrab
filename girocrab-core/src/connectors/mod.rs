@@ -50,6 +50,7 @@ pub mod paypal_nvp;
 pub mod quirion;
 pub mod scalable;
 pub mod schwaebisch_hall;
+pub mod sharinbox;
 pub mod template;
 pub mod trade_republic;
 pub mod uberspace;
