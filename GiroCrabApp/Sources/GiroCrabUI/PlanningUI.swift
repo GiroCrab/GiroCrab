@@ -25,6 +25,7 @@ extension AppModel {
     func saveSplits(_ parts: [TransactionSplitInput], for booking: Booking) -> String? {
         guard let vault else { return nil }
         do { try vault.setTransactionSplits(transactionId: booking.id, splits: parts) } catch { return "\(error)" }
+        invalidateTotals()
         reloadBookings(); reloadCategories(); reloadAccounts()
         return nil
     }

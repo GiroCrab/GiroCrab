@@ -5,6 +5,24 @@ import GiroCrabCore
 /// #383: the split flow behind „Umsatz aufteilen (Splitbuchung)“ saves and reads back.
 @MainActor
 final class SplitBookingTests: XCTestCase {
+    func testSplitSavesInvalidateTotalsOnlyOnSuccess() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
+        let half = booking.amountCents / 2
+        let parts = [
+            TransactionSplitInput(uuid: nil, categoryId: booking.categoryId, amountCents: half, note: "a"),
+            TransactionSplitInput(uuid: nil, categoryId: nil, amountCents: booking.amountCents - half, note: "b"),
+        ]
+        var version = model.totalsVersion
+        XCTAssertNil(model.saveSplits(parts, for: booking))
+        XCTAssertGreaterThan(model.totalsVersion, version)
+        version = model.totalsVersion
+        XCTAssertNotNil(model.saveSplits([parts[0]], for: booking))
+        XCTAssertEqual(model.totalsVersion, version)
+        XCTAssertNil(model.saveSplits([], for: booking))
+        XCTAssertGreaterThan(model.totalsVersion, version)
+    }
+
     func testSaveSplitsRoundTrips() async throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
