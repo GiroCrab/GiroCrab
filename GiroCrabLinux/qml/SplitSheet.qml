@@ -46,10 +46,12 @@ Sheet {
     /// (#1663), so a typo gets there unnoticed. Warn, never block.
     readonly property bool restIsNegative: rest !== null && rest < 0
     readonly property bool valid: parts.length >= 2 && rest !== null && rest !== 0 && splitOff.every(c => c !== 0)
-    /// Why "Speichern" is greyed out (#383): say so instead of leaving it silent.
+    /// Why "Speichern" is greyed out (#383): say so instead of leaving it silent; nothing while
+    /// nothing is typed yet (SplitDraft.problem).
     readonly property string problem: {
         revision
         if (valid || parts.length === 0 || error !== "") return ""
+        if (parts.slice(1).every(p => String(p.amount).trim() === "")) return ""
         return parts.slice(1).some(p => String(p.amount).trim() !== "" && cents(p) === null)
             ? qsTr("Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“.")
             : qsTr("Jeder Teil braucht einen Betrag ungleich 0.")

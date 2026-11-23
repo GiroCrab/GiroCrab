@@ -114,11 +114,11 @@ final class SplitBookingTests: XCTestCase {
 
     /// #1663: what the sheet shows and saves for the parts as typed.
     func testDraftValidityHintsAndSavedSigns() {
-        // nothing typed yet: not savable
+        // nothing typed yet: not savable, but no hint either
         let empty = SplitDraft(total: 8_743, splitOffTexts: [""])
         XCTAssertEqual(empty.rest, 8_743)
         XCTAssertFalse(empty.valid)
-        XCTAssertEqual(empty.problem, .zeroPart)
+        XCTAssertNil(empty.problem)
         XCTAssertNil(empty.amountsToSave(sign: -1))
 
         let half = SplitDraft(total: 8_743, splitOffTexts: ["50 %"])

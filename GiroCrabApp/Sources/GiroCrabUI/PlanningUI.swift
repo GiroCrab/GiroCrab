@@ -601,7 +601,7 @@ struct SplitDraft: Equatable {
     /// What the first part keeps; nil while a part is unreadable or the sum leaves `Int64`.
     let rest: Int64?
     let valid: Bool
-    /// Why "Speichern" is greyed out (#383); nil while valid.
+    /// Why "Speichern" is greyed out (#383); nil while valid and while nothing is typed yet.
     let problem: Problem?
 
     init(total: Int64, splitOffTexts: [String]) {
@@ -610,7 +610,7 @@ struct SplitDraft: Equatable {
         let rest = SplitMath.rest(total: total, splitOff: parts)
         let valid = rest.map { SplitMath.isValid(total: total, parts: [$0] + parts.compactMap { $0 }) } ?? false
         (splitOff, self.rest, self.valid) = (parts, rest, valid)
-        if valid {
+        if valid || typed.allSatisfy(\.isEmpty) {
             problem = nil
         } else {
             problem = zip(typed, parts).contains { !$0.isEmpty && $1 == nil } ? .unreadable : .zeroPart
