@@ -690,7 +690,7 @@ Rectangle {
                                selectedId: index + 1 < cg.path.length ? cg.path[index + 1] : (cg.booking.category_id ?? -1) }
                 }
             }
-            Button { Layout.fillWidth: true; text: qsTr("Umsatz aufteilen (Splitbuchung) …"); icon.name: SF.icon("arrow.triangle.branch"); onClicked: AppModel.splitBooking = cg.booking }
+            Button { Layout.fillWidth: true; text: qsTr("Umsatz aufteilen (Splitbuchung) …"); icon.name: SF.icon("arrow.triangle.branch"); onClicked: AppModel.openSplit(cg.booking) }
             Button { Layout.fillWidth: true; text: qsTr("Regel für diesen Händler erstellen …"); icon.name: SF.icon("wand.and.stars"); highlighted: true
                      onClicked: AppModel.openRuleEditor(cg.booking) }
             Text { text: qsTr("In der Liste: C kategorisieren · R Regel erstellen"); font.pixelSize: Theme.caption2; color: Theme.tertiary }

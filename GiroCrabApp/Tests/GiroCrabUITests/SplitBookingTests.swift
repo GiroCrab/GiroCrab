@@ -54,4 +54,18 @@ final class SplitBookingTests: XCTestCase {
         XCTAssertNil(SplitMath.rest(total: 1, splitOff: [Int64.min]))
     }
 
+    /// #1663: „Umsatz aufteilen“ › „19 %“ opens the sheet with that share; closing it drops the share.
+    func testRowMenuShareOpensTheSheetWithThatShare() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
+        model.openSplit(booking, percent: 19)
+        XCTAssertEqual(model.splitBooking?.id, booking.id)
+        XCTAssertEqual(model.splitPresetPercent, 19)
+        XCTAssertEqual(SplitMath.share(of: 8_743, 19, 100), 1_661)
+        model.splitBooking = nil
+        XCTAssertNil(model.splitPresetPercent)
+        model.openSplit(booking)
+        XCTAssertNil(model.splitPresetPercent)
+        XCTAssertEqual(SplitMath.menuShares, [50, 19])
+    }
 }

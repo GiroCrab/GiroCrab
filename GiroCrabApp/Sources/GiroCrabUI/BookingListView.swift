@@ -621,7 +621,14 @@ struct DayCardRow: View {
         Button("Regel für diesen Händler erstellen …", systemImage: "wand.and.stars") { model.openRuleEditor(from: b) }
         Button("Notiz bearbeiten …", systemImage: "note.text") { model.editNote(for: b) }
         TagsMenu(model: model, booking: b)
-        Button("Umsatz aufteilen (Splitbuchung) …", systemImage: "arrow.triangle.branch") { model.splitBooking = b }
+        // #1663: a common share opens the sheet with that share already in the second part
+        Menu("Umsatz aufteilen (Splitbuchung)", systemImage: "arrow.triangle.branch") {
+            ForEach(SplitMath.menuShares, id: \.self) { percent in
+                Button { model.openSplit(b, percent: percent) } label: { Text((Double(percent) / 100).formatted(.percent)) }
+            }
+            Divider()
+            Button("Andere Aufteilung …") { model.openSplit(b) }
+        }
         LoanAssignMenu(model: model, booking: b, hidesWhenUnavailable: true)
         OfflineBookingMenu(model: model, booking: b)
         Divider()

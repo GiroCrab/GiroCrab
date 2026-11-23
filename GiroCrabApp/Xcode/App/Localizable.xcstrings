@@ -4731,6 +4731,17 @@
         }
       }
     },
+    "Andere Aufteilung …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other split…"
+          }
+        }
+      }
+    },
     "Andere Datei …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31223,6 +31234,17 @@
       }
     },
     "Umsatz aufteilen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split booking"
+          }
+        }
+      }
+    },
+    "Umsatz aufteilen (Splitbuchung)" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {

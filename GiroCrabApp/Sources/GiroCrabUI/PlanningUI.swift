@@ -22,6 +22,13 @@ extension AppModel {
         return try? await vaultOffMain { try $0.listTransactionSplits(transactionId: id) }
     }
 
+    /// Opens „Umsatz aufteilen“; `percent` (#1663) puts that share of the booking into the second
+    /// part of a booking that is not split yet.
+    func openSplit(_ booking: Booking, percent: Int64? = nil) {
+        splitPresetPercent = percent
+        splitBooking = booking
+    }
+
     func saveSplits(_ parts: [TransactionSplitInput], for booking: Booking) -> String? {
         guard let vault else { return nil }
         do { try vault.setTransactionSplits(transactionId: booking.id, splits: parts) } catch { return "\(error)" }
@@ -528,6 +535,8 @@ struct CustomPeriodForm: View {
 
 /// Split arithmetic in the booking's direction (cents, positive = same sign as the booking).
 enum SplitMath {
+    /// The shares the row menu offers under „Umsatz aufteilen“ (#1663), in percent.
+    static let menuShares: [Int64] = [50, 19]
     static func remaining(total: Int64, parts: [Int64]) -> Int64 { total - parts.reduce(0, +) }
     /// At least two parts, none 0, parts add up to `total`. Negative parts are allowed.
     static func isValid(total: Int64, parts: [Int64]) -> Bool {
@@ -557,6 +566,8 @@ struct SplitSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let booking: Booking
+    /// Share (percent) for the second part of a fresh split, from the row menu (#1663).
+    var presetPercent: Int64? = nil
 
     private struct Part: Identifiable {
         let id = UUID()
@@ -689,9 +700,8 @@ struct SplitSheet: View {
             }
             hasSplits = !existing.isEmpty
             if existing.isEmpty {
-                // screenshots: half split off, as after a click on ½
-                let demo = model.options.demoSheetName == "split" ? SplitMath.share(of: total, 1, 2).map(Money.plain) : nil
-                parts = [Part(categoryID: booking.categoryId), Part(amount: demo ?? "")]
+                let preset = presetPercent.flatMap { SplitMath.share(of: total, $0, 100) }.map(Money.plain)
+                parts = [Part(categoryID: booking.categoryId), Part(amount: preset ?? "")]
                 focusedPart = parts.last?.id
             } else {
                 parts = existing.map { Part(categoryID: $0.categoryId, amount: Money.plain(sign * $0.amountCents), note: $0.note) }

@@ -2994,8 +2994,13 @@ QtObject {
     property var budgetCategoryID: null
     /// Category whose "Symbol & Farbe" popover is open.
     property var iconColorCategoryID: null
-    /// The booking whose SplitSheet is open.
+    /// The booking whose SplitSheet is open; closing it drops the preset share.
     property var splitBooking: null
+    onSplitBookingChanged: if (splitBooking === null) splitPresetPercent = null
+    /// Share of the booking the sheet puts into the second part (#1663, row menu „50 %“ / „19 %“).
+    property var splitPresetPercent: null
+    /// SplitMath.menuShares: the shares the row menu offers under „Umsatz aufteilen“, in percent.
+    readonly property var splitMenuShares: [50, 19]
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
     readonly property var colorNames: ({
@@ -3131,6 +3136,12 @@ QtObject {
         try { core("set_transaction_splits", { transaction_id: booking.id, splits: parts }) } catch (e) { return e.message }
         reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning()
         return ""
+    }
+    /// openSplit(_:percent:) (#1663): opens „Umsatz aufteilen“; `percent` puts that share of the
+    /// booking into the second part of a booking that is not split yet.
+    function openSplit(b, percent) {
+        splitPresetPercent = percent === undefined ? null : percent
+        splitBooking = b
     }
     /// SplitMath.parse (#1663): a part as typed – an amount ("43,71") or a share of `total`
     /// ("50 %") – in cents; null when it is neither.
@@ -4204,8 +4215,12 @@ QtObject {
             break
         }
         case "category": if (top) newCategoryRequest = { parent: top.id }; break
-        // "Umsatz aufteilen" of the first expense (#1663)
-        case "split": splitBooking = bookings.find(b => b.amount_cents < 0) ?? null; break
+        // "Umsatz aufteilen" › „50 %“ of the first expense (#1663)
+        case "split": {
+            const b = bookings.find(x => x.amount_cents < 0)
+            if (b) openSplit(b, 50)
+            break
+        }
         // Konten › Tags verwalten … (#228)
         // `tags-accounts`: the first tag's bookings per account (TagManagerSheet.qml)
         case "tags": case "tags-accounts": TagManager.open(); break

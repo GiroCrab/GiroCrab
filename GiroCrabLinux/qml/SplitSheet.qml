@@ -45,6 +45,11 @@ Sheet {
             ? qsTr("Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“.")
             : qsTr("Jeder Teil braucht einen Betrag ungleich 0.")
     }
+    function presetAmount() {
+        const percent = AppModel.splitPresetPercent
+        const share = percent === null ? null : AppModel.splitShareCents(total, percent, 100)
+        return share === null ? "" : Fmt.plain(share)
+    }
     function part(categoryID, amount, note) { return { uid: nextUid++, categoryID: categoryID, amount: amount, note: note } }
 
     onAboutToShow: {
@@ -59,8 +64,8 @@ Sheet {
             }
             hasSplits = existing.length > 0
             parts = existing.length === 0
-                // screenshots: half split off, as after a click on ½
-                ? [part(b.category_id, "", ""), part(null, AppModel.demoSheet === "split" ? Fmt.plain(AppModel.splitShareCents(total, 1, 2)) : "", "")]
+                // the share picked in the row menu (#1663) goes into the second part
+                ? [part(b.category_id, "", ""), part(null, presetAmount(), "")]
                 : existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note))
             if (!hasSplits) focusUid = parts[1].uid
         })

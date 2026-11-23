@@ -630,7 +630,24 @@ Rectangle {
         AppMenuItem { text: qsTr("Notiz bearbeiten …"); icon.name: SF.icon("note.text"); onTriggered: AppModel.editNote(stream.menuBooking) }
         // TagsMenu (#228)
         TagsMenu { booking: stream.menuBooking }
-        AppMenuItem { text: qsTr("Umsatz aufteilen (Splitbuchung) …"); icon.name: SF.icon("arrow.triangle.branch"); onTriggered: AppModel.splitBooking = stream.menuBooking }
+        // #1663: a common share opens the sheet with that share already in the second part
+        AppMenu {
+            id: splitMenu
+            title: qsTr("Umsatz aufteilen (Splitbuchung)")
+            icon.name: SF.icon("arrow.triangle.branch")
+            Instantiator {
+                model: AppModel.splitMenuShares
+                delegate: AppMenuItem {
+                    required property int modelData
+                    text: qsTr("%1 %").arg(modelData)
+                    onTriggered: AppModel.openSplit(stream.menuBooking, modelData)
+                }
+                onObjectAdded: (index, item) => splitMenu.insertItem(index, item)
+                onObjectRemoved: (index, item) => splitMenu.removeItem(item)
+            }
+            AppMenuSeparator {}
+            AppMenuItem { text: qsTr("Andere Aufteilung …"); onTriggered: AppModel.openSplit(stream.menuBooking) }
+        }
         // LoanAssignMenu(hidesWhenUnavailable: true): left out for loan bookings and unlinked inflows
         Instantiator {
             model: AppModel.loanAssignable(stream.menuBooking) ? 1 : 0
@@ -638,7 +655,7 @@ Rectangle {
             onObjectAdded: (index, menu) => {
                 let at = 0
                 for (let i = 0; i < rowMenu.count; ++i)
-                    if (rowMenu.itemAt(i) && rowMenu.itemAt(i).text === qsTr("Umsatz aufteilen (Splitbuchung) …")) at = i + 1
+                    if (rowMenu.itemAt(i) && rowMenu.itemAt(i).subMenu === splitMenu) at = i + 1
                 rowMenu.insertMenu(at, menu)
             }
             onObjectRemoved: (index, menu) => rowMenu.removeMenu(menu)
