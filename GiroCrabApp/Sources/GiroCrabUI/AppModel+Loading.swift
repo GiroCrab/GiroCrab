@@ -751,6 +751,8 @@ extension AppModel {
                 // selectionFlow always uses scope .all and is unchanged here.
             } catch {
                 guard !Task.isCancelled, let self else { return }
+                // no new list: a ⌘A waiting for it ends with the error (#1696)
+                self.selectAllAfterReload = false
                 self.errorMessage = describe(error)
             }
         }

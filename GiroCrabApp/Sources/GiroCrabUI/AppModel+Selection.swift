@@ -347,6 +347,8 @@ extension AppModel {
     func failSelectionLoad(_ error: Error, cycleLoaded: Bool = false) {
         selectionLoadTask = nil
         endSelectionLoad()
+        // no new list: a ⌘A waiting for it ends with the error (#1696)
+        selectAllAfterReload = false
         if shownSelection != sidebarSelection || shownPeriod != requestedPeriod {
             showSelectionWithoutData()
         } else if !cycleLoaded {
