@@ -679,3 +679,32 @@ fn a_renamed_tag_found_by_uuid_still_makes_a_duplicate() {
     );
     assert_eq!(b.list_rules().unwrap().len(), 1);
 }
+
+#[test]
+fn a_present_rule_stays_skipped_when_its_tag_is_not_chosen() {
+    let dir = TempDir::new("rx-dupe-unticked");
+    let a = open(&dir, "a.db");
+    let cat = category(&a, "Freizeit", None);
+    let urlaub = a.create_tag("Urlaub".into(), String::new()).unwrap();
+    a.save_rule(rule("kino", cat, vec![], vec![urlaub.id]))
+        .unwrap();
+    let json = a.export_rules(vec![]).unwrap();
+
+    let b = open(&dir, "b.db");
+    category(&b, "Freizeit", None);
+    let first = b.import_rules_and_tags(json.clone()).unwrap();
+    assert_eq!(first.rules_imported, 1, "{first:?}");
+
+    // the rule chosen again, its tag unticked (the selection only locks the
+    // tags of rules that will be imported)
+    let again = b
+        .import_rules_and_tags_selected(json, vec![0], vec![])
+        .unwrap();
+    assert_eq!(
+        (again.rules_imported, again.rules_skipped),
+        (0, 1),
+        "{again:?}"
+    );
+    let rules = b.list_rules().unwrap();
+    assert_eq!(rules.len(), 1, "{rules:?}");
+}

@@ -868,12 +868,17 @@ impl Vault {
             tag_ids.insert(fold(&t.name), id);
         }
 
+        // Every tag of the file found here: the ones found before plus those this
+        // import created. Not `tag_ids` alone: a rule already present whose tag
+        // was not chosen must still be recognised by that tag.
+        let mut known = resolved;
+        known.extend(tag_ids.iter().map(|(name, id)| (name.clone(), *id)));
+
         // Rules: after the existing ones, in the file's order.
         for e in chosen {
             let name = rule_name(e);
             let (category_id, field, match_kind, account_ids, missing) =
-                // tags now all exist: `tag_ids` holds the ones this import uses
-                match plan_rule(e, &cats, &accs, &existing, &tag_ids) {
+                match plan_rule(e, &cats, &accs, &existing, &known) {
                     Plan::Skip(reason) => {
                         report.rules_skipped += 1;
                         report
