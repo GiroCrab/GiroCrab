@@ -1221,6 +1221,9 @@ public final class AppModel {
     var hasOwnVault: Bool { ownVault != nil }
     /// State of „Tresor-Schlüssel einfügen“ (key paste sheet).
     var keyAdoption: KeyAdoptionState = .idle
+    /// Bumped by „Abbrechen“ in the paste sheet: a folder check still running
+    /// for an earlier attempt sets nothing afterwards (#1503).
+    @ObservationIgnored private var keyAdoptionAttempt = 0
 
     // MARK: - Vault lifecycle
 
@@ -1558,6 +1561,9 @@ public final class AppModel {
             do {
                 let current = try await VaultKeyManager.shared.unlock()
                 let cloud = CloudSyncManager.shared
+                // A sync already running would make this one return at once and leave
+                // the previous run's result behind (#1503): wait for it first.
+                await cloud.waitUntilIdle()
                 await cloud.sync(vault: v, remoteKey: pasted, mergeOnly: true)
                 if let e = cloud.lastError { self.keyAdoption = .failed(e); self.toast = e; return }
                 // Also with the device's own key (#1503): nothing found and nothing here
@@ -1595,8 +1601,11 @@ public final class AppModel {
     func adoptSyncKey(_ text: String, folder url: URL, wait: TimeInterval = 6) {
         guard keyAdoption != .working else { return }
         keyAdoption = .working
+        let attempt = keyAdoptionAttempt
         Task {
             let picked = await ICloudFolderMigration.inspectPicked(url, wait: wait)
+            // „Abbrechen“ while iCloud was still listing the folder: change nothing.
+            guard attempt == self.keyAdoptionAttempt else { return }
             if let message = KeyAdoptionState.pickedFolderMessage(picked) {
                 // names the folder just picked, not the one still configured
                 self.keyAdoption = .notFound(message, searched: ICloudFolderMigration.displayName(for: url)); return
@@ -1607,6 +1616,12 @@ public final class AppModel {
             self.keyAdoption = .idle
             self.adoptSyncKey(text)
         }
+    }
+
+    /// „Abbrechen“ in the paste sheet: a running folder check is dropped (#1503).
+    func cancelKeyAdoption() {
+        keyAdoptionAttempt += 1
+        if keyAdoption == .working { keyAdoption = .idle }
     }
 
     /// After a pasted key opened the synced vault: switch from the demo to it and

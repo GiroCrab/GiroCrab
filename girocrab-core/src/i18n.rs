@@ -844,6 +844,9 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Die Bank hat den angeforderten Zeitraum abgelehnt; abgerufen wurden die letzten 90 Tage." => {
             "{0}: the bank refused the requested period; the last 90 days were fetched."
         }
+        "{0}: Die Umsatzliste war länger als 50 Seiten und wurde nicht vollständig gelesen." => {
+            "{0}: the transaction list was longer than 50 pages and was not read completely."
+        }
         // ------------------------------------------------------------ connectors/fints RAH-10 (bank_keys.rs, keyfile.rs, rah10.rs)
         "Ungültige Bankleitzahl." => "Invalid bank code.",
         "Bankschlüssel-Metadaten ungültig." => "Invalid bank key metadata.",

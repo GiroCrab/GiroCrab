@@ -41,13 +41,13 @@ pub enum HistoryRange {
 }
 
 impl HistoryRange {
-    /// From a setting value: `max` or a number of days; anything else is the
-    /// earlier default of 90 days.
+    /// From a setting value: `max` or a number of days; anything else (also 0,
+    /// which would fetch nothing) is the earlier default of 90 days.
     pub(crate) fn parse(value: &str) -> Self {
         match value.trim() {
             "max" => Self::Maximum,
             v => Self::Days {
-                days: v.parse().unwrap_or(90),
+                days: v.parse().ok().filter(|d| *d > 0).unwrap_or(90),
             },
         }
     }

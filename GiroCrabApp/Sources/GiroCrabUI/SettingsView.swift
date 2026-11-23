@@ -170,7 +170,7 @@ struct GeneralSettings: View {
                         Text("\(Int(firstFetchPeriod.wrappedValue) ?? 90) Tage").tag(firstFetchPeriod.wrappedValue)
                     }
                 }
-                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ holt alles, was die Bank liefert. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bereits abgerufene Konten betrifft das nicht.")
+                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ holt alles, was die Bank liefert. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Buchungen").appSectionHeader() }
             TransferSettingsSection()
@@ -889,7 +889,7 @@ struct KeyPasteSheet: View {
                     .disabled(!valid)
             }
             HStack {
-                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Abbrechen", role: .cancel) { model.cancelKeyAdoption(); dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
                 Button("Übernehmen") { model.adoptSyncKey(text) }
