@@ -341,7 +341,28 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     });
 }
 
+mod depot_chart;
+
 fn depot_data(vault: &Vault, account: &Account, tangible: bool) -> Result<DepotData, String> {
+    // Value history of this one depot (its own currency, never summed across currencies);
+    // the range selector filters it in `render_view` without another vault call.
+    let history = if tangible {
+        Vec::new()
+    } else {
+        vault
+            .depot_value_history(vec![account.id], depot_chart::MAX_DAYS)
+            .map(|v| {
+                v.into_iter()
+                    .map(|p| depot_chart::Point {
+                        date: p.date,
+                        value_cents: p.value_cents,
+                        covered: p.covered_depots,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    depot_chart::store(account.id, history);
     let holdings = match vault.classified_assets(account.id) {
         Ok(v) => v
             .into_iter()
@@ -485,6 +506,7 @@ pub fn render_view(win: &MainWindow) {
     match mode {
         MODE_DEPOT => {
             let Some(data) = with_ui(|u| u.depot.take()) else {
+                depot_chart::reset(win);
                 return;
             };
             let cur = data.account.currency.clone();
@@ -507,6 +529,7 @@ pub fn render_view(win: &MainWindow) {
                 .collect();
             win.set_kpis(ModelRc::new(VecModel::from(kpis)));
             set_shares(win, &view.composition);
+            depot_chart::render(win, data.account.id, &cur_money, &date);
             match tab {
                 DepotTab::Positions => {
                     set_columns(win, &portfolio::POSITION_COLUMNS);

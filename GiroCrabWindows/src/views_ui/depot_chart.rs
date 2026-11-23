@@ -1,0 +1,233 @@
+//! Value history chart of one securities depot (#578): the series of
+//! `Vault::depot_value_history` as path commands for the Slint `Path` element.
+
+use std::fmt::Write;
+use std::sync::Mutex;
+
+use slint::{ModelRc, SharedString, VecModel};
+
+use crate::MainWindow;
+use crate::portfolio::{Period, today_iso};
+
+/// Days asked for "Max"; the core starts the series at the first day with a value.
+pub const MAX_DAYS: u32 = 365 * 30;
+const W: f32 = 1000.0;
+const H: f32 = 100.0;
+
+/// One day of the series (from `DepotValuePoint`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Point {
+    pub date: String,
+    pub value_cents: i64,
+    pub covered: u32,
+}
+
+/// Series of the last loaded depot, keyed by its account id: written by the load worker,
+/// read by `render` only for the depot it draws.
+static SERIES: Mutex<Option<(i64, Vec<Point>)>> = Mutex::new(None);
+
+pub fn store(account_id: i64, points: Vec<Point>) {
+    *SERIES.lock().unwrap_or_else(|e| e.into_inner()) = Some((account_id, points));
+}
+
+/// Path in a 1000 × 100 viewbox plus the value range of the vertical axis.
+#[derive(Debug, PartialEq)]
+pub struct Chart {
+    pub path: String,
+    pub top_cents: i64,
+    pub bottom_cents: i64,
+}
+
+/// Range selector: 0 = 1 M, 1 = 1 J, otherwise Max.
+pub fn range_period(i: i32) -> Period {
+    match i {
+        0 => Period::Month,
+        1 => Period::Year,
+        _ => Period::All,
+    }
+}
+
+/// The days from `start` (ISO, inclusive) on; the series is sorted by date.
+pub fn in_range<'a>(points: &'a [Point], start: Option<&str>) -> &'a [Point] {
+    match start {
+        Some(s) => &points[points.partition_point(|p| p.date.as_str() < s)..],
+        None => points,
+    }
+}
+
+/// Line of the series; `None` for an empty one. A change in the number of covered depots
+/// starts a new stroke (no false growth when a depot's first value comes in); a stroke of a
+/// single day is drawn as a short dash.
+pub fn chart(points: &[Point]) -> Option<Chart> {
+    let lo = points.iter().map(|p| p.value_cents).min()?;
+    let hi = points.iter().map(|p| p.value_cents).max()?;
+    let (bottom, top) = if lo == hi {
+        let pad = (hi.abs() / 10).max(100);
+        (lo - pad, hi + pad)
+    } else {
+        (lo, hi)
+    };
+    let span = (top - bottom) as f32;
+    let n = points.len();
+    let x = |i: usize| {
+        if n == 1 {
+            W / 2.0
+        } else {
+            i as f32 * W / (n - 1) as f32
+        }
+    };
+    let y = |v: i64| H - (v - bottom) as f32 / span * H;
+    let mut path = String::new();
+    let mut start = 0;
+    while start < n {
+        let mut end = start + 1;
+        while end < n && points[end].covered == points[start].covered {
+            end += 1;
+        }
+        if end - start == 1 {
+            let (px, py) = (x(start), y(points[start].value_cents));
+            let (a, b) = ((px - 4.0).max(0.0), (px + 4.0).min(W));
+            let _ = write!(path, "M {a:.1} {py:.1} L {b:.1} {py:.1} ");
+        } else {
+            for (i, p) in points.iter().enumerate().take(end).skip(start) {
+                let cmd = if i == start { 'M' } else { 'L' };
+                let _ = write!(path, "{cmd} {:.1} {:.1} ", x(i), y(p.value_cents));
+            }
+        }
+        start = end;
+    }
+    path.pop();
+    Some(Chart {
+        path,
+        top_cents: top,
+        bottom_cents: bottom,
+    })
+}
+
+/// "Stand …" of the last day; the change only within the last stretch of equal coverage.
+pub fn readout(
+    points: &[Point],
+    money: &dyn Fn(i64) -> String,
+    date: &dyn Fn(&str) -> String,
+) -> String {
+    let Some(last) = points.last() else {
+        return "Keine Werte im Zeitraum".into();
+    };
+    let from = points
+        .iter()
+        .rposition(|p| p.covered != last.covered)
+        .map_or(0, |i| i + 1);
+    let first = &points[from];
+    let mut s = format!("Stand {}: {}", date(&last.date), money(last.value_cents));
+    if first.date != last.date {
+        let delta = last.value_cents - first.value_cents;
+        let _ = write!(
+            s,
+            " · Veränderung seit {}: {}",
+            date(&first.date),
+            money(delta)
+        );
+    }
+    s
+}
+
+/// Draws the chart of `account_id`; amounts go through `money` (masked in privacy mode).
+pub fn render(
+    win: &MainWindow,
+    account_id: i64,
+    money: &dyn Fn(i64) -> String,
+    date: &dyn Fn(&str) -> String,
+) {
+    let guard = SERIES.lock().unwrap_or_else(|e| e.into_inner());
+    let all: &[Point] = match &*guard {
+        Some((id, p)) if *id == account_id => p,
+        _ => &[],
+    };
+    let start = range_period(win.get_depot_chart_range()).start(&today_iso());
+    let points = in_range(all, start.as_deref());
+    let (path, ticks) = match chart(points) {
+        Some(c) => {
+            let mid = c.bottom_cents + (c.top_cents - c.bottom_cents) / 2;
+            let ticks = [c.top_cents, mid, c.bottom_cents].map(|v| SharedString::from(money(v)));
+            (c.path, ticks.to_vec())
+        }
+        None => (String::new(), Vec::new()),
+    };
+    win.set_depot_chart_shown(!all.is_empty());
+    win.set_depot_chart_path(path.into());
+    win.set_depot_chart_ticks(ModelRc::new(VecModel::from(ticks)));
+    win.set_depot_chart_readout(readout(points, money, date).into());
+}
+
+/// Forgets the series and empties the chart (no depot data, e.g. after locking).
+pub fn reset(win: &MainWindow) {
+    *SERIES.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    win.set_depot_chart_shown(false);
+    win.set_depot_chart_path(SharedString::new());
+    win.set_depot_chart_ticks(ModelRc::default());
+    win.set_depot_chart_readout(SharedString::new());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pt(date: &str, value_cents: i64, covered: u32) -> Point {
+        Point {
+            date: date.into(),
+            value_cents,
+            covered,
+        }
+    }
+
+    #[test]
+    fn empty_series_has_no_chart() {
+        assert_eq!(chart(&[]), None);
+        assert!(in_range(&[], Some("2026-01-01")).is_empty());
+        let s = readout(&[], &|c: i64| c.to_string(), &|d: &str| d.to_string());
+        assert_eq!(s, "Keine Werte im Zeitraum");
+    }
+
+    #[test]
+    fn scales_between_min_and_max() {
+        let c = chart(&[pt("2026-11-01", 100, 1), pt("2026-11-02", 300, 1)]).unwrap();
+        assert_eq!(c.path, "M 0.0 100.0 L 1000.0 0.0");
+        assert_eq!((c.bottom_cents, c.top_cents), (100, 300));
+    }
+
+    #[test]
+    fn single_point_is_a_centered_dash_with_padded_axis() {
+        let c = chart(&[pt("2026-11-01", 5000, 1)]).unwrap();
+        assert_eq!(c.path, "M 496.0 50.0 L 504.0 50.0");
+        assert_eq!((c.bottom_cents, c.top_cents), (4500, 5500));
+    }
+
+    #[test]
+    fn coverage_change_breaks_the_line() {
+        let points = [
+            pt("2026-11-01", 0, 1),
+            pt("2026-11-02", 100, 1),
+            pt("2026-11-03", 200, 2),
+            pt("2026-11-04", 300, 2),
+        ];
+        let c = chart(&points).unwrap();
+        assert_eq!(c.path.matches('M').count(), 2);
+        assert!(c.path.starts_with("M 0.0 100.0 L 333.3 66.7 M 666.7"));
+    }
+
+    #[test]
+    fn range_filter_and_readout_within_last_coverage() {
+        let points = [
+            pt("2026-10-01", 10, 1),
+            pt("2026-11-01", 20, 2),
+            pt("2026-11-20", 35, 2),
+        ];
+        assert_eq!(in_range(&points, None).len(), 3);
+        assert_eq!(in_range(&points, Some("2026-10-23")).len(), 2);
+        let s = readout(&points, &|c: i64| c.to_string(), &|d: &str| d.to_string());
+        assert_eq!(s, "Stand 2026-11-20: 35 · Veränderung seit 2026-11-01: 15");
+        assert_eq!(range_period(0), Period::Month);
+        assert_eq!(range_period(1), Period::Year);
+        assert_eq!(range_period(2), Period::All);
+    }
+}
