@@ -293,6 +293,8 @@ extension AppModel {
         } else if !cycleLoaded {
             salaryCycle = shownSalaryCycle
         }
+        // the switch ends with the failed load: a later refresh of this view is no switch (#1808)
+        viewSwitchPending = false
         errorMessage = describe(error)
     }
 

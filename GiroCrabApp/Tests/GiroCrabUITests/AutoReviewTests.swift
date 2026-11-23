@@ -104,7 +104,11 @@ final class AutoReviewTests: XCTestCase {
         XCTAssertNil(model.selectedBookingID)
         XCTAssertNil(model.selectedBooking)
         XCTAssertFalse(model.bookings.contains { $0.id == a.id })
+        // the destination's first row is the one the old fallback would have marked
+        let first = try XCTUnwrap(model.bookings.first)
+        model.setChecked(false, for: first)
         await model.autoReviewTask?.value
+        XCTAssertFalse(model.bookings.first { $0.id == first.id }?.checked ?? true)
         model.selectedBookingID = a.id
         model.sidebarSelection = .allAccounts
         XCTAssertFalse(isChecked(a))

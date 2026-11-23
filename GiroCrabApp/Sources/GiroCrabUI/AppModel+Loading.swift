@@ -561,6 +561,8 @@ extension AppModel {
             let p = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
             Perf.interval("publishBookings") { publish(p) }
         }
+        // a failed load published nothing: the switch is over (#1808)
+        viewSwitchPending = false
         reloadSelectionKPIs()
         reloadCategoryHistory()
         // Every edit, sync and import ends up here: cached merchant histories may be
