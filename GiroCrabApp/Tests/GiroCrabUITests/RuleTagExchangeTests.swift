@@ -66,11 +66,15 @@ final class RuleTagExchangeTests: XCTestCase {
                 RulePreview(index: 0, name: "rewe", categoryPath: "Lebensmittel", tags: ["Familie"], problem: nil, note: nil),
                 RulePreview(index: 1, name: "kino", categoryPath: "Freizeit", tags: ["Urlaub"], problem: nil, note: nil),
             ],
-            tags: [TagPreview(name: "Familie", colorHex: "", exists: false), TagPreview(name: "Urlaub", colorHex: "", exists: true)]
+            tags: [TagPreview(name: "Familie", colorHex: "", exists: false, problem: nil), TagPreview(name: "Urlaub", colorHex: "", exists: true, problem: nil)]
         )
         XCTAssertEqual(RuleExchangeSelectionSheet.requiredTags(preview, rules: [0]), ["familie"])
         XCTAssertEqual(RuleExchangeSelectionSheet.requiredTags(preview, rules: [0, 1]), ["familie", "urlaub"])
         XCTAssertTrue(RuleExchangeSelectionSheet.requiredTags(preview, rules: []).isEmpty)
+        // the core's name rule: case and inner spaces don't matter
+        var spaced = preview
+        spaced.rules[0].tags = ["  FAMILIE   "]
+        XCTAssertEqual(RuleExchangeSelectionSheet.requiredTags(spaced, rules: [0]), [AppModel.tagKey("Familie")])
         // a rule the import skips locks no tag
         var skipped = preview
         skipped.rules[1].problem = "bereits vorhanden"
@@ -81,7 +85,8 @@ final class RuleTagExchangeTests: XCTestCase {
         let report = RuleExchangeReport(tagsCreated: 2, tagsExisting: 1, rulesImported: 3, rulesSkipped: 1,
                                         rulesImportedLines: ["rewe", "hotel", "„beide“ – ohne die nicht gefundenen Konten (Karte)"],
                                         rulesSkippedLines: ["„kino“: Kategorie „Freizeit“ nicht gefunden"],
-                                        tagsCreatedNames: ["Urlaub", "Auto"], tagsExistingNames: ["Familie"])
+                                        tagsCreatedNames: ["Urlaub", "Auto"], tagsExistingNames: ["Familie"],
+                                        tagsSkippedLines: ["„xxx“: Der Name des Tags ist länger als 64 Zeichen."])
         let lines = RuleExchangeReportSheet.summaryLines(report)
         XCTAssertTrue(lines[0].contains("3") && lines[0].contains("1"), "\(lines)")
         XCTAssertTrue(lines[1].contains("2"), "\(lines)")
@@ -90,16 +95,20 @@ final class RuleTagExchangeTests: XCTestCase {
         let sections = RuleExchangeReportSheet.detailSections(report)
         // imported and skipped, for rules and for tags
         XCTAssertEqual(sections.map(\.lines),
-                       [report.rulesImportedLines, report.rulesSkippedLines, ["Urlaub", "Auto"], ["Familie"]])
+                       [report.rulesImportedLines, report.rulesSkippedLines, ["Urlaub", "Auto"],
+                        ["„Familie“: bereits vorhanden", "„xxx“: Der Name des Tags ist länger als 64 Zeichen."]])
+        // skipped tags count both kinds
+        XCTAssertTrue(lines[1].contains("übersprungen: 2"), "\(lines)")
     }
 
     /// A tags file: no rule line, but the tags in the details as for rules.
     func testTagsFileHasDetailsToo() {
         let report = RuleExchangeReport(tagsCreated: 1, tagsExisting: 2, rulesImported: 0, rulesSkipped: 0,
                                         rulesImportedLines: [], rulesSkippedLines: [],
-                                        tagsCreatedNames: ["Urlaub"], tagsExistingNames: ["Auto", "Abos"])
+                                        tagsCreatedNames: ["Urlaub"], tagsExistingNames: ["Auto", "Abos"], tagsSkippedLines: [])
         let lines = RuleExchangeReportSheet.summaryLines(report)
         XCTAssertEqual(lines.count, 1, "\(lines)")
-        XCTAssertEqual(RuleExchangeReportSheet.detailSections(report).map(\.lines), [["Urlaub"], ["Auto", "Abos"]])
+        XCTAssertEqual(RuleExchangeReportSheet.detailSections(report).map(\.lines),
+                       [["Urlaub"], ["„Auto“: bereits vorhanden", "„Abos“: bereits vorhanden"]])
     }
 }

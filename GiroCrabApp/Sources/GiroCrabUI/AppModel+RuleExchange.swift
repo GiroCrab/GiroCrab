@@ -27,11 +27,14 @@ extension AppModel {
     /// Reads a rules/tags file chosen by the user and lists what it holds, for
     /// choosing what to import. nil = unreadable or no GiroCrab file (error shown).
     func previewRulesTagsFile(_ url: URL) async -> RuleTagImport? {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let json: String
         do {
-            json = try String(contentsOf: url, encoding: .utf8)
+            // off the main thread; the security scope lasts until the read is done
+            json = try await Task.detached(priority: .userInitiated) {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                return try String(contentsOf: url, encoding: .utf8)
+            }.value
         } catch {
             showError(String(localized: "Import fehlgeschlagen"), error.localizedDescription)
             return nil

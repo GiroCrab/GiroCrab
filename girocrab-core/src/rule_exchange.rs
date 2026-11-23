@@ -10,10 +10,13 @@
 //! - **tags**: name and colour (tags are matched by name, missing ones created).
 //!
 //! The import resolves each of them in that order. A rule whose category or
-//! (all of) whose accounts cannot be found is skipped rather than imported in a
-//! wider form (no category, or every account); the report names it. A rule
-//! that already exists (same name, pattern, field, match kind and category)
-//! is skipped too, so importing the same file twice adds nothing.
+//! (all of) whose accounts cannot be found, or whose field or match kind this
+//! build does not know, is skipped rather than imported in a wider form (no
+//! category, every account, all fields); the report names it. So is a rule
+//! `save_rule` would refuse (empty or invalid pattern, neither category nor
+//! tags), already in the preview. A rule that already exists (same name,
+//! pattern, field, match kind, category, case sensitivity, amount range and
+//! accounts) is skipped too, so importing the same file twice adds nothing.
 
 use std::collections::HashMap;
 
@@ -51,6 +54,8 @@ pub struct RuleExchangeReport {
     pub tags_created_names: Vec<String>,
     /// Names of the tags that already existed, as the vault spells them.
     pub tags_existing_names: Vec<String>,
+    /// One line per tag that could not be created (invalid name), with the reason.
+    pub tags_skipped_lines: Vec<String>,
 }
 
 /// A file's contents before the import, for choosing what to import (#1057).
@@ -86,6 +91,8 @@ pub struct TagPreview {
     pub color_hex: String,
     /// A tag of that name is already in the vault (it is reused, not created).
     pub exists: bool,
+    /// Why the import would skip it (invalid name).
+    pub problem: Option<String>,
 }
 
 // ------------------------------------------------------------------ file format
@@ -381,13 +388,34 @@ fn wanted_tags(file: &ExchangeFile) -> Vec<TagEntry> {
     wanted
 }
 
-/// The live tag a file tag stands for: same uuid, else same name. (id, name)
+/// The live tag a file tag stands for: the one with its uuid, else the one with
+/// its name (a fresh vault shares no uuid). (id, name)
 fn find_tag(live: &[(i64, String, String, String)], t: &TagEntry) -> Option<(i64, String)> {
-    live.iter()
-        .find(|(_, uuid, name, _)| {
-            (!t.uuid.is_empty() && *uuid == t.uuid) || fold(name) == fold(&t.name)
-        })
+    let by_uuid = || {
+        live.iter()
+            .find(|(_, uuid, ..)| !t.uuid.is_empty() && *uuid == t.uuid)
+    };
+    let by_name = || {
+        live.iter()
+            .find(|(_, _, name, _)| fold(name) == fold(&t.name))
+    };
+    by_uuid()
+        .or_else(by_name)
         .map(|(id, _, name, _)| (*id, name.clone()))
+}
+
+/// Why a tag of the file cannot be created (invalid name); `None` = fine.
+fn tag_problem(name: &str) -> Option<String> {
+    crate::tags::clean_name(name).err().map(|e| reason(&e))
+}
+
+/// A core error as a short reason in a list: the message alone for invalid
+/// input (without „Ungültige Eingabe:“).
+fn reason(err: &CoreError) -> String {
+    match err {
+        CoreError::InvalidInput { message } => message.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// What an import does with a rule of the file.
@@ -410,6 +438,13 @@ fn plan_rule(e: &RuleEntry, cats: &[CategoryRow], accs: &[AccountRow], existing:
     let Some(match_kind) = match_kind_from(&e.match_kind) else {
         return Plan::Skip(tr("unbekannte Suchart").into());
     };
+    // `RuleField::from_str` reads anything unknown as „all fields“: a wider rule
+    if !matches!(
+        e.field.as_str(),
+        "any" | "counterparty" | "purpose" | "booking_text" | "iban"
+    ) {
+        return Plan::Skip(tr("unbekanntes Feld").into());
+    }
     let category_id = match &e.category {
         None => 0,
         Some(c) => match resolve_category(c, cats) {
@@ -440,12 +475,51 @@ fn plan_rule(e: &RuleEntry, cats: &[CategoryRow], accs: &[AccountRow], existing:
     }
     let name = rule_name(e);
     let field = RuleField::from_str(&e.field);
+    // the checks of `save_rule`, so the preview shows what the import will do
+    if e.pattern.trim().is_empty() {
+        return Plan::Skip(tr("Das Suchmuster ist leer.").into());
+    }
+    if category_id == 0 && e.tags.is_empty() {
+        return Plan::Skip(
+            tr("Die Regel braucht eine Kategorie oder mindestens einen Tag.").into(),
+        );
+    }
+    let probe = Rule {
+        id: 0,
+        name: name.clone(),
+        category_id,
+        field,
+        match_kind,
+        pattern: e.pattern.clone(),
+        case_sensitive: e.case_sensitive,
+        min_amount_cents: e.min_amount_cents,
+        max_amount_cents: e.max_amount_cents,
+        account_ids: account_ids.clone(),
+        priority: 0,
+        enabled: e.enabled,
+        match_count: 0,
+        tag_ids: Vec::new(),
+    };
+    if let Err(err) = crate::rules::CompiledRule::compile_supported(probe) {
+        return Plan::Skip(reason(&err));
+    }
+    let sorted = |ids: &[i64]| {
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    };
+    let accounts = sorted(&account_ids);
     if existing.iter().any(|r| {
         r.name == name
             && r.pattern == e.pattern
             && r.field == field
             && r.match_kind == match_kind
             && r.category_id == category_id
+            && r.case_sensitive == e.case_sensitive
+            && r.min_amount_cents == e.min_amount_cents
+            && r.max_amount_cents == e.max_amount_cents
+            && sorted(&r.account_ids) == accounts
     }) {
         return Plan::Skip(tr("bereits vorhanden").into());
     }
@@ -608,10 +682,14 @@ impl Vault {
                 .collect(),
             tags: wanted_tags(&file)
                 .into_iter()
-                .map(|t| TagPreview {
-                    exists: find_tag(&live, &t).is_some(),
-                    name: t.name,
-                    color_hex: t.color_hex,
+                .map(|t| {
+                    let exists = find_tag(&live, &t).is_some();
+                    TagPreview {
+                        problem: (!exists).then(|| tag_problem(&t.name)).flatten(),
+                        exists,
+                        name: t.name,
+                        color_hex: t.color_hex,
+                    }
                 })
                 .collect(),
         })
@@ -656,6 +734,7 @@ impl Vault {
             rules_skipped_lines: Vec::new(),
             tags_created_names: Vec::new(),
             tags_existing_names: Vec::new(),
+            tags_skipped_lines: Vec::new(),
         };
         let chosen: Vec<&RuleEntry> = file
             .rules
@@ -700,13 +779,24 @@ impl Vault {
                     id
                 }
                 None => {
-                    // an invalid colour must not cost the tag
-                    let tag = self
+                    // an invalid colour must not cost the tag; an invalid name skips
+                    // only this tag (a rule using it comes without it)
+                    let created = self
                         .create_tag(t.name.clone(), t.color_hex.clone())
-                        .or_else(|_| self.create_tag(t.name.clone(), String::new()))?;
-                    report.tags_created += 1;
-                    report.tags_created_names.push(tag.name.clone());
-                    tag.id
+                        .or_else(|_| self.create_tag(t.name.clone(), String::new()));
+                    match created {
+                        Ok(tag) => {
+                            report.tags_created += 1;
+                            report.tags_created_names.push(tag.name.clone());
+                            tag.id
+                        }
+                        Err(err) => {
+                            report
+                                .tags_skipped_lines
+                                .push(trf("„{0}“: {1}", &[&t.name, &reason(&err)]));
+                            continue;
+                        }
+                    }
                 }
             };
             tag_ids.insert(fold(&t.name), id);
@@ -775,7 +865,7 @@ impl Vault {
                     report.rules_skipped += 1;
                     report
                         .rules_skipped_lines
-                        .push(trf("„{0}“: {1}", &[&name, &err]));
+                        .push(trf("„{0}“: {1}", &[&name, &reason(&err)]));
                 }
             }
         }

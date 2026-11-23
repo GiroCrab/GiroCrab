@@ -36210,13 +36210,13 @@
         }
       }
     },
-    "Übersprungene Tags (bereits vorhanden)" : {
+    "Übersprungene Tags" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Skipped Tags (already present)"
+            "value" : "Skipped Tags"
           }
         }
       }
@@ -36780,6 +36780,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%1$@”: %2$u new, %3$u updated"
+          }
+        }
+      }
+    },
+    "„%@“: bereits vorhanden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@”: already present"
           }
         }
       }

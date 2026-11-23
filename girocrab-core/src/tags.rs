@@ -87,7 +87,7 @@ pub struct BookingTag {
 }
 
 /// Trimmed name, inner runs of whitespace collapsed; checked for length.
-fn clean_name(name: &str) -> CoreResult<String> {
+pub(crate) fn clean_name(name: &str) -> CoreResult<String> {
     let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
     if name.is_empty() {
         return Err(CoreError::invalid(tr("Der Name des Tags fehlt.")));

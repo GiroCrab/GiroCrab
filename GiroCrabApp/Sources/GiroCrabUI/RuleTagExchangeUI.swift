@@ -112,17 +112,18 @@ struct RuleExchangeSelectionSheet: View {
         _tags = State(initialValue: Set(preview.tags.map(\.name)))
     }
 
-    /// Tags (case-insensitive) a ticked rule that will be imported adds: imported
-    /// in any case. A rule the import skips brings no tag along.
+    /// Tags a ticked rule that will be imported adds, as the core's name keys
+    /// (`AppModel.tagKey`: case and inner spaces ignored): imported in any case.
+    /// A rule the import skips brings no tag along.
     static func requiredTags(_ preview: RuleExchangePreview, rules: Set<UInt32>) -> Set<String> {
-        Set(preview.rules.filter { rules.contains($0.index) && $0.problem == nil }.flatMap(\.tags).map { $0.lowercased() })
+        Set(preview.rules.filter { rules.contains($0.index) && $0.problem == nil }.flatMap(\.tags).map(AppModel.tagKey))
     }
 
     private var required: Set<String> { Self.requiredTags(preview, rules: rules) }
 
-    private func isTicked(_ tag: TagPreview) -> Bool {
-        tags.contains(tag.name) || required.contains(tag.name.lowercased())
-    }
+    private func isLocked(_ tag: TagPreview) -> Bool { required.contains(AppModel.tagKey(tag.name)) }
+
+    private func isTicked(_ tag: TagPreview) -> Bool { tags.contains(tag.name) || isLocked(tag) }
 
     private var tagCount: Int { preview.tags.filter(isTicked).count }
 
@@ -211,7 +212,7 @@ struct RuleExchangeSelectionSheet: View {
                    all: { tags = Set(preview.tags.map(\.name)) },
                    none: { tags = [] })
             ForEach(preview.tags, id: \.name) { tag in
-                let locked = required.contains(tag.name.lowercased())
+                let locked = isLocked(tag)
                 Toggle(isOn: Binding(
                     get: { isTicked(tag) },
                     set: { if $0 { tags.insert(tag.name) } else { tags.remove(tag.name) } }
@@ -219,10 +220,15 @@ struct RuleExchangeSelectionSheet: View {
                     VStack(alignment: .leading, spacing: 1) {
                         // tag names are always covered in a report (#228)
                         Text("#" + tag.name).appFont(.body).sensitive()
-                        Text(locked ? String(localized: "von einer ausgewählten Regel verwendet")
-                             : tag.exists ? String(localized: "bereits vorhanden, wird übernommen")
-                             : String(localized: "neu"))
-                            .appFont(.caption).foregroundStyle(Theme.secondary)
+                        if let problem = tag.problem {
+                            Text(String(localized: "Wird übersprungen: \(problem)")).appFont(.caption)
+                                .foregroundStyle(Theme.warning)
+                        } else {
+                            Text(locked ? String(localized: "von einer ausgewählten Regel verwendet")
+                                 : tag.exists ? String(localized: "bereits vorhanden, wird übernommen")
+                                 : String(localized: "neu"))
+                                .appFont(.caption).foregroundStyle(Theme.secondary)
+                        }
                     }
                 }
                 #if os(macOS)
@@ -256,8 +262,8 @@ struct RuleExchangeReportSheet: View {
         if r.rulesImported + r.rulesSkipped > 0 {
             lines.append(String(localized: "Regeln importiert: \(r.rulesImported) · übersprungen: \(r.rulesSkipped)"))
         }
-        if r.tagsCreated + r.tagsExisting > 0 {
-            lines.append(String(localized: "Tags importiert: \(r.tagsCreated) · übersprungen: \(r.tagsExisting)"))
+        if r.tagsCreated + r.tagsExisting > 0 || !r.tagsSkippedLines.isEmpty {
+            lines.append(String(localized: "Tags importiert: \(r.tagsCreated) · übersprungen: \(r.tagsExisting + UInt32(r.tagsSkippedLines.count))"))
         }
         if lines.isEmpty {
             lines.append(String(localized: "Die Datei enthält keine Regeln oder Tags."))
@@ -275,7 +281,9 @@ struct RuleExchangeReportSheet: View {
             Section(title: String(localized: "Importierte Regeln"), lines: r.rulesImportedLines),
             Section(title: String(localized: "Übersprungene Regeln"), lines: r.rulesSkippedLines),
             Section(title: String(localized: "Importierte Tags"), lines: r.tagsCreatedNames),
-            Section(title: String(localized: "Übersprungene Tags (bereits vorhanden)"), lines: r.tagsExistingNames),
+            // already there (reused by the rules) or not creatable (invalid name)
+            Section(title: String(localized: "Übersprungene Tags"),
+                    lines: r.tagsExistingNames.map { String(localized: "„\($0)“: bereits vorhanden") } + r.tagsSkippedLines),
         ].filter { !$0.lines.isEmpty }
     }
 

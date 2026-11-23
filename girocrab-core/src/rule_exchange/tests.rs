@@ -395,3 +395,191 @@ fn a_skipped_rule_brings_no_tag_along() {
     assert!(report.tags_created_names.is_empty(), "{report:?}");
     assert!(b.list_tags().unwrap().is_empty());
 }
+
+/// The export of `a` as JSON, changed by `edit`.
+fn edited(a: &Vault, edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(&a.export_rules(vec![]).unwrap()).unwrap();
+    edit(&mut v);
+    v.to_string()
+}
+
+#[test]
+fn unknown_field_is_skipped_not_widened() {
+    let dir = TempDir::new("rx-field");
+    let a = open(&dir, "a.db");
+    let cat = category(&a, "Freizeit", None);
+    a.save_rule(rule("kino", cat, vec![], vec![])).unwrap();
+    let json = edited(&a, |v| v["rules"][0]["field"] = "counterprty".into());
+
+    let b = open(&dir, "b.db");
+    category(&b, "Freizeit", None);
+    let preview = b.preview_rules_and_tags(json.clone()).unwrap();
+    assert!(preview.rules[0].problem.is_some(), "{preview:?}");
+    let report = b.import_rules_and_tags(json).unwrap();
+    assert_eq!(
+        (report.rules_imported, report.rules_skipped),
+        (0, 1),
+        "{report:?}"
+    );
+    assert!(b.list_rules().unwrap().is_empty());
+}
+
+#[test]
+fn rules_differing_in_accounts_amounts_or_case_are_no_duplicates() {
+    let dir = TempDir::new("rx-dupes");
+    let a = open(&dir, "a.db");
+    let giro = account(&a, "Girokonto", IBAN_GIRO, "");
+    let card = account(&a, "Kreditkarte", IBAN_CARD, "");
+    let cat = category(&a, "Freizeit", None);
+    a.save_rule(rule("kino", cat, vec![giro], vec![])).unwrap();
+    a.save_rule(rule("kino", cat, vec![card], vec![])).unwrap();
+    a.save_rule(Rule {
+        min_amount_cents: None,
+        ..rule("kino", cat, vec![giro], vec![])
+    })
+    .unwrap();
+    a.save_rule(Rule {
+        case_sensitive: true,
+        ..rule("kino", cat, vec![giro], vec![])
+    })
+    .unwrap();
+    let json = a.export_rules(vec![]).unwrap();
+
+    // one file into an empty vault: four different rules, none a duplicate
+    let b = open(&dir, "b.db");
+    account(&b, "Girokonto", IBAN_GIRO, "");
+    account(&b, "Kreditkarte", IBAN_CARD, "");
+    category(&b, "Freizeit", None);
+    let report = b.import_rules_and_tags(json.clone()).unwrap();
+    assert_eq!(
+        (report.rules_imported, report.rules_skipped),
+        (4, 0),
+        "{report:?}"
+    );
+    // the same file again: all four are present now
+    let again = b.import_rules_and_tags(json).unwrap();
+    assert_eq!(
+        (again.rules_imported, again.rules_skipped),
+        (0, 4),
+        "{again:?}"
+    );
+}
+
+#[test]
+fn rules_save_rule_refuses_are_skipped_in_preview_and_import() {
+    let dir = TempDir::new("rx-invalid");
+    let a = source(&dir);
+    // "rewe" gets a broken regex, "hotel" (tags only) an empty pattern
+    let json = edited(&a, |v| {
+        v["rules"][0]["match_kind"] = "regex".into();
+        v["rules"][0]["pattern"] = "(unclosed".into();
+        v["rules"][2]["pattern"] = "  ".into();
+    });
+
+    let b = open(&dir, "b.db");
+    account(&b, "Girokonto", IBAN_GIRO, "");
+    let food = category(&b, "Lebensmittel", None);
+    category(&b, "Supermarkt", Some(food));
+    let preview = b.preview_rules_and_tags(json.clone()).unwrap();
+    assert!(preview.rules[0].problem.is_some(), "{preview:?}");
+    assert!(preview.rules[2].problem.is_some(), "{preview:?}");
+    // the reason without the generic „Ungültige Eingabe:“ prefix
+    assert!(
+        !preview.rules[2]
+            .problem
+            .as_deref()
+            .unwrap()
+            .contains("Ungültige"),
+        "{preview:?}"
+    );
+
+    // only these two chosen: neither is imported, so their tags stay out
+    let report = b
+        .import_rules_and_tags_selected(json, vec![0, 2], vec![])
+        .unwrap();
+    assert_eq!(
+        (report.rules_imported, report.rules_skipped),
+        (0, 2),
+        "{report:?}"
+    );
+    assert!(b.list_tags().unwrap().is_empty(), "{report:?}");
+}
+
+#[test]
+fn a_tag_found_by_uuid_wins_over_one_with_the_same_name() {
+    let dir = TempDir::new("rx-uuid");
+    let a = open(&dir, "a.db");
+    let cat = category(&a, "Arbeit", None);
+    let work = a.create_tag("Work".into(), String::new()).unwrap();
+    a.save_rule(rule("buero", cat, vec![], vec![work.id]))
+        .unwrap();
+    let json = a.export_rules(vec![]).unwrap();
+    let uuid: String = a
+        .db()
+        .unwrap()
+        .query_row("SELECT uuid FROM tags WHERE id = ?1", [work.id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+
+    // the target: another tag named "Work", and the exported one renamed to "Office"
+    let b = open(&dir, "b.db");
+    category(&b, "Arbeit", None);
+    let other = b.create_tag("Work".into(), String::new()).unwrap();
+    let office = b.create_tag("Office".into(), String::new()).unwrap();
+    // uuids are derived from the name: give the same-named tag another one first
+    b.db()
+        .unwrap()
+        .execute(
+            "UPDATE tags SET uuid = 'other-work' WHERE id = ?1",
+            [other.id],
+        )
+        .unwrap();
+    b.db()
+        .unwrap()
+        .execute(
+            "UPDATE tags SET uuid = ?1 WHERE id = ?2",
+            params![uuid, office.id],
+        )
+        .unwrap();
+    let report = b.import_rules_and_tags(json).unwrap();
+    assert_eq!(report.tags_existing_names, ["Office"], "{report:?}");
+    let buero = b
+        .list_rules()
+        .unwrap()
+        .into_iter()
+        .find(|r| r.name == "buero")
+        .unwrap();
+    assert_eq!(buero.tag_ids, vec![office.id]);
+    assert_ne!(buero.tag_ids, vec![other.id]);
+}
+
+#[test]
+fn an_invalid_tag_name_is_reported_and_the_import_goes_on() {
+    let dir = TempDir::new("rx-tagname");
+    let a = source(&dir);
+    let long = "x".repeat(70);
+    let json = edited(&a, |v| {
+        v["tags"].as_array_mut().unwrap().insert(
+            0,
+            serde_json::json!({"uuid": "", "name": long, "color_hex": ""}),
+        );
+    });
+
+    let b = open(&dir, "b.db");
+    account(&b, "Girokonto", IBAN_GIRO, "");
+    let food = category(&b, "Lebensmittel", None);
+    category(&b, "Supermarkt", Some(food));
+    let preview = b.preview_rules_and_tags(json.clone()).unwrap();
+    assert!(preview.tags[0].problem.is_some(), "{preview:?}");
+    assert!(
+        preview.tags[1..].iter().all(|t| t.problem.is_none()),
+        "{preview:?}"
+    );
+
+    let report = b.import_rules_and_tags(json).unwrap();
+    assert_eq!(report.tags_skipped_lines.len(), 1, "{report:?}");
+    // the tags after it and the rules still came in
+    assert_eq!(report.tags_created, 2, "{report:?}");
+    assert!(report.rules_imported >= 2, "{report:?}");
+}

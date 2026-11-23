@@ -1707,6 +1707,7 @@ fn english(de: &str) -> Option<&'static str> {
             "The file is from a newer GiroCrab version. Please update GiroCrab."
         }
         "unbekannte Suchart" => "unknown match type",
+        "unbekanntes Feld" => "unknown field",
         "Kategorie „{0}“ nicht gefunden" => "category “{0}” not found",
         "Konten nicht gefunden ({0})" => "accounts not found ({0})",
         "bereits vorhanden" => "already exists",
