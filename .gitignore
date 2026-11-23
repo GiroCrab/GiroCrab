@@ -119,7 +119,6 @@ __pycache__/
 # --- Logs / dumps ---
 *.log
 *.jsonl
-.claude/settings.local.json
 dist/
 
 # Local build output (xcframework staging etc.)
@@ -142,3 +141,10 @@ GiroCrabAndroid/.gradle/
 # Outputs of scripts/build-rust-android.sh (regenerated, never committed)
 GiroCrabAndroid/app/src/main/jniLibs/
 GiroCrabAndroid/app/src/main/generated/
+
+
+# Claude local state stays ignored; shared repo skills are tracked
+/.claude/*
+!/.claude/
+!/.claude/skills/
+!/.claude/skills/**
