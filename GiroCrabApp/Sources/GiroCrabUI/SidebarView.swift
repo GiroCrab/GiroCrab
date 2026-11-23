@@ -652,10 +652,12 @@ private struct SidebarSelectionList<Content: View>: View {
             // The first row starts at the height of the middle column's heading (#1544), e.g. „Belege & Postbox“:
             // just below the toolbar, which also keeps the traffic lights / sidebar toggle clear.
             // The list's own top margin does that; an extra row (the earlier 28 pt one) could not be
-            // made smaller, as the list gives every row a minimum height.
+            // made smaller, as the list gives every row a minimum height. A content margin, not a
+            // safe-area padding: the padding moved the scroll view itself 14 pt down, so the line
+            // AppKit shows once the list is scrolled sat below the toolbar line, with a band above it.
             content
         }
-        .safeAreaPadding(.top, 14)
+        .contentMargins(.top, 14, for: .scrollContent)
         #else
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) { content }

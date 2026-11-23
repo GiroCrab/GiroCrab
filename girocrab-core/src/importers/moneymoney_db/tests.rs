@@ -4518,6 +4518,159 @@ fn adopt_account_reuses_imported_trade_republic_checking_account_without_iban() 
     }
 }
 
+/// An imported PayPal account (payment service, EUR, no IBAN) on `connection`.
+fn imported_paypal(db: &rusqlite::Connection, connection: i64, mm_id: &str) -> i64 {
+    let gid = Vault::ensure_group(db, "Zahlungsdienste", "creditcard", 1).unwrap();
+    db.execute(
+        "INSERT INTO accounts(connection_id, group_id, external_ref, name, bank_name, iban, currency, kind, balance_cents, balance_date, sf_symbol, sort_order, created_ms)
+         VALUES (?1, ?2, ?3, 'PayPal', 'PayPal', '', 'EUR', 'payment_service', 1000, '2026-11-20', 'creditcard', 1, 1000)",
+        params![connection, gid, format!("moneymoney-db:{mm_id}")],
+    )
+    .unwrap();
+    db.last_insert_rowid()
+}
+
+fn enable_banking_login(db: &rusqlite::Connection, bank: &str, login: &str) -> i64 {
+    Vault::add_bank_connection_keyed(
+        db,
+        ConnectorKind::EnableBanking,
+        &ConnectorKind::enable_banking_key("DE", bank),
+        None,
+        bank.to_string(),
+        login.to_string(),
+    )
+    .unwrap()
+    .0
+}
+
+fn adopt_paypal(db: &rusqlite::Connection, connection: i64, currency: &str) -> Option<i64> {
+    super::adopt_account(
+        db,
+        connection,
+        &format!("eb:paypal-{currency}"),
+        "",
+        "",
+        currency,
+        AccountKind::PaymentService,
+        &[],
+    )
+    .unwrap()
+}
+
+#[test]
+fn paypal_through_enable_banking_adopts_the_import_of_the_direct_login() {
+    // #834: the import put PayPal on a direct login; the user sets PayPal up
+    // through Enable Banking instead, and its first fetch takes the account over
+    let _dir = crate::test_support::TempDir::new("girocrab-paypal-834");
+    let v = Vault::open(
+        _dir.join("v.db").to_string_lossy().to_string(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let direct = v
+        .add_bank_connection(
+            ConnectorKind::PayPal,
+            String::new(),
+            "erika@example.org".into(),
+        )
+        .unwrap();
+    let db = v.db().unwrap();
+    let imported = imported_paypal(&db, direct, "pp-1");
+    let eb = enable_banking_login(&db, "PayPal", "Privat");
+    // another currency of the same PayPal account is another account
+    assert_eq!(adopt_paypal(&db, eb, "USD"), None);
+    assert_eq!(adopt_paypal(&db, eb, "EUR"), Some(imported));
+    let (connection, ext): (i64, String) = db
+        .query_row(
+            "SELECT connection_id, external_ref FROM accounts WHERE id = ?1",
+            params![imported],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((connection, ext.as_str()), (eb, "eb:paypal-EUR"));
+}
+
+#[test]
+fn own_import_wins_over_an_unsynced_twin_login() {
+    let _dir = crate::test_support::TempDir::new("girocrab-paypal-834d");
+    let v = Vault::open(
+        _dir.join("v.db").to_string_lossy().to_string(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let direct = v
+        .add_bank_connection(
+            ConnectorKind::PayPal,
+            String::new(),
+            "erika@example.org".into(),
+        )
+        .unwrap();
+    let db = v.db().unwrap();
+    imported_paypal(&db, direct, "pp-1");
+    let eb = enable_banking_login(&db, "PayPal", "Privat");
+    let own = imported_paypal(&db, eb, "pp-own");
+    assert_eq!(adopt_paypal(&db, eb, "EUR"), Some(own));
+}
+
+#[test]
+fn imports_of_used_or_unrelated_logins_are_not_taken_over() {
+    let _dir = crate::test_support::TempDir::new("girocrab-paypal-834b");
+    let v = Vault::open(
+        _dir.join("v.db").to_string_lossy().to_string(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let direct = v
+        .add_bank_connection(
+            ConnectorKind::PayPal,
+            String::new(),
+            "erika@example.org".into(),
+        )
+        .unwrap();
+    let db = v.db().unwrap();
+    imported_paypal(&db, direct, "pp-1");
+    // another bank through Enable Banking never takes a PayPal account
+    let c24 = enable_banking_login(&db, "C24", "Konto");
+    assert_eq!(adopt_paypal(&db, c24, "EUR"), None);
+    // the direct login already synced: its accounts are in use
+    db.execute(
+        "UPDATE bank_connections SET last_sync_unix = 1 WHERE id = ?1",
+        params![direct],
+    )
+    .unwrap();
+    let eb = enable_banking_login(&db, "PayPal", "Privat");
+    assert_eq!(adopt_paypal(&db, eb, "EUR"), None);
+}
+
+#[test]
+fn two_imported_paypal_logins_are_never_guessed() {
+    let _dir = crate::test_support::TempDir::new("girocrab-paypal-834c");
+    let v = Vault::open(
+        _dir.join("v.db").to_string_lossy().to_string(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let a = v
+        .add_bank_connection(
+            ConnectorKind::PayPal,
+            String::new(),
+            "erika@example.org".into(),
+        )
+        .unwrap();
+    let b = v
+        .add_bank_connection(
+            ConnectorKind::PayPal,
+            String::new(),
+            "max@example.org".into(),
+        )
+        .unwrap();
+    let db = v.db().unwrap();
+    imported_paypal(&db, a, "pp-1");
+    imported_paypal(&db, b, "pp-2");
+    let eb = enable_banking_login(&db, "PayPal", "Privat");
+    assert_eq!(adopt_paypal(&db, eb, "EUR"), None);
+}
+
 /// Visa-Karte closed in MoneyMoney (bit 16 of `refresh`, the low bits are its
 /// refresh settings), Girokonto open.
 const CARD_CLOSED: &str = "UPDATE accounts SET refresh = 19 WHERE rowid = 2;
