@@ -952,6 +952,10 @@ impl sync_flow::Ui for DialogBridge {
             c.title.clone()
         };
         self.show("push", title, challenge_text(c), None);
+        // #949: the order's push approval shows the comparison as well; login push stays without
+        if let Some(cmp) = tan_comparison_ui::current() {
+            self.show_comparison(cmp);
+        }
         match self.replies.lock().unwrap().recv_timeout(interval) {
             Ok(None) | Err(RecvTimeoutError::Disconnected) => false,
             Ok(Some(_)) | Err(RecvTimeoutError::Timeout) => true,
