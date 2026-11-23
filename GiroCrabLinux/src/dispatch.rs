@@ -1513,6 +1513,13 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         "seed_refund_demo" | "edit_refund" => Some((|| {
             let identity: String = arg(a, "vault_identity")?;
             let refund_target = REFUND_TARGET.lock().unwrap();
+            let active = VAULT.lock().unwrap();
+            if active
+                .as_ref()
+                .is_none_or(|active| !std::ptr::eq(active.as_ref(), v))
+            {
+                return Err(crate::i18n::tr("Tresor ist gesperrt"));
+            }
             let target = refund_target
                 .as_ref()
                 .and_then(|(token, vault)| (token == &identity).then(|| vault.upgrade()).flatten());
@@ -1731,11 +1738,32 @@ mod tests {
         call_ok("open_demo", json!({}));
         let new = vault().unwrap();
         assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
-        assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_ok());
+        assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_err());
         args["vault_identity"] = json!(pin_refund_target(&new));
         assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_err());
         args.as_object_mut().unwrap().remove("vault_identity");
         assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
+    }
+
+    #[test]
+    fn refund_worker_cannot_write_its_captured_vault_after_lock() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let captured = vault().unwrap();
+        let args = json!({"vault_identity":pin_refund_target(&captured)});
+        assert!(
+            dispatch_vault(&captured, "seed_refund_demo", &args)
+                .unwrap()
+                .is_ok()
+        );
+        let before = captured.list_accounts().unwrap().len();
+        call_ok("lock", json!({}));
+        assert!(
+            dispatch_vault(&captured, "seed_refund_demo", &args)
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(captured.list_accounts().unwrap().len(), before);
     }
 
     #[test]
@@ -1758,7 +1786,7 @@ mod tests {
         assert!(
             dispatch_vault(&old, "seed_refund_demo", &args)
                 .unwrap()
-                .is_ok()
+                .is_err()
         );
         let current = json!({"vault_identity":pin_refund_target(&new)});
         assert!(

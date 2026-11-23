@@ -28,6 +28,7 @@ Sheet {
 
     /// The typed amount with its sign, null while it is not a usable number.
     readonly property var amountCents: {
+        if (sheet.hasSplits) return OfflineAccounts.bookingRequest.booking.amount_cents
         const cents = Fmt.parseCents(amountField.text)
         if (cents === null || cents === 0) return null
         const magnitude = Math.abs(cents)

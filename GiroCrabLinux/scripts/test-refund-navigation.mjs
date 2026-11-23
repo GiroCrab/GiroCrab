@@ -17,6 +17,15 @@ function bodyAfter(marker, text = source) {
     return text.slice(start + 1, end - 1);
 }
 const reveal = bodyAfter("function revealBooking(id)");
+test("zero-total split bookings retain their amount for metadata saves", () => {
+    const text=readFileSync(new URL("../qml/ManualBookingSheet.qml",import.meta.url),"utf8");
+    const amount=bodyAfter("readonly property var amountCents:",text);
+    for (const [hasSplits,existing,input,expected] of [[true,0,"",0],[true,-1200,"invalid",-1200],[false,0,"0",null],[false,0,"12",-1200]]) {
+        const s={sheet:{hasSplits},OfflineAccounts:{bookingRequest:{booking:{amount_cents:existing}}},hasSplits,amountField:{text:input},flow:"out",Fmt:{parseCents:t=>/^\d+$/.test(t)?Number(t)*100:null}};
+        vm.createContext(s);
+        assert.equal(vm.runInContext(`(function(){${amount}})()`,s),expected);
+    }
+});
 test("refund mutation resets busy on identity, queue and worker errors", () => {
     for (const failure of ["identity", "worker", "queue", "locked", "ok"]) {
         const s = { refundEditing:false, isUnlocked:true, vaultLoaded:failure!=="locked", vaultGeneration:1,
