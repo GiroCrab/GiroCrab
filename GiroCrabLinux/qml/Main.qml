@@ -320,7 +320,7 @@ ApplicationWindow {
             }
             InspectorView {
                 id: inspectorPane
-                // RootView.swift (#934): Belege & PostBox has its own preview; the booking inspector
+                // RootView.swift (#934): Belege & Postbox has its own preview; the booking inspector
                 // would show whatever booking was selected last
                 visible: AppModel.showInspector && AppModel.sidebarSelection !== "documents"
                 SplitView.minimumWidth: 280; SplitView.preferredWidth: 320; SplitView.maximumWidth: 380

@@ -58,11 +58,11 @@ Funktionsumfang der Oberfläche.
 - **Dokumentenabruf je Bankzugang (#954):** „Bankzugang bearbeiten“ hat im Abschnitt „Zugang“ den
   Schalter „Dokumente abrufen“, aber nur bei Banken, die Dokumente liefern. Er ist standardmäßig an
   und gilt mit „Speichern“. Ist er aus, lädt der Abruf keine neuen Belege, Kontoauszüge oder
-  PostBox-Dokumente; gespeicherte bleiben. „Kontoauszüge abrufen“ verschwindet für die Konten des
-  Zugangs. Bei comdirect über FinTS sind der PostBox-Schalter und „PostBox jetzt abrufen“ dann
+  Postbox-Dokumente; gespeicherte bleiben. „Kontoauszüge abrufen“ verschwindet für die Konten des
+  Zugangs. Bei comdirect über FinTS sind der Postbox-Schalter und „Postbox jetzt abrufen“ dann
   deaktiviert, mit einem Hinweis. FNZ, quirion und Schwäbisch Hall zeigen im Login-Fenster keinen
   Haken für die PDFs. Wird der Schalter wieder eingeschaltet, holen die nächsten Abrufe nach, was
-  fehlt. „Belege & PostBox“ nennt die Zugänge mit ausgeschaltetem Abruf und verlinkt
+  fehlt. „Belege & Postbox“ nennt die Zugänge mit ausgeschaltetem Abruf und verlinkt
   „Einstellungen › Banken öffnen“. Neue Kernaufrufe in `src/dispatch.rs`:
   `documents_fetch_supported`, `documents_fetch_enabled`, `set_documents_fetch`.
 - **Kompakterer Dialog „Bankzugang bearbeiten“ (#954):** „Speichern“ ist erst nach einer Änderung
@@ -71,11 +71,11 @@ Funktionsumfang der Oberfläche.
   Kontenauswahl zeigt jedes Konto in einer Zeile, mit einem kurzen Hinweis (die lange Erklärung
   steht im Tooltip). Die BLZ erscheint nur noch bei FinTS-Zugängen, und der Dialog ist höher.
 - **Konten gleichen Namens (#954):** Haben zwei Konten denselben Namen (etwa zweimal „Konto flex“
-  verschiedener Inhaber), zeigen die Kontoauswahl in „Belege & PostBox“, die Kontozeilen der
+  verschiedener Inhaber), zeigen die Kontoauswahl in „Belege & Postbox“, die Kontozeilen der
   Dokumente, die Seitenleiste (Untertitel zwischen Bank und Notiz) und „Konto hinzufügen“ bei den
   Regeln den Inhaber dazu. Fehlt er oder haben beide denselben, steht dort das Ende der IBAN bzw.
   Kontonummer („…1234“).
-- **„Belege & PostBox“ nach Bankzugang filtern (#1042):** Vor der Kontoauswahl steht die Auswahl
+- **„Belege & Postbox“ nach Bankzugang filtern (#1042):** Vor der Kontoauswahl steht die Auswahl
   „Bankzugang“ mit „Alle Bankzugänge“, „Ohne Konto“ und den Zugängen, die Konten haben. Sie erscheint
   erst ab zwei Zugängen. Die Kontoauswahl zeigt dann nur die Konten dieses Zugangs; ein Konto eines
   anderen Zugangs wird beim Wechsel zurückgesetzt. Bei „Ohne Konto“ ist die Kontoauswahl gesperrt.
@@ -323,7 +323,7 @@ Funktionsumfang der Oberfläche.
   eingeklappte Optionen. CSV kennt zusätzlich die Spalten „IBAN der Gegenseite“ und „Tags“.
   Zeitraum und Konten bleiben gemerkt; „Exportieren …“ fragt immer nach dem Ort, „Pro Konto eine
   Datei“ nach einem Ordner (statt still nach Downloads zu speichern).
-- **Belege & PostBox:** Ungelesene Dokumente tragen einen Punkt und einen fetten Titel und werden
+- **Belege & Postbox:** Ungelesene Dokumente tragen einen Punkt und einen fetten Titel und werden
   beim Öffnen gelesen; „Als gelesen / ungelesen markieren“, „Nur ungelesene“ und „Alle als
   gelesen markieren“. Die Seitenleiste zählt die ungelesenen (Kontextmenü „Alle als gelesen
   markieren“). Filter nach Typ und Jahr; „N exportieren …“ exportiert genau die gefilterte Liste,

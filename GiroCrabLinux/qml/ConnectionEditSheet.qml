@@ -28,7 +28,7 @@ Sheet {
     property bool documentsSupported: false
     property bool documentsFetch: true
     property bool initialDocumentsFetch: true
-    /// „Dokumente abrufen“ is off: nothing that fetches documents runs (PostBox included).
+    /// „Dokumente abrufen“ is off: nothing that fetches documents runs (Postbox included).
     readonly property bool documentsBlocked: documentsSupported && !documentsFetch
     /// The values as loaded: „Speichern“ is only available once something differs.
     property string initialValues: "{}"

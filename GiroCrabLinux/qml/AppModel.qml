@@ -1466,7 +1466,7 @@ QtObject {
         return d === "" ? a.name : a.name + " · " + d
     }
     /// Combo box entries: "Alle Konten", then each section title and its accounts (`label(a)`).
-    /// `sections` defaults to `accountMenuSections` („Belege & PostBox“ passes the ones of a bank login, #1042).
+    /// `sections` defaults to `accountMenuSections` („Belege & Postbox“ passes the ones of a bank login, #1042).
     function accountMenuOptions(label, withoutAccount, sections) {
         const out = [{ id: null, title: qsTr("Alle Konten") }]
         if (withoutAccount) out.push({ id: documentsWithoutAccount, title: qsTr("Ohne Konto") })
@@ -2687,7 +2687,7 @@ QtObject {
                                                                       unlinked_only: unlinkedOnly, connection_id: noConnection ? null : connectionId } })) || []
         return withoutAccount ? docs.filter(d => d.account_id === null || d.account_id === undefined) : docs
     }
-    /// „Belege & PostBox“ filtered to one bank login (#1042); null = all, `documentsWithoutAccount` =
+    /// „Belege & Postbox“ filtered to one bank login (#1042); null = all, `documentsWithoutAccount` =
     /// documents without an account (they have no bank login). Set it with `selectDocumentsConnection`.
     property var documentsConnectionFilter: null
     /// Bank logins to offer in that filter: those with at least one account.
@@ -2696,7 +2696,7 @@ QtObject {
         for (const a of allAccounts) if (a.connection_id !== null) used[a.connection_id] = true
         return connections.filter(c => used[c.id])
     }
-    /// The account menu of „Belege & PostBox“, narrowed to the chosen bank login (#1042).
+    /// The account menu of „Belege & Postbox“, narrowed to the chosen bank login (#1042).
     readonly property var documentsAccountSections: {
         const cid = documentsConnectionFilter
         if (cid === null || cid === documentsWithoutAccount) return accountMenuSections
@@ -2772,7 +2772,7 @@ QtObject {
         run(() => core("mark_documents_seen", { doc_ids: ids, seen: seen }))
         documentsVersion++   // → SidebarModel.refreshCounts()
     }
-    /// Marks every unread document read (sidebar: „Belege & PostBox“).
+    /// Marks every unread document read (sidebar: „Belege & Postbox“).
     function markAllDocumentsSeen() {
         if (!isUnlocked) return
         run(() => core("mark_all_documents_seen", { account_id: null }))
@@ -2868,13 +2868,13 @@ QtObject {
         }
         return connections.filter(c => (ids === null || ids.indexOf(c.id) >= 0) && documentsOffConnectionIDs.indexOf(c.id) >= 0)
     }
-    /// "PostBox jetzt abrufen": syncs the login with the PostBox, however recent the last fetch.
+    /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     function fetchComdirectPostbox(c) {
         if (syncingConnectionID !== null) return
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect PostBox (#838) or the Consorsbank Online-Archiv (#1024).
+    /// Toast suffix of a sync with the comdirect Postbox (#838) or the Consorsbank Online-Archiv (#1024).
     function postboxNote(s, c) {
         const n = s.postbox_documents
         if (c && c.connector === "FinTsGeneric" && c.bank_code === "76030080") {
