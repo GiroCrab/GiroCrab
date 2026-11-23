@@ -71,11 +71,19 @@ QtObject {
         const g = h.value_cents - cost
         return { cents: g, percent: g / cost * 100 }
     }
-    /// One position as plain text: name, ISIN/WKN, quantity, price, value.
-    function clipboardLine(h) {
+    /// One position as plain text: name, ISIN/WKN, quantity, price, value (in trading currency when set).
+    function clipboardLine(h, accountCurrency) {
+        const acc = accountCurrency || "EUR"
+        const trade = nativeCurrency(h, acc)
+        const price = (trade !== null && has(h.native_price_cents))
+            ? Fmt.money(h.native_price_cents, trade)
+            : Fmt.money(h.current_price_cents, acc)
+        const val = (trade !== null && has(h.native_value_cents))
+            ? Fmt.money(h.native_value_cents, trade)
+            : Fmt.money(h.value_cents, acc)
         const id = h.isin || h.wkn
         const qty = Number(h.quantity).toLocaleString(Qt.locale(), "f", 4).replace(/[.,]?0+$/, "")
-        return [h.name, id, qty + " × " + Fmt.money(h.current_price_cents), Fmt.money(h.value_cents)].filter(x => x).join(" · ")
+        return [h.name, id, qty + " × " + price, val].filter(x => x).join(" · ")
     }
     function isBond(asset) { return asset.classification.asset_class === "bond" }
     function assetGain(asset) { return gainOf(asset.holding, priceBasis(asset.holding, isBond(asset))) }
