@@ -6,6 +6,7 @@ mod analytics;
 mod announcements;
 mod assets_loans;
 mod assets_loans_ui;
+mod bug_report_ui;
 mod cockpit;
 mod daily;
 mod girocode;
@@ -1471,15 +1472,10 @@ fn save_png_file(name: &str) -> Option<PathBuf> {
     std::env::var_os("GIROCRAB_EXPORT_DIR").map(|d| PathBuf::from(d).join(name))
 }
 
-/// Puts the image on the clipboard as registered "PNG" and as `CF_DIB`.
-///
-/// The clipboard is opened for the UI thread's active window: `EmptyClipboard` on a clipboard
+/// Opens the clipboard for the UI thread's active window: `EmptyClipboard` on a clipboard
 /// opened without an owner sets the owner to NULL, and `SetClipboardData` may then fail.
-/// Opening (busy) and writing fail with different status texts.
 #[cfg(windows)]
-fn copy_image_to_clipboard(png: &[u8], dib: &[u8]) -> Result<(), String> {
-    use clipboard_win::{Clipboard, raw, register_format};
-    const CF_DIB: u32 = 8;
+fn open_clipboard() -> Result<clipboard_win::Clipboard, String> {
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetActiveWindow() -> *mut std::ffi::c_void;
@@ -1488,8 +1484,17 @@ fn copy_image_to_clipboard(png: &[u8], dib: &[u8]) -> Result<(), String> {
     // (NULL if there is none); the handle is passed on, never dereferenced.
     let owner = unsafe { GetActiveWindow() };
     // A NULL owner behaves exactly like `Clipboard::new_attempts(10)`.
-    let _open = Clipboard::new_attempts_for(owner, 10)
-        .map_err(|_| "Die Zwischenablage ist gerade belegt; bitte erneut versuchen.".to_string())?;
+    clipboard_win::Clipboard::new_attempts_for(owner, 10)
+        .map_err(|_| "Die Zwischenablage ist gerade belegt; bitte erneut versuchen.".to_string())
+}
+
+/// Puts the image on the clipboard as registered "PNG" and as `CF_DIB`.
+/// Opening (busy) and writing fail with different status texts.
+#[cfg(windows)]
+fn copy_image_to_clipboard(png: &[u8], dib: &[u8]) -> Result<(), String> {
+    use clipboard_win::{raw, register_format};
+    const CF_DIB: u32 = 8;
+    let _open = open_clipboard()?;
     let write = |_| "Das Bild konnte nicht in die Zwischenablage geschrieben werden.".to_string();
     raw::empty().map_err(write)?;
     raw::set_without_clear(CF_DIB, dib).map_err(write)?;
@@ -1502,6 +1507,19 @@ fn copy_image_to_clipboard(png: &[u8], dib: &[u8]) -> Result<(), String> {
 #[cfg(not(windows))]
 fn copy_image_to_clipboard(_png: &[u8], _dib: &[u8]) -> Result<(), String> {
     Err("Bilder in die Zwischenablage kopieren geht nur unter Windows.".into())
+}
+
+/// Puts plain text (the sanitized bug report, #384) on the clipboard.
+#[cfg(windows)]
+fn copy_text_to_clipboard(text: &str) -> Result<(), String> {
+    let _open = open_clipboard()?;
+    clipboard_win::raw::set_string(text)
+        .map_err(|_| "Der Text konnte nicht in die Zwischenablage geschrieben werden.".to_string())
+}
+
+#[cfg(not(windows))]
+fn copy_text_to_clipboard(_text: &str) -> Result<(), String> {
+    Err("Text in die Zwischenablage kopieren geht nur unter Windows.".into())
 }
 
 /// `TransferSession` driven synchronously.
@@ -2094,12 +2112,34 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         }
     }
+    bug_report_ui::install(
+        &win,
+        std::rc::Rc::new({
+            let vault = vault.clone();
+            move || {
+                let guard = vault.lock().ok()?;
+                let v = guard.as_ref()?; // gesperrt => None => Aktionen gesperrt
+                let known_terms = v
+                    .list_accounts()
+                    .ok()?
+                    .into_iter()
+                    .flat_map(|a| [a.name, a.iban])
+                    .filter(|t| !t.trim().is_empty())
+                    .collect();
+                Some(bug_report_ui::ReportSource {
+                    known_terms,
+                    log_lines: Vec::new(),
+                })
+            }
+        }),
+    );
     {
         let (weak, vault) = (win.as_weak(), vault.clone());
         win.on_lock(move || {
             let Some(win) = weak.upgrade() else { return };
             SESSION.store(0, Ordering::SeqCst);
             *vault.lock().unwrap() = None;
+            bug_report_ui::reset(&win);
             with_state(|st| *st = State::default());
             win.set_unlocked(false);
             win.set_days(ModelRc::new(VecModel::from(Vec::<DayGroup>::new())));

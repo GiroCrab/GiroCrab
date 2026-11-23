@@ -1021,6 +1021,15 @@ export component MainWindow inherits Window {
     in property <[color]> palette;
     in property <string> app-version;
     in-out property <bool> about-open: false;
+    // ---- Problem melden (#384, Teil 2): Text geht nur nach Klick und erneut bereinigt hinaus
+    in-out property <bool> report-open: false;
+    in-out property <string> report-description;
+    in-out property <string> report-preview;
+    in property <string> report-status;
+    in property <bool> report-busy: false;
+    callback report-request();
+    callback report-copy();
+    callback report-open-issue();
     // ---- Mehrere Tresore (#410) und Tresor-Synchronisation (Cloud-Ordner)
     in-out property <bool> vaults-open: false;
     in property <[string]> vault-names: ["Haupttresor"];
@@ -1162,7 +1171,7 @@ export component MainWindow inherits Window {
                     MenuEntry { text: root.demo-active ? "Demo-Daten beenden" : "Demo-Daten ansehen"; clicked => { root.demo-switch(); } }
                 }
                 MenuTitle {
-                    text: "Werkzeuge"; menu-height: 256px;
+                    text: "Werkzeuge"; menu-height: 288px;
                     MenuEntry { text: "Regeln …"; clicked => { root.rules-request(); } }
                     MenuEntry { text: "Tags verwalten …"; clicked => { root.tags-request(); } }
                     MenuEntry { text: "Kategorien …"; clicked => { root.categories-open(); } }
@@ -1171,6 +1180,7 @@ export component MainWindow inherits Window {
                     MenuEntry { text: "Tresor-Synchronisation …"; clicked => { root.vaults-open = true; } }
                     MenuSep {}
                     MenuEntry { text: "Einstellungen …"; hint: "Strg+,"; clicked => { SettingsImportState.request(); SettingsImportState.tab = 3; } }
+                    MenuEntry { text: "Problem melden …"; clicked => { root.report-request(); } }
                     MenuEntry { text: "Info"; clicked => { root.about-open = true; } }
                 }
                 MenuTitle {
@@ -2456,6 +2466,31 @@ export component MainWindow inherits Window {
         Text { text: "Freie Software unter GPL-3.0-or-later. Der Tresor liegt verschlüsselt auf diesem Rechner."; font-size: 11px; color: Theme.muted; wrap: word-wrap; }
         Text { text: "Tastenkürzel: Strg+F Suche · Strg+L Sperren · Strg+R / F5 Abrufen · Strg+I Importieren · Strg+N Überweisung · Esc Dialog schließen"; font-size: 11px; color: Theme.muted; wrap: word-wrap; }
         HorizontalLayout { alignment: end; Button { text: "Schließen"; primary: true; clicked => { root.about-open = false; root.refocus(); } } }
+    }
+
+    // ---- Problem melden (#384, Teil 2; Mac: BugReportUI.swift), ohne Bildschirmaufnahme
+    if report-open: Dialog {
+        dialog-width: 620px;
+        Text { text: "Problem melden"; font-size: 18px; font-weight: 700; color: Theme.text; }
+        Text { text: "Nichts wird automatisch gesendet. Beim Kopieren oder Öffnen werden Beschreibung und Diagnose erneut bereinigt. Bitte keine echten IBANs, Namen oder Buchungsdaten eintragen."; font-size: 11px; color: Theme.muted; wrap: word-wrap; }
+        if root.privacy: Text { text: "Im Datenschutzmodus sind Beschreibung und Diagnose ausgeblendet; Kopieren und Öffnen sind gesperrt."; font-size: 12px; color: Theme.muted; wrap: word-wrap; }
+        if !root.privacy: ScrollView {
+            height: 300px;
+            VerticalLayout {
+                spacing: 6px;
+                Text { text: "Was ist passiert?"; font-size: 12px; font-weight: 600; color: Theme.text; }
+                TextEdit { height: 80px; wrap: word-wrap; text <=> root.report-description; }
+                Text { text: root.report-busy ? "Diagnose wird bereinigt …" : "Diagnose (automatisch bereinigt, editierbar)"; font-size: 12px; font-weight: 600; color: Theme.text; }
+                TextEdit { height: 200px; enabled: !root.report-busy; text <=> root.report-preview; }
+            }
+        }
+        if root.report-status != "": Text { text: root.report-status; font-size: 12px; color: Theme.muted; wrap: word-wrap; }
+        HorizontalLayout {
+            alignment: end; spacing: 8px;
+            Button { text: "In Zwischenablage kopieren"; enabled: !root.privacy && !root.report-busy && root.report-preview != ""; clicked => { root.report-copy(); } }
+            Button { text: "Issue im Browser öffnen"; enabled: !root.privacy && !root.report-busy && root.report-preview != ""; clicked => { root.report-open-issue(); } }
+            Button { text: "Schließen"; primary: true; clicked => { root.report-open = false; root.refocus(); } }
+        }
     }
     }
 
