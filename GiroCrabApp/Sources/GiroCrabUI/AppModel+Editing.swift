@@ -500,20 +500,26 @@ extension AppModel {
     func openRuleEditor(draft: Rule?) {
         ruleDraft = draft
         showRuleEditor = true
+        #if os(macOS)
+        ruleEditorRequest &+= 1
+        #endif
     }
 
-    @discardableResult
-    func saveRule(_ rule: Rule) -> Int64? {
-        guard let vault else { return nil }
+    func saveRule(_ rule: Rule, onlyUncategorized: Bool) async throws -> (id: Int64, application: Result<UInt32, Error>)? {
+        guard let pin = pinVault() else { throw CoreError.Database(message: "vault locked") }
+        let result: (id: Int64, application: Result<UInt32, Error>)
         do {
-            let id = try vault.saveRule(rule: rule)
-            _ = try vault.applyRules(onlyUncategorized: false)
-            reloadAll()
-            return id
+            result = try await pin.run { vault in
+                let id = try vault.saveRule(rule: rule)
+                return (id, Result { try vault.applyRule(ruleId: id, onlyUncategorized: onlyUncategorized) })
+            }
         } catch {
-            showError(String(localized: "Regel konnte nicht gespeichert werden"), describe(error))
-            return nil
+            guard isCurrent(pin) else { return nil }
+            throw error
         }
+        guard isCurrent(pin) else { return nil }
+        reloadAll()
+        return result
     }
 
     func deleteRule(_ id: Int64) {

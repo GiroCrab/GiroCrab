@@ -35,9 +35,9 @@ final class TanComparisonTests: XCTestCase {
     func testNoComparisonBeforeOrderApproval() throws {
         let snap = try XCTUnwrap(TanComparison(iban: "DE89370400440532013000", amountCents: 1_234))
         XCTAssertNil(AppModel.visibleTanComparison(
-            snapshot: snap, orderApproval: false, isBatch: false, isStanding: false, isDebit: false))
+            snapshot: snap, orderApproval: false, isBatch: false, isDebit: false))
         XCTAssertEqual(AppModel.visibleTanComparison(
-            snapshot: snap, orderApproval: true, isBatch: false, isStanding: false, isDebit: false), snap)
+            snapshot: snap, orderApproval: true, isBatch: false, isDebit: false), snap)
     }
 
     func testModelHidesSnapshotWithoutOrderChallenge() throws {
@@ -47,15 +47,22 @@ final class TanComparisonTests: XCTestCase {
         XCTAssertNil(model.tanComparison)
     }
 
-    // (b) batch transfer, standing order and direct debit never show the single-transfer card
-    func testNoComparisonForBatchStandingOrDebit() throws {
+    // (b) a batch transfer and a direct debit never show the single-transfer card; a standing order does (#1475)
+    func testNoComparisonForBatchOrDebit() throws {
         let snap = try XCTUnwrap(TanComparison(iban: "DE89370400440532013000", amountCents: 1_234))
         XCTAssertNil(AppModel.visibleTanComparison(
-            snapshot: snap, orderApproval: true, isBatch: true, isStanding: false, isDebit: false))
+            snapshot: snap, orderApproval: true, isBatch: true, isDebit: false))
         XCTAssertNil(AppModel.visibleTanComparison(
-            snapshot: snap, orderApproval: true, isBatch: false, isStanding: true, isDebit: false))
-        XCTAssertNil(AppModel.visibleTanComparison(
-            snapshot: snap, orderApproval: true, isBatch: false, isStanding: false, isDebit: true))
+            snapshot: snap, orderApproval: true, isBatch: false, isDebit: true))
+    }
+
+    func testStandingOrderShowsTheComparisonOfWhatWasSent() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.activeTransferIsStanding = true
+        let snap = try XCTUnwrap(TanComparison(iban: "DE89370400440532013000", amountCents: 85_000))
+        XCTAssertEqual(AppModel.visibleTanComparison(
+            snapshot: snap, orderApproval: true, isBatch: model.activeTransferIsBatch,
+            isDebit: model.activeTransferIsDebit), snap)
     }
 
     // (c) the card shows what was sent, not the form edited afterwards
@@ -68,8 +75,7 @@ final class TanComparisonTests: XCTestCase {
         model.transferDraft.amountText = "999,00"
         let shown = try XCTUnwrap(AppModel.visibleTanComparison(
             snapshot: model.activeTransferComparison, orderApproval: true,
-            isBatch: model.activeTransferIsBatch, isStanding: model.activeTransferIsStanding,
-            isDebit: model.activeTransferIsDebit))
+            isBatch: model.activeTransferIsBatch, isDebit: model.activeTransferIsDebit))
         XCTAssertEqual(shown.endCharacters, "3000")
         XCTAssertEqual(shown.amount, Money.format(1_234))
     }

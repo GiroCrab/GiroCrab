@@ -74,6 +74,16 @@ public struct GiroCrabScenes: Scene {
         #endif
 
         #if os(macOS)
+        Window("Regeln", id: RuleEditorWindow.id) {
+            RuleEditorWindow()
+                .environment(model)
+                .appTextSize(textSize.effective)
+                .preferredColorScheme(appearance.colorScheme)
+        }
+        .defaultSize(width: 920, height: 660)
+        .windowResizability(.contentMinSize)
+        .commandsRemoved()
+
         Window("Mitteilungen", id: "announcements") {
             AnnouncementsListView()
                 .appTextSize(textSize.effective)
@@ -185,6 +195,10 @@ public struct GiroCrabRootView: View {
                     .transformEnvironment(\.reportRedaction) { $0.formUnion(model.reportRedaction.union(LaunchOptions.current.redaction)) }
                     .onAppear { StartupClock.mark("MainSplitView appear") }
                     #if os(macOS)
+                    .onChange(of: model.ruleEditorRequest, initial: true) {
+                        guard model.showRuleEditor else { return }
+                        openWindow(id: RuleEditorWindow.id)
+                    }
                     // screenshots: --demo-sheet report[:<sheet>] captures the open
                     // view or demo sheet, as "Problem melden" would; once, also
                     // after a lock/unlock brings this view back
@@ -532,7 +546,7 @@ struct MainSplitView: View {
     private var inspectorSplitter: some View {
         ZStack {
             Color.clear.frame(width: 10)
-            Color(nsColor: .separatorColor).frame(width: 1).frame(maxHeight: .infinity)
+            Theme.systemSeparator.frame(width: 1).frame(maxHeight: .infinity)
         }
         .contentShape(Rectangle())
         .frame(width: 10)
@@ -625,10 +639,12 @@ struct MainSplitView: View {
                 .environment(model)
         }
         #endif
+        #if os(iOS)
         .capturableSheet(isPresented: $model.showRuleEditor) {
-            RuleEditorView(initialDraft: model.ruleDraft)
+            RuleEditorView()
                 .environment(model)
         }
+        #endif
         .capturableSheet(isPresented: $model.showCommandPalette, onDismiss: {
             // Follow-up sheet/popover chosen in the palette: opened once the
             // palette is really gone, instead of after a guessed delay.
@@ -705,6 +721,7 @@ struct MainSplitView: View {
                 else if c.connector == .fnz { FnzWebSheet(connection: c) }
                 else if c.connector == .equatePlus { EquatePlusWebSheet(connection: c) }
                 else if c.connector == .quirion { QuirionWebSheet(connection: c) }
+                else if c.connector == .sharinbox { SharinboxWebSheet(connection: c) }
                 else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
             }
@@ -769,6 +786,19 @@ struct MainSplitView: View {
                        isPresented: Binding(get: { model.enableBankingAdoptNotice != nil },
                                             set: { if !$0 { model.enableBankingAdoptNotice = nil } }),
                        presenting: model.enableBankingAdoptNotice) { _ in
+                    Button("OK") {}
+                } message: { notice in
+                    Text(notice.message)
+                }
+                .dialogSuppressionToggle(isSuppressed: $enableBankingNoticeSuppressed)
+        }
+        .background {
+            Color.clear
+                .alert("Enable-Banking-Anwendung synchronisiert",
+                       // after the default application's notice, never on top of it
+                       isPresented: Binding(get: { model.enableBankingLoginNotice != nil && model.enableBankingAdoptNotice == nil },
+                                            set: { if !$0 { model.enableBankingLoginNotice = nil } }),
+                       presenting: model.enableBankingLoginNotice) { _ in
                     Button("OK") {}
                 } message: { notice in
                     Text(notice.message)

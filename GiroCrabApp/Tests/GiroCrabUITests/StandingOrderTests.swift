@@ -171,11 +171,19 @@ final class StandingOrderTests: XCTestCase {
     func testBankLimitsNeverLeaveAMismatch() {
         let limits = StandingOrderLimits(
             minDaysAhead: 2, maxDaysAhead: 0, months: [], weeks: [], daysOfMonth: [1, 15], weekdays: [])
-        var d = StandingDraft(order: order(), action: .change)
-        d.firstDate = Calendar.current.date(byAdding: .day, value: 10, to: Date()) ?? Date()
-        d.syncDay(to: limits)
-        XCTAssertTrue([1, 15].contains(d.execDay))
-        XCTAssertTrue(d.firstDateMatchesDay)
-        XCTAssertGreaterThanOrEqual(d.firstDate, d.firstDateRange(limits).lowerBound)
+        // The sheet conforms the draft once the bank's limits are known and
+        // then follows the date picker. Every day of a month is picked once, so
+        // the result does not depend on the day the test runs: a pick on the
+        // order's own day (3, not offered by this bank) used to slip through
+        // on one day per month.
+        for ahead in 3...45 {
+            var d = StandingDraft(order: order(), action: .change)
+            d.conform(to: limits)
+            d.firstDate = Calendar.current.date(byAdding: .day, value: ahead, to: Date()) ?? Date()
+            d.syncDay(to: limits)
+            XCTAssertTrue([1, 15].contains(d.execDay), "day \(d.execDay), picked \(ahead) days ahead")
+            XCTAssertTrue(d.firstDateMatchesDay, "picked \(ahead) days ahead")
+            XCTAssertGreaterThanOrEqual(d.firstDate, d.firstDateRange(limits).lowerBound, "picked \(ahead) days ahead")
+        }
     }
 }

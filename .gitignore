@@ -113,6 +113,9 @@ __pycache__/
 **/merchants/*.json
 **/merchants/*.svg
 
+# --- Design-review tooling (Impeccable: local screenshots and sessions, docs/ui-audit.md) ---
+.impeccable/
+
 # --- Logs / dumps ---
 *.log
 *.jsonl

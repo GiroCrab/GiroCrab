@@ -345,6 +345,61 @@ fn a_repeat_fetch_leaves_a_manually_unlinked_document_open() {
     assert_eq!(docs[0].account_id, doc.account_id);
 }
 
+#[test]
+fn a_closer_booking_does_not_relink_a_manually_unlinked_document() {
+    let subject = "JPM USD EM Bond USD (Dist)";
+    let (_dir, v) = open_vault("girocrab-manual-unlink-closer");
+    let kind = ConnectorKind::TradeRepublic;
+    let conn = v
+        .add_bank_connection(kind, String::new(), "login".into())
+        .unwrap();
+    let pdf = tr_pdf("KAUF", subject, "25,00", "04.12.2025");
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        FetchResult {
+            accounts: vec![tr_cash_account()],
+            transactions: vec![tr_booking("dec6", "2025-12-06", -25_00, subject)],
+            documents: vec![tr_document("receipt", subject, pdf.clone(), "2025-12-04")],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let doc = v.list_all_documents(Default::default()).unwrap().remove(0);
+    assert_eq!(doc.booking_id, Some(booking_id_of(&v, "dec6")));
+
+    // User manually detaches the PDF; a later sync brings an exact-date Dec 4 booking.
+    v.link_document(doc.id, None).unwrap();
+    store_fetch(
+        &v,
+        kind,
+        conn,
+        FetchResult {
+            accounts: vec![tr_cash_account()],
+            transactions: vec![
+                tr_booking("dec6", "2025-12-06", -25_00, subject),
+                tr_booking("dec4", "2025-12-04", -25_00, subject),
+            ],
+            documents: vec![tr_document("receipt", subject, pdf, "2025-12-04")],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        v.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        None
+    );
+
+    // Explicit manual re-linking still works and clears the unlink marker.
+    let dec4 = booking_id_of(&v, "dec4");
+    v.link_document(doc.id, Some(dec4)).unwrap();
+    assert_eq!(
+        v.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        Some(dec4)
+    );
+}
+
 // ---- comdirect: trade documents belong to the depot and document a booking on the Girokonto ----
 
 const CD_GIRO: &str = "DE02200411550123456700";
@@ -1518,3 +1573,5 @@ fn comdirect_links_only_the_settled_amount_when_a_pre_tax_amount_also_appears() 
         Some(booking_id_of(&v, "settled"))
     );
 }
+
+mod resort;

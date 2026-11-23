@@ -183,6 +183,7 @@ fn default_name_en(de: &str) -> Option<&'static str> {
         "Kreditkarten" => "Credit cards",
         "Depots & ETFs" => "Portfolios & ETFs",
         "Darlehen & Kredite" => "Loans",
+        "Bausparen" => "Building savings",
         "Importierte Konten" => "Imported accounts",
         // Starter categories.
         "Einnahmen" => "Income",
@@ -419,6 +420,22 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Bitte bei Schwäbisch Hall im Browserfenster anmelden und die Daten abrufen." => {
             "Please sign in to Schwäbisch Hall in the browser window and fetch your data."
+        }
+        "Sharinbox: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "Sharinbox: Incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte bei Sharinbox im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to Sharinbox in the browser window and fetch your data."
+        }
+        "Bitte bei Sharinbox im Browserfenster abrufen." => {
+            "Please fetch your data in the Sharinbox browser window."
+        }
+        "Sharinbox: Dokument {0} abgelehnt, Feld {1} ungültig." => {
+            "Sharinbox: document {0} rejected, field {1} invalid."
+        }
+        "Mitarbeiteraktien" => "Employee shares",
+        "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
+            "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }
         "Schwäbisch Hall Dokument" => "Schwäbisch Hall document",
         "Bausparkasse Schwäbisch Hall: Bausparverträge mit Saldo und Umsätzen, optional die PDF-Dokumente aus dem Postfach. Anmeldung im Browserfenster von „Mein Konto“. Interne Portal-API; Änderungen sind möglich." => {
@@ -757,8 +774,11 @@ fn english(de: &str) -> Option<&'static str> {
         "PIN ist leer" => "PIN is empty",
         "TAN-Verfahren {0}" => "TAN method {0}",
         "{0}: Freigabe ohne Auftragsreferenz" => "{0}: approval without task reference",
-        "Die Bank verlangt für {0} eine TAN-Eingabe. Bitte ein Push-/App-Verfahren (z. B. SecureGo plus) verwenden oder „Tage beim ersten Abruf“ auf höchstens 90 setzen." => {
-            "The bank requires a TAN for {0}. Use a push/app method (e.g. SecureGo plus) or set “Days on first sync” to 90 or less."
+        "Die Bank verlangt für {0} eine TAN-Eingabe, die während des Abrufs nicht möglich ist. Bitte ein App-Verfahren der Bank (Freigabe in der Banking-App) verwenden." => {
+            "The bank requires a TAN for {0}, which can’t be entered during a sync. Please use one of the bank’s app methods (approval in the banking app)."
+        }
+        "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen." => {
+            "Banks usually hand out the last 90 days of bookings without a TAN. For a new account, the period of the first fetch can be set to 90 days in Settings."
         }
         "Kontenliste (HKSPA) – {0}" => "Account list (HKSPA) – {0}",
         "Kontoauszug {0}" => "Statement {0}",
@@ -1231,6 +1251,59 @@ fn english(de: &str) -> Option<&'static str> {
             "Kontist: The list of bookings was not delivered completely. Please start the sync again."
         }
         // ------------------------------------------------------------ connectors/uberspace.rs
+        // ------------------------------------------------------------ connectors/bitcoin_core.rs
+        "Bitcoin Core: Die RPC-Adresse ist ungültig." => {
+            "Bitcoin Core: The RPC address is invalid."
+        }
+        "Bitcoin Core: Zugang abgelehnt. Die .cookie-Datei ist veraltet oder Benutzer:Passwort stimmt nicht." => {
+            "Bitcoin Core: Access denied. The .cookie file is outdated or user:password is wrong."
+        }
+        "Bitcoin Core: unerwartete Antwort des Knotens." => {
+            "Bitcoin Core: unexpected answer from the node."
+        }
+        "Bitcoin Core ist nicht erreichbar. Läuft der Knoten, und ist der RPC-Server eingeschaltet (server=1)?" => {
+            "Bitcoin Core cannot be reached. Is the node running, with the RPC server switched on (server=1)?"
+        }
+        "Bitcoin Core meldet: {0}" => "Bitcoin Core reports: {0}",
+        "Bitcoin Core: Die RPC-Adresse muss auf diesem Rechner liegen (127.0.0.1 oder localhost)." => {
+            "Bitcoin Core: The RPC address must be on this computer (127.0.0.1 or localhost)."
+        }
+        "Bitcoin Core: Die Wallet „{0}“ ist im Knoten nicht geladen." => {
+            "Bitcoin Core: The wallet “{0}” is not loaded in the node."
+        }
+        "Bitcoin Core: Im Knoten ist keine Wallet geladen." => {
+            "Bitcoin Core: The node has no wallet loaded."
+        }
+        "Bitcoin Core: Der Knoten hat mehrere Wallets geladen. Bitte den Wallet-Namen eintragen." => {
+            "Bitcoin Core: The node has several wallets loaded. Please enter the wallet name."
+        }
+        "Bitcoin-Kurs nicht abrufbar. Der Bestand wurde nicht aktualisiert." => {
+            "Bitcoin price not available. The holdings were not updated."
+        }
+        "Bitcoin Core: Keine .cookie-Datei in {0}. Läuft der Knoten mit eingeschaltetem RPC-Server (server=1)?" => {
+            "Bitcoin Core: No .cookie file in {0}. Is the node running with the RPC server switched on (server=1)?"
+        }
+        "Bitcoin Core: Die .cookie-Datei ist unlesbar." => {
+            "Bitcoin Core: The .cookie file cannot be read."
+        }
+        "Eigener Knoten (lokale JSON-RPC-Schnittstelle)" => "Own node (local JSON-RPC interface)",
+        "Wallet-Name (leer = einzige geladene Wallet)" => {
+            "Wallet name (empty = the only loaded wallet)"
+        }
+        "(nicht nötig – nutzt die .cookie-Datei des Knotens)" => {
+            "(not needed – uses the node's .cookie file)"
+        }
+        "Bitcoin Core: der Bestand einer Wallet im eigenen Knoten als Depot mit der Position Bitcoin, bewertet zum aktuellen Euro-Kurs. Der Knoten muss beim Abruf laufen, mit eingeschaltetem RPC-Server (server=1); die Anmeldung erfolgt über seine .cookie-Datei. Über Adressen und Bestand verlässt nichts den Rechner, nur der Kurs wird öffentlich abgefragt." => {
+            "Bitcoin Core: the balance of a wallet in your own node as a depot with the position Bitcoin, valued at the current euro price. The node must be running during the sync, with the RPC server switched on (server=1); it logs in with the node's .cookie file. Nothing about addresses or holdings leaves the computer; only the price is queried publicly."
+        }
+        "Bitcoin-Core-Datenverzeichnis" => "Bitcoin Core data directory",
+        "Ordner des eigenen Knotens mit der .cookie-Datei; leer = Standardordner (Mac: ~/Library/Application Support/Bitcoin)." => {
+            "Folder of your own node with the .cookie file; empty = default folder (Mac: ~/Library/Application Support/Bitcoin)."
+        }
+        "Bitcoin-Core-RPC-Adresse" => "Bitcoin Core RPC address",
+        "Adresse des RPC-Servers auf diesem Rechner; leer = http://127.0.0.1:8332." => {
+            "Address of the RPC server on this computer; empty = http://127.0.0.1:8332."
+        }
         // ------------------------------------------------------------ connectors/hanseatic.rs
         "Online-Banking (Direkt-Login, Freigabe in der App)" => {
             "Online banking (direct login, approval in the app)"
@@ -1721,6 +1794,7 @@ fn english(de: &str) -> Option<&'static str> {
             "Only needed if kontist.dev shows a secret for the client; otherwise leave empty."
         }
         "Kontist" => "Kontist",
+        "Bitcoin Core" => "Bitcoin Core",
         "comdirect Client-Secret" => "comdirect client secret",
         "Wird beim Freischalten des API-Zugangs einmalig angezeigt." => {
             "Shown once when API access is activated."
@@ -2019,6 +2093,36 @@ mod tests {
     #[test]
     fn unknown_text_falls_back_to_german() {
         assert_eq!(tr_in(Lang::En, "Gibt es nicht"), "Gibt es nicht");
+    }
+
+    /// Every kind's sidebar section (#1003) has an English name and a place of its own, in the
+    /// order the "Kontoart" view lists them; other views take both from here (#1631).
+    #[test]
+    fn every_account_kind_section_has_an_english_name_and_its_own_place() {
+        use crate::connectors::account_kind_section_in as section;
+        use crate::models::AccountKind::*;
+        let kinds = [
+            Checking,
+            Savings,
+            TimeDeposit,
+            Cash,
+            PaymentService,
+            CreditCard,
+            Brokerage,
+            Loan,
+            BuildingSavings,
+        ];
+        let orders: Vec<i32> = kinds
+            .iter()
+            .map(|&k| section(Lang::En, k).sort_order)
+            .collect();
+        assert!(orders.windows(2).all(|w| w[0] < w[1]), "{orders:?}");
+        for kind in kinds {
+            let (de, en) = (section(Lang::De, kind).name, section(Lang::En, kind).name);
+            assert_ne!(de, en, "{kind:?} has no English section name");
+        }
+        assert_eq!(section(Lang::De, Checking).name, "Girokonten");
+        assert_eq!(section(Lang::En, PaymentService).name, "Payment services");
     }
 
     #[test]

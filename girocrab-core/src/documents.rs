@@ -895,12 +895,26 @@ impl Vault {
 
     /// Re-links (or unlinks) a document.
     pub fn link_document(&self, doc_id: i64, booking_id: Option<i64>) -> Result<(), CoreError> {
-        let db = self.db()?;
-        db.execute(
+        let mut db = self.db()?;
+        let tx = db.transaction()?;
+        let changed = tx.execute(
             "UPDATE booking_documents SET booking_id = ?1,
                 account_id = COALESCE((SELECT account_id FROM transactions WHERE id = ?1), account_id) WHERE id = ?2",
             params![booking_id, doc_id],
         )?;
+        if changed > 0 {
+            let key = format!("doc.unlinked.{doc_id}");
+            if booking_id.is_none() {
+                tx.execute(
+                    "INSERT INTO settings(key, value) VALUES (?1, '1')
+                     ON CONFLICT(key) DO UPDATE SET value = '1'",
+                    [key],
+                )?;
+            } else {
+                tx.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -912,7 +926,7 @@ impl Vault {
         doc_id: i64,
         account_id: Option<i64>,
     ) -> Result<(), CoreError> {
-        let db = self.db()?;
+        let mut db = self.db()?;
         if let Some(a) = account_id {
             let exists: bool = db.query_row(
                 "SELECT EXISTS (SELECT 1 FROM accounts WHERE id = ?1 AND deleted_ms IS NULL)",
@@ -925,7 +939,20 @@ impl Vault {
                 });
             }
         }
-        let n = db.execute(
+        let previous: Option<Option<i64>> = db
+            .query_row(
+                "SELECT account_id FROM booking_documents WHERE id = ?1",
+                [doc_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(previous) = previous else {
+            return Err(CoreError::NotFound {
+                what: trf("Dokument {0}", &[&doc_id]),
+            });
+        };
+        let tx = db.transaction()?;
+        tx.execute(
             "UPDATE booking_documents SET account_id = ?1,
                 booking_id = CASE WHEN ?1 IS NOT NULL AND
                     (SELECT account_id FROM transactions WHERE id = booking_id) = ?1
@@ -933,17 +960,25 @@ impl Vault {
               WHERE id = ?2",
             params![account_id, doc_id],
         )?;
-        if n == 0 {
-            return Err(CoreError::NotFound {
-                what: trf("Dokument {0}", &[&doc_id]),
-            });
+        if previous != account_id {
+            tx.execute(
+                "DELETE FROM settings WHERE key = ?1",
+                [format!("doc.unlinked.{doc_id}")],
+            )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
     pub fn delete_document(&self, doc_id: i64) -> Result<(), CoreError> {
-        self.db()?
-            .execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
+        let mut db = self.db()?;
+        let tx = db.transaction()?;
+        tx.execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
+        tx.execute(
+            "DELETE FROM settings WHERE key = ?1",
+            [format!("doc.unlinked.{doc_id}")],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 

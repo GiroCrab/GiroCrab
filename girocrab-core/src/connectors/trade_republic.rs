@@ -322,6 +322,23 @@ fn document_inflow(title: &str, text: &str) -> Option<bool> {
     crate::connectors::document_matching::inflow_in(event, text, 400)
 }
 
+/// A stored title has no separate timeline event. Classify the document name and
+/// retain the saved type when that name alone does not identify one.
+pub(super) fn stored_document_filing<'a>(
+    title: &str,
+    stored_type: &'a str,
+) -> (&'a str, Option<&'static str>) {
+    let head = title
+        .split_once(" \u{2013} ")
+        .map_or(title, |(head, _)| head);
+    let head = head.to_lowercase();
+    let doc_type = match crate::documents::type_from_title(&head) {
+        "beleg" => stored_type,
+        known => known,
+    };
+    (doc_type, document_account_ref(&head, doc_type))
+}
+
 /// The account a Trade Republic document belongs to (`tr:depot` or `tr:cash`), decided by what the
 /// document is, never by the way it arrived (a booking's detail screen or the activity list): a
 /// confirmation or credit for a security (trade, savings plan, dividend, corporate action, the

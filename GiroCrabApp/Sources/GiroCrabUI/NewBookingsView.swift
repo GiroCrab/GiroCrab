@@ -84,6 +84,6 @@ private struct NewBookingsCardHeader: View {
             .padding(.vertical, 12)
             Rectangle().fill(Theme.border).frame(height: 1)
         }
-        .modifier(DayCardSegment(isTop: true, isBottom: false))
+        .modifier(DayCardSegment())
     }
 }

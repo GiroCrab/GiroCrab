@@ -49,3 +49,18 @@ Die bankabhängigen Regeln stehen in `girocrab-core/src/connectors/document_matc
 und beim Trade-Republic-Connector. Die Tests prüfen synthetische PDFs, beide
 Abrufreihenfolgen und mehrdeutige Fälle. Für eine weitere Bank liefert der
 Connector die fachlichen Kriterien, der Core verwendet denselben Abgleich.
+
+## Vorhandene Bankbelege neu einsortieren
+
+In den Einstellungen des Bankzugangs lässt sich „Dokumente neu einsortieren …“
+für Trade Republic, comdirect (REST und FinTS mit PostBox), FNZ und Quirion
+auslösen. GiroCrab prüft gespeicherte Bankbelege lokal. Es können sich
+Dokumenttypen und auch manuell gewählte Ablagekonten ändern.
+Bestehende Buchungsverknüpfungen bleiben erhalten. Bei Trade Republic und
+comdirect können offene Belege neu verknüpft werden, auch nach einem früheren
+manuellen Lösen der Verknüpfung.
+
+comdirect-PostBox-Belege ohne Ablagekonto werden nur übernommen, wenn im
+Tresor genau ein comdirect-Zugang aufgezeichnet ist. Ein früherer, gelöschter Zugang
+zählt mit. FNZ und Quirion übernehmen die gemeinsamen Titelregeln für
+PostBox-Dokumente.

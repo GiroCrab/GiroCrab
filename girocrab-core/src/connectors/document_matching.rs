@@ -464,7 +464,7 @@ pub(crate) fn link_unlinked_by_content(
     rules: &DocumentMatchRules,
     changed_document_ids: &HashSet<i64>,
     new_booking_ids: &HashSet<i64>,
-) -> CoreResult<()> {
+) -> CoreResult<u32> {
     let mut accounts = conn.prepare(
         "SELECT id, external_ref, kind, iban, account_number, archived_unix IS NULL
            FROM accounts WHERE connection_id = ?1 AND deleted_ms IS NULL",
@@ -492,7 +492,7 @@ pub(crate) fn link_unlinked_by_content(
         }
     }
     if active.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let mut new_booking_dates = BTreeSet::new();
     let mut new_booking = conn.prepare(
@@ -540,6 +540,7 @@ pub(crate) fn link_unlinked_by_content(
             AND t.booking_date BETWEEN ?2 AND ?3",
     )?;
     let mut pdf = conn.prepare("SELECT pdf_bytes FROM booking_documents WHERE id = ?1")?;
+    let mut linked = 0;
     for (id, title, doc_type) in docs {
         let changed_document = changed_document_ids.contains(&id);
         if !changed_document && new_booking_dates.is_empty() {
@@ -647,16 +648,18 @@ pub(crate) fn link_unlinked_by_content(
             && (changed_document || new_booking_ids.contains(&booking))
         {
             // An occupied best match blocks a link instead of sending the document to a nearby
-            // booking. Check at write time because an earlier PDF in this pass may have linked it.
-            conn.execute(
+            // booking. Check at write time because an earlier PDF in this pass may have linked it,
+            // and keep documents unlinked that the user detached manually.
+            linked += conn.execute(
                 "UPDATE booking_documents SET booking_id = ?1
                   WHERE id = ?2 AND booking_id IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'doc.unlinked.' || ?2)
                     AND NOT EXISTS (SELECT 1 FROM booking_documents WHERE booking_id = ?1)",
                 params![booking, id],
-            )?;
+            )? as u32;
         }
     }
-    Ok(())
+    Ok(linked)
 }
 
 #[cfg(test)]

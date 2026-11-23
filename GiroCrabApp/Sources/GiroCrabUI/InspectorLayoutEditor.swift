@@ -63,11 +63,11 @@ struct InspectorLayoutBar: View {
             .buttonStyle(.borderless)
             .help(editing ? Text("Bearbeitung der Seitenleiste beenden") : Text("Reihenfolge der Bereiche ändern und Bereiche ausblenden"))
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 3)
         .frame(maxWidth: .infinity)
-        .background(Theme.canvas)
+        .background(Theme.systemBackground)
     }
 }
 
@@ -228,7 +228,7 @@ private struct InspectorPlaceholderCard: View {
                 .foregroundStyle(Theme.text)
             Text(hint).appFont(.caption).foregroundStyle(Theme.secondary)
         }
-        .card()
+        .flatSection()
     }
 }
 

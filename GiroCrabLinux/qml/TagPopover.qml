@@ -5,6 +5,10 @@ import QtQuick.Controls
 // large as the chips need (one row for a few short tags, at most 260 pt wide).
 Popup {
     id: pop
+    // ReportDialogs.swift › capturablePopover (#384): drawn into the bug report picture
+    onOpened: ReportDialogs.track(pop)
+    onClosed: ReportDialogs.untrack(pop)
+    Component.onDestruction: ReportDialogs.untrack(pop)
     property var tags: []
     padding: 8
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside

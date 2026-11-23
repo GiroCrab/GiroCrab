@@ -33,6 +33,29 @@ pub(super) fn tan_demanded(e: &CoreError) -> bool {
     matches!(e, CoreError::Bank { code, .. } if matches!(code.as_str(), "0030" | "3956"))
 }
 
+/// Statements this far back are handed out without a TAN (PSD2, RTS art. 10);
+/// banks like comdirect ask for one beyond (#1627).
+const DAYS_WITHOUT_TAN: i64 = 90;
+
+/// Whether `e` is a TAN demand (0030) for statements that reach back further
+/// than banks serve without one (#1627). The start is the login-wide
+/// `ctx.since`, the date the statements requests are sent with. Any other TAN
+/// demand does not qualify: a shorter period would not help there.
+pub(super) fn tan_beyond_free_period(ctx: &ConnectContext, e: &CoreError) -> bool {
+    matches!(e, CoreError::Bank { code, .. } if code == "0030")
+        && crate::dates::parse_iso(&ctx.since).is_some_and(|since| {
+            crate::dates::days_between(since, crate::dates::today()) > DAYS_WITHOUT_TAN
+        })
+}
+
+/// The way out of [`tan_beyond_free_period`], one hint for the whole sync.
+/// No colon after "TAN": the log scrubber would take it for a TAN value.
+pub(super) fn period_hint() -> &'static str {
+    tr(
+        "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen.",
+    )
+}
+
 /// Whether a TAN medium name already carries the "SO:" (security object) prefix.
 pub(super) fn has_so_prefix(medium: &str) -> bool {
     medium
@@ -43,7 +66,27 @@ pub(super) fn has_so_prefix(medium: &str) -> bool {
 /// Dialog init refused with 9010 ("Ungültiger Signaturaufbau") that is not a stale
 /// system ID / TAN method (9931/9942).
 fn init_rejected_as_malformed(reply: &BankReply) -> bool {
-    reply.has("9010") && !reply.has("9931") && !reply.has("9942")
+    reply.has("9010") && !stale_system_id(reply)
+}
+
+/// 9931/9942: the stored system ID or TAN function is stale, a new sync is due.
+fn stale_system_id(reply: &BankReply) -> bool {
+    reply.has("9931") || reply.has("9942")
+}
+
+/// An answer to a retry that no other variant can improve: its error is the one to report.
+fn ends_hktan_retry(reply: &BankReply) -> bool {
+    reply.has("9930") || stale_system_id(reply)
+}
+
+/// Dialog init refused with 9110 ("Falsche Segmentzusammenstellung", #1641). The one-step
+/// sync before it passed, so the part that differs is the HKTAN of the two-step init; the
+/// bank's text has to name it (a 9110 about another segment is not retried).
+fn init_rejected_as_wrong_segments(reply: &BankReply) -> bool {
+    reply
+        .codes
+        .iter()
+        .any(|c| c.0 == "9110" && c.2.to_uppercase().contains("HKTAN"))
 }
 
 /// The bank code does not belong to the login: 9210 "Bankleitzahl passt nicht
@@ -575,7 +618,7 @@ impl FinTsConnector {
             return Err(CoreError::Bank {
                 code: "0030".into(),
                 message: trf(
-                    "Die Bank verlangt für {0} eine TAN-Eingabe. Bitte ein Push-/App-Verfahren (z. B. SecureGo plus) verwenden oder „Tage beim ersten Abruf“ auf höchstens 90 setzen.",
+                    "Die Bank verlangt für {0} eine TAN-Eingabe, die während des Abrufs nicht möglich ist. Bitte ein App-Verfahren der Bank (Freigabe in der Banking-App) verwenden.",
                     &[&seg_id],
                 ),
             });
@@ -588,7 +631,7 @@ impl FinTsConnector {
     pub(super) async fn open_dialog(&mut self, ctx: &ConnectContext) -> CoreResult<Phase> {
         // Authenticated dialog with strong customer authentication.
         self.reset_dialog();
-        let sec = self.sec();
+        let mut sec = self.sec();
         let mut reply = self.send_dialog_init(ctx, &sec).await?;
         // wrong bank code for this login: nothing below can help (`login` may
         // try another one)
@@ -604,6 +647,20 @@ impl FinTsConnector {
             if retry.check().is_ok() {
                 self.st.single_step = true;
                 reply = retry;
+            }
+        }
+        // The bank refuses our HKTAN as a wrong segment combination (#1641): another of its
+        // two-step functions, or the init without HKTAN, may be taken.
+        if sec != "999" && init_rejected_as_wrong_segments(&reply) {
+            // no function list from an earlier sync: the refusal may carry one (3920)
+            if self.st.tan_functions.is_empty() {
+                self.learn_bpd(&reply);
+                sec = self.sec();
+            }
+            let (retry, accepted) = self.retry_init_without_refused_hktan(ctx).await?;
+            if accepted || ends_hktan_retry(&retry) {
+                reply = retry;
+                sec = self.sec();
             }
         }
         self.learn_bpd(&reply);
@@ -648,10 +705,81 @@ impl FinTsConnector {
 
     async fn send_dialog_init(&mut self, ctx: &ConnectContext, sec: &str) -> CoreResult<BankReply> {
         let mut payload = vec![self.hkidn(ctx, 3), self.hkvvb(4)];
-        if sec != "999" {
+        if sec != "999" && !self.st.init_without_hktan {
             payload.push(self.hktan_process4(5, "HKIDN"));
         }
         self.send(ctx, payload, sec, None).await
+    }
+
+    /// The dialog init was refused with 9110 for its HKTAN (#1641). Tries the bank's other
+    /// two-step functions, then the same function without HKTAN in the init. Only an answer
+    /// without errors is kept (function or flag go into the state, `true`); otherwise the state
+    /// is as it was and the last answer comes back with `false`, so that a stale system ID in
+    /// it (9931/9942) is still handled.
+    pub(super) async fn retry_init_without_refused_hktan(
+        &mut self,
+        ctx: &ConnectContext,
+    ) -> CoreResult<(BankReply, bool)> {
+        let refused = (
+            self.st.sec_func.clone(),
+            self.st.tan_method_name.clone(),
+            self.st.init_without_hktan,
+        );
+        let found = self.try_init_variants(ctx, &refused).await;
+        if !matches!(found, Ok((_, true))) {
+            (
+                self.st.sec_func,
+                self.st.tan_method_name,
+                self.st.init_without_hktan,
+            ) = refused;
+        }
+        found
+    }
+
+    async fn try_init_variants(
+        &mut self,
+        ctx: &ConnectContext,
+        refused: &(String, String, bool),
+    ) -> CoreResult<(BankReply, bool)> {
+        let refused_code = refused.0.as_str();
+        for (code, name) in self.tan_function_fallbacks(refused_code) {
+            crate::depot_debug::log(&format!(
+                "fints: login HKTAN refused with function {refused_code}, trying {code}"
+            ));
+            self.st.init_without_hktan = false;
+            self.st.sec_func = code.clone();
+            self.st.tan_method_name = name;
+            let (reply, accepted) = self.init_attempt(ctx, &code).await?;
+            // a stale system ID or a locked access fails every variant alike
+            if accepted || ends_hktan_retry(&reply) {
+                return Ok((reply, accepted));
+            }
+        }
+        crate::depot_debug::log(&format!(
+            "fints: login HKTAN refused with function {refused_code}, trying without HKTAN"
+        ));
+        self.st.sec_func = refused.0.clone();
+        self.st.tan_method_name = refused.1.clone();
+        self.st.init_without_hktan = true;
+        self.init_attempt(ctx, refused_code).await
+    }
+
+    /// A fresh dialog init and whether it was accepted (no errors and a dialog opened);
+    /// if not, the dialog is ended unless the bank already aborted it.
+    async fn init_attempt(
+        &mut self,
+        ctx: &ConnectContext,
+        sec: &str,
+    ) -> CoreResult<(BankReply, bool)> {
+        self.reset_dialog();
+        let reply = self.send_dialog_init(ctx, sec).await?;
+        if reply.errors().is_empty() && self.dialog_id != "0" {
+            return Ok((reply, true));
+        }
+        if !reply.has("9800") {
+            self.end_dialog(ctx, sec).await;
+        }
+        Ok((reply, false))
     }
 
     pub(super) fn sec(&self) -> String {

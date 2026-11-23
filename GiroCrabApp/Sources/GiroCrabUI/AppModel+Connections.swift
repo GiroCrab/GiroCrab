@@ -78,6 +78,58 @@ extension AppModel {
     }
 
     private func addConnectionChecked(_ kind: ConnectorKind, login: String) {
+        // also while demo data is shown: the login goes into the personal vault (only a magic
+        // demo login is a demo connection)
+        if kind == .bitcoinCore, !Self.isMagicDemoLogin(login) {
+            addBitcoinCore(login: login)
+            return
+        }
+        addConnectionStored(kind, login: login)
+    }
+
+    /// Bitcoin Core: stored only once the node answers (RPC server on, `.cookie` found, wallet
+    /// there); otherwise its error says what is missing and nothing is added. The data
+    /// directory Bitcoin-Qt uses is taken over when none is set. Runs in the personal vault, so
+    /// the check uses its settings and the detected directory is saved there, not in the demo.
+    private func addBitcoinCore(login: String) {
+        runInOwnVault { [self] in checkAndAddBitcoinCore(login: login) }
+    }
+
+    /// Adds only when, after the check, the same vault is open and the datadir and RPC URL are
+    /// still the checked ones; otherwise nothing is written and the user adds it again.
+    private func checkAndAddBitcoinCore(login: String) {
+        guard let pin = pinVault() else { return }
+        let storedDatadir = settingEntry(BitcoinCoreDatadir.key)?.value ?? ""
+        let rpcURL = settingEntry("bitcoin_core.rpc_url")?.value ?? ""
+        let detected = storedDatadir.isEmpty ? BitcoinCoreDatadir.detected() : nil
+        let datadir = storedDatadir.isEmpty ? detected ?? "" : storedDatadir
+        Task { @MainActor [weak self] in
+            let checkError: Error?
+            do {
+                _ = try await checkBitcoinCore(datadir: datadir, rpcUrl: rpcURL, wallet: login)
+                checkError = nil
+            } catch {
+                checkError = error
+            }
+            guard let self else { return }
+            // also before a node error: one about values no longer set would mislead
+            guard isCurrent(pin),
+                  (settingEntry(BitcoinCoreDatadir.key)?.value ?? "") == storedDatadir,
+                  (settingEntry("bitcoin_core.rpc_url")?.value ?? "") == rpcURL else {
+                showError(String(localized: "Bitcoin Core nicht hinzugefügt"),
+                          String(localized: "Tresor oder Einstellungen haben sich während der Prüfung geändert. Bitte füge Bitcoin Core noch einmal hinzu."))
+                return
+            }
+            if let checkError {
+                showError(String(localized: "Bitcoin Core nicht erreichbar"), describe(checkError))
+                return
+            }
+            if let detected { saveSetting(BitcoinCoreDatadir.key, detected) }
+            addConnectionStored(.bitcoinCore, login: login)
+        }
+    }
+
+    private func addConnectionStored(_ kind: ConnectorKind, login: String) {
         runInOwnVault(allowDemo: Self.isMagicDemoLogin(login)) { [self] in
             guard let vault else { return }
             var newID: Int64?

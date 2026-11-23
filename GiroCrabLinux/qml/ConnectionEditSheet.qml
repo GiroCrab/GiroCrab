@@ -48,6 +48,7 @@ Sheet {
         case "PayPal": return ["paypal.client_id", "paypal.client_secret", "paypal.environment"]
         case "Kontist": return ["kontist.client_id", "kontist.client_secret"]
         case "Bunq": return ["bunq.environment"]
+        case "BitcoinCore": return ["bitcoin_core.datadir", "bitcoin_core.rpc_url"]
         case "EnableBanking": return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
         default: return []
         }
@@ -70,6 +71,7 @@ Sheet {
         case "Kontist": return "Kontist OAuth2-Client"
         case "Bunq": return "bunq API"
         case "Ibkr": return "Interactive Brokers Flex Web Service"
+        case "BitcoinCore": return "Bitcoin Core"
         default: return "Enable Banking (PSD2)"
         }
     }

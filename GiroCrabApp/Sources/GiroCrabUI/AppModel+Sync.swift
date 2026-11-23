@@ -27,6 +27,20 @@ extension AppModel {
     }
 
     private func requestSyncChecked(_ connection: BankConnection) {
+        // Bitcoin Core on a Mac without a node (the vault came over iCloud): not fetched here,
+        // its balance comes from the Mac running the node
+        if connection.connector == .bitcoinCore, !isDemo,
+           !BitcoinCoreDatadir.nodeOnThisMac(configured: settingEntry(BitcoinCoreDatadir.key)?.value) {
+            toast = String(localized: "\(connection.displayName): wird per iCloud-Sync vom Mac mit Bitcoin Core aktualisiert.")
+            syncNextInQueue()
+            return
+        }
+        // Bitcoin Core: the data directory Bitcoin-Qt uses, unless one is set (stored, so it
+        // shows in the connection's settings and can be changed there)
+        if connection.connector == .bitcoinCore, !isDemo, settingEntry(BitcoinCoreDatadir.key)?.hasValue != true,
+           let dir = BitcoinCoreDatadir.detected() {
+            saveSetting(BitcoinCoreDatadir.key, dir)
+        }
         if connection.connector == .advanzia, !isDemo, !Self.isMagicDemoLogin(connection.loginName) {
             startAdvanzia(connection); return
         }
@@ -98,9 +112,11 @@ extension AppModel {
     }
 
     func requestSyncAll() {
-        // portal connections need an interactive login – not part of "sync all"
-        // logins whose accounts are all archived are not asked at all
-        requestSyncBatch { [self] in connections.filter { !usesPortal($0) && !usesFileImport($0) && !$0.allAccountsArchived } }
+        requestSyncBatch { [self] in
+            connections.filter {
+                !$0.allAccountsArchived && supportsSyncSchedule($0) && syncSchedule($0.id) != AutoSync.never
+            }
+        }
     }
 
     /// "Konten abrufen" in a group's menu: the logins behind the group's
@@ -463,8 +479,10 @@ extension AppModel {
         case .finished(let s):
             // a scheduled sync of another login leaves a pending "<Konto> abrufen" alone
             if account(syncAccountID, of: connection) != nil { syncAccountID = nil }
-            logSync(connectionID: connection.id, source: syncLogSource(for: connection.id), outcome: .ok,
-                    message: s.warnings.joined(separator: " / "), imported: Int(s.transactionsImported))
+            // what the bank would not give is no success (#1627)
+            logSync(connectionID: connection.id, source: syncLogSource(for: connection.id),
+                    outcome: s.warnings.isEmpty ? .ok : .partial,
+                    message: (s.warnings + s.hints).joined(separator: " / "), imported: Int(s.transactionsImported))
             activeChallenge = nil
             syncingConnectionID = nil
             activeSession = nil
