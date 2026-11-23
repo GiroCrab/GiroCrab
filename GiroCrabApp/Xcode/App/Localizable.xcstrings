@@ -25053,6 +25053,28 @@
         }
       }
     },
+    "Nur dieses Konto abgerufen. Ganze Verbindung noch nie." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetched this account only. Whole connection: never."
+          }
+        }
+      }
+    },
+    "Nur dieses Konto abgerufen. Ganze Verbindung: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetched this account only. Whole connection: %@"
+          }
+        }
+      }
+    },
     "Nur eine Bewertung: %@ · %@" : {
       "extractionState" : "manual",
       "localizations" : {

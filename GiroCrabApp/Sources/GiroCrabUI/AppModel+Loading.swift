@@ -979,16 +979,27 @@ extension AppModel {
         return String(localized: "Aktualisiert \(relative)")
     }
 
-    /// Last fetch of the account's bank connection (#815). The core stores the time per connection, not per
-    /// account, so accounts of one bank show the same value. `nil` for offline accounts (they are never fetched).
+    /// Last fetch of the account (#815, #1716): the later of the connection's last full sync and the account's
+    /// own single fetch. The core stores the connection's time per connection, so accounts of one bank show the
+    /// same value until one of them is fetched on its own; then that account shows its own time and the tooltip
+    /// says so. `nil` for offline accounts (they are never fetched).
     func lastFetchText(for account: Account) -> (text: String, help: String?)? {
         guard !isOffline(account.id) else { return nil }
-        guard let latest = connections.first(where: { $0.id == account.connectionId })?.lastSyncUnix else {
+        let connection = connections.first(where: { $0.id == account.connectionId })?.lastSyncUnix
+        guard let latest = [connection, account.lastFetchUnix].compactMap({ $0 }).max() else {
             return (String(localized: "Noch nie abgerufen"), nil)
         }
         let relative = Self.relativeSyncText(latest)
-        let exact = Date(timeIntervalSince1970: TimeInterval(latest)).formatted(date: .long, time: .shortened)
-        return (String(localized: "Abgerufen \(relative)"), exact)
+        var help = Date(timeIntervalSince1970: TimeInterval(latest)).formatted(date: .long, time: .shortened)
+        if let own = account.lastFetchUnix, own > (connection ?? .min) {
+            if let connection {
+                let whole = Self.relativeSyncText(connection)
+                help += "\n" + String(localized: "Nur dieses Konto abgerufen. Ganze Verbindung: \(whole)")
+            } else {
+                help += "\n" + String(localized: "Nur dieses Konto abgerufen. Ganze Verbindung noch nie.")
+            }
+        }
+        return (String(localized: "Abgerufen \(relative)"), help)
     }
 
     private static func relativeSyncText(_ unix: Int64) -> String {
