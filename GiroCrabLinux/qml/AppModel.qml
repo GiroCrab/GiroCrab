@@ -2721,7 +2721,7 @@ QtObject {
         run(() => core("mark_documents_seen", { doc_ids: ids, seen: seen }))
         documentsVersion++   // → SidebarModel.refreshCounts()
     }
-    /// Marks every unread document read (sidebar: „Belege & PostBox“).
+    /// Marks every unread document read (sidebar: „Belege & Postbox“).
     function markAllDocumentsSeen() {
         if (!isUnlocked) return
         run(() => core("mark_all_documents_seen", { account_id: null }))

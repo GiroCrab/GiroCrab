@@ -1778,7 +1778,7 @@ mod tests {
         );
     }
 
-    /// Belege & PostBox (#934): read status, the sidebar's unread count and the export of
+    /// Belege & Postbox (#934): read status, the sidebar's unread count and the export of
     /// the filtered list into a subfolder, as DocumentsView.qml / AppModel.qml call them.
     #[test]
     fn documents_read_status_and_filtered_export() {

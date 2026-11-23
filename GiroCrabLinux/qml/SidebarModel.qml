@@ -42,7 +42,7 @@ QtObject {
     // MARK: badge counts (AppModel+Loading.swift › refreshSidebarCounts)
     property int plannedCount: 0
     property int mandateCount: 0
-    /// Unread documents (badge of „Belege & PostBox“, #934), a partial-index COUNT.
+    /// Unread documents (badge of „Belege & Postbox“, #934), a partial-index COUNT.
     property int unseenDocumentCount: 0
     property int countGeneration: 0
     /// `COUNT(*)`s off the GUI thread. Call after planned payments, mandates or documents changed.
