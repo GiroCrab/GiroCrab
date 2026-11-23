@@ -57,9 +57,10 @@
 //! - 37: one sidebar section per account kind (#1003): the accounts of the old
 //!   section "Giro & Tagesgeld" move to Girokonten, Tagesgeld / Sparen, Festgeld, Bargeld
 //!   and Zahlungsdienste by `accounts.kind`; the old section is removed.
-//! - 38: reserved for the credit line of a card (#1143, `accounts.credit_limit_cents`),
-//!   which is still open; empty here so that vaults a #1143 build already moved to 38
-//!   still run step 39.
+//! - 38: empty on purpose. A development build of the credit line of a card (#1143,
+//!   `accounts.credit_limit_cents`) already moved some vaults to 38; without this slot
+//!   they would skip step 39. Never fill it later: a vault that ran 39 does not run
+//!   it again. The credit line gets a step after 39, creating its column only if missing.
 //! - 39: last single-account fetch (#1716): `accounts.last_fetch_unix` (NULL =
 //!   none; the login's `last_sync_unix` still counts for every account).
 //!
@@ -115,7 +116,7 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Hook(account_kind_groups),                           // 37 (#1003)
-    Step::Sql(""),                                             // 38: reserved for #1143
+    Step::Sql(""),                                             // 38: empty, see the list above
     Step::Hook(account_last_fetch),                            // 39 (#1716)
 ];
 
