@@ -287,7 +287,7 @@ fn own_vault() -> Result<Arc<Vault>, String> {
 }
 
 /// `AppModel.localApiTarget`: the own vault while it is the one shown (never the demo).
-fn local_api_target() -> Result<Arc<Vault>, String> {
+pub(crate) fn local_api_target() -> Result<Arc<Vault>, String> {
     let own = OWN.lock().unwrap().clone();
     let shown = VAULT.lock().unwrap().clone();
     match (own, shown) {
@@ -633,6 +633,7 @@ fn call(method: &str, a: &Value) -> R {
                 let _ = v.checkpoint();
             }
             *VAULT.lock().unwrap() = None;
+            crate::local_api::stop();
             ok(())
         }
         "is_unlocked" => ok(VAULT.lock().unwrap().is_some()),
@@ -3598,13 +3599,34 @@ mod tests {
         use std::io::{BufRead, BufReader, Write};
         use std::os::unix::fs::PermissionsExt;
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        struct Cleanup {
+            run: std::path::PathBuf,
+            saved_xdg: Option<std::ffi::OsString>,
+            saved_flatpak: Option<std::ffi::OsString>,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                crate::local_api::stop();
+                *VAULT.lock().unwrap() = None;
+                *OWN.lock().unwrap() = None;
+                set_env("XDG_RUNTIME_DIR", self.saved_xdg.as_ref());
+                set_env("FLATPAK_ID", self.saved_flatpak.as_ref());
+                let _ = std::fs::remove_dir_all(&self.run);
+            }
+        }
         // short: sun_path holds 108 bytes
-        let run = std::path::PathBuf::from(format!("/tmp/gcl-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&run);
-        std::fs::create_dir_all(&run).unwrap();
+        let run = (0u32..)
+            .map(|n| std::path::PathBuf::from(format!("/tmp/gcl-{}-{n}", std::process::id())))
+            .find(|p| std::fs::create_dir(p).is_ok())
+            .expect("exclusive runtime dir");
         std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let saved = std::env::var_os("XDG_RUNTIME_DIR");
+        let _guard = Cleanup {
+            run: run.clone(),
+            saved_xdg: std::env::var_os("XDG_RUNTIME_DIR"),
+            saved_flatpak: std::env::var_os("FLATPAK_ID"),
+        };
         set_env("XDG_RUNTIME_DIR", Some(&run));
+        set_env("FLATPAK_ID", Option::<&str>::None);
         let socket = run.join("girocrab/girocrab.sock");
         let v = Vault::open(run.join("own.girocrab").display().to_string(), vec![9; 32]).unwrap();
         v.seed_demo_data().unwrap();
@@ -3718,11 +3740,7 @@ mod tests {
         assert!(!socket.exists(), "closed on lock");
         assert!(std::os::unix::net::UnixStream::connect(&socket).is_err());
 
-        *VAULT.lock().unwrap() = None;
-        *OWN.lock().unwrap() = None;
         drop(v);
-        set_env("XDG_RUNTIME_DIR", saved);
-        let _ = std::fs::remove_dir_all(run);
     }
 }
 

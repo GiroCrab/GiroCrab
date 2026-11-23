@@ -160,6 +160,9 @@ fn reconcile(target: &Arc<Vault>) -> Option<ShareScope> {
     if let Some(r) = s.running.take() {
         r.server.stop();
     }
+    if !crate::dispatch::local_api_target().is_ok_and(|v| Arc::ptr_eq(&v, target)) {
+        return Some(scope);
+    }
     s.start_error = None;
     let started = socket_path().and_then(|p| {
         LocalApiServer::start(target.clone(), p.display().to_string()).map_err(|e| describe(&e))

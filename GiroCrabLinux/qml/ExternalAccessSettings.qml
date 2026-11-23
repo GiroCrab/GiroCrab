@@ -15,18 +15,33 @@ ScrollView {
 
     readonly property var scope: ExternalAccess.scope
     readonly property bool hasToken: ExternalAccess.hasToken
+    readonly property bool scopeEditable: !!scope && !ExternalAccess.scopeReadFailed
     /// `if scope.enabled { accountsSection … }`
     readonly property bool enabledScope: AppModel.holdsRealData && !!scope && scope.enabled
+    property var clientConfig: null
+    property string currentHelperPath: ExternalAccess.helperPath
+    function refreshAssistantConfig() {
+        if (!shown || !hasToken) {
+            clientConfig = null
+            currentHelperPath = ExternalAccess.helperPath
+            return
+        }
+        clientConfig = AppModel.coreOrNull("local_api_client_config", { token: ExternalAccess.newToken || null })
+        currentHelperPath = ExternalAccess.helperPath
+    }
     /// .onAppear / .onDisappear of the pane (tab switch or window closed)
     readonly property bool shown: visible && AppModel.showSettings
     onShownChanged: {
-        if (shown) return
+        if (shown) {
+            ExternalAccess.sessionGeneration++
+            ExternalAccess.reconcile()
+            refreshAssistantConfig()
+            return
+        }
         ExternalAccess.forgetNewToken()
         forgetCheck()
     }
-    /// `localApiClientConfig(helper:token:)`; null = the helper is not built (`helper == nil`).
-    readonly property var config: shown && hasToken
-        ? AppModel.coreOrNull("local_api_client_config", { token: ExternalAccess.newToken || null }) : null
+    readonly property var config: clientConfig
 
     // CheckState: "" (idle), "running", or a LocalApiCheck name ("works", "failed", …)
     property string check: ""
@@ -35,8 +50,8 @@ ScrollView {
     // A new or revoked key makes an earlier (or running) test stale.
     Connections {
         target: ExternalAccess
-        function onNewTokenChanged() { pane.forgetCheck() }
-        function onHasTokenChanged() { pane.forgetCheck() }
+        function onNewTokenChanged() { pane.forgetCheck(); pane.refreshAssistantConfig() }
+        function onHasTokenChanged() { pane.forgetCheck(); pane.refreshAssistantConfig() }
     }
 
     function startCheck() {
@@ -127,9 +142,24 @@ ScrollView {
             Note { text: qsTr("Die externe Analyse ist nur mit Ihrem eigenen, entsperrten Tresor verfügbar – nicht mit den Demo-Daten.") }
         }
 
+        SettingsFormSection {
+            visible: AppModel.holdsRealData && ExternalAccess.scopeReadFailed
+            title: qsTr("Externe Analyse")
+            IconNote {
+                text: ExternalAccess.startError !== ""
+                    ? qsTr("Einstellungen konnten nicht geladen werden: %1").arg(ExternalAccess.startError)
+                    : qsTr("Einstellungen konnten nicht geladen werden.")
+            }
+            Button {
+                text: qsTr("Erneut versuchen")
+                onClicked: ExternalAccess.reconcile()
+            }
+        }
+
         // accessSection
         SettingsFormSection {
             visible: AppModel.holdsRealData && !!pane.scope
+            enabled: pane.scopeEditable
             title: qsTr("Externe Analyse")
             CheckBox {
                 text: qsTr("Lesenden Zugriff für Programme auf diesem Rechner erlauben")
@@ -149,6 +179,7 @@ ScrollView {
         // accountsSection
         SettingsFormSection {
             visible: pane.enabledScope
+            enabled: pane.scopeEditable
             title: qsTr("Geteilte Konten")
             Repeater {
                 model: AppModel.groups
@@ -191,6 +222,7 @@ ScrollView {
         // fieldsSection
         SettingsFormSection {
             visible: pane.enabledScope
+            enabled: pane.scopeEditable
             title: qsTr("Geteilte Felder")
             Repeater {
                 model: [{ key: "share_counterparty", title: qsTr("Empfänger und Auftraggeber") },
@@ -210,6 +242,7 @@ ScrollView {
         // tokenSection
         SettingsFormSection {
             visible: pane.enabledScope
+            enabled: pane.scopeEditable
             title: qsTr("Zugangsschlüssel")
             SettingsFormRow {
                 visible: ExternalAccess.newToken !== ""
@@ -285,7 +318,8 @@ ScrollView {
                 }
                 Button {
                     text: qsTr("Programmpfad kopieren")
-                    onClicked: AppModel.copyToClipboard(ExternalAccess.helperPath)
+                    enabled: pane.currentHelperPath !== ""
+                    onClicked: AppModel.copyToClipboard(pane.currentHelperPath)
                 }
                 Button {
                     text: qsTr("Verbindung testen")
@@ -299,11 +333,19 @@ ScrollView {
                 symbol: pane.check === "works" ? "checkmark.circle" : "exclamationmark.triangle"
                 text: visible ? pane.checkText(pane.check) : ""
             }
-            Note {
+            ColumnLayout {
                 visible: pane.config === null
-                text: ExternalAccess.devBuild
-                    ? qsTr("Dieser Entwickler-Build enthält das Hilfsprogramm nicht. Bauen Sie es mit „cargo build --release -p girocrab-mcp“.")
-                    : qsTr("Das Hilfsprogramm ist in diesem Build nicht enthalten.")
+                Layout.fillWidth: true
+                spacing: 8
+                Note {
+                    text: ExternalAccess.devBuild
+                        ? qsTr("Dieser Entwickler-Build enthält das Hilfsprogramm nicht. Bauen Sie es mit „cargo build --release -p girocrab-mcp“.")
+                        : qsTr("Das Hilfsprogramm ist in diesem Build nicht enthalten.")
+                }
+                Button {
+                    text: qsTr("Erneut suchen")
+                    onClicked: pane.refreshAssistantConfig()
+                }
             }
         }
     }

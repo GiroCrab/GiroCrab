@@ -13,6 +13,8 @@ QtObject {
 
     /// `localApiScope`: ShareScope of the core (snake_case), null = not loaded / no target.
     property var scope: null
+    property bool scopeReadFailed: false
+    property int sessionGeneration: 0
     /// `localApiNewToken`: shown once, right after it was created ("" = none). Never logged.
     property string newToken: ""
     /// `isLocalApiRunning`
@@ -39,6 +41,8 @@ QtObject {
             stop()
             // Locked, demo or unlocking: a key shown once is never shown again.
             scope = null
+            scopeReadFailed = false
+            sessionGeneration++
             newToken = ""
             return
         }
@@ -98,7 +102,11 @@ QtObject {
         helperPath = state.helper_path || ""
         devBuild = state.dev_build
         const s = state.scope
-        if (!s) return   // unreadable: start error set
+        if (!s) {
+            scopeReadFailed = true
+            return   // unreadable: start error set
+        }
+        scopeReadFailed = false
         // Another token (revoked, replaced): the one shown is no longer valid.
         if (s.token_sha256 !== (scope ? scope.token_sha256 : "")) newToken = ""
         if (isNewest || !scope) {
@@ -126,8 +134,16 @@ QtObject {
         return shown
     }
     /// `createLocalApiToken`: a new access token, shown once; the previous one stops working.
-    function createToken() { job("create_local_api_token", {}, token => api.newToken = token) }
+    function createToken() {
+        const sGen = sessionGeneration
+        job("create_local_api_token", {}, token => {
+            if (sGen === api.sessionGeneration) api.newToken = token
+        })
+    }
     function revokeToken() { job("revoke_local_api_token", {}, null) }
     /// `forgetNewLocalApiToken`: the pane closed, the new key is not shown again.
-    function forgetNewToken() { newToken = "" }
+    function forgetNewToken() {
+        sessionGeneration++
+        newToken = ""
+    }
 }
