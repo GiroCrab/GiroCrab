@@ -53,7 +53,7 @@ Stücken gelesen und beim Überschreiten von 25 MB sofort abgebrochen.
 ## Regeln
 
 * **Konten:** ein Konto je Vertrag, Kennung `bsh:{vtn}`, Name aus Vertragsart ohne Phase und
-  Vertragsnummer (`bsn`), z. B. „Bausparvertrag 217111 D 01“. Sparphase → Sparkonto; Verträge
+  Vertragsnummer (`bsn`), z. B. „Bausparvertrag 217111 D 01“. Sparphase → Bausparen (#1630); Verträge
   mit „Darlehen“ in Art oder Phase → Darlehen mit negativem Saldo. Wechselt ein Vertrag in die
   Darlehensphase, wird das bestehende Konto zum Darlehen; der Name bleibt.
 * **Vollständige Liste:** Die Vertragsliste gilt als vollständig. Ein Vertrag, der nicht mehr

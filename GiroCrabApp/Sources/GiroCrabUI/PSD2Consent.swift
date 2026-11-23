@@ -206,7 +206,8 @@ extension AppModel {
     // MARK: sync notice
 
     /// Toast text after a sync: bookings plus accounts that appeared or lost access, and
-    /// a pointer to the log when parts failed (#1083; the texts name accounts, so not here).
+    /// a pointer to the log when parts failed (#1083; the texts name accounts, so not here)
+    /// and the core's advice for it, which names none (#1627).
     func syncNotice(_ connection: BankConnection, _ s: SyncSummary) -> String {
         var parts = [String(localized: "\(connection.displayName): \(s.transactionsImported) neue Buchungen, \(s.transactionsCategorized) kategorisiert")]
         if !s.newAccounts.isEmpty {
@@ -222,6 +223,7 @@ extension AppModel {
             parts.append(String(localized: "Nicht alles abgerufen"))
             #endif
         }
+        parts.append(contentsOf: s.hints)
         return parts.joined(separator: " · ")
     }
 }

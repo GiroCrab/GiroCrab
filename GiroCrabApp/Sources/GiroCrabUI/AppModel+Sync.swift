@@ -479,8 +479,10 @@ extension AppModel {
         case .finished(let s):
             // a scheduled sync of another login leaves a pending "<Konto> abrufen" alone
             if account(syncAccountID, of: connection) != nil { syncAccountID = nil }
-            logSync(connectionID: connection.id, source: syncLogSource(for: connection.id), outcome: .ok,
-                    message: s.warnings.joined(separator: " / "), imported: Int(s.transactionsImported))
+            // what the bank would not give is no success (#1627)
+            logSync(connectionID: connection.id, source: syncLogSource(for: connection.id),
+                    outcome: s.warnings.isEmpty ? .ok : .partial,
+                    message: (s.warnings + s.hints).joined(separator: " / "), imported: Int(s.transactionsImported))
             activeChallenge = nil
             syncingConnectionID = nil
             activeSession = nil

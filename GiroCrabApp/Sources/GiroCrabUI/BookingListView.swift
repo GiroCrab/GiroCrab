@@ -2,8 +2,8 @@ import SwiftUI
 import GiroCrabCore
 
 /// Column 2: calm booking stream. Fills the space between sidebar and
-/// inspector, bookings grouped into white day cards
-/// with the daily sum in the card header.
+/// inspector, bookings grouped into flat day sections separated by
+/// full-width dividers instead of cards.
 struct BookingStreamView: View {
     @Environment(\.bookingDensity) private var density
     @Environment(\.textScale) private var textScale
@@ -43,7 +43,7 @@ struct BookingStreamView: View {
                 #endif
                 ScrollView {
                     // Spacing 0: the stream below is one flat run of day headers and
-                    // rows that form the day cards; everything above it is one block.
+                    // rows; dividers provide the structure, everything above is one block.
                     LazyVStack(alignment: .leading, spacing: 0) {
                         #if !os(iOS)
                         // The scroll-to-top target is the very first thing in the scroll
@@ -109,11 +109,11 @@ struct BookingStreamView: View {
                                 .padding(.top, 14)
                         }
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 16)
                     #if os(iOS)
                     .padding(.top, 4)
                     #endif
-                    .padding(.bottom, 18)
+                    .padding(.bottom, 14)
                     .frame(maxWidth: .infinity)
                     #if os(macOS)
                     // One value, so the view re-runs only when a scroller comes or goes, not at every
@@ -136,7 +136,7 @@ struct BookingStreamView: View {
                     }
                 }
             }
-            .background(Theme.canvas)
+            .background(Theme.systemBackground)
             #if os(iOS)
             // iPhone: the detail column is not reachable by tapping, so show it as a sheet.
             .capturableSheet(isPresented: Binding(
@@ -278,11 +278,15 @@ struct BookingStreamView: View {
                 .padding(.top, 4)
                 .padding(.bottom, 6)
                 #else
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, ViewLayout.cardGap)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, ViewLayout.sectionSpacing)
                 #endif
                 .frame(maxWidth: .infinity)
+                // Full-width line between the pinned header and the scroll content.
+                #if os(macOS)
+                .overlay(alignment: .bottom) { Divider() }
+                #endif
                 .padding(.trailing, scrollerInset)
     }
 
@@ -329,25 +333,30 @@ private struct StreamAnalysisCards: View {
             #if os(iOS)
             if cards.cashflow {
                 DisclosureGroup("Cashflow-Analyse", isExpanded: $showCashflowIOS) {
-                    VStack(spacing: ViewLayout.cardGap) {
+                    VStack(spacing: 0) {
                         CashflowCard()
-                        if cards.budgets { BudgetProgressCard() }
+                        if cards.budgets {
+                            Divider()
+                            BudgetProgressCard()
+                        }
                     }
-                    .padding(.top, 8)
                 }
                 .appFont(.subheadline, weight: .medium)
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.card))
+                .flatSection(horizontal: 14, vertical: 6)
             } else {
                 BudgetProgressCard()
             }
             #else
-            if cards.cashflow {
-                CashflowCard().transition(Motion.slide(.top))
-            }
-            if cards.budgets {
-                BudgetProgressCard().transition(Motion.slide(.top))
+            VStack(spacing: 0) {
+                if cards.cashflow {
+                    CashflowCard().transition(Motion.slide(.top))
+                }
+                if cards.cashflow && cards.budgets {
+                    Divider()
+                }
+                if cards.budgets {
+                    BudgetProgressCard().transition(Motion.slide(.top))
+                }
             }
             #endif
         }
@@ -422,43 +431,16 @@ struct MerchantFocusBar: View {
                 .help("Händler-Filter aufheben und zur vorherigen Ansicht zurückkehren")
         }
         .appFont(.callout)
-        .padding(.horizontal, 20).padding(.vertical, 8)
+        .padding(.horizontal, 16).padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card)
         .overlay(alignment: .bottom) { Divider() }
     }
 }
 
+/// The stream is one flat run of rows: no rounded day cards, no strokes.
 struct DayCardSegment: ViewModifier {
-    @Environment(\.bookingDensity) private var density
-    let isTop: Bool
-    let isBottom: Bool
-
     func body(content: Content) -> some View {
-        let r: CGFloat = 12
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: isTop ? r : 0, bottomLeadingRadius: isBottom ? r : 0,
-            bottomTrailingRadius: isBottom ? r : 0, topTrailingRadius: isTop ? r : 0,
-            style: .continuous)
-        if density == .compact {
-            content.frame(maxWidth: .infinity)
-        } else {
-            content
-                .frame(maxWidth: .infinity)
-                .background(shape.fill(Theme.card))
-                .clipShape(shape)
-                .overlay {
-                    // The border of the whole card: stroke a shape that reaches 1 pt past
-                    // an open edge and clip it, so only top/bottom slices draw that edge.
-                    Color.clear.overlay {
-                        shape.strokeBorder(Theme.border, lineWidth: 1)
-                            .padding(.top, isTop ? 0 : -1)
-                            .padding(.bottom, isBottom ? 0 : -1)
-                    }
-                    .clipped()
-                    .allowsHitTesting(false)
-                }
-        }
+        content.frame(maxWidth: .infinity)
     }
 }
 
@@ -492,12 +474,12 @@ struct DayHeader: View {
                         .help("Kontostand am Ende des Tages")
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, density == .compact ? 4 : 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, density == .compact ? 3 : 6)
             .background(marked ? Theme.accent.opacity(0.12) : Color.clear)
-            Rectangle().fill(Theme.border).frame(height: 1)
+            Divider()
         }
-        .modifier(DayCardSegment(isTop: true, isBottom: false))
+        .modifier(DayCardSegment())
     }
 }
 
@@ -568,7 +550,7 @@ private extension View {
     func trackScrollDay(_ day: String) -> some View { modifier(StreamDayTracker(day: day)) }
 }
 
-/// One booking of a day card; the last one closes the card.
+/// One booking row of a flat day section; the last one ends the day's dividers.
 struct DayCardRow: View {
     @Environment(\.textScale) private var textScale
     @Environment(\.bookingDensity) private var density
@@ -618,14 +600,14 @@ struct DayCardRow: View {
                     #if os(macOS)
                     // onto a sidebar category (#366) or into another app (BookingDragItem);
                     // the payload is read when the drag starts
-                    .draggable(model.dragItem(for: b))
+                    .onDrag { model.dragItem(for: b).itemProvider() }
                     #endif
             if !isLast || density == .compact {
-                Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1)
-                    .padding(.leading, density == .compact ? 14 : 64)
+                Divider()
+                    .padding(.leading, density == .compact ? 12 : 48)
             }
         }
-        .modifier(DayCardSegment(isTop: false, isBottom: isLast))
+        .modifier(DayCardSegment())
         .onChange(of: model.selectedBookingID) { _, id in
             if id != booking.id { compactDetailsCollapsed = false }
         }
@@ -1091,11 +1073,11 @@ struct BookingRow: View {
         }
         }
         #if os(macOS)
-        .frame(minHeight: (effectiveDensity == .compact ? 28 : 44) * textScale, alignment: .top)
+        .frame(minHeight: (effectiveDensity == .compact ? 26 : 36) * textScale, alignment: .top)
         #else
-        .frame(minHeight: 44, alignment: .top)
+        .frame(minHeight: 40, alignment: .top)
         #endif
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.vertical, effectiveDensity.verticalPadding * textScale)
         .background {
             ZStack {

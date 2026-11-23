@@ -162,6 +162,7 @@ fn fetch_warnings_name_accounts_by_their_stored_name() {
     };
     let s = store_fetch(&v, ConnectorKind::FinTsGeneric, conn, first).unwrap();
     assert!(s.warnings.is_empty());
+    assert!(s.hints.is_empty());
     let id = v.list_accounts().unwrap().pop().unwrap().id;
     v.rename_account(id, "Cash".into()).unwrap();
 
@@ -172,9 +173,11 @@ fn fetch_warnings_name_accounts_by_their_stored_name() {
             format!("{iban}: Umsätze (HKCAZ/camt.052) – TAN verlangt"),
             "Kontenliste (HKSPA) – abgelehnt".into(),
         ],
+        hints: vec!["Zeitraum auf 90 Tage stellen".into()],
         ..Default::default()
     };
     let s = store_fetch(&v, ConnectorKind::FinTsGeneric, conn, failed).unwrap();
+    assert_eq!(s.hints, vec!["Zeitraum auf 90 Tage stellen".to_string()]);
     assert_eq!(
         s.warnings,
         vec![
@@ -941,6 +944,148 @@ fn stored_time_deposit_is_not_turned_back_into_savings() {
     assert_eq!(kind(), "time_deposit");
     fetch(AccountKind::Savings);
     assert_eq!(kind(), "time_deposit");
+    std::fs::remove_file(path).ok();
+}
+
+/// #1630: a Bausparvertrag stored as savings before becomes "building_savings" (kind, symbol and
+/// section) with the next retrieval; set by hand, it stays one when a bank reports Savings.
+#[test]
+fn stored_savings_becomes_building_savings_and_stays_one() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Bhw, String::new(), "Bausparer".into())
+        .unwrap();
+    let fetch = |kind| {
+        store_fetch(
+            &v,
+            ConnectorKind::Bhw,
+            conn,
+            FetchResult {
+                accounts: vec![RemoteAccount {
+                    external_ref: "B".into(),
+                    name: "Bausparvertrag".into(),
+                    owner: String::new(),
+                    iban: String::new(),
+                    account_number: String::new(),
+                    currency: "EUR".into(),
+                    kind,
+                    balance_cents: 1_000_00,
+                    balance_date: "2026-11-11".into(),
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    };
+    let stored = || -> (String, String, String) {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT a.kind, a.sf_symbol, g.builtin_role FROM accounts a
+                   JOIN account_groups g ON g.id = a.group_id WHERE a.external_ref = 'B'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+    };
+    // stored by a build before #1630
+    fetch(AccountKind::Savings);
+    assert_eq!(stored().0, "savings");
+    fetch(AccountKind::BuildingSavings);
+    assert_eq!(
+        stored(),
+        (
+            "building_savings".to_string(),
+            AccountKind::BuildingSavings.sf_symbol().to_string(),
+            "Bausparen".to_string()
+        )
+    );
+    // a bank that still says Savings does not turn it back
+    fetch(AccountKind::Savings);
+    assert_eq!(stored().0, "building_savings");
+    std::fs::remove_file(path).ok();
+}
+
+/// #1630, review of #1650: an unlinked account that a fetch adopts by IBAN takes a new kind
+/// with its symbol and section; one set to Bausparen by hand stays Bausparen on a Savings fetch.
+#[test]
+fn unlinked_account_adopted_as_building_savings_gets_its_section() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Bhw, String::new(), "Bausparer".into())
+        .unwrap();
+    let unlinked = |name: &str, iban: &str| -> i64 {
+        let id = v
+            .create_offline_account(name.into(), AccountKind::Savings, "EUR".into(), 0)
+            .unwrap();
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET iban = ?1 WHERE id = ?2",
+                rusqlite::params![iban, id],
+            )
+            .unwrap();
+        id
+    };
+    let fetched = |name: &str, iban: &str, kind| RemoteAccount {
+        external_ref: iban.into(),
+        name: name.into(),
+        owner: String::new(),
+        iban: iban.into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind,
+        balance_cents: 0,
+        balance_date: "2026-11-11".into(),
+    };
+    let state = |id: i64| -> (Option<i64>, String, String, String) {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT a.connection_id, a.kind, a.sf_symbol, g.builtin_role FROM accounts a
+                   JOIN account_groups g ON g.id = a.group_id WHERE a.id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+    };
+    let converted = unlinked("Vertrag A", "DE02120300000000202051");
+    let by_hand = unlinked("Vertrag B", "DE12500105170648489890");
+    v.set_account_kind(by_hand, AccountKind::BuildingSavings)
+        .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::Bhw,
+        conn,
+        FetchResult {
+            accounts: vec![
+                fetched(
+                    "Vertrag A",
+                    "DE02120300000000202051",
+                    AccountKind::BuildingSavings,
+                ),
+                fetched("Vertrag B", "DE12500105170648489890", AccountKind::Savings),
+            ],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let bausparen = (
+        Some(conn),
+        "building_savings".to_string(),
+        AccountKind::BuildingSavings.sf_symbol().to_string(),
+        "Bausparen".to_string(),
+    );
+    assert_eq!(
+        state(converted),
+        bausparen,
+        "kind, symbol and section move together"
+    );
+    assert_eq!(
+        state(by_hand).1,
+        "building_savings",
+        "a Savings report keeps it"
+    );
     std::fs::remove_file(path).ok();
 }
 

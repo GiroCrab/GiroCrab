@@ -103,6 +103,6 @@ struct LoanProgressCard: View {
 private struct CardIf: ViewModifier {
     let enabled: Bool
     func body(content: Content) -> some View {
-        if enabled { content.card() } else { content }
+        if enabled { content.flatSection() } else { content }
     }
 }

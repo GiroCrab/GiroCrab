@@ -652,10 +652,12 @@ private struct SidebarSelectionList<Content: View>: View {
             // The first row starts at the height of the middle column's heading (#1544), e.g. „Belege & Postbox“:
             // just below the toolbar, which also keeps the traffic lights / sidebar toggle clear.
             // The list's own top margin does that; an extra row (the earlier 28 pt one) could not be
-            // made smaller, as the list gives every row a minimum height.
+            // made smaller, as the list gives every row a minimum height. A content margin, not a
+            // safe-area padding: the padding moved the scroll view itself 14 pt down, so the line
+            // AppKit shows once the list is scrolled sat below the toolbar line, with a band above it.
             content
         }
-        .safeAreaPadding(.top, 14)
+        .contentMargins(.top, 14, for: .scrollContent)
         #else
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) { content }
@@ -744,6 +746,7 @@ struct AccountRow: View {
     /// stay dark there). `backgroundProminence` is not set in a macOS sidebar.
     private var onSelection: Bool { model.sidebarRowSelection(for: .account(account.id)).isSelected }
     @Environment(\.reportRedaction) private var redaction
+    @AppStorage(SidebarDensity.defaultsKey) private var density: SidebarDensity = .defaultValue
     let account: Account
     var syncing: Bool = false
 
@@ -753,84 +756,10 @@ struct AccountRow: View {
     }
 
     var body: some View {
-        HStack(spacing: DisclosureChevron.gap) {
-            // tinted like the account's marker in the booking list
-            AccountSignet(account: account, size: 20, color: model.accountColor(account.id), onSelection: onSelection)
-                .overlay(alignment: .topTrailing) {
-                    // unread count pinned to the icon's corner, so the subtitle stays untruncated
-                    if let text = NewCountBadge.label(for: Int(account.newCount)) {
-                        Text(verbatim: text)
-                            .appFont(.caption2, weight: .bold, monospacedDigit: true)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 4)
-                            .frame(minWidth: 14, minHeight: 14)
-                            .background(Capsule().fill(Theme.accent))
-                            .overlay(Capsule().strokeBorder(.background, lineWidth: 1.5))
-                            .fixedSize()
-                            .offset(x: 5, y: -4)
-                            .accessibilityLabel(Text("\(Int(account.newCount)) neue Buchungen"))
-                    }
-                }
-            VStack(alignment: .leading, spacing: 1) {
-                // row 1: the whole width for the name
-                HStack(spacing: 4) {
-                    // the owner takes no room in the title line: tooltip only
-                    Text(account.name).appFont(.callout, weight: .medium).lineLimit(1).sensitive()
-                        .help(redaction.masking(account.owner))
-                    if account.accessRevoked {
-                        Image(systemName: "lock.slash")
-                            .appFont(.caption2)
-                            .foregroundStyle(Theme.warning)
-                            .help("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.")
-                            .accessibilityLabel(Text("Zugriff entzogen"))
-                    }
-                    Spacer(minLength: 4)
-                    if syncing {
-                        ProgressView().controlSize(.mini)
-                            .accessibilityLabel(Text("Wird synchronisiert"))
-                    }
-                    // outside the overall money totals (#337): like a group's
-                    // eye.slash — the effective flag (own switch, group, archiving)
-                    if account.showsTotalExclusionIndicator {
-                        AccountTotalExclusionIndicator(
-                            help: model.totalExclusionIconHelp(account, redaction: redaction))
-                    }
-                }
-                // row 2: bank / loan progress left, balance right
-                HStack(spacing: 6) {
-                    if let repaid {
-                        ProgressView(value: repaid)
-                            .progressViewStyle(.linear)
-                            .tint(Theme.loan.opacity(0.7))
-                            .controlSize(.mini)
-                            .frame(maxWidth: 44)
-                            .sensitive(.amounts)
-                            .help(redaction.masking("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt", .amounts))
-                        Text("\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
-                            .sensitive(.amounts)
-                            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if let date = account.archivedDate {
-                        Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
-                            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            .help("Archiviert – wird nicht mehr abgerufen")
-                    } else {
-                        Text(searchAwareSubtitle)
-                            .sensitive(searchAwareSubtitle == account.bankName && account.bankLabel == nil ? [] : .personal) // owner / IBAN hits, own bank label
-                            .appFont(.caption2, design: ibanSubtitle ? .monospaced : .default)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 4)
-                    // archived accounts show no balance (#667)
-                    if !account.isArchived {
-                        Text(Money.format(account.balanceCents, currency: account.currency))
-                            .sensitive(.amounts)
-                            .appFont(.subheadline, monospacedDigit: true)
-                            .fixedSize() // the subtitle truncates, never the balance (#343)
-                            .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
-                    }
-                }
+        Group {
+            switch density {
+            case .spacious: spaciousRow
+            case .compact: compactRow
             }
         }
         .padding(.vertical, 1)
@@ -838,8 +767,197 @@ struct AccountRow: View {
         // reachable explanation (#337): why the account stays out of the totals
         // although its own switch is on — the group that wins, or archiving
         .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
-        // one element per account: unread count, name, bank / loan progress, balance
+        // one element per account: name, unread count, bank / loan progress, balance
         .accessibilityElement(children: .combine)
+    }
+
+    /// What a row shows below the name: one source for both layouts.
+    private enum SecondLine {
+        case archived(Date)
+        case loan(Double)
+        case subtitle(String)
+    }
+
+    private var secondLine: SecondLine {
+        if let repaid { return .loan(repaid) }
+        if let date = account.archivedDate { return .archived(date) }
+        return .subtitle(searchAwareSubtitle)
+    }
+
+    /// Name, owner initials, count and balance in one line, bank below (#884).
+    /// The name truncates first; count and balance keep their width.
+    private var spaciousRow: some View {
+        let line2 = secondLine
+        return HStack(spacing: 9) {
+            // tinted like the account's marker in the booking list
+            AccountSignet(account: account, size: 24, color: model.accountColor(account.id), onSelection: onSelection)
+            // name and balance share the first line: aligned on its baseline, not centred on the row
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(account.name).appFont(.body, weight: .medium).lineLimit(1).truncationMode(.tail).sensitive()
+                            .help(redaction.masking(account.owner))
+                        if showsInitials(line2) {
+                            Text(verbatim: SidebarDensity.initials(of: account.owner))
+                                .appFont(.caption2, weight: .semibold)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 4)
+                                .background(.secondary.opacity(0.15), in: Capsule())
+                                .fixedSize()
+                                .sensitive()
+                        }
+                        revokedIcon
+                        NewCountBadge(count: Int(account.newCount), onSelection: onSelection)
+                            .layoutPriority(1)
+                        // in the name line, centred on it like in the compact row
+                        if syncing {
+                            ProgressView().controlSize(.mini)
+                                .accessibilityLabel(Text("Wird synchronisiert"))
+                        }
+                        exclusionIndicator
+                    }
+                    switch line2 {
+                    case .archived(let date):
+                        archivedLabel(date)
+                    case .loan(let repaid):
+                        ProgressView(value: repaid)
+                            .progressViewStyle(.linear)
+                            .tint(Theme.loan.opacity(0.7))
+                            .controlSize(.mini)
+                            .frame(maxWidth: 110)
+                            .sensitive(.amounts)
+                            .help(redaction.masking(repaidText(repaid), .amounts))
+                    case .subtitle(let text):
+                        subtitle(text)
+                    }
+                }
+                Spacer(minLength: 4)
+                // archived accounts show no balance (#667), nor how far a loan was repaid
+                if !account.isArchived {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        balance(.callout)
+                        if let repaid {
+                            Text(repaidText(repaid))
+                                .sensitive(.amounts)
+                                .appFont(.caption2).foregroundStyle(.secondary)
+                                .fixedSize()
+                        }
+                    }
+                    .layoutPriority(1)
+                }
+            }
+        }
+    }
+
+    /// Name and count above, bank and balance below (#624, #884).
+    private var compactRow: some View {
+        HStack(spacing: DisclosureChevron.gap) {
+            // tinted like the account's marker in the booking list
+            AccountSignet(account: account, size: 20, color: model.accountColor(account.id), onSelection: onSelection)
+            VStack(alignment: .leading, spacing: 1) {
+                // row 1: the whole width for the name
+                HStack(spacing: 4) {
+                    // the owner takes no room in the title line: tooltip only
+                    Text(account.name).appFont(.callout, weight: .medium).lineLimit(1).sensitive()
+                        .help(redaction.masking(account.owner))
+                    revokedIcon
+                    // a count bubble in the row: the icon (and its colour, #175) stays free
+                    NewCountBadge(count: Int(account.newCount), onSelection: onSelection)
+                    Spacer(minLength: 4)
+                    if syncing {
+                        ProgressView().controlSize(.mini)
+                            .accessibilityLabel(Text("Wird synchronisiert"))
+                    }
+                    exclusionIndicator
+                }
+                // row 2: bank / loan progress left, balance right
+                HStack(spacing: 6) {
+                    switch secondLine {
+                    case .archived(let date):
+                        archivedLabel(date)
+                    case .loan(let repaid):
+                        ProgressView(value: repaid)
+                            .progressViewStyle(.linear)
+                            .tint(Theme.loan.opacity(0.7))
+                            .controlSize(.mini)
+                            .frame(maxWidth: 44)
+                            .sensitive(.amounts)
+                            .help(redaction.masking(repaidText(repaid), .amounts))
+                        Text(repaidText(repaid))
+                            .sensitive(.amounts)
+                            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    case .subtitle(let text):
+                        subtitle(text)
+                    }
+                    Spacer(minLength: 4)
+                    // archived accounts show no balance (#667)
+                    if !account.isArchived {
+                        balance(.subheadline)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: parts both layouts share
+
+    private func repaidText(_ repaid: Double) -> String {
+        String(localized: "\(repaid.formatted(.percent.precision(.fractionLength(0)))) getilgt")
+    }
+
+    @ViewBuilder private var revokedIcon: some View {
+        if account.accessRevoked {
+            Image(systemName: "lock.slash")
+                .appFont(.caption2)
+                .foregroundStyle(Theme.warning)
+                .help("Zugriff entzogen: Die Bank liefert dieses Konto nicht mehr. Buchungen bleiben erhalten.")
+                .accessibilityLabel(Text("Zugriff entzogen"))
+        }
+    }
+
+    /// Outside the overall money totals (#337): like a group's eye.slash —
+    /// the effective flag (own switch, group, archiving).
+    @ViewBuilder private var exclusionIndicator: some View {
+        if account.showsTotalExclusionIndicator {
+            AccountTotalExclusionIndicator(
+                help: model.totalExclusionIconHelp(account, redaction: redaction))
+        }
+    }
+
+    private func archivedLabel(_ date: Date) -> some View {
+        Text("Archiviert \(date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year(.twoDigits)))")
+            .appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            .help("Archiviert – wird nicht mehr abgerufen")
+    }
+
+    /// Bank, note or search hit below the name. Only the plain bank name stays
+    /// visible in reports: owner / IBAN hits and the user's own bank label are personal.
+    private func subtitle(_ text: String) -> some View {
+        Text(text)
+            .sensitive(text == account.bankName && account.bankLabel == nil ? [] : .personal)
+            .appFont(.caption2, design: model.isSidebarAccountSearching && text == formatIBAN(account.iban) ? .monospaced : .default)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    private func balance(_ style: Font.TextStyle) -> some View {
+        Text(Money.format(account.balanceCents, currency: account.currency))
+            .sensitive(.amounts)
+            .appFont(style, monospacedDigit: true)
+            .fixedSize() // the name / subtitle truncates, never the balance (#343)
+            .foregroundStyle(onSelection ? AnyShapeStyle(.primary) : AnyShapeStyle(account.kind == .loan ? Theme.loan : (account.balanceCents < 0 ? Theme.negative : Theme.text)))
+    }
+
+    /// The initials chip, unless the subtitle the row shows already names the owner
+    /// (accounts of the same name told apart by owner, or an owner hit while searching).
+    /// Archived accounts and loans show a date or the repayment bar there, so they keep it.
+    private func showsInitials(_ line2: SecondLine) -> Bool {
+        guard !SidebarDensity.initials(of: account.owner).isEmpty else { return false }
+        guard case .subtitle(let text) = line2 else { return true }
+        if text == account.owner { return false } // owner hit while searching
+        // same-named accounts told apart by owner: the distinction is the owner itself
+        return !(model.accountDistinction(account) == account.owner && text.contains(account.owner))
     }
 
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
@@ -866,10 +984,6 @@ struct AccountRow: View {
             return account.iban.isEmpty ? account.accountNumber : formatIBAN(account.iban)
         }
         return baseSubtitle
-    }
-
-    private var ibanSubtitle: Bool {
-        model.isSidebarAccountSearching && searchAwareSubtitle == formatIBAN(account.iban)
     }
 }
 

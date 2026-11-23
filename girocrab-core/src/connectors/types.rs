@@ -66,6 +66,9 @@ pub struct SyncSummary {
     /// Parts of this sync that failed while the rest was stored (#1083), one
     /// text each, accounts by name: e.g. bookings the bank wanted a TAN for.
     pub warnings: Vec<String>,
+    /// Advice that goes with `warnings` (#1627): what the user can do about it.
+    /// Names no account, so a sync notice can show it as it is.
+    pub hints: Vec<String>,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -624,6 +627,9 @@ pub struct FetchResult {
     /// as done and reports them. An account's external ref in a text is
     /// replaced by the account's name when storing.
     pub warnings: Vec<String>,
+    /// What the user can do about `warnings` (#1627), already in the UI language
+    /// and without account names.
+    pub hints: Vec<String>,
 }
 
 impl FetchResult {

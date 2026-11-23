@@ -31,6 +31,9 @@ const ROW_OVERHEAD: i64 = 64;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SyncLogOutcome {
     Ok,
+    /// The sync stored what it could read, but parts failed (#1627): the
+    /// message says which, e.g. bookings the bank wanted a TAN for.
+    Partial,
     Error,
     Cancelled,
 }
@@ -39,6 +42,7 @@ impl SyncLogOutcome {
     fn as_str(self) -> &'static str {
         match self {
             SyncLogOutcome::Ok => "ok",
+            SyncLogOutcome::Partial => "partial",
             SyncLogOutcome::Error => "error",
             SyncLogOutcome::Cancelled => "cancelled",
         }
@@ -47,6 +51,7 @@ impl SyncLogOutcome {
     fn parse(s: &str) -> Self {
         match s {
             "ok" => SyncLogOutcome::Ok,
+            "partial" => SyncLogOutcome::Partial,
             "cancelled" => SyncLogOutcome::Cancelled,
             _ => SyncLogOutcome::Error,
         }
@@ -104,7 +109,7 @@ pub struct SyncLogEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SyncLogFilter {
     pub connection_id: Option<i64>,
-    /// Only failed syncs.
+    /// Only failed and partial syncs.
     pub only_errors: bool,
     /// Words (all must occur) in the connection name or the message.
     pub search: Option<String>,
@@ -384,7 +389,7 @@ impl Vault {
             wh.push(format!("connection_id = ?{}", args.len()));
         }
         if filter.only_errors {
-            wh.push("outcome = 'error'".into());
+            wh.push("outcome IN ('error', 'partial')".into());
         }
         if let Some(q) = filter.search.as_deref() {
             for term in q.split_whitespace() {
