@@ -46,7 +46,9 @@ fail=0
 module_keys=$(sed -n 's/^\/\/! - \([0-9][0-9–-]*\):.*/\1/p' "$schema" | expand)
 check "$schema (module comment)" "$module_keys" || fail=1
 
-table_keys=$(sed -n 's/^| *\([0-9][0-9–+-]*\) *|.*/\1/p' "$doc" | expand)
+# Only the table in the section "## Schema & migrations", not other tables of the file.
+table_keys=$(awk '/^## /{on = ($0 == "## Schema & migrations")} on' "$doc" |
+    sed -n 's/^| *\([0-9][0-9–+-]*\) *|.*/\1/p' | expand)
 check "$doc (schema table)" "$table_keys" || fail=1
 grep -qx "$((n + 1))+" <<<"$table_keys" || { echo "$doc (schema table): missing the row \"$((n + 1))+\" for future changes" >&2; fail=1; }
 
@@ -54,3 +56,4 @@ if [ "$fail" -ne 0 ]; then
     echo "Describe every schema step in the module comment of $schema and in the table of $doc." >&2
     exit 1
 fi
+echo "lint-schema-docs: ok"
