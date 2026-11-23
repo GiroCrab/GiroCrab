@@ -36509,13 +36509,13 @@
         }
       }
     },
-    "„Maximum“ holt alles, was die Bank liefert. Für mehr als 90 Tage verlangen viele Banken eine TAN. Später lässt sich ein Zeitraum in den Einstellungen des Zugangs erneut abrufen." : {
+    "„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Später lässt sich ein Zeitraum in den Einstellungen des Zugangs erneut abrufen." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "“Maximum” fetches everything the bank provides. Many banks require a TAN for more than 90 days. A period can be fetched again later in the connection’s settings."
+            "value" : "“Maximum” goes back as far as the bank and the connection allow. Many banks require a TAN for more than 90 days. A period can be fetched again later in the connection’s settings."
           }
         }
       }

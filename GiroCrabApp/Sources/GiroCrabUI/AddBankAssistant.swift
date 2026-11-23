@@ -439,7 +439,7 @@ struct AddBankSheet: View {
                 } header: {
                     Text("Erster Abruf").appSectionHeader()
                 } footer: {
-                    Text("„Maximum“ holt alles, was die Bank liefert. Für mehr als 90 Tage verlangen viele Banken eine TAN. Später lässt sich ein Zeitraum in den Einstellungen des Zugangs erneut abrufen.")
+                    Text("„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Später lässt sich ein Zeitraum in den Einstellungen des Zugangs erneut abrufen.")
                         .appFont(.caption).foregroundStyle(Theme.secondary)
                         .leadingFooter()
                 }
