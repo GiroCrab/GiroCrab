@@ -54,6 +54,8 @@ struct RuleTagExchange: ViewModifier {
                 case .rules(let ids): await model.exportRulesFile(ids)
                 case .tags(let ids): await model.exportTagsFile(ids)
                 }
+                // a newer export request replaced this one while it ran: drop the result
+                guard !Task.isCancelled, self.export == export else { return }
                 filename = export.defaultFilename
                 document = data.map(JSONFileDocument.init(data:))
                 if document == nil { self.export = nil }

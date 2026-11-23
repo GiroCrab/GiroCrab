@@ -60,6 +60,9 @@ extension AppModel {
             reloadRules()
             return report
         } catch {
+            // tags created before the failure are in the vault: show them
+            reloadTags()
+            reloadRules()
             showError(String(localized: "Import fehlgeschlagen"), describe(error))
             return nil
         }

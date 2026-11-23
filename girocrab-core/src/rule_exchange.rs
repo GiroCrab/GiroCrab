@@ -6,7 +6,8 @@
 //!
 //! - **category**: uuid, `builtin_role` (starter categories) and the path of
 //!   names from the top ("Lebensmittel" › "Supermarkt");
-//! - **accounts**: IBAN, account number and name;
+//! - **accounts**: IBAN, account number and name (an IBAN shared by several
+//!   accounts is narrowed down by number and name);
 //! - **tags**: name and colour (tags are matched by name, missing ones created).
 //!
 //! The import resolves each of them in that order. A rule whose category or
@@ -15,8 +16,8 @@
 //! category, every account, all fields); the report names it. So is a rule
 //! `save_rule` would refuse (empty or invalid pattern, neither category nor
 //! tags), already in the preview. A rule that already exists (same name,
-//! pattern, field, match kind, category, case sensitivity, amount range and
-//! accounts) is skipped too, so importing the same file twice adds nothing.
+//! pattern, field, match kind, category, case sensitivity, amount range,
+//! accounts and tags) is skipped too, so importing the same file twice adds nothing.
 
 use std::collections::HashMap;
 
@@ -312,19 +313,27 @@ fn resolve_category(r: &CategoryRef, cats: &[CategoryRow]) -> Option<i64> {
     None
 }
 
-/// The account in this vault: IBAN, account number, then a unique name.
+/// The account in this vault: a unique IBAN, then a unique account number,
+/// then a unique name. Several accounts with the IBAN (e.g. sub-accounts of one
+/// login) are told apart by number and name; if that fails, none is taken.
 fn resolve_account(r: &AccountRef, accs: &[AccountRow]) -> Option<i64> {
+    let mut pool: Vec<&AccountRow> = accs.iter().collect();
     let iban = crate::iban::normalize_iban(&r.iban);
-    if !iban.is_empty()
-        && let Some(a) = accs
+    if !iban.is_empty() {
+        let hits: Vec<_> = accs
             .iter()
-            .find(|a| crate::iban::normalize_iban(&a.iban) == iban)
-    {
-        return Some(a.id);
+            .filter(|a| crate::iban::normalize_iban(&a.iban) == iban)
+            .collect();
+        if hits.len() == 1 {
+            return Some(hits[0].id);
+        }
+        if !hits.is_empty() {
+            pool = hits;
+        }
     }
     let number = r.account_number.trim();
     if !number.is_empty() {
-        let hits: Vec<_> = accs
+        let hits: Vec<_> = pool
             .iter()
             .filter(|a| a.account_number.trim() == number)
             .collect();
@@ -334,7 +343,7 @@ fn resolve_account(r: &AccountRef, accs: &[AccountRow]) -> Option<i64> {
     }
     let name = fold(&r.name);
     if !name.is_empty() {
-        let hits: Vec<_> = accs.iter().filter(|a| fold(&a.name) == name).collect();
+        let hits: Vec<_> = pool.iter().filter(|a| fold(&a.name) == name).collect();
         if hits.len() == 1 {
             return Some(hits[0].id);
         }
@@ -432,9 +441,36 @@ enum Plan {
     Skip(String),
 }
 
+/// Folded names of live tags by id, for comparing a file rule's tags (by name:
+/// tags to be created have no id yet) with those of the rules here.
+fn tag_name_map(live: &[(i64, String, String, String)]) -> HashMap<i64, String> {
+    live.iter()
+        .map(|(id, _, name, _)| (*id, fold(name)))
+        .collect()
+}
+
+/// A rule's tags as sorted folded names; names that cannot become a tag are
+/// left out (the rule is imported without them).
+fn tag_set<'a>(names: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let mut set: Vec<String> = names
+        .filter(|n| tag_problem(n).is_none())
+        .map(|n| fold(n))
+        .collect();
+    set.sort_unstable();
+    set.dedup();
+    set
+}
+
 /// Resolves a rule's category and accounts in this vault. A rule is skipped
 /// rather than widened: no category found, or none of its accounts.
-fn plan_rule(e: &RuleEntry, cats: &[CategoryRow], accs: &[AccountRow], existing: &[Rule]) -> Plan {
+/// `names` = [`tag_name_map`] of the tags `existing` rules use.
+fn plan_rule(
+    e: &RuleEntry,
+    cats: &[CategoryRow],
+    accs: &[AccountRow],
+    existing: &[Rule],
+    names: &HashMap<i64, String>,
+) -> Plan {
     let Some(match_kind) = match_kind_from(&e.match_kind) else {
         return Plan::Skip(tr("unbekannte Suchart").into());
     };
@@ -510,6 +546,7 @@ fn plan_rule(e: &RuleEntry, cats: &[CategoryRow], accs: &[AccountRow], existing:
         ids
     };
     let accounts = sorted(&account_ids);
+    let tags = tag_set(e.tags.iter());
     if existing.iter().any(|r| {
         r.name == name
             && r.pattern == e.pattern
@@ -520,6 +557,7 @@ fn plan_rule(e: &RuleEntry, cats: &[CategoryRow], accs: &[AccountRow], existing:
             && r.min_amount_cents == e.min_amount_cents
             && r.max_amount_cents == e.max_amount_cents
             && sorted(&r.account_ids) == accounts
+            && tag_set(r.tag_ids.iter().filter_map(|id| names.get(id))) == tags
     }) {
         return Plan::Skip(tr("bereits vorhanden").into());
     }
@@ -647,6 +685,7 @@ impl Vault {
         let file = parse(&json)?;
         let db = self.db()?;
         let live = tags(&db)?;
+        let names = tag_name_map(&live);
         let existing = Vault::load_rules(&db)?;
         let (cats, accs) = (categories(&db)?, accounts(&db)?);
         Ok(RuleExchangePreview {
@@ -655,7 +694,7 @@ impl Vault {
                 .iter()
                 .enumerate()
                 .map(|(i, e)| {
-                    let (problem, note) = match plan_rule(e, &cats, &accs, &existing) {
+                    let (problem, note) = match plan_rule(e, &cats, &accs, &existing, &names) {
                         Plan::Ready { missing, .. } if !missing.is_empty() => (
                             None,
                             Some(trf(
@@ -744,18 +783,24 @@ impl Vault {
             .map(|(_, e)| e)
             .collect();
 
-        let (cats, accs, mut existing, mut priority) = {
+        let (cats, accs, mut existing, mut priority, mut names) = {
             let db = self.db()?;
             let existing = Vault::load_rules(&db)?;
             let top = existing.iter().map(|r| r.priority).max().unwrap_or(0);
-            (categories(&db)?, accounts(&db)?, existing, top)
+            let names = tag_name_map(&tags(&db)?);
+            (categories(&db)?, accounts(&db)?, existing, top, names)
         };
 
         // Tags: the chosen ones plus every tag a chosen rule adds that will be
         // imported (a skipped rule brings no tag along).
         let needed: Vec<String> = chosen
             .iter()
-            .filter(|e| matches!(plan_rule(e, &cats, &accs, &existing), Plan::Ready { .. }))
+            .filter(|e| {
+                matches!(
+                    plan_rule(e, &cats, &accs, &existing, &names),
+                    Plan::Ready { .. }
+                )
+            })
             .flat_map(|e| e.tags.iter().map(|t| fold(t)))
             .collect();
         let wanted: Vec<TagEntry> = wanted_tags(file)
@@ -786,6 +831,7 @@ impl Vault {
                         .or_else(|_| self.create_tag(t.name.clone(), String::new()));
                     match created {
                         Ok(tag) => {
+                            names.insert(tag.id, fold(&tag.name));
                             report.tags_created += 1;
                             report.tags_created_names.push(tag.name.clone());
                             tag.id
@@ -806,7 +852,7 @@ impl Vault {
         for e in chosen {
             let name = rule_name(e);
             let (category_id, field, match_kind, account_ids, missing) =
-                match plan_rule(e, &cats, &accs, &existing) {
+                match plan_rule(e, &cats, &accs, &existing, &names) {
                     Plan::Skip(reason) => {
                         report.rules_skipped += 1;
                         report

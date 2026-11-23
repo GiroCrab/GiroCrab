@@ -583,3 +583,68 @@ fn an_invalid_tag_name_is_reported_and_the_import_goes_on() {
     assert_eq!(report.tags_created, 2, "{report:?}");
     assert!(report.rules_imported >= 2, "{report:?}");
 }
+
+#[test]
+fn rules_differing_only_in_their_tags_are_no_duplicates() {
+    let dir = TempDir::new("rx-dupe-tags");
+    let a = open(&dir, "a.db");
+    let urlaub = a.create_tag("Urlaub".into(), String::new()).unwrap();
+    let familie = a.create_tag("Familie".into(), String::new()).unwrap();
+    // tag-only rules: same everything but the tag
+    a.save_rule(rule("hotel", 0, vec![], vec![urlaub.id]))
+        .unwrap();
+    a.save_rule(rule("hotel", 0, vec![], vec![familie.id]))
+        .unwrap();
+    let json = a.export_rules(vec![]).unwrap();
+
+    let b = open(&dir, "b.db");
+    let report = b.import_rules_and_tags(json.clone()).unwrap();
+    assert_eq!(
+        (report.rules_imported, report.rules_skipped),
+        (2, 0),
+        "{report:?}"
+    );
+    // an exact re-import still adds nothing
+    let preview = b.preview_rules_and_tags(json.clone()).unwrap();
+    assert!(
+        preview.rules.iter().all(|r| r.problem.is_some()),
+        "{preview:?}"
+    );
+    let again = b.import_rules_and_tags(json).unwrap();
+    assert_eq!(
+        (again.rules_imported, again.rules_skipped),
+        (0, 2),
+        "{again:?}"
+    );
+}
+
+#[test]
+fn an_iban_shared_by_several_accounts_is_narrowed_by_number_and_name() {
+    let dir = TempDir::new("rx-iban-shared");
+    let a = open(&dir, "a.db");
+    let sub = account(&a, "Unterkonto", IBAN_GIRO, "0002");
+    let cat = category(&a, "Freizeit", None);
+    a.save_rule(rule("kino", cat, vec![sub], vec![])).unwrap();
+    let json = a.export_rules(vec![]).unwrap();
+
+    // the IBAN alone would pick the first account with it
+    let b = open(&dir, "b.db");
+    account(&b, "Hauptkonto", IBAN_GIRO, "0001");
+    let wanted = account(&b, "Unterkonto", IBAN_GIRO, "0002");
+    category(&b, "Freizeit", None);
+    let report = b.import_rules_and_tags(json.clone()).unwrap();
+    assert_eq!(report.rules_imported, 1, "{report:?}");
+    assert_eq!(b.list_rules().unwrap()[0].account_ids, vec![wanted]);
+
+    // number and name tell nothing apart: no account is guessed
+    let c = open(&dir, "c.db");
+    account(&c, "Hauptkonto", IBAN_GIRO, "0001");
+    account(&c, "Tagesgeld", IBAN_GIRO, "0003");
+    category(&c, "Freizeit", None);
+    let report = c.import_rules_and_tags(json).unwrap();
+    assert_eq!(
+        (report.rules_imported, report.rules_skipped),
+        (0, 1),
+        "{report:?}"
+    );
+}
