@@ -522,6 +522,10 @@ pub(crate) fn merge_bookings(
         .filter(|f| f.deleted_ms.is_none())
         .flat_map(|f| f.splits.iter().map(|p| p.0.as_str()))
         .collect();
+    let split_owners: HashMap<String, i64> = conn
+        .prepare("SELECT uuid,transaction_id FROM transaction_splits")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
     for id in pending_splits.keys() {
         conn.execute(
             "DELETE FROM transaction_splits WHERE transaction_id=?1",
@@ -532,7 +536,11 @@ pub(crate) fn merge_bookings(
         let deleted = local[&id].deleted_ms.is_some();
         let lines: Vec<_> = lines
             .into_iter()
-            .filter(|p| !deleted || !live_uuids.contains(p.0.as_str()))
+            .filter(|p| {
+                !deleted
+                    || (!live_uuids.contains(p.0.as_str())
+                        && split_owners.get(&p.0).is_none_or(|owner| *owner == id))
+            })
             .collect();
         if !deleted {
             for line in &lines {

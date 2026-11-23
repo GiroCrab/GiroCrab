@@ -5,6 +5,157 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 #[test]
+fn round6_expense_direction_keeps_refund_adjustments() {
+    let f = Fixture::new();
+    let o = f.add(-10000, Some(f.cost));
+    let r = f.add(3000, Some(f.income));
+    f.link(r, "", o, "");
+    for (direction, expense, income) in [
+        (BookingDirection::All, 7000, 0),
+        (BookingDirection::Expense, 7000, 0),
+        (BookingDirection::Income, 0, 0),
+    ] {
+        let report =
+            f.v.analytics_report(
+                BookingFilter {
+                    direction,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            (report.expense_cents, report.income_cents),
+            (expense, income),
+            "{direction:?}"
+        );
+    }
+}
+
+#[test]
+fn round6_analytics_does_not_compute_the_unused_untagged_bucket() {
+    let f = Fixture::new();
+    f.add(i64::MAX, Some(f.income));
+    let sale = f.add(100, None);
+    let investment =
+        f.v.create_category("Invest".into(), None, "chart.bar".into(), "#ff0000".into())
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET builtin_role='Investitionen' WHERE id=?1",
+            [investment],
+        )
+        .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET category_id=?1 WHERE id=?2",
+            params![investment, sale],
+        )
+        .unwrap();
+    assert!(
+        f.v.analytics_report(BookingFilter::default(), false)
+            .is_ok()
+    );
+    assert!(f.v.tag_totals(BookingFilter::default()).is_err());
+}
+
+#[test]
+fn round6_split_category_presentation_follows_saved_positions() {
+    let f = Fixture::new();
+    let b = f.add(-100, None);
+    f.split(b, &[(-40, Some(f.cost)), (-60, Some(f.income))]);
+    let mut parts = f.v.list_transaction_splits(b).unwrap();
+    parts.reverse();
+    f.v.set_transaction_splits(
+        b,
+        parts
+            .iter()
+            .map(|p| TransactionSplitInput {
+                uuid: Some(p.uuid.clone()),
+                category_id: p.category_id,
+                amount_cents: p.amount_cents,
+                note: p.note.clone(),
+            })
+            .collect(),
+    )
+    .unwrap();
+    let rows = f.v.list_transactions(BookingFilter::default()).unwrap();
+    let b = rows.transactions.iter().find(|r| r.id == b).unwrap();
+    let db = f.v.db().unwrap();
+    let names = parts
+        .iter()
+        .map(|p| {
+            db.query_row(
+                "SELECT name FROM categories WHERE id=?1",
+                [p.category_id],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(b.category_name, names.join(", "));
+}
+
+#[test]
+fn round6_dashboard_primary_plan_totals_never_mix_currencies() {
+    let f = Fixture::new();
+    let usd =
+        f.v.create_offline_account("USD".into(), AccountKind::Cash, "USD".into(), 0)
+            .unwrap();
+    f.add(-10000, Some(f.cost));
+    f.add_on(usd, -10000, Some(f.cost), "USD", &f.date);
+    f.v.db().unwrap().execute_batch(&format!("UPDATE categories SET builtin_role='Investitionen' WHERE id={}; UPDATE transactions SET counterparty='Security',purpose='Sparplan execution'",f.cost)).unwrap();
+    for inherited in [false, true] {
+        if inherited {
+            f.v.db()
+                .unwrap()
+                .execute("UPDATE transactions SET currency=''", [])
+                .unwrap();
+        }
+        let dashboard = f.v.investment_dashboard(1).unwrap();
+        assert_eq!(dashboard.plans.len(), 1, "inherited currency: {inherited}");
+        assert_eq!(dashboard.plans[0].total_invested_cents, 10000);
+        assert_eq!(dashboard.plans[0].executions[0].amount_cents, 10000);
+        assert_eq!(dashboard.monthly[0].investment_cents, 10000);
+    }
+}
+
+#[test]
+fn round6_unlinked_expense_direction_keeps_mixed_split_totals() {
+    let f = Fixture::new();
+    let expense = f.add(-100, None);
+    f.split(expense, &[(-200, Some(f.cost)), (100, Some(f.income))]);
+    let all =
+        f.v.analytics_report(BookingFilter::default(), false)
+            .unwrap();
+    let expenses =
+        f.v.analytics_report(
+            BookingFilter {
+                direction: BookingDirection::Expense,
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        (expenses.income_cents, expenses.expense_cents),
+        (all.income_cents, all.expense_cents)
+    );
+    let income =
+        f.v.analytics_report(
+            BookingFilter {
+                direction: BookingDirection::Income,
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!((income.income_cents, income.expense_cents), (0, 0));
+}
+
+#[test]
 fn round5_api_summary_sorts_minimum_signed_category_total() {
     let f = Fixture::new();
     let transfer = f.transfer_category();
@@ -899,8 +1050,8 @@ mod previous_pr_regressions {
         f.link(refund, "", original, "");
         for (direction, sum) in [
             (BookingDirection::All, -2000),
-            (BookingDirection::Expense, -3000),
-            (BookingDirection::Income, 1000),
+            (BookingDirection::Expense, -2000),
+            (BookingDirection::Income, 0),
         ] {
             let page =
                 f.v.list_transactions(BookingFilter {

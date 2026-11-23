@@ -313,11 +313,6 @@ impl Projection {
         for book in state.books.values_mut() {
             book.live &= accounts.contains(&book.account_id);
         }
-        state.rows.retain(|r| {
-            r.deleted_ms.is_some()
-                || (state.books.get(&r.key.refund.0).is_some_and(|b| b.live)
-                    && state.books.get(&r.key.original.0).is_some_and(|b| b.live))
-        });
         Ok(Self::from_state(state)?.allocations)
     }
 

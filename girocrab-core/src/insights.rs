@@ -149,9 +149,13 @@ impl Vault {
         let (all, merchants, projected_months): (Vec<Booking>, _, _) = {
             let db = self.db()?;
             let allowed = crate::user_groups::total_account_ids(&db)?;
+            let projection = self.financial_projection(&db)?;
             let all = all_bookings(self, &db, BookingScope::All)?
                 .into_iter()
-                .filter(|b| allowed.contains(&b.account_id))
+                .filter(|b| {
+                    allowed.contains(&b.account_id)
+                        && projection.info[&b.id].currency.eq_ignore_ascii_case("EUR")
+                })
                 .collect();
             let monthly = self
                 .projected_selection(

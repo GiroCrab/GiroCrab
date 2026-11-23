@@ -28,10 +28,10 @@ pub(crate) struct Row {
     pub amount_cents: i128,
     pub flow: FlowKind,
     side: KpiSide,
+    direction: i8,
 }
 
 pub(crate) struct Info {
-    amount_cents: i64,
     pub account_id: i64,
     pub date: String,
     pub currency: String,
@@ -159,7 +159,6 @@ impl Projection {
             out.info.insert(
                 b.id,
                 Info {
-                    amount_cents: b.amount_cents,
                     account_id: b.account_id,
                     date: b.booking_date.clone(),
                     currency: refunds.books()[&b.id].currency.clone(),
@@ -181,6 +180,7 @@ impl Projection {
                     amount_cents: i128::from(b.amount_cents),
                     flow: b.flow,
                     side,
+                    direction: b.amount_cents.signum() as i8,
                 });
             } else {
                 for p in &book.parts {
@@ -200,6 +200,7 @@ impl Projection {
                         amount_cents: i128::from(p.amount),
                         flow: part.flow,
                         side,
+                        direction: b.amount_cents.signum() as i8,
                     });
                 }
             }
@@ -292,6 +293,7 @@ impl Projection {
                 amount_cents: -i128::from(a.cents),
                 flow: source_flow,
                 side: source_side,
+                direction: self.refunds.books()[&refund.0].amount.signum() as i8,
             });
             rows.push(Row {
                 booking_id: refund.0,
@@ -299,12 +301,22 @@ impl Projection {
                 amount_cents: i128::from(a.cents),
                 flow: target_flow,
                 side: target_side,
+                direction: self.refunds.books()[&original.0]
+                    .amount_of(&original.1)
+                    .unwrap_or(0)
+                    .signum() as i8,
             });
         }
-        let mut combined: HashMap<(i64, Option<i64>, FlowKind, u8), (Row, i128)> = HashMap::new();
+        let mut combined: HashMap<_, (Row, i128)> = HashMap::new();
         for r in rows {
             combined
-                .entry((r.booking_id, r.category_id, r.flow, r.side as u8))
+                .entry((
+                    r.booking_id,
+                    r.category_id,
+                    r.flow,
+                    r.side as u8,
+                    r.direction,
+                ))
                 .or_insert((r, 0))
                 .1 += r.amount_cents;
         }
@@ -314,7 +326,13 @@ impl Projection {
             .filter(|(e, _)| remaining[*e] != 0 || !shifted.contains(*e))
             .map(|(e, &(category, flow, side))| {
                 let (flow, side) = scoped(e.0, flow, side);
-                (e.0, category, flow, side as u8)
+                (
+                    e.0,
+                    category,
+                    flow,
+                    side as u8,
+                    self.refunds.books()[&e.0].amount.signum() as i8,
+                )
             })
             .collect();
         let rows = Arc::new(
@@ -327,6 +345,7 @@ impl Projection {
                             row.category_id,
                             row.flow,
                             row.side as u8,
+                            row.direction,
                         ))
                 })
                 .map(|(mut row, n)| {
@@ -529,8 +548,8 @@ impl Vault {
                 ids.as_ref().is_none_or(|ids| ids.contains(&r.booking_id))
                     && match filter.direction {
                         BookingDirection::All => true,
-                        BookingDirection::Income => info.amount_cents > 0,
-                        BookingDirection::Expense => info.amount_cents < 0,
+                        BookingDirection::Income => r.direction > 0,
+                        BookingDirection::Expense => r.direction < 0,
                     }
                     && (loan_view
                         || filter.account_ids.is_empty()

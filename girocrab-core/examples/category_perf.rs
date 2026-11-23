@@ -168,12 +168,6 @@ fn main() {
             c.execute("INSERT INTO refund_links(refund_id,original_id,refund_cents,original_cents,created_ms,changed_ms) VALUES (?1,?2,?3,?4,?5,?5)",rusqlite::params![c.last_insert_rowid(),id,cents,amount,index as i64+1]).unwrap();
         }
     }
-    if let Some(out) = out {
-        // Open once so WAL data is checkpointed into the file.
-        Vault::open(out.clone(), key).unwrap().checkpoint().unwrap();
-        println!("vault written: {out}");
-        return;
-    }
     let vault = Vault::open(path, key).unwrap();
     let all = vault
         .list_transactions(BookingFilter {
@@ -181,7 +175,6 @@ fn main() {
             ..Default::default()
         })
         .unwrap();
-    let cats = vault.list_categories(None, None).unwrap();
     let linked = all
         .transactions
         .iter()
@@ -201,6 +194,12 @@ fn main() {
         "refund benchmark fixture has fewer live links than requested"
     );
     println!("live refund links: {linked}");
+    if let Some(out) = out {
+        vault.checkpoint().unwrap();
+        println!("vault written: {out}");
+        return;
+    }
+    let cats = vault.list_categories(None, None).unwrap();
     println!(
         "bookings: {}, categories: {}\n",
         all.transactions.len(),

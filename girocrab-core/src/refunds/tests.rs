@@ -2812,6 +2812,96 @@ struct Fixture {
     account: i64,
 }
 
+#[test]
+fn round6_deleted_twin_split_edit_cannot_take_a_deleted_canonical_uuid() {
+    let a = Fixture::new();
+    let old = a.add("old", -100);
+    let canonical = a.add("canonical", -100);
+    let parts = a.split(old, &[-40, -60]);
+    let b = Fixture::new();
+    merge(&b.v, &a.v);
+    let bo = review_peer_id(&b.v, &a.v, old);
+    let bc = review_peer_id(&b.v, &a.v, canonical);
+    raw(
+        &a.v,
+        &format!(
+            "UPDATE transaction_splits SET transaction_id={canonical} WHERE transaction_id={old}; UPDATE transactions SET deleted_ms=1000,splits_ms=200 WHERE id={canonical}; UPDATE transactions SET deleted_ms=1000,splits_ms=100 WHERE id={old}"
+        ),
+    );
+    raw(
+        &b.v,
+        &format!(
+            "UPDATE transactions SET deleted_ms=1000,splits_ms=300 WHERE id={bo}; UPDATE transactions SET deleted_ms=1000 WHERE id={bc}; UPDATE transaction_splits SET note='peer edit' WHERE transaction_id={bo}"
+        ),
+    );
+    merge(&a.v, &b.v);
+    assert_eq!(
+        number(
+            &a.v,
+            &format!("SELECT COUNT(*) FROM transaction_splits WHERE transaction_id={old}")
+        ),
+        0
+    );
+    assert_eq!(
+        a.v.db()
+            .unwrap()
+            .prepare(
+                "SELECT uuid FROM transaction_splits WHERE transaction_id=?1 ORDER BY position,id"
+            )
+            .unwrap()
+            .query_map([canonical], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        parts
+    );
+}
+
+#[test]
+fn round6_scoped_allocations_retain_out_of_scope_ancestry() {
+    let f = Fixture::new();
+    let r = f.add("r", 100);
+    let o = f.add("o", -100);
+    let mid = f.add("mid", -100);
+    let end = f.add("end", -100);
+    let other =
+        f.v.create_offline_account("Other".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+    raw(
+        &f.v,
+        &format!("UPDATE transactions SET account_id={other} WHERE id={mid}"),
+    );
+    f.link(r, "", o, "");
+    let db = f.v.db().unwrap();
+    let mut state = State::load(&db).unwrap();
+    let mut ancestor = state.rows.remove(0);
+    ancestor.changed_ms = 35;
+    ancestor.deleted_ms = Some(35);
+    ancestor.moved = false;
+    let mut middle = ancestor.clone();
+    middle.key.original.0 = mid;
+    middle.moved_from = Some(ancestor.key.clone());
+    middle.changed_ms = 20;
+    middle.deleted_ms = None;
+    let mut last = middle.clone();
+    last.key.original.0 = end;
+    last.moved_from = Some(middle.key.clone());
+    last.changed_ms = 30;
+    for row in [ancestor, middle, last] {
+        store::write(&db, &row).unwrap();
+    }
+    let p = Projection::from_state(State::load(&db).unwrap()).unwrap();
+    assert_eq!(p.allocations.iter().map(|a| a.cents).sum::<i64>(), 0);
+    assert_eq!(
+        p.scoped_allocations(&HashSet::from([f.account]))
+            .unwrap()
+            .iter()
+            .map(|a| a.cents)
+            .sum::<i64>(),
+        0
+    );
+}
+
 fn review_peer_id(peer: &Vault, source: &Vault, id: i64) -> i64 {
     let external: String = source
         .db()

@@ -196,7 +196,7 @@ pub(crate) fn attach_split_categories(
         let mut st = db.prepare(&format!(
             "SELECT sp.transaction_id, c.name, c.color_hex, c.sf_symbol
                FROM transaction_splits sp JOIN categories c ON c.id = sp.category_id
-              WHERE c.deleted_ms IS NULL AND sp.transaction_id IN ({}) ORDER BY sp.id",
+              WHERE c.deleted_ms IS NULL AND sp.transaction_id IN ({}) ORDER BY sp.position, sp.id",
             ids.join(",")
         ))?;
         let mut names: HashMap<i64, (Vec<String>, String, String)> = HashMap::new();

@@ -93,20 +93,28 @@ impl Vault {
             .collect::<Result<_, _>>()?;
         let rows = selection.rows.clone();
         selection.rows.retain(|r| r.flow != FlowKind::Transfer);
-        let tags = crate::tags::totals_of(&db, selection.shares()?)?
-            .into_iter()
-            .filter_map(|t| {
-                let tag_id = t.tag_id?;
-                let (name, color_hex) = names.get(&tag_id)?.clone();
-                Some(TagFlowTotal {
-                    tag_id,
-                    name,
-                    color_hex,
-                    cents: t.sum_cents,
-                    booking_count: t.booking_count,
-                })
+        let tagged: HashSet<i64> = db.prepare("SELECT DISTINCT x.transaction_id FROM transaction_tags x JOIN tags g ON g.id=x.tag_id WHERE g.deleted_ms IS NULL")?.query_map([],|r|r.get(0))?.collect::<Result<_,_>>()?;
+        let tags = crate::tags::totals_of(
+            &db,
+            selection
+                .shares()?
+                .into_iter()
+                .filter(|(id, _)| tagged.contains(id))
+                .collect(),
+        )?
+        .into_iter()
+        .filter_map(|t| {
+            let tag_id = t.tag_id?;
+            let (name, color_hex) = names.get(&tag_id)?.clone();
+            Some(TagFlowTotal {
+                tag_id,
+                name,
+                color_hex,
+                cents: t.sum_cents,
+                booking_count: t.booking_count,
             })
-            .collect();
+        })
+        .collect();
         selection.rows = rows;
         let category_expenses = selection.category_flows(&db, Side::Expense)?;
         let expense_cents = cents(category_expenses.iter().map(|c| i128::from(c.cents)).sum())?;
