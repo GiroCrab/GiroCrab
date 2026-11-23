@@ -157,6 +157,26 @@ final class BookingPagingTests: XCTestCase {
         XCTAssertEqual(model.bookings.map(\.id), matching.map(\.id), "nothing skipped, nothing twice")
     }
 
+    /// Another account or period ends a multiple selection: kept, it would cover only the
+    /// rows the new list happens to share with the old one.
+    func testChangingTheSidebarSelectionOrPeriodDropsTheMultipleSelection() async throws {
+        let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
+        model.sidebarSelection = .account(account.id)
+        loadFirstPage(of: 20)
+        model.selectAllBookings()
+        try await awaitSelectAll()
+        XCTAssertTrue(model.isMultiSelection)
+        model.sidebarSelection = .allAccounts
+        XCTAssertFalse(model.isMultiSelection)
+        XCTAssertLessThanOrEqual(model.selectedBookingIDs.count, 1)
+
+        model.selectAllBookings()
+        try await awaitSelectAll()
+        XCTAssertTrue(model.isMultiSelection)
+        model.period = model.period == .all ? .months12 : .all
+        XCTAssertFalse(model.isMultiSelection)
+    }
+
     func testAFullReloadDropsAPageStillOnItsWay() async throws {
         let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
         loadFirstPage(of: 20)

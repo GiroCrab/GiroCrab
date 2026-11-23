@@ -167,6 +167,7 @@ public final class AppModel {
                 oldValue.flatMap { sidebarRowSelections[$0] }?.isSelected = false
                 sidebarSelection.flatMap { sidebarRowSelections[$0] }?.isSelected = true
                 requestStreamTop()
+                dropMultiSelection()
             }
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
@@ -273,7 +274,7 @@ public final class AppModel {
     }
     var period: Period = .all {
         didSet {
-            if oldValue != period { requestStreamTop() }
+            if oldValue != period { requestStreamTop(); dropMultiSelection() }
             periodDidChange()
         }
     }

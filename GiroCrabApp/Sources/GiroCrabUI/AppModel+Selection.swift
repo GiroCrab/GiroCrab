@@ -114,6 +114,15 @@ extension AppModel {
         selectLoadedBookings()
     }
 
+    /// Another account, group, category or period: a multiple selection made in the previous
+    /// list ends (like a folder change in Finder). Kept, it would cover only the rows of the
+    /// new list's first page that happen to be in both – neither „all“ nor what was chosen (#1696).
+    func dropMultiSelection() {
+        isSelectingAllBookings = false
+        guard isMultiSelection else { return }
+        selectedBookingIDs = selectedBookingID.map { [$0] } ?? []
+    }
+
     private func selectLoadedBookings() {
         // a checked row kept in place no longer matches the filter (#1696)
         let outside = lingeringRowOutsideFilterID
