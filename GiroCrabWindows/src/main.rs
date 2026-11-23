@@ -18,6 +18,8 @@ mod manage_ui;
 mod mandates_ui;
 mod mandates_view;
 mod nav;
+mod offline;
+mod offline_ui;
 mod planning;
 mod policy;
 mod portfolio;
@@ -2031,6 +2033,7 @@ fn main() -> Result<(), slint::PlatformError> {
             win.set_accounts(ModelRc::new(VecModel::from(Vec::<AccountRow>::new())));
             win.set_has_inspector(false);
             views_ui::on_lock(&win);
+            offline_ui::reset(&win);
             win.set_first_run(false);
         });
     }
@@ -2332,6 +2335,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     manage_ui::wire(&win, vault.clone());
+    offline_ui::wire(&win, &vault);
     views_ui::wire(&win, vault.clone());
 
     if demo_mode {
