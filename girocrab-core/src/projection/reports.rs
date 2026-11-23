@@ -86,7 +86,8 @@ impl Vault {
                 .currency
                 .eq_ignore_ascii_case(&currency)
         });
-        let sums = selection.totals()?;
+        let category_income = selection.category_flows(&db, Side::Income)?;
+        let income_cents = cents(category_income.iter().map(|c| i128::from(c.cents)).sum())?;
         let names: HashMap<i64, (String, String)> = db
             .prepare("SELECT id,name,color_hex FROM tags WHERE deleted_ms IS NULL")?
             .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
@@ -122,11 +123,11 @@ impl Vault {
         Ok(AnalyticsReport {
             currency,
             monthly,
-            income_cents: sums.income_cents,
+            income_cents,
             expense_cents,
-            net_cents: cents(i128::from(sums.income_cents) - i128::from(expense_cents))?,
+            net_cents: cents(i128::from(income_cents) - i128::from(expense_cents))?,
             category_expenses,
-            category_income: selection.category_flows(&db, Side::Income)?,
+            category_income,
             tags,
         })
     }

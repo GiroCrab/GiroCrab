@@ -5,6 +5,68 @@ use rusqlite::params;
 use serde_json::{Value, json};
 
 #[test]
+fn round7b_linked_positive_split_keeps_its_unallocated_income() {
+    let f = Fixture::new();
+    let o = f.add(-300, Some(f.cost));
+    let r = f.add(0, None);
+    let p = f.split(r, &[(800, Some(f.income)), (-800, Some(f.cost))]);
+    f.link(r, &p[0], o, "");
+    let report =
+        f.v.analytics_report(
+            BookingFilter {
+                direction: BookingDirection::Income,
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!(report.income_cents, 500);
+}
+
+#[test]
+fn round7b_category_rollup_stops_at_a_deleted_parent() {
+    let f = Fixture::new();
+    let parent =
+        f.v.create_category("Parent".into(), None, "tag".into(), "".into())
+            .unwrap();
+    f.v.delete_category(parent).unwrap();
+    let child =
+        f.v.create_category("Child".into(), Some(parent), "tag".into(), "".into())
+            .unwrap();
+    f.add(-100, Some(child));
+    let flows =
+        f.v.list_category_expenses(BookingFilter::default())
+            .unwrap();
+    assert!(
+        flows
+            .iter()
+            .any(|r| r.category_id == Some(child) && r.cents == 100)
+    );
+    assert!(flows.iter().all(|r| r.category_id != Some(parent)));
+}
+
+#[test]
+fn round7b_analytics_does_not_narrow_an_unused_investment_total() {
+    let f = Fixture::new();
+    let invest =
+        f.v.create_category("Invest".into(), None, "tag".into(), "".into())
+            .unwrap();
+    f.v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET builtin_role='Investitionen' WHERE id=?1",
+            [invest],
+        )
+        .unwrap();
+    f.add(i64::MAX, Some(invest));
+    f.add(100, Some(invest));
+    let report =
+        f.v.analytics_report(BookingFilter::default(), false)
+            .unwrap();
+    assert_eq!((report.income_cents, report.expense_cents), (0, 0));
+}
+
+#[test]
 fn round7_negative_saveback_is_not_roundup() {
     let f = Fixture::new();
     let id = f.add(-100, None);

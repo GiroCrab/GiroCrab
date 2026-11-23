@@ -2,6 +2,80 @@ mod round7 {
     use super::*;
 
     #[test]
+    fn concurrent_unique_replacements_on_both_endpoints_keep_the_link() {
+        for reverse in [false, true] {
+            let a = Fixture::new();
+            let (r, o) = (a.add("r", 150), a.add("o", -300));
+            let rp = a.split(r, &[100, 50]);
+            let op = a.split(o, &[-100, -200]);
+            a.link(r, &rp[0], o, &op[0]);
+            let b = Fixture::new();
+            merge(&b.v, &a.v);
+            let br = review_peer_id(&b.v, &a.v, r);
+            let bo = review_peer_id(&b.v, &a.v, o);
+            a.v.set_transaction_splits(r, vec![part(None, 100), part(Some(rp[1].clone()), 50)])
+                .unwrap();
+            b.v.set_transaction_splits(bo, vec![part(None, -100), part(Some(op[1].clone()), -200)])
+                .unwrap();
+            if reverse {
+                merge(&b.v, &a.v);
+                merge(&a.v, &b.v);
+            } else {
+                merge(&a.v, &b.v);
+                merge(&b.v, &a.v);
+            }
+            assert_eq!(shares(&a.v, r), [100]);
+            assert_eq!(shares(&b.v, br), [100]);
+        }
+    }
+
+    #[test]
+    fn deleted_split_vector_is_not_partially_discarded_by_merge() {
+        for reverse in [false, true] {
+            let a = Fixture::new();
+            let old = a.add("old", -100);
+            let canonical = a.add("canonical", -100);
+            let parts = a.split(old, &[-70, -30]);
+            let b = Fixture::new();
+            merge(&b.v, &a.v);
+            let bo = review_peer_id(&b.v, &a.v, old);
+            raw(
+                &a.v,
+                &format!(
+                    "UPDATE transaction_splits SET transaction_id={canonical} WHERE transaction_id={old}; UPDATE transactions SET deleted_ms=1000,splits_ms=100 WHERE id={old}"
+                ),
+            );
+            a.v.set_transaction_splits(
+                canonical,
+                vec![part(Some(parts[0].clone()), -70), part(None, -30)],
+            )
+            .unwrap();
+            raw(
+                &b.v,
+                &format!("UPDATE transactions SET deleted_ms=1000,splits_ms=300 WHERE id={bo}"),
+            );
+            if reverse {
+                merge(&b.v, &a.v);
+                merge(&a.v, &b.v);
+            } else {
+                merge(&a.v, &b.v);
+                merge(&b.v, &a.v);
+            }
+            for (v, id) in [(&a.v, old), (&b.v, bo)] {
+                assert_eq!(
+                    number(
+                        v,
+                        &format!(
+                            "SELECT SUM(amount_cents) FROM transaction_splits WHERE transaction_id={id}"
+                        )
+                    ),
+                    -100
+                );
+            }
+        }
+    }
+
+    #[test]
     fn concurrent_twin_folds_keep_split_uuids_unique() {
         for (stamp, reverse) in [(100, false), (100, true), (200, false), (200, true)] {
             let a = Fixture::new();
@@ -3002,7 +3076,7 @@ fn round6_deleted_twin_split_edit_cannot_take_a_deleted_canonical_uuid() {
             &a.v,
             &format!("SELECT COUNT(*) FROM transaction_splits WHERE transaction_id={old}")
         ),
-        0
+        2
     );
     assert_eq!(
         a.v.db()

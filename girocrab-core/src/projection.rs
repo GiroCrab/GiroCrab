@@ -147,7 +147,7 @@ impl Projection {
             info: HashMap::new(),
             parts: HashMap::new(),
             parents: db
-                .prepare("SELECT id,parent_id FROM categories WHERE deleted_ms IS NULL")?
+                .prepare("SELECT c.id,p.id FROM categories c LEFT JOIN categories p ON p.id=c.parent_id AND p.deleted_ms IS NULL WHERE c.deleted_ms IS NULL")?
                 .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<Result<_, _>>()?,
             refunds: refunds.clone(),
@@ -233,7 +233,7 @@ impl Projection {
         let directed: HashSet<_> = allocations
             .iter()
             .filter(|a| a.cents > 0)
-            .filter_map(|a| a.original.as_ref())
+            .flat_map(|a| a.original.iter().chain(a.refund.iter()))
             .filter_map(|e| self.parts.get(e).map(|p| p.3))
             .collect();
         let mut rows: Vec<Row> = self
@@ -309,7 +309,7 @@ impl Projection {
                 amount_cents: -i128::from(a.cents),
                 flow: source_flow,
                 side: source_side,
-                direction: self.refunds.books()[&refund.0].amount.signum() as i8,
+                direction: 1,
             });
             rows.push(Row {
                 booking_id: refund.0,
