@@ -462,7 +462,8 @@ impl Vault {
                 archived: a.archived_unix.is_some(),
                 last_sync_unix: a
                     .connection_id
-                    .and_then(|c| last_sync.get(&c).copied().flatten()),
+                    .and_then(|c| last_sync.get(&c).copied().flatten())
+                    .max(a.last_fetch_unix),
                 iban: numbers(a.iban),
                 account_number: numbers(a.account_number),
                 // Names can carry the account number ("Girokonto 1234567").
