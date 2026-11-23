@@ -7,7 +7,7 @@ import GiroCrabCore
 final class BitcoinConnectorTests: XCTestCase {
     func testCatalogEntryNeedsNoSecretAndNoRequiredSetting() throws {
         let bank = try XCTUnwrap(bankCatalog().first { $0.kind == .bitcoin })
-        XCTAssertEqual(bank.name, "Bitcoin")
+        XCTAssertEqual(bank.name, "Bitcoin-Wallet (xpub)")
         XCTAssertTrue(bank.requiredSettings.isEmpty, "mempool.space works without any setting")
         // a label in brackets means "no password": the sync starts without a login prompt
         XCTAssertTrue(bank.secretLabel.hasPrefix("("))
@@ -17,7 +17,7 @@ final class BitcoinConnectorTests: XCTestCase {
 
     func testWalletIsNoPortalLoginAndHasItsOwnLook() {
         XCTAssertNil(ConnectorKind.bitcoin.portalURL)
-        XCTAssertEqual(ConnectorKind.bitcoin.displayName, "Bitcoin")
+        XCTAssertEqual(ConnectorKind.bitcoin.displayName, "Bitcoin-Wallet (xpub)")
         XCTAssertEqual(ConnectorKind.bitcoin.tintHex, "#F7931A")
         XCTAssertEqual(ConnectorKind.bitcoin.monogram, "BTC")
     }

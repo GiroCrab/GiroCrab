@@ -188,7 +188,7 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
         ),
         (
             ConnectorKind::Bitcoin,
-            "Bitcoin",
+            "Bitcoin-Wallet (xpub)",
             "bitcoin btc krypto crypto kryptowährung wallet xpub ypub zpub hardware wallet mempool",
         ),
         (

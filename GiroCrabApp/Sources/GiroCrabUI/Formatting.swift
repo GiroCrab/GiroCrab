@@ -529,7 +529,7 @@ extension ConnectorKind {
         case .bhw: return "BHW Bausparkasse"
         case .finpension: return "Finpension"
         case .kontist: return "Kontist"
-        case .bitcoin: return "Bitcoin"
+        case .bitcoin: return "Bitcoin-Wallet (xpub)"
         }
     }
 

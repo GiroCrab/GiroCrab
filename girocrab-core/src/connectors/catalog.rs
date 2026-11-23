@@ -247,7 +247,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
         },
         ConnectorKind::Bitcoin => BankDescriptor {
             kind,
-            name: "Bitcoin".into(),
+            name: "Bitcoin-Wallet (xpub)".into(),
             protocol: tr("Bitcoin-Wallet (nur lesen, xpub/ypub/zpub)").into(),
             bank_code: "".into(),
             sf_symbol: "bitcoinsign.circle".into(),
@@ -752,7 +752,7 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
-        name: "Bitcoin (xpub/ypub/zpub)",
+        name: "Bitcoin-Wallet (xpub/ypub/zpub)",
         kind: Some(ConnectorKind::Bitcoin),
         interface: Interface::RestApi,
         official: Some(true),
