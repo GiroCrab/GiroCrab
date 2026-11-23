@@ -24,9 +24,10 @@ name and its import call; it has no sign-in for it yet.
 - The account balance is the sum of the position values; profit and loss compare the value
   with the purchase price. This reproduces the two totals at the top of "Mein Weindepot"
   ("Insgesamt investiert", "Depot-Wert").
-- Entries whose latest status says sold, delivered, withdrawn, cancelled or returned are left
-  out. Which status values the portal uses beyond "PURCHASED" is not documented; an unknown
-  status counts as held.
+- Entries whose latest status is exactly SOLD, DELIVERED, WITHDRAWN, CANCELLED (CANCELED) or
+  RETURNED are left out. Which status values the portal uses beyond "PURCHASED" is not
+  documented; any other status, including negated or compound ones such as NOT_DELIVERED,
+  counts as held.
 - There are no documents in this portal, so no mailbox is read.
 - Only EUR is accepted by design (the portal prices in EUR).
 

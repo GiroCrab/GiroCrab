@@ -79,8 +79,15 @@ test('nothing but the selected fields crosses the bridge', async () => {
 });
 
 test('positions that left the depot are left out, an unknown status is kept', async () => {
-  const w = await page(portal(depot(entry('1'), entry('2', {status: 'SOLD'}), entry('3', {status: 'DELIVERED'}), entry('4', {status: 'IN_STORAGE'}))));
+  const w = await page(portal(depot(entry('1'), entry('2', {status: 'SOLD'}), entry('3', {status: 'DELIVERED'}), entry('4', {status: 'IN_STORAGE'}),
+    entry('5', {status: 'cancelled'}))));
   assert.deepEqual(JSON.parse(await w.__gcBerghausCie.collect()).depot.items.map(i => i.id), ['1', '4']);
+});
+
+test('a negated or compound status is not a status that removes a position', async () => {
+  const w = await page(portal(depot(entry('1', {status: 'NOT_DELIVERED'}), entry('2', {status: 'UNDELIVERED'}),
+    entry('3', {status: 'PARTIALLY_SOLD'}), entry('4', {status: 'RETURN_PENDING'}))));
+  assert.deepEqual(JSON.parse(await w.__gcBerghausCie.collect()).depot.items.map(i => i.id), ['1', '2', '3', '4']);
 });
 
 test('an empty depot is a valid, empty list', async () => {

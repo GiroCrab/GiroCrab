@@ -67,8 +67,9 @@ enum BerghausCieScripts {
       const QUERY = '{ clientsDepot { id amount caskOf buyPriceBtl bottleSize { title factorForLiterPrices } ' +
         'vintage { title year wine { lwin } valuationRel { sourceOfValuation datetimeCreated value } } ' +
         'depotPositionStatusRel { status datetimeStatusUpdate } } }';
-      // positions that left the depot (sold, delivered to the customer, cancelled)
-      const GONE = /SOLD|DELIVER|WITHDRAW|CANCEL|RETURN/i;
+      // positions that left the depot (sold, delivered to the customer, cancelled): exact status
+      // names only, so a negated or compound status (NOT_DELIVERED) stays in the depot
+      const GONE = /^(SOLD|DELIVERED|WITHDRAWN|CANCELLED|CANCELED|RETURNED)$/;
       const request = async () => {
         if (location.origin !== pageOrigin || !signedIn) fail('Bitte erneut anmelden.');
         const controller = new AbortController();
@@ -99,7 +100,7 @@ enum BerghausCieScripts {
         for (const p of answer.data.clientsDepot) {
           const status = (p.depotPositionStatusRel || []).slice()
             .sort((a, b) => String(a.datetimeStatusUpdate).localeCompare(String(b.datetimeStatusUpdate))).pop();
-          if (status && GONE.test(String(status.status))) continue;
+          if (status && GONE.test(String(status.status).trim().toUpperCase())) continue;
           const v = p.vintage || {};
           // the newest valuation of the source decides; an unusable newest one is an error, never
           // a reason to fall back to an older value
