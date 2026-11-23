@@ -3,6 +3,16 @@ import GiroCrabCore
 @testable import GiroCrabUI
 
 final class HeaderPieSlicesTests: XCTestCase {
+    func testCategorizedExpenseTotalsExcludeUncategorizedAndNonpositiveShares() {
+        let totals = [
+            CategoryFlowTotal(categoryId: nil, name: "Uncategorized", colorHex: "", cents: 100, bookingCount: 1),
+            CategoryFlowTotal(categoryId: 1, name: "Food", colorHex: "", cents: 200, bookingCount: 1),
+            CategoryFlowTotal(categoryId: 2, name: "Credit", colorHex: "", cents: -50, bookingCount: 1),
+            CategoryFlowTotal(categoryId: 3, name: "Zero", colorHex: "", cents: 0, bookingCount: 1),
+        ]
+        XCTAssertEqual(HeaderPieSlices.categorizedExpenses(totals), [.init(id: "1", label: "Food", cents: 200)])
+        XCTAssertTrue(HeaderPieSlices.categorizedExpenses([]).isEmpty)
+    }
     private func cat(_ id: Int64, parent: Int64?, name: String, own: Int64, total: Int64, depth: UInt32) -> GiroCrabCore.Category {
         GiroCrabCore.Category(id: id, parentId: parent, name: name, sfSymbol: "tag", colorHex: "", sortOrder: 0, depth: depth,
                               path: name, ownTotalCents: own, totalCents: total, transactionCount: 1, budgetCents: nil)

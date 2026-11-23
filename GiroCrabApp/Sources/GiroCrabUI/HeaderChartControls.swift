@@ -97,6 +97,13 @@ struct ChartStyleInlinePicker: View {
 
 /// Slices of the header pie (#634).
 enum HeaderPieSlices {
+    static func categorizedExpenses(_ totals: [CategoryFlowTotal]) -> [Part] {
+        totals.compactMap { total in
+            guard let id = total.categoryId, total.cents > 0 else { return nil }
+            return Part(id: String(id), label: total.name, cents: total.cents)
+        }
+    }
+
     struct Part: Equatable {
         /// Category id as text; "own" = bookings directly in the selected category.
         let id: String
@@ -291,8 +298,7 @@ struct AccountExpensePie: View {
                 let filter = BookingFilter(accountIds: key.ids, categoryId: nil, includeSubcategories: false,
                     uncategorizedOnly: false, search: nil, dateFrom: key.from, dateTo: key.to, limit: 0, offset: 0,
                     scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
-                return try vault.listCategoryExpenses(filter: filter).filter { $0.cents > 0 }
-                    .map { HeaderPieSlices.Part(id: $0.categoryId.map { String($0) } ?? "uncategorized", label: $0.name, cents: $0.cents) }
+                return HeaderPieSlices.categorizedExpenses(try vault.listCategoryExpenses(filter: filter))
             }
             guard !Task.isCancelled else { return }
             guard let parts else { loaded = nil; return }
