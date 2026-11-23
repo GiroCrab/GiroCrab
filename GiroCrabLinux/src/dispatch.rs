@@ -1603,7 +1603,7 @@ vault_methods! {
     update_category(id, name, parent_id, sf_symbol, color_hex) delete_category(id)
     // sidebar drag & drop of categories, „Nach oben“ / „Nach unten“ (#977)
     reorder_categories(parent_id, ids)
-    set_category_budget(category_id, budget_cents)
+    set_category_budget(category_id, budget_cents) set_category_role(category_id, role)
     list_transaction_splits(transaction_id) set_transaction_splits(transaction_id, splits)
     // --- import / export ---
     export_bookings_csv(filter)

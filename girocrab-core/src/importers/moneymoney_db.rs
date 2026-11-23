@@ -600,6 +600,8 @@ struct SrcCategories {
     /// (category path, rule expression, restricted to certain accounts), in
     /// MoneyMoney order; only categories with a non-blank rule
     rules: Vec<(Vec<String>, String, bool)>,
+    /// Category paths with `showInDiagrams = 0` → `CategoryRole::Neutral` (#931).
+    neutral_paths: Vec<Vec<String>>,
 }
 
 #[derive(Default)]
@@ -712,6 +714,31 @@ fn apply_category_colors(
                 "UPDATE categories SET color_hex = ?1, color_ms = ?4
                  WHERE id = ?2 AND upper(color_hex) = ?3 AND deleted_ms IS NULL",
                 params![color, id, DEFAULT_CATEGORY_COLOR, now],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Marks categories hidden from MoneyMoney's diagrams (`showInDiagrams = 0`)
+/// as `CategoryRole::Neutral` (#931) – only where no role choice (including an
+/// explicit reset to inherit, which stamps `role_ms > 0`) was made in GiroCrab yet.
+fn apply_category_roles(
+    conn: &Connection,
+    src: &Source,
+    cache: &HashMap<String, i64>,
+) -> CoreResult<()> {
+    let now = now_ms();
+    for path in &src.categories.neutral_paths {
+        let key: String = path
+            .iter()
+            .map(|p| format!("\u{1}{}", p.to_lowercase()))
+            .collect();
+        if let Some(id) = cache.get(&key) {
+            conn.execute(
+                "UPDATE categories SET role = 'neutral', role_ms = ?2
+                 WHERE id = ?1 AND role IS NULL AND role_ms = 0 AND deleted_ms IS NULL",
+                params![id, now],
             )?;
         }
     }
@@ -1515,6 +1542,8 @@ fn read_categories(conn: &Connection, have: &HashSet<String>) -> CoreResult<SrcC
             "rules",
             "apply_to_account",
             "color",
+            "showindiagrams",
+            "show_in_diagrams",
         ],
         "ORDER BY group_key, sort, rowid",
     )?;
@@ -1528,10 +1557,11 @@ fn read_categories(conn: &Connection, have: &HashSet<String>) -> CoreResult<SrcC
             vtext(get(r, 4)?),
             vtext(get(r, 5)?),
             mm_color(&vtext(get(r, 6)?)),
+            vint(get(r, 7)?).or(vint(get(r, 8)?)),
         ))
     })?;
     for row in rows {
-        let (id, name, typ, group, rules, apply_to_account, color) = row?;
+        let (id, name, typ, group, rules, apply_to_account, color, show_in_diagrams) = row?;
         // rowid 1 / type 0 / empty name = "Ohne Kategorie"
         if name.is_empty() || typ == Some(0) {
             continue;
@@ -1546,6 +1576,9 @@ fn read_categories(conn: &Connection, have: &HashSet<String>) -> CoreResult<SrcC
         }
         if let Some(color) = color {
             cats.colors.push((path.clone(), color));
+        }
+        if show_in_diagrams == Some(0) {
+            cats.neutral_paths.push(path.clone());
         }
         cats.order.push(path.clone());
         cats.by_id.insert(id, path);
@@ -3186,6 +3219,7 @@ impl ImportCtx<'_> {
             )?;
         }
         apply_category_colors(conn, self.src, &self.cat_cache)?;
+        apply_category_roles(conn, self.src, &self.cat_cache)?;
         import_category_rules(conn, self.src, &mut self.cat_cache, &mut self.res)
     }
 

@@ -65,7 +65,12 @@ fn category_match_sql(cat_match: &str) -> String {
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
 /// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
 /// PayPal account (see `BookingFinisher`).
-pub(crate) fn enrich(t: &mut Booking, rules: &MerchantRules, paypal: bool, top_role: &str) {
+pub(crate) fn enrich(
+    t: &mut Booking,
+    rules: &MerchantRules,
+    paypal: bool,
+    category_role: Option<CategoryRole>,
+) {
     // flow and recurring series read the bundled merchant: the user's changes only rename
     let (merchant, bundled) = rules.resolve_with_bundled(&t.counterparty, &t.purpose);
     t.merchant = merchant;
@@ -73,16 +78,15 @@ pub(crate) fn enrich(t: &mut Booking, rules: &MerchantRules, paypal: bool, top_r
     t.merchant_domain = Some(t.merchant.domain.clone()).filter(|d| !d.is_empty());
     t.merchant_svg_path = Some(t.merchant.svg_path.clone()).filter(|d| !d.is_empty());
     t.merchant_hex_color = t.merchant.color_hex.clone();
-    // Only the category role classifies: a custom category named like a built-in has no role
-    // and must not be treated as an investment by its name.
-    let role = top_role;
+    // Only the category role classifies (#931): a custom category named like a built-in
+    // defaults to Consumption unless the user assigns it a role.
     t.flow = classify_by_kind(
         t.amount_cents,
         &t.counterparty,
         &t.purpose,
         &t.booking_text,
         bundled.kind,
-        role,
+        category_role,
         t.account_kind,
     );
     t.payment_method = payment_method(
@@ -248,7 +252,7 @@ pub(crate) fn attach_split_categories(
 /// Only depends on the vault's data, so `ListCache` keeps it between calls.
 pub(super) struct BookingFinisher {
     language: crate::i18n::Lang,
-    category_flows: HashMap<i64, super::categories::CategoryFlow>,
+    category_roles: HashMap<i64, CategoryRole>,
     paths: HashMap<i64, (String, String, String, String)>,
     salary_ibans: HashSet<String>,
     overrides: HashMap<String, String>,
@@ -264,7 +268,7 @@ pub(super) struct BookingFinisher {
 impl BookingFinisher {
     fn load(db: &rusqlite::Connection, merchants: Arc<MerchantRules>) -> Result<Self, CoreError> {
         let paths = Vault::category_paths(db)?;
-        let category_flows = Vault::category_flows(db)?;
+        let category_roles = Vault::category_roles(db)?;
         let loan_links = crate::loans::link_map(db)?;
         let salary_ibans = crate::salary::marked_salary_ibans(db)?;
         let overrides = crate::insights::load_overrides(db)?;
@@ -289,7 +293,7 @@ impl BookingFinisher {
         };
         Ok(Self {
             language: crate::i18n::current(),
-            category_flows,
+            category_roles,
             paths,
             salary_ibans,
             overrides,
@@ -310,14 +314,15 @@ impl BookingFinisher {
             t.category_color_hex = color.clone();
             t.category_symbol = sym.clone();
         }
-        let category_flow = t.category_id.and_then(|c| self.category_flows.get(&c));
-        let top_role = category_flow.map(|c| c.top_role.as_str()).unwrap_or("");
-        let transfer_category = category_flow.is_some_and(|c| c.is_transfer);
+        let category_role = t
+            .category_id
+            .and_then(|c| self.category_roles.get(&c).copied());
+        let transfer_category = category_role == Some(CategoryRole::Neutral);
         enrich(
             t,
             &self.merchants,
             self.paypal_accounts.contains(&t.account_id),
-            top_role,
+            category_role,
         );
         t.is_salary = crate::salary::is_salary(t, &self.salary_ibans);
         // A salary stays income although its booking text names a transfer
@@ -2249,16 +2254,17 @@ mod own_transfer_tests {
         let (_d, v, ids) = vault_with(&[
             ("Papa", 500_00, "x", Some("Umbuchung")),
             ("Papa", 500_00, "x", Some("Privat/Geldtransit")),
-            // no own IBAN involved: the category alone decides
+            // no own IBAN involved: the category role alone decides (#931)
         ]);
-        v.db()
+        for cat in v
+            .list_categories(None, None)
             .unwrap()
-            .execute(
-                "UPDATE categories SET builtin_role='import:transfers'
-            WHERE name IN ('Umbuchung','Geldtransit')",
-                [],
-            )
-            .unwrap();
+            .into_iter()
+            .filter(|c| matches!(c.name.as_str(), "Umbuchung" | "Geldtransit"))
+        {
+            v.set_category_role(cat.id, Some(CategoryRole::Neutral))
+                .unwrap();
+        }
         assert_eq!(flow_of(&v, ids[0]), FlowKind::Transfer);
         assert_eq!(flow_of(&v, ids[1]), FlowKind::Transfer);
         assert_eq!(

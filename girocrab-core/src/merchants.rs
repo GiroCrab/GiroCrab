@@ -1623,8 +1623,8 @@ fn is_investment_category_path(path: &str) -> bool {
     )
 }
 
-/// Classifies a booking. `top_category` is the immutable role of the top-level
-/// category, using the original German catalog keys (empty for custom entries).
+/// Classifies a booking. `top_category` is the built-in category identity or
+/// imported investment path (for callers without a resolved `CategoryRole`).
 pub fn classify(
     amount_cents: i64,
     counterparty: &str,
@@ -1634,28 +1634,32 @@ pub fn classify(
     top_category: &str,
     account_kind: AccountKind,
 ) -> FlowKind {
+    let role = crate::models::CategoryRole::from_builtin_role(top_category).or_else(|| {
+        is_investment_category_path(top_category).then_some(crate::models::CategoryRole::Investment)
+    });
     classify_by_kind(
         amount_cents,
         counterparty,
         purpose,
         booking_text,
         merchant.kind,
-        top_category,
+        role,
         account_kind,
     )
 }
 
 /// [`classify`] with the merchant kind alone (the bundled table's, see
-/// [`BundledMerchant`]).
+/// [`BundledMerchant`]) and the category's resolved [`CategoryRole`] (#931).
 pub(crate) fn classify_by_kind(
     amount_cents: i64,
     counterparty: &str,
     purpose: &str,
     booking_text: &str,
     merchant_kind: MerchantKind,
-    top_category: &str,
+    category_role: Option<crate::models::CategoryRole>,
     account_kind: AccountKind,
 ) -> FlowKind {
+    use crate::models::CategoryRole;
     let t = normalise(&format!("{counterparty} {purpose} {booking_text}"));
     if contains_any(
         &t,
@@ -1663,7 +1667,7 @@ pub(crate) fn classify_by_kind(
     ) {
         return FlowKind::Perk;
     }
-    if top_category == "Sparen & Investieren"
+    if category_role == Some(CategoryRole::Investment)
         || matches!(merchant_kind, K::Etf | K::Crypto | K::Stock)
         || contains_any(
             &t,
@@ -1678,17 +1682,16 @@ pub(crate) fn classify_by_kind(
                 "wp abrechnung",
             ],
         )
-        || is_investment_category_path(top_category)
     {
         return FlowKind::Investment;
     }
-    if top_category == "Kredite & Darlehen"
+    if category_role == Some(CategoryRole::Loan)
         || account_kind == AccountKind::Loan
         || contains_any(&t, &["darlehen", "tilgung", "kreditrate"])
     {
         return FlowKind::Loan;
     }
-    if matches!(top_category, "Umbuchungen" | "import:transfers")
+    if category_role == Some(CategoryRole::Neutral)
         || contains_any(
             &t,
             &[

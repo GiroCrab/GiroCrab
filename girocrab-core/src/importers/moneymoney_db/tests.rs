@@ -5143,3 +5143,53 @@ fn suggests_time_deposit_for_festgeld_names() {
     );
     assert_eq!(kind("Girokonto"), AccountKind::Checking);
 }
+
+/// #931: categories hidden from diagrams (`showInDiagrams = 0`) import with
+/// `CategoryRole::Neutral`; visible ones stay `None` (`Consumption`), and a
+/// re-import does not overwrite an explicit role set in GiroCrab.
+#[test]
+fn show_in_diagrams_zero_maps_to_neutral_role() {
+    let v = vault();
+    let mm = fake_db_with(
+        false,
+        "ALTER TABLE categories ADD COLUMN showInDiagrams INTEGER DEFAULT 1;
+         INSERT INTO categories (rowid, name, type, group_key, sort, showInDiagrams) VALUES
+           (10, 'Ausgelegt', 1, 0, 10, 0),
+           (11, 'Kino', 1, 0, 11, 1);",
+    );
+    import_with(&v, &mm, |_| {});
+    let find = |name: &str| {
+        v.list_categories(None, None)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == name)
+            .unwrap()
+    };
+    let outlay = find("Ausgelegt");
+    assert_eq!(outlay.role, Some(crate::models::CategoryRole::Neutral));
+    assert_eq!(outlay.effective_role, crate::models::CategoryRole::Neutral);
+    let cinema = find("Kino");
+    assert_eq!(cinema.role, None);
+    assert_eq!(
+        cinema.effective_role,
+        crate::models::CategoryRole::Consumption
+    );
+
+    // Explicit user edit in GiroCrab (both a different role and resetting to
+    // inherit with `None`, which stamps `role_ms > 0`) survives a re-import.
+    v.set_category_role(outlay.id, Some(crate::models::CategoryRole::Consumption))
+        .unwrap();
+    import_with(&v, &mm, |_| {});
+    assert_eq!(
+        find("Ausgelegt").role,
+        Some(crate::models::CategoryRole::Consumption)
+    );
+
+    v.set_category_role(outlay.id, None).unwrap();
+    import_with(&v, &mm, |_| {});
+    assert_eq!(find("Ausgelegt").role, None);
+    assert_eq!(
+        find("Ausgelegt").effective_role,
+        crate::models::CategoryRole::Consumption
+    );
+}

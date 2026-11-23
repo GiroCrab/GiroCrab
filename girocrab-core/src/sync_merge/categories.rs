@@ -12,7 +12,8 @@ use crate::error::CoreResult;
 
 #[derive(Clone, PartialEq, Debug)]
 struct Cat {
-    role: Option<String>,
+    builtin_role: Option<String>,
+    category_role: Option<String>,
     id: i64,
     uuid: String,
     name: String,
@@ -27,6 +28,7 @@ struct Cat {
     color_ms: i64,
     budget_ms: i64,
     order_ms: i64,
+    role_ms: i64,
     deleted_ms: Option<i64>,
     merged_into: Option<String>,
 }
@@ -35,13 +37,19 @@ impl Cat {
     fn merge(&mut self, o: Cat) {
         // Identity is immutable; when combining a custom entry and a built-in,
         // custom provenance wins so its name can never become translated.
-        merge_category_role(&mut self.role, o.role);
+        merge_category_role(&mut self.builtin_role, o.builtin_role);
         take_newer(&mut self.name, &mut self.name_ms, o.name, o.name_ms);
         take_newer(&mut self.parent, &mut self.parent_ms, o.parent, o.parent_ms);
         take_newer(&mut self.symbol, &mut self.symbol_ms, o.symbol, o.symbol_ms);
         take_newer(&mut self.color, &mut self.color_ms, o.color, o.color_ms);
         take_newer(&mut self.budget, &mut self.budget_ms, o.budget, o.budget_ms);
         take_newer(&mut self.order, &mut self.order_ms, o.order, o.order_ms);
+        take_newer(
+            &mut self.category_role,
+            &mut self.role_ms,
+            o.category_role,
+            o.role_ms,
+        );
         merge_deletion(
             &mut self.deleted_ms,
             &mut self.merged_into,
@@ -69,7 +77,7 @@ fn load_categories(conn: &Connection, schema: &str) -> CoreResult<Vec<Cat>> {
     let sql = format!(
         "SELECT c.id, c.uuid, c.name, p.uuid, c.sf_symbol, c.color_hex, c.budget_cents,
                 c.sort_order, c.name_ms, c.parent_ms, c.symbol_ms, c.color_ms, c.budget_ms,
-                c.order_ms, c.deleted_ms, c.merged_into, c.builtin_role
+                c.order_ms, c.deleted_ms, c.merged_into, c.builtin_role, c.role, c.role_ms
          FROM {schema}.categories c LEFT JOIN {schema}.categories p ON p.id = c.parent_id
          ORDER BY c.id"
     );
@@ -77,7 +85,8 @@ fn load_categories(conn: &Connection, schema: &str) -> CoreResult<Vec<Cat>> {
         .prepare(&sql)?
         .query_map([], |r| {
             Ok(Cat {
-                role: r.get(16)?,
+                builtin_role: r.get(16)?,
+                category_role: r.get(17)?,
                 id: r.get(0)?,
                 uuid: r.get(1)?,
                 name: r.get(2)?,
@@ -92,6 +101,7 @@ fn load_categories(conn: &Connection, schema: &str) -> CoreResult<Vec<Cat>> {
                 color_ms: r.get(11)?,
                 budget_ms: r.get(12)?,
                 order_ms: r.get(13)?,
+                role_ms: r.get(18)?,
                 deleted_ms: r.get(14)?,
                 merged_into: r.get(15)?,
             })
@@ -200,8 +210,17 @@ fn combine_categories(state: &mut BTreeMap<String, Cat>) -> bool {
         // BTreeMap order: the first is the lowest uuid
         let keep = &uuids[0];
         for u in &uuids[1..] {
-            let role = state[u].role.clone();
-            merge_category_role(&mut state.get_mut(keep).unwrap().role, role);
+            let builtin_role = state[u].builtin_role.clone();
+            let category_role = state[u].category_role.clone();
+            let role_ms = state[u].role_ms;
+            let kept = state.get_mut(keep).unwrap();
+            merge_category_role(&mut kept.builtin_role, builtin_role);
+            take_newer(
+                &mut kept.category_role,
+                &mut kept.role_ms,
+                category_role,
+                role_ms,
+            );
         }
         let keep_ms = state[keep].name_ms;
         for u in &uuids[1..] {
@@ -319,7 +338,8 @@ pub(crate) fn merge_categories(
             "UPDATE categories SET name = ?2, parent_id = ?3, sf_symbol = ?4, color_hex = ?5,
                     budget_cents = ?6, sort_order = ?7, name_ms = ?8, parent_ms = ?9,
                     symbol_ms = ?10, color_ms = ?11, budget_ms = ?12, order_ms = ?13,
-                    deleted_ms = IFNULL(?14, -1), merged_into = ?15, builtin_role = ?16
+                    deleted_ms = IFNULL(?14, -1), merged_into = ?15, builtin_role = ?16,
+                    role = ?17, role_ms = ?18
              WHERE id = ?1",
             params![
                 ids[&c.uuid],
@@ -337,7 +357,9 @@ pub(crate) fn merge_categories(
                 c.order_ms,
                 c.deleted_ms,
                 c.merged_into,
-                c.role
+                c.builtin_role,
+                c.category_role,
+                c.role_ms
             ],
         )?;
     }

@@ -479,6 +479,64 @@ pub struct UserGroup {
     pub accounts: Vec<Account>,
 }
 
+/// Financial role of a category (#931): determines how bookings in this
+/// category (and its sub-categories, via tree inheritance) count in KPIs and
+/// cashflow, independent of the category's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, uniffi::Enum)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum CategoryRole {
+    /// Everyday spending (default at top level).
+    #[default]
+    Consumption,
+    /// Regular income (seeded now for #931; flow classification changes land in step 3).
+    Income,
+    /// Salary / pension (seeded now for #931; pay-cycle integration lands in step 3).
+    Salary,
+    /// Saving & investing.
+    Investment,
+    /// Loans & debt.
+    Loan,
+    /// Neutral movement (counts as neither income nor expense; e.g. transfers, outlays, deposits).
+    Neutral,
+}
+
+impl CategoryRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Consumption => "consumption",
+            Self::Income => "income",
+            Self::Salary => "salary",
+            Self::Investment => "investment",
+            Self::Loan => "loan",
+            Self::Neutral => "neutral",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "consumption" => Some(Self::Consumption),
+            "income" => Some(Self::Income),
+            "salary" => Some(Self::Salary),
+            "investment" => Some(Self::Investment),
+            "loan" => Some(Self::Loan),
+            "neutral" => Some(Self::Neutral),
+            _ => None,
+        }
+    }
+
+    /// Initial financial role derived from a built-in category identity (#678 → #931).
+    pub(crate) fn from_builtin_role(builtin: &str) -> Option<Self> {
+        match builtin {
+            "Sparen & Investieren" => Some(Self::Investment),
+            "Kredite & Darlehen" => Some(Self::Loan),
+            "Umbuchungen" | "import:transfers" => Some(Self::Neutral),
+            "Einnahmen" => Some(Self::Income),
+            "Gehalt" => Some(Self::Salary),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Category {
@@ -498,6 +556,12 @@ pub struct Category {
     pub total_cents: i64,
     pub transaction_count: u32,
     pub budget_cents: Option<i64>,
+    /// Explicit financial role of this category (#931); `None` = inherit from parent.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub role: Option<CategoryRole>,
+    /// Resolved financial role after inheriting down the category tree (root default: `Consumption`).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub effective_role: CategoryRole,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]

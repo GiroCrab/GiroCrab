@@ -60,6 +60,9 @@
 //! - 38: repair (#998): accounts the MoneyMoney import archived because their last refresh there
 //!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]), marked
 //!   in `accounts.archive_unknown` until an import or the user settles their state.
+//! - 39: explicit category financial roles (#931): `categories.role` (NULL = inherit from
+//!   parent, root default `consumption`) and its sync stamp `categories.role_ms`, seeded
+//!   from `categories.builtin_role` with stamp 0 so user edits win on sync.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -114,7 +117,28 @@ const STEPS: &[Step] = &[
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Hook(account_kind_groups),                           // 37 (#1003)
     Step::Hook(unarchive_cancelled_refreshes),                 // 38: repair (#998)
+    Step::Hook(category_roles),                                // 39 (#931)
 ];
+
+/// Step 39 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
+/// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
+/// explicit user choice on another device wins on sync. Idempotent.
+fn category_roles(conn: &Connection) -> CoreResult<()> {
+    for (col, def) in [("role", "TEXT"), ("role_ms", "INTEGER NOT NULL DEFAULT 0")] {
+        if !has_column(conn, "main", "categories", col)? {
+            conn.execute_batch(&format!("ALTER TABLE categories ADD COLUMN {col} {def};"))?;
+        }
+    }
+    conn.execute_batch(
+        "UPDATE categories SET role = 'investment' WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Sparen & Investieren';
+         UPDATE categories SET role = 'investment' WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL AND builtin_role IN ('ETF-Sparpläne', 'Aktien');
+         UPDATE categories SET role = 'loan'       WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Kredite & Darlehen';
+         UPDATE categories SET role = 'neutral'    WHERE role IS NULL AND role_ms = 0 AND builtin_role IN ('Umbuchungen', 'import:transfers');
+         UPDATE categories SET role = 'income'     WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Einnahmen';
+         UPDATE categories SET role = 'salary'     WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Gehalt';",
+    )?;
+    Ok(())
+}
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
 /// this device's account id and never merged) to `accounts.note` with its edit stamp `note_ms`,
@@ -1183,7 +1207,63 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 38);
+        assert_eq!(SCHEMA_VERSION, 39);
+    }
+
+    /// #931: step 39 adds `categories.role` and `categories.role_ms` and seeds built-in
+    /// categories from `builtin_role` with stamp 0, leaving custom categories `NULL`.
+    #[test]
+    fn category_roles_backfill_from_builtin_role() {
+        let mut conn = schema_at(38);
+        conn.execute_batch(
+            "INSERT INTO categories(id, parent_id, name, builtin_role) VALUES
+               (1, NULL, 'Sparen & Investieren', 'Sparen & Investieren'),
+               (2, 1, 'ETF-Sparpläne', 'ETF-Sparpläne'),
+               (3, NULL, 'Kredite & Darlehen', 'Kredite & Darlehen'),
+               (4, NULL, 'Umbuchungen', 'Umbuchungen'),
+               (5, NULL, 'Geldtransit', 'import:transfers'),
+               (6, NULL, 'Einnahmen', 'Einnahmen'),
+               (7, 6, 'Gehalt', 'Gehalt'),
+               (8, NULL, 'Lebensmittel', 'Lebensmittel'),
+               (9, NULL, 'Eigene Kategorie', NULL),
+               (10, NULL, 'ETF-Sparpläne', 'ETF-Sparpläne');",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let read = |id: i64| -> (Option<String>, i64) {
+            conn.query_row(
+                "SELECT role, role_ms FROM categories WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(read(1), (Some("investment".into()), 0));
+        assert_eq!(read(2), (None, 0));
+        assert_eq!(read(3), (Some("loan".into()), 0));
+        assert_eq!(read(4), (Some("neutral".into()), 0));
+        assert_eq!(read(5), (Some("neutral".into()), 0));
+        assert_eq!(read(6), (Some("income".into()), 0));
+        assert_eq!(read(7), (Some("salary".into()), 0));
+        assert_eq!(read(8), (None, 0));
+        assert_eq!(read(9), (None, 0));
+        // Promoted to root before v39: preserves legacy investment classification.
+        assert_eq!(read(10), (Some("investment".into()), 0));
+        // Idempotent: re-running never overwrites an explicit role or an explicit
+        // reset to inherit (`role = NULL, role_ms > 0`).
+        conn.execute(
+            "UPDATE categories SET role = 'consumption', role_ms = 500 WHERE id = 4",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE categories SET role = NULL, role_ms = 600 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        category_roles(&conn).unwrap();
+        assert_eq!(read(4), (Some("consumption".into()), 500));
+        assert_eq!(read(1), (None, 600));
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for

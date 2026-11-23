@@ -6,23 +6,32 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::Vault;
 use crate::error::{CoreError, CoreResult};
-use crate::i18n::{role_name, tr};
+use crate::i18n::{role_name, tr, trf};
 use crate::models::*;
 
-/// Classification metadata never passes through a booking's display fields.
-#[derive(Default)]
-pub(super) struct CategoryFlow {
-    pub(super) top_role: String,
-    pub(super) is_transfer: bool,
-}
+type CategoryRow = (
+    i64,
+    Option<i64>,
+    String,
+    String,
+    String,
+    i32,
+    Option<i64>,
+    Option<CategoryRole>,
+);
 
 impl Vault {
-    fn category_rows(
-        conn: &Connection,
-    ) -> CoreResult<Vec<(i64, Option<i64>, String, String, String, i32, Option<i64>)>> {
-        let mut stmt = conn.prepare("SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL")?;
+    fn category_rows(conn: &Connection) -> CoreResult<Vec<CategoryRow>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role, role
+               FROM categories WHERE deleted_ms IS NULL",
+        )?;
         let rows = stmt
             .query_map([], |r| {
+                let role = r
+                    .get::<_, Option<String>>(8)?
+                    .as_deref()
+                    .and_then(CategoryRole::from_str);
                 Ok((
                     r.get(0)?,
                     r.get(1)?,
@@ -34,34 +43,44 @@ impl Vault {
                     r.get(4)?,
                     r.get(5)?,
                     r.get(6)?,
+                    role,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
-    pub(super) fn category_flows(conn: &Connection) -> CoreResult<HashMap<i64, CategoryFlow>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, parent_id, builtin_role FROM categories WHERE deleted_ms IS NULL",
-        )?;
-        let rows: HashMap<i64, (Option<i64>, Option<String>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
+    /// Effective financial role of every live category (#931): walks up `parent_id`
+    /// until the first explicit `role` is found, defaulting to `CategoryRole::Consumption`.
+    pub(super) fn category_roles(conn: &Connection) -> CoreResult<HashMap<i64, CategoryRole>> {
+        let mut stmt =
+            conn.prepare("SELECT id, parent_id, role FROM categories WHERE deleted_ms IS NULL")?;
+        let rows: HashMap<i64, (Option<i64>, Option<CategoryRole>)> = stmt
+            .query_map([], |r| {
+                let role = r
+                    .get::<_, Option<String>>(2)?
+                    .as_deref()
+                    .and_then(CategoryRole::from_str);
+                Ok((r.get(0)?, (r.get(1)?, role)))
+            })?
             .collect::<Result<_, _>>()?;
-        let mut out = HashMap::new();
-        for id in rows.keys() {
-            let mut flow = CategoryFlow::default();
-            let mut cur = Some(*id);
-            // Match the display tree's depth bound; malformed cycles cannot hang a load.
-            for _ in 0..32 {
+        let mut out = HashMap::with_capacity(rows.len());
+        for &id in rows.keys() {
+            let mut resolved = CategoryRole::Consumption;
+            let mut cur = Some(id);
+            // Match the display tree's depth bound (`0..=32` = 33 nodes from root to depth 32);
+            // malformed cycles cannot hang a load.
+            for _ in 0..=32 {
                 let Some((parent, role)) = cur.and_then(|c| rows.get(&c)) else {
                     break;
                 };
-                flow.top_role = role.clone().unwrap_or_default();
-                flow.is_transfer |=
-                    matches!(role.as_deref(), Some("Umbuchungen" | "import:transfers"));
+                if let Some(explicit) = role {
+                    resolved = *explicit;
+                    break;
+                }
                 cur = *parent;
             }
-            out.insert(*id, flow);
+            out.insert(id, resolved);
         }
         Ok(out)
     }
@@ -71,8 +90,7 @@ impl Vault {
     ) -> CoreResult<HashMap<i64, (String, String, String, String)>> {
         // id -> (name, path, color, symbol)
         let rows = Self::category_rows(conn)?;
-        let by_id: HashMap<i64, &(i64, Option<i64>, String, String, String, i32, Option<i64>)> =
-            rows.iter().map(|r| (r.0, r)).collect();
+        let by_id: HashMap<i64, &CategoryRow> = rows.iter().map(|r| (r.0, r)).collect();
         let mut out = HashMap::new();
         for r in &rows {
             let mut parts = vec![r.2.clone()];
@@ -536,6 +554,30 @@ impl Vault {
         Ok(())
     }
 
+    /// Sets (or clears with `None`, to inherit from parent) the financial role
+    /// of a category (#931). Stamps `role_ms` for iCloud sync.
+    pub fn set_category_role(
+        &self,
+        category_id: i64,
+        role: Option<CategoryRole>,
+    ) -> Result<(), CoreError> {
+        let db = self.db()?;
+        let n = db.execute(
+            "UPDATE categories SET role = ?1, role_ms = ?3 WHERE id = ?2 AND deleted_ms IS NULL",
+            params![
+                role.map(CategoryRole::as_str),
+                category_id,
+                crate::dates::now_ms()
+            ],
+        )?;
+        if n == 0 {
+            return Err(CoreError::NotFound {
+                what: trf("Kategorie {0}", &[&category_id]),
+            });
+        }
+        Ok(())
+    }
+
     /// Deletes a category and its sub-categories (soft: the rows stay with a
     /// deletion stamp, so a sync does not bring them back); their rules go
     /// too and their transactions and splits become uncategorised. The
@@ -607,10 +649,7 @@ impl Vault {
     }
 
     /// `category_id` and all its descendants (capped like the history queries).
-    fn category_subtree(
-        rows: &[(i64, Option<i64>, String, String, String, i32, Option<i64>)],
-        category_id: i64,
-    ) -> Vec<i64> {
+    fn category_subtree(rows: &[CategoryRow], category_id: i64) -> Vec<i64> {
         let mut ids = vec![category_id];
         let mut i = 0;
         while i < ids.len() && ids.len() < 4096 {
@@ -672,10 +711,7 @@ impl Vault {
                 totals.insert(c, (s, n));
             }
         }
-        let mut children: HashMap<
-            Option<i64>,
-            Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-        > = HashMap::new();
+        let mut children: HashMap<Option<i64>, Vec<&CategoryRow>> = HashMap::new();
         for r in &rows {
             children.entry(r.1).or_default().push(r);
         }
@@ -687,10 +723,7 @@ impl Vault {
         }
         fn subtotal(
             id: i64,
-            children: &HashMap<
-                Option<i64>,
-                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-            >,
+            children: &HashMap<Option<i64>, Vec<&CategoryRow>>,
             totals: &HashMap<Option<i64>, (i64, u32)>,
             depth: u32,
         ) -> (i64, u32) {
@@ -713,10 +746,8 @@ impl Vault {
             parent: Option<i64>,
             depth: u32,
             prefix: &str,
-            children: &HashMap<
-                Option<i64>,
-                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-            >,
+            inherited_role: CategoryRole,
+            children: &HashMap<Option<i64>, Vec<&CategoryRow>>,
             totals: &HashMap<Option<i64>, (i64, u32)>,
             out: &mut Vec<Category>,
         ) {
@@ -732,6 +763,7 @@ impl Vault {
                     };
                     let own = totals.get(&Some(k.0)).copied().unwrap_or((0, 0));
                     let (total, count) = subtotal(k.0, children, totals, 0);
+                    let effective_role = k.7.unwrap_or(inherited_role);
                     out.push(Category {
                         id: k.0,
                         parent_id: k.1,
@@ -745,12 +777,30 @@ impl Vault {
                         total_cents: total,
                         transaction_count: count,
                         budget_cents: k.6,
+                        role: k.7,
+                        effective_role,
                     });
-                    walk(Some(k.0), depth + 1, &path, children, totals, out);
+                    walk(
+                        Some(k.0),
+                        depth + 1,
+                        &path,
+                        effective_role,
+                        children,
+                        totals,
+                        out,
+                    );
                 }
             }
         }
-        walk(None, 0, "", &children, &totals, &mut out);
+        walk(
+            None,
+            0,
+            "",
+            CategoryRole::Consumption,
+            &children,
+            &totals,
+            &mut out,
+        );
         Ok(out)
     }
 }

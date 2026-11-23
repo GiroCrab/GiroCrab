@@ -319,10 +319,11 @@ Rectangle {
                     readonly property string iban: rc.booking.counterparty_iban.replace(/ /g, "").toUpperCase()
                     readonly property bool ownIban: iban !== "" && Object.values(AppModel.accountsByID)
                         .some(a => a.iban.replace(/ /g, "").toUpperCase() === iban)
+                    readonly property var bookingCategory: AppModel.categoryByID(rc.booking.category_id)
                     text: !visible ? ""
                         : ownIban ? qsTr("Umbuchung erkannt: Die Gegenkonto-IBAN gehört zu einem eigenen Konto.")
-                        : rc.booking.category_name === "Umbuchungen" || rc.booking.category_path.startsWith("Umbuchungen")
-                          ? qsTr("Umbuchung erkannt: Die Buchung hat die Kategorie „Umbuchungen“.")
+                        : (bookingCategory && bookingCategory.effective_role === "Neutral")
+                          ? qsTr("Umbuchung erkannt: Die Kategorie der Buchung hat die Rolle „Neutral“.")
                         : qsTr("Umbuchung erkannt: Der Buchungstext deutet auf eine Übertragung zwischen eigenen Konten oder eine Abrechnung hin.")
                     font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.Wrap; Layout.fillWidth: true
                 }

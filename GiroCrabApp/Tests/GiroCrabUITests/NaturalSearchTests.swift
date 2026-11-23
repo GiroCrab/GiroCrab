@@ -6,9 +6,11 @@ import GiroCrabCore
 final class NaturalSearchTests: XCTestCase {
     private let cats: [GiroCrabCore.Category] = [
         GiroCrabCore.Category(id: 1, parentId: nil, name: "Lebensmittel", sfSymbol: "tag", colorHex: "", sortOrder: 0, depth: 0,
-                              path: "Lebensmittel", ownTotalCents: 0, totalCents: 0, transactionCount: 0, budgetCents: nil),
+                              path: "Lebensmittel", ownTotalCents: 0, totalCents: 0, transactionCount: 0, budgetCents: nil,
+                              role: nil, effectiveRole: .consumption),
         GiroCrabCore.Category(id: 2, parentId: nil, name: "Freizeit", sfSymbol: "tag", colorHex: "", sortOrder: 0, depth: 0,
-                              path: "Freizeit", ownTotalCents: 0, totalCents: 0, transactionCount: 0, budgetCents: nil),
+                              path: "Freizeit", ownTotalCents: 0, totalCents: 0, transactionCount: 0, budgetCents: nil,
+                              role: nil, effectiveRole: .consumption),
     ]
     private func state(_ text: String = "orig") -> NaturalSearchState {
         NaturalSearchState(searchText: text, period: .all, customFrom: "2020-01-01", customTo: "2020-01-31",
@@ -330,7 +332,8 @@ final class NaturalSearchTests: XCTestCase {
     func testKeywordEqualToCategoryNameIsDropped() {
         let withRent = cats + [GiroCrabCore.Category(id: 3, parentId: nil, name: "Miete", sfSymbol: "tag", colorHex: "",
                                                     sortOrder: 0, depth: 0, path: "Miete", ownTotalCents: 0,
-                                                    totalCents: 0, transactionCount: 0, budgetCents: nil)]
+                                                    totalCents: 0, transactionCount: 0, budgetCents: nil,
+                                                    role: nil, effectiveRole: .consumption)]
         var s = state("zeige alle miete")
         NaturalSearch.apply(parsed: ParsedSearchQuery(text: "miete", categoryName: "Miete"),
                             to: &s, categories: withRent, today: today)

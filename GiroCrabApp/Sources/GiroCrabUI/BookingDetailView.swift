@@ -200,8 +200,9 @@ struct ReceiptCard: View {
                 }
                 let reason: LocalizedStringKey = if ownIban {
                     "Umbuchung erkannt: Die Gegenkonto-IBAN gehört zu einem eigenen Konto."
-                } else if booking.categoryName == "Umbuchungen" || booking.categoryPath.hasPrefix("Umbuchungen") {
-                    "Umbuchung erkannt: Die Buchung hat die Kategorie „Umbuchungen“."
+                } else if let cid = booking.categoryId,
+                          model.categories.first(where: { $0.id == cid })?.effectiveRole == .neutral {
+                    "Umbuchung erkannt: Die Kategorie der Buchung hat die Rolle „Neutral“."
                 } else {
                     "Umbuchung erkannt: Der Buchungstext deutet auf eine Übertragung zwischen eigenen Konten oder eine Abrechnung hin."
                 }

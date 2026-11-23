@@ -575,16 +575,20 @@ pub(crate) const STARTER_TREE: Tree = &[
 fn categories(conn: &Connection) -> CoreResult<std::collections::HashMap<&'static str, i64>> {
     let mut map = std::collections::HashMap::new();
     for (i, (name, sym, color, kids)) in STARTER_TREE.iter().enumerate() {
+        let role = crate::models::CategoryRole::from_builtin_role(name)
+            .map(crate::models::CategoryRole::as_str);
         conn.execute(
-            "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, builtin_role) VALUES (NULL, ?1, ?2, ?3, ?4, ?1)",
-            params![name, sym, color, i as i32],
+            "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, builtin_role, role) VALUES (NULL, ?1, ?2, ?3, ?4, ?1, ?5)",
+            params![name, sym, color, i as i32, role],
         )?;
         let pid = conn.last_insert_rowid();
         map.insert(*name, pid);
         for (j, (kid, ksym)) in kids.iter().enumerate() {
+            let krole = crate::models::CategoryRole::from_builtin_role(kid)
+                .map(crate::models::CategoryRole::as_str);
             conn.execute(
-                "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, builtin_role) VALUES (?1, ?2, ?3, ?4, ?5, ?2)",
-                params![pid, kid, ksym, color, j as i32],
+                "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, builtin_role, role) VALUES (?1, ?2, ?3, ?4, ?5, ?2, ?6)",
+                params![pid, kid, ksym, color, j as i32, krole],
             )?;
             map.insert(*kid, conn.last_insert_rowid());
         }

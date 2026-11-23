@@ -31233,6 +31233,17 @@
         }
       }
     },
+    "Umbuchung erkannt: Die Kategorie der Buchung hat die Rolle „Neutral“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transfer detected: the booking's category has the role “Neutral”."
+          }
+        }
+      }
+    },
     "Umfang" : {
       "extractionState" : "manual",
       "localizations" : {

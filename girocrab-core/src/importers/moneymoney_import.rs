@@ -942,13 +942,16 @@ pub(crate) fn find_or_create_category(
             }
         };
         // Preserve the importer's established transfer semantics explicitly;
-        // this role never grants localisation of an imported name.
+        // this role never grants localisation of an imported name, and never
+        // overrides an explicit role choice (including clearing to inherit, `role_ms != 0`).
         if matches!(
             part.trim().to_lowercase().as_str(),
             "umbuchung" | "umbuchungen" | "geldtransit" | "transfer" | "transfers"
         ) {
             conn.execute(
-                "UPDATE categories SET builtin_role='import:transfers' WHERE id=?1",
+                "UPDATE categories SET builtin_role = 'import:transfers',
+                        role = CASE WHEN role IS NULL AND role_ms = 0 THEN 'neutral' ELSE role END
+                  WHERE id = ?1",
                 [id],
             )?;
         }
@@ -1682,7 +1685,7 @@ fn sample(r: &MmRow, i: i64, account_id: i64, merchants: &MerchantRules) -> Book
     // preview of an import: no connection yet, a payment service reads as before
     let paypal = b.account_kind == AccountKind::PaymentService;
     // Preview names are imported user text, never built-in category roles.
-    enrich(&mut b, merchants, paypal, "");
+    enrich(&mut b, merchants, paypal, None);
     b.is_salary = crate::salary::salary_signal(&b);
     b
 }
@@ -3201,5 +3204,40 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
             statement_account(&mt(&[iban, "DE02120300000000202051"])),
             None
         );
+    }
+
+    #[test]
+    fn find_or_create_category_respects_explicit_reset_to_inherit() {
+        let dir = crate::test_support::TempDir::new("mm-import-role-reset");
+        let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![7; 32]).unwrap();
+        let mut cache = HashMap::new();
+        let mut created = 0;
+        let id = {
+            let db = v.db().unwrap();
+            find_or_create_category(&db, &["Umbuchungen".into()], &mut cache, &mut created).unwrap()
+        };
+        let role_of = || {
+            v.list_categories(None, None)
+                .unwrap()
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .role
+        };
+        assert_eq!(role_of(), Some(CategoryRole::Neutral));
+
+        // Explicitly clear to inherit (`role = NULL, role_ms > 0`): a later CSV
+        // import of the same category must not restore `Neutral`.
+        v.set_category_role(id, None).unwrap();
+        assert_eq!(role_of(), None);
+        cache.clear();
+        {
+            let db = v.db().unwrap();
+            let again =
+                find_or_create_category(&db, &["Umbuchungen".into()], &mut cache, &mut created)
+                    .unwrap();
+            assert_eq!(again, id);
+        }
+        assert_eq!(role_of(), None);
     }
 }

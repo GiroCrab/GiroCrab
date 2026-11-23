@@ -631,6 +631,8 @@ mod tests {
                 total_cents: 0,
                 transaction_count: 0,
                 budget_cents: None,
+                role: None,
+                effective_role: girocrab_core::CategoryRole::Consumption,
             })
             .collect()
     }
