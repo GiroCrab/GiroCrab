@@ -287,8 +287,9 @@ extension AppModel {
         _ = Self.localApiQuitObserver
         Self.localApiOwner = self
         do {
-            let server = try LocalApiServer.start(vault: v, socketPath: Self.localApiSocketPath)
-            server.setListener(listener: LocalApiChangeListener(model: self, servedVault: v))
+            // The listener is in place before the first request, so no early edit goes unreported.
+            let server = try LocalApiServer.start(vault: v, socketPath: Self.localApiSocketPath,
+                                                  onChange: LocalApiChangeListener(model: self, servedVault: v))
             localApi = RunningLocalApi(server: server, servedVault: v)
         } catch {
             // Kept for the status line: a toast alone would leave "starting" forever.

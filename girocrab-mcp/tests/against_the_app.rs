@@ -39,7 +39,8 @@ fn serve(dir: &ShortDir) -> App {
     let token = vault.create_local_api_token().unwrap();
     // One level deeper: the server creates its folder itself, with mode 0700.
     let socket = dir.0.join("api").join("s.sock");
-    let server = LocalApiServer::start(vault.clone(), socket.to_string_lossy().into()).unwrap();
+    let server =
+        LocalApiServer::start(vault.clone(), socket.to_string_lossy().into(), None).unwrap();
     App {
         vault,
         server,

@@ -83,13 +83,19 @@ impl LocalApiServer {
     /// chmod-ed). Another live server on the same path is an error, a stale
     /// socket there is replaced, any other file is an error.
     /// Errors are `InvalidInput` with a localized message for the status line.
+    /// `on_change` is in place before the first request is accepted, so no edit
+    /// goes unreported; `set_listener` replaces it later.
     #[uniffi::constructor]
-    pub fn start(vault: Arc<Vault>, socket_path: String) -> Result<Arc<Self>, CoreError> {
+    pub fn start(
+        vault: Arc<Vault>,
+        socket_path: String,
+        on_change: Option<Arc<dyn LocalApiListener>>,
+    ) -> Result<Arc<Self>, CoreError> {
         let path = PathBuf::from(&socket_path);
         let stopper = Stopper::new().map_err(io_error)?;
         let (listener, file_id, lock) = bind(&path)?;
         let vault = Arc::downgrade(&vault);
-        let changes: ListenerSlot = Arc::new(Mutex::new(None));
+        let changes: ListenerSlot = Arc::new(Mutex::new(on_change));
         {
             let stopper = stopper.clone();
             let changes = changes.clone();
@@ -450,13 +456,18 @@ fn serve(
             *next = Instant::now() + started.elapsed().min(MAX_PAUSE);
             answer
         };
-        // Stopped (locked) meanwhile: nothing more goes out.
-        let Some((answer, changed)) = answer else {
-            return;
+        let (answer, changed) = answer;
+        // Stopped meanwhile (locked, access switched off, key revoked): nothing more
+        // goes out, but a committed edit is still reported (the app ignores it for a
+        // vault it no longer shows).
+        let written = match answer {
+            Some(answer) => {
+                line.clear();
+                deadline = Instant::now() + IDLE;
+                writeln!(out, "{answer}").is_ok()
+            }
+            None => false,
         };
-        line.clear();
-        deadline = Instant::now() + IDLE;
-        let written = writeln!(out, "{answer}").is_ok();
         // Committed either way: the app reloads even if the client went away.
         if changed {
             let listener = changes.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -470,23 +481,24 @@ fn serve(
     }
 }
 
-/// None once `stop()` ran: checked after taking the vault and again after the
-/// request, so an answer computed while the app locked is never sent.
-/// The flag tells whether the request changed bookings.
-fn answer(vault: &Weak<Vault>, stopper: &Stopper, line: &[u8]) -> Option<(String, bool)> {
+/// The answer is None once `stop()` ran: checked before taking the vault and again
+/// after the request, so an answer computed while the app locked is never sent.
+/// The flag tells whether the request changed bookings; it stays set when the
+/// answer is withheld, because the change is committed.
+fn answer(vault: &Weak<Vault>, stopper: &Stopper, line: &[u8]) -> (Option<String>, bool) {
     let stopped = || stopper.stopped.load(Ordering::SeqCst);
     if stopped() {
-        return None;
+        return (None, false);
     }
     // The vault is held only for this one request.
     let Some(vault) = vault.upgrade() else {
-        return Some((
-            response(Err(ApiError::new(
+        return (
+            Some(response(Err(ApiError::new(
                 ApiErrorCode::Locked,
                 "GiroCrab is locked",
-            ))),
+            )))),
             false,
-        ));
+        );
     };
     let answer = match std::str::from_utf8(line) {
         Ok(text) => vault.local_api_socket_request(text.trim_end_matches('\r')),
@@ -495,11 +507,11 @@ fn answer(vault: &Weak<Vault>, stopper: &Stopper, line: &[u8]) -> Option<(String
             false,
         ),
     };
-    // Not reported either: the app locked meanwhile and loads afresh on unlock.
+    let (text, changed) = answer;
     if stopped() {
-        return None;
+        return (None, changed);
     }
-    Some(answer)
+    (Some(text), changed)
 }
 
 #[cfg(test)]
@@ -538,7 +550,7 @@ mod tests {
     }
 
     fn start(d: &ShortDir, vault: &Arc<Vault>) -> Arc<LocalApiServer> {
-        LocalApiServer::start(vault.clone(), d.socket().to_string_lossy().into()).unwrap()
+        LocalApiServer::start(vault.clone(), d.socket().to_string_lossy().into(), None).unwrap()
     }
 
     impl Drop for ShortDir {
@@ -654,7 +666,7 @@ mod tests {
         let d = ShortDir::new();
         let (_v, vault, _) = vault();
         let path = d.socket();
-        let server = LocalApiServer::start(vault, path.to_string_lossy().into()).unwrap();
+        let server = LocalApiServer::start(vault, path.to_string_lossy().into(), None).unwrap();
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(path.parent().unwrap()), 0o700);
@@ -669,7 +681,7 @@ mod tests {
         let (_v, vault, _) = vault();
         let path = d.make_dir(0o700);
         std::fs::write(&path, b"keep me").unwrap();
-        assert!(LocalApiServer::start(vault, path.to_string_lossy().into()).is_err());
+        assert!(LocalApiServer::start(vault, path.to_string_lossy().into(), None).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"keep me");
     }
 
@@ -728,14 +740,14 @@ mod tests {
         let d = ShortDir::new();
         let (_v, vault, _) = vault();
         let path: String = d.socket().to_string_lossy().into();
-        let first = LocalApiServer::start(vault.clone(), path.clone()).unwrap();
-        assert!(LocalApiServer::start(vault.clone(), path.clone()).is_err());
+        let first = LocalApiServer::start(vault.clone(), path.clone(), None).unwrap();
+        assert!(LocalApiServer::start(vault.clone(), path.clone(), None).is_err());
         assert!(
             UnixStream::connect(&path).is_ok(),
             "first one still reachable"
         );
         first.stop();
-        let second = LocalApiServer::start(vault.clone(), path.clone()).unwrap();
+        let second = LocalApiServer::start(vault.clone(), path.clone(), None).unwrap();
         // The first one stopping (again) or going away must not take the second's file.
         first.stop();
         drop(first);
@@ -749,9 +761,9 @@ mod tests {
             let d = ShortDir::new();
             let (_v, vault, _) = vault();
             let path: String = d.socket().to_string_lossy().into();
-            let mut first = LocalApiServer::start(vault.clone(), path.clone()).unwrap();
+            let mut first = LocalApiServer::start(vault.clone(), path.clone(), None).unwrap();
             first.stop();
-            let second = LocalApiServer::start(vault.clone(), path.clone()).unwrap();
+            let second = LocalApiServer::start(vault.clone(), path.clone(), None).unwrap();
             // Model inode reuse deterministically, independent of the host
             // filesystem's allocation policy. The old server no longer owns
             // this path even when the replacement has the same file identity.
@@ -813,7 +825,7 @@ mod tests {
         let d = ShortDir::new();
         let (_v, vault, _) = vault();
         let path = d.make_dir(0o755);
-        assert!(LocalApiServer::start(vault, path.to_string_lossy().into()).is_err());
+        assert!(LocalApiServer::start(vault, path.to_string_lossy().into(), None).is_err());
         let mode = std::fs::metadata(path.parent().unwrap())
             .unwrap()
             .permissions()
@@ -906,9 +918,14 @@ mod tests {
                 ..scope
             })
             .unwrap();
-        let server = start(&d, &vault);
+        // given at the start: in place before the first request
         let changes = Arc::new(Changes::default());
-        server.set_listener(Some(changes.clone()));
+        let server = LocalApiServer::start(
+            vault.clone(),
+            d.socket().to_string_lossy().into(),
+            Some(changes.clone()),
+        )
+        .unwrap();
         let mut c = Client::connect(&d.socket());
         let page = c.send_raw(
             &json!({ "v": 1, "token": token, "method": "transactions",
