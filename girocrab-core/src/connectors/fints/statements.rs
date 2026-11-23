@@ -8,9 +8,9 @@ use crate::connectors::{ConnectContext, RemoteTransaction, today};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 
-/// Start date of a card statement request: `since`, but not further back than the
+/// Start date of a statement request: `since`, but not further back than the
 /// bank's storage period (`storage_days`, 0 = unknown). Dates are `YYYY-MM-DD`.
-pub(super) fn card_since(since: &str, today: &str, storage_days: i64) -> String {
+pub(super) fn stored_since(since: &str, today: &str, storage_days: i64) -> String {
     let parse = |d: &str| jiff::civil::Date::strptime("%Y-%m-%d", d).ok();
     match (parse(since), parse(today)) {
         (Some(s), Some(t)) if storage_days > 0 => {
@@ -154,6 +154,16 @@ pub(super) fn hex_decode(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Warning of a statements request that stopped at its page limit with pages
+/// left: kept as a warning, not an error, so a long first fetch still stores
+/// what it read.
+pub(super) fn truncated_warning(label: &str) -> String {
+    trf(
+        "{0}: Die Umsatzliste war länger als 50 Seiten und wurde nicht vollständig gelesen.",
+        &[&label],
+    )
+}
+
 /// Period of a statements request (HKCAZ/HKKAZ): from `since` (YYYY-MM-DD), open end.
 /// An explicit "bis" date of today cuts off entries a bank already dates on the
 /// next business day, e.g. weekend card holds and credits dated Monday (#1570);
@@ -202,7 +212,9 @@ impl FinTsConnector {
         label: &str,
     ) -> CoreResult<(Vec<RemoteTransaction>, Option<i64>)> {
         let format = self.st.camt_formats.first().cloned().unwrap_or_default();
-        let (from, to) = request_period(&ctx.since);
+        // never ask for more than the bank keeps: an older start ends in a partial reply (3997)
+        let since = stored_since(&ctx.since, &today(), self.st.caz_storage_days);
+        let (from, to) = request_period(&since);
         let mut touchdown: Option<String> = None;
         let mut txs = Vec::new();
         let mut closing = None;
@@ -246,6 +258,7 @@ impl FinTsConnector {
                 break;
             }
         }
+        self.truncated_statements |= touchdown.is_some();
         txs.extend(pending);
         Ok((txs, closing))
     }
@@ -306,7 +319,7 @@ impl FinTsConnector {
             (String::new(), String::new())
         } else {
             // Never ask for more than the bank keeps: an older start date is an error.
-            let since = card_since(&ctx.since, &today(), self.st.kku_storage_days);
+            let since = stored_since(&ctx.since, &today(), self.st.kku_storage_days);
             (since.replace('-', ""), today().replace('-', ""))
         };
         let mut touchdown: Option<String> = None;
@@ -366,7 +379,8 @@ impl FinTsConnector {
         } else {
             Self::ktv(acc)
         };
-        let (from, to) = request_period(&ctx.since);
+        let since = stored_since(&ctx.since, &today(), self.st.kaz_storage_days);
+        let (from, to) = request_period(&since);
         let mut touchdown: Option<String> = None;
         let mut data = Vec::<u8>::new();
         for _page in 0..50 {
@@ -394,6 +408,7 @@ impl FinTsConnector {
                 break;
             }
         }
+        self.truncated_statements |= touchdown.is_some();
         let (txs, stmt) = mt940::parse(&crate::text::decode_bank_bytes(&data), label, currency);
         Ok((txs, stmt.closing_balance_cents))
     }
