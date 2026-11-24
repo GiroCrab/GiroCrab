@@ -15,6 +15,14 @@ struct BookingStreamView: View {
     @FocusState private var focused: Bool
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var hSize
+
+    /// iPhone sheet title: the merchant, else the booking text like the list row, else
+    /// "Buchung" (an empty name left the title blank).
+    private var sheetTitle: String {
+        guard let b = model.selectedBooking else { return String(localized: "Buchung") }
+        let name = b.merchant.name.isEmpty ? b.bookingText : b.merchant.name
+        return name.isEmpty ? String(localized: "Buchung") : name
+    }
     #endif
 
     var body: some View {
@@ -143,8 +151,20 @@ struct BookingStreamView: View {
                 get: { hSize == .compact && model.showBookingSheet && model.selectedBookingID != nil },
                 set: { if !$0 { model.showBookingSheet = false } }
             )) {
-                NavigationStack { InspectorView() }
-                    .presentationDetents([.medium, .large])
+                // Title + "Fertig" (UI-Audit INS-3); the merchant is personal, so the
+                // title is masked in the bug report (a parameter text, no `.sensitive()`).
+                NavigationStack {
+                    InspectorView()
+                        .navigationTitle(redaction.masking(sheetTitle))
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Fertig") { model.showBookingSheet = false }
+                            }
+                        }
+                }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             #endif
             // Drop a receipt anywhere on the stream: matched by amount/date/merchant.

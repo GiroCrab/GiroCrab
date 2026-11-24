@@ -502,6 +502,73 @@ pub fn account_subtitle(bank: &str, iban: &str, privacy: bool) -> String {
         .join(" · ")
 }
 
+/// Bank line below an IBAN field (#1563): bank name of a German IBAN, empty when unknown.
+/// Masked in privacy mode, because the bank narrows down the IBAN. Never fills in the BIC.
+pub fn iban_bank_line(iban: &str, privacy: bool) -> String {
+    let compact: String = iban.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.is_empty() {
+        return String::new();
+    }
+    bank_line_text(
+        girocrab_core::connectors::fints_directory::bank_name_for_iban(compact),
+        privacy,
+    )
+}
+
+/// Display text of a looked-up bank name (empty, trimmed, masked in privacy mode).
+fn bank_line_text(name: Option<String>, privacy: bool) -> String {
+    match name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
+        Some(n) => mask(&n, privacy),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod bank_line_tests {
+    use super::*;
+
+    #[test]
+    fn iban_bank_line_is_empty_for_blank_input() {
+        assert_eq!(iban_bank_line("", false), "");
+        assert_eq!(iban_bank_line("   \t ", true), "");
+    }
+
+    #[test]
+    fn iban_bank_line_ignores_whitespace_in_unknown_iban() {
+        assert_eq!(iban_bank_line("XX00 0000 0000", false), "");
+        assert_eq!(iban_bank_line("XX00 0000 0000", true), "");
+    }
+
+    #[test]
+    fn shows_bank_name_trimmed() {
+        assert_eq!(
+            bank_line_text(Some("  Sparkasse Test ".into()), false),
+            "Sparkasse Test"
+        );
+    }
+
+    #[test]
+    fn unknown_or_blank_bank_gives_empty_line() {
+        assert_eq!(bank_line_text(None, false), "");
+        assert_eq!(bank_line_text(Some("   ".into()), true), "");
+    }
+
+    #[test]
+    fn privacy_mode_masks_bank_name() {
+        let shown = bank_line_text(Some("Sparkasse Test".into()), true);
+        assert_ne!(shown, "Sparkasse Test");
+        assert_eq!(shown, mask("Sparkasse Test", true));
+    }
+
+    #[test]
+    fn empty_and_foreign_ibans_have_no_bank_line() {
+        assert_eq!(iban_bank_line("", false), "");
+        assert_eq!(iban_bank_line("   ", true), "");
+        // Only German IBANs are resolved (core returns None otherwise).
+        assert_eq!(iban_bank_line("AT611904300234573201", false), "");
+    }
+}
+
 /// Why a booking counts as transfer, from its own texts.
 pub fn transfer_reason(r: &Row) -> String {
     let t = format!("{} {} {}", r.counterparty, r.purpose, r.booking_text).to_lowercase();

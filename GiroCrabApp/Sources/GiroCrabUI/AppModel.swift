@@ -1032,6 +1032,9 @@ public final class AppModel {
             reloadBookings()
             if let q = options.pickBooking, let b = bookings.first(where: { $0.merchantName.lowercased().contains(q) || $0.counterparty.lowercased().contains(q) }) {
                 selectedBookingID = b.id
+                // iPhone: the inspector is a sheet that otherwise only a tap opens; UI audits and
+                // simulator screenshots need it (docs/ui-audit.md). Ignored where it is a column.
+                showBookingSheet = true
                 if options.merchantList { focusMerchant(of: b) }
             }
             // Sachwerte (#87): --pick also selects an item by name
