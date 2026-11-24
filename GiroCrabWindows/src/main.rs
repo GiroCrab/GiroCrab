@@ -1524,15 +1524,13 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
             if sel.is_some() {
                 // First paint: load the scope's bookings synchronously (selects the first one);
                 // the background reload in `apply_view` then refreshes them.
+                // A pending reveal may need many more rows: that read stays in the background
+                // reload (`apply_view`), never on the UI thread.
                 let (target, amount) = with_state(|st| (st.target, st.amount));
-                let limit = with_state(|st| st.reveal_limit.max(ROW_LIMIT));
-                let reveal = with_state(|st| {
-                    (st.reveal_limit > 0)
-                        .then_some(st.selected_booking)
-                        .flatten()
-                });
-                if let Ok(((rows, balances), missing)) =
-                    load_reveal_rows(vault, target, limit, reveal, amount)
+                let revealing = with_state(|st| st.reveal_limit > 0);
+                if !revealing
+                    && let Ok(((rows, balances), missing)) =
+                        load_reveal_rows(vault, target, ROW_LIMIT, None, amount)
                 {
                     with_state(|st| {
                         st.rows = rows;
