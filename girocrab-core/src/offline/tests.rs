@@ -902,3 +902,51 @@ fn category_sums_count_only_eur_across_accounts() {
     assert_eq!(page.transactions.len(), 4, "rows of every currency stay");
     assert_eq!(page.expense_cents, -10_00, "page sums: EUR only");
 }
+
+/// CodeRabbit (#1855): an amount edit evaluates a rule-assigned category again (a rule may
+/// match amounts), like the sync merge on a receiving device; a manual category stays.
+#[test]
+fn amount_edit_reevaluates_a_rule_category_but_keeps_a_manual_one() {
+    let v = vault("offline-amount-rule");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+        .unwrap();
+    let cat: i64 = {
+        let db = v.db().unwrap();
+        db.execute("INSERT INTO categories(name) VALUES ('Regel')", [])
+            .unwrap();
+        db.last_insert_rowid()
+    };
+    let set_source = |source: &str| {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET category_id=?2, category_source=?3 WHERE id=?1",
+                params![id, cat, source],
+            )
+            .unwrap();
+    };
+    let category = || -> Option<i64> {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT category_id FROM transactions WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    set_source("rule");
+    let mut s = setup("2026-01-10", -2000, "Shop");
+    s.category_id = Some(cat);
+    v.save_manual_booking(account, Some(id), s.clone()).unwrap();
+    // no rule matches the booking: the rule result is gone
+    assert_eq!(category(), None);
+    set_source("manual");
+    s.amount_cents = -3000;
+    v.save_manual_booking(account, Some(id), s).unwrap();
+    assert_eq!(category(), Some(cat));
+}

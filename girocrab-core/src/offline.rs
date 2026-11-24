@@ -410,6 +410,14 @@ impl Vault {
                 "UPDATE transactions SET splits_ms=MAX(splits_ms+1,?2) WHERE id=?1",
                 params![id, now_ms()],
             )?;
+            // rules can match amounts: a rule-assigned category is evaluated again by `finish`,
+            // as on a receiving device (sync merge); manual categories and splits stay
+            tx.execute(
+                "UPDATE transactions SET category_id = NULL, rule_id = NULL, category_source = 'none'
+                  WHERE id = ?1 AND category_source = 'rule'
+                    AND NOT EXISTS (SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
+                [id],
+            )?;
         }
         if date_changed {
             tx.execute(

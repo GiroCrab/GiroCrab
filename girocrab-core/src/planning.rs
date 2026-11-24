@@ -600,7 +600,8 @@ pub(crate) fn store_splits(
 /// Gives the parts of booking `id` UUIDs derived from the booking's sync key and each part's
 /// content (category, amount, note, occurrence), like the schema 39 backfill: an import that
 /// creates the same parts on two devices gives them the same identities. A UUID already taken
-/// elsewhere keeps the random one.
+/// elsewhere keeps the random one; a UUID a refund link names (live or undoable) is kept, so the
+/// link still finds its part after a reimport.
 pub(crate) fn derive_split_uuids(conn: &rusqlite::Connection, id: i64) -> Result<(), CoreError> {
     let key = crate::sync_merge::booking_key(conn, id)?;
     let parts: Vec<(String, i64, String, Option<String>)> = conn
@@ -621,7 +622,10 @@ pub(crate) fn derive_split_uuids(conn: &rusqlite::Connection, id: i64) -> Result
         *occurrence += 1;
         let stable = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &identity).to_string();
         conn.execute(
-            "UPDATE OR IGNORE transaction_splits SET uuid = ?2 WHERE transaction_id = ?1 AND uuid = ?3",
+            "UPDATE OR IGNORE transaction_splits SET uuid = ?2 WHERE transaction_id = ?1 AND uuid = ?3
+               AND NOT EXISTS (SELECT 1 FROM refund_links l
+                                WHERE (l.refund_id = ?1 AND l.refund_part = ?3)
+                                   OR (l.original_id = ?1 AND l.original_part = ?3))",
             params![id, stable, uuid],
         )?;
     }
@@ -795,6 +799,33 @@ mod tests {
                 .iter()
                 .all(|(_, u)| uuid::Uuid::parse_str(u).unwrap().get_version_num() == 5)
         );
+        // a part a refund link names keeps its UUID when a reimport would derive another one
+        let linked = first[2].1.clone();
+        let refund = tx(&v, "refund", "2025-01-05", 20, None);
+        let changed = vec![part(-40, "a"), part(-40, "a"), part(-20, "b neu")];
+        let keep: Vec<_> = v
+            .list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .zip(changed)
+            .map(|(old, mut new)| {
+                new.uuid = Some(old.uuid);
+                new
+            })
+            .collect();
+        {
+            let db = v.db().unwrap();
+            db.execute(
+                "INSERT INTO refund_links(refund_id, refund_part, original_id, original_part,
+                     refund_cents, original_cents, created_ms, changed_ms)
+                 VALUES (?1, '', ?2, ?3, 20, 20, 1, 1)",
+                params![refund, id, linked],
+            )
+            .unwrap();
+            store_splits(&db, id, &keep).unwrap();
+            derive_split_uuids(&db, id).unwrap();
+        }
+        assert_eq!(v.list_transaction_splits(id).unwrap()[2].uuid, linked);
         drop(v);
         let _ = std::fs::remove_dir_all(dir);
     }
