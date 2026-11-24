@@ -3277,20 +3277,36 @@ QtObject {
         showRuleEditor = true
     }
     /// The id of the saved rule, else null (error shown). Applies just this rule, to the
-    /// uncategorised bookings or to all (the scope question of „Speichern & anwenden“).
+    /// uncategorised bookings or to all (the scope question of „Speichern & anwenden“),
+    /// and reports the changed bookings; a failed apply keeps the saved rule.
     function saveRule(rule, onlyUncategorized) {
+        let id
         try {
-            const id = core("save_rule", { rule: rule })
-            core("apply_rule", { rule_id: id, only_uncategorized: onlyUncategorized })
-            // the editor reads the saved rule (its new id) right away: rules now, the rest async
-            reloadRulesNow()
-            reloadAll()
-            return id
+            id = core("save_rule", { rule: rule })
         } catch (e) {
             errorTitle = qsTr("Regel konnte nicht gespeichert werden")
             errorMessage = e.message
             return null
         }
+        let changed = null
+        let applyError = null
+        try {
+            changed = core("apply_rule", { rule_id: id, only_uncategorized: onlyUncategorized })
+        } catch (e) {
+            applyError = e
+        }
+        // the editor reads the saved rule (its new id) right away: rules now, the rest async
+        reloadRulesNow()
+        reloadAll()
+        if (applyError !== null) {
+            errorTitle = qsTr("Regel gespeichert, Anwenden fehlgeschlagen")
+            errorMessage = applyError.message
+        } else if (changed === 0) {
+            toast = qsTr("Regel gespeichert – keine Buchungen geändert")
+        } else {
+            toast = qsTr("Regel gespeichert – geänderte Buchungen: %1").arg(changed)
+        }
+        return id
     }
     function deleteRule(id) {
         run(() => core("delete_rule", { rule_id: id }))

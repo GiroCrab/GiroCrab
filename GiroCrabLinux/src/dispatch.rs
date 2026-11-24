@@ -2322,13 +2322,21 @@ mod tests {
             .as_u64()
             .unwrap()
         };
-        // „Nur unkategorisierte Buchungen“: the manual category stays
-        apply(true);
+        // „Nur unkategorisierte Buchungen“: the manual category stays; the count is the
+        // other uncategorised bookings with that purpose (none in today's demo)
+        let others = call("list_transactions", json!({ "filter": filter }))["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["purpose"] == json!("Konzertticket") && b["category_id"].is_null())
+            .count() as u64;
+        assert_eq!(apply(true), others);
         let b = booking(&|b| b["id"] == id);
         assert_eq!(b["category_id"], old);
         assert_eq!(b["category_source"], json!("Manual"));
         // „Alle Buchungen“: the rule replaces it
         assert!(apply(false) >= 1);
+        assert_eq!(apply(false), 0, "a second run changes nothing");
         let b = booking(&|b| b["id"] == id);
         assert_eq!(b["category_id"], new);
         assert_eq!(b["category_source"], json!("Rule"));
@@ -2337,7 +2345,7 @@ mod tests {
             "set_transaction_category",
             json!({ "transaction_id": id, "category_id": null }),
         );
-        assert!(apply(true) >= 1);
+        assert_eq!(apply(true), 1, "just the booking set back to uncategorised");
         assert_eq!(booking(&|b| b["id"] == id)["category_id"], new);
         // an unknown rule changes nothing
         assert_eq!(
