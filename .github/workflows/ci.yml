@@ -170,7 +170,7 @@ jobs:
       - name: Linux UI texts have English (Localizable.xcstrings or i18n/en-linux.json)
         run: python3 -I GiroCrabLinux/scripts/i18n-report.py
       - name: Test String-Catalog-Merge-Driver
-        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py
+        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py scripts/test_coderabbit_flow.py
       - name: Test AI provenance classifier
         run: python3 -m unittest tools/test_export_ai_provenance.py
       - name: Test FNZ portal browser scripts
@@ -179,6 +179,8 @@ jobs:
         run: scripts/lint-serde-feature.sh
       - name: Free functions are exported to UniFFI only from ffi.rs
         run: scripts/lint-ffi-exports.sh
+      - name: Every schema step is described in schema.rs and docs/ARCHITECTURE.md
+        run: scripts/lint-schema-docs.sh
       - name: No unsafe outside sys.rs, no processes, hidden includes or encoded data in the payment path
         run: scripts/lint-no-obfuscation.sh
       - if: needs.changes.outputs.rust == 'true'

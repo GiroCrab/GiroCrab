@@ -1191,6 +1191,35 @@ fn english(de: &str) -> Option<&'static str> {
         "Volkswagen Bank: Unerwartete Antwort auf die TAN-Abfrage." => {
             "Volkswagen Bank: unexpected answer to the TAN request."
         }
+        // ------------------------------------------------------------ connectors/monefit.rs
+        "Monefit: Unerwartete Antwort der API (HTTP {0})." => {
+            "Monefit: Unexpected API response (HTTP {0})."
+        }
+        "Monefit: Sitzung abgelaufen. Bitte erneut abrufen." => {
+            "Monefit: Session expired. Please sync again."
+        }
+        "Monefit: E-Mail-Adresse und Passwort erforderlich." => {
+            "Monefit: Email address and password required."
+        }
+        "Monefit: Der Anmeldedienst antwortet nicht (HTTP {0}). Bitte später erneut versuchen." => {
+            "Monefit: The login service is not responding (HTTP {0}). Please try again later."
+        }
+        "Monefit: Die Anmeldung verlangt einen zweiten Faktor; das wird noch nicht unterstützt." => {
+            "Monefit: The login requires a second factor, which is not supported yet."
+        }
+        "Monefit: Anmeldung fehlgeschlagen. Bitte E-Mail-Adresse und Passwort prüfen." => {
+            "Monefit: Login failed. Please check email address and password."
+        }
+        "Monefit: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen." => {
+            "Monefit: Incomplete booking in the response. No data was taken over."
+        }
+        "Monefit: Die Umsatzliste wurde nicht vollständig geliefert. Bitte den Abruf erneut starten." => {
+            "Monefit: The list of bookings was not delivered completely. Please start the sync again."
+        }
+        "Monefit SmartSaver: Saldo und alle Umsätze des Sparkontos. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich. Eine Anmeldung mit zweitem Faktor wird noch nicht unterstützt." => {
+            "Monefit SmartSaver: balance and all bookings of the savings account. Unofficial: uses the web app's interface, changes are possible. A login with a second factor is not supported yet."
+        }
+        "Web-App (Direkt-Login)" => "Web app (direct login)",
         // ------------------------------------------------------------ connectors/kontist.rs
         "Kontist GraphQL-API (OAuth2 + Freigabe in der App)" => {
             "Kontist GraphQL API (OAuth2 + approval in the app)"

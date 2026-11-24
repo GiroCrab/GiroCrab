@@ -44,6 +44,7 @@ pub mod fordmoney;
 pub mod hanseatic;
 pub mod ibkr;
 pub mod kontist;
+pub mod monefit;
 pub mod opel;
 pub mod paypal;
 pub mod paypal_nvp;

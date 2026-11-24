@@ -113,6 +113,7 @@ CONNECTOR_DOCS = {
     "uberspace": ("Uberspace", "Uberspace"),
     "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),
     "kontist": ("Kontist", "Kontist"),
+    "monefit": ("Monefit SmartSaver", "Monefit"),
     "schwaebisch-hall": ("Schwäbisch Hall (Bausparen)", "Schwäbisch Hall"),
 }
 
