@@ -3,7 +3,8 @@
 // `Dialog` in main.slint (which owns the theme), so colours come in as properties. All state and
 // callbacks live in the `SettingsImportState` global; settings_import_ui.rs fills it and runs
 // every vault call, file dialog and file access on a worker thread.
-import { Button, ListView, LineEdit, ComboBox, CheckBox } from "std-widgets.slint";
+import { Button, ListView, LineEdit, ComboBox, CheckBox, ScrollView } from "std-widgets.slint";
+import { UpdatesSection } from "updates.slint";
 
 export struct SiRow { title: string, detail: string }
 
@@ -280,8 +281,10 @@ export component SettingsImportPanel inherits VerticalLayout {
     }
 
     // ---- 3: settings
-    if SettingsImportState.tab == 3: VerticalLayout {
+    // scrolls: editor + update result + notes can exceed the dialog's minimum height
+    if SettingsImportState.tab == 3: ScrollView { VerticalLayout {
         spacing: 6px;
+        padding-right: 10px;
         HorizontalLayout {
             spacing: 8px;
             Caption { text: "FinTS-Produkt"; ink: root.muted; }
@@ -310,7 +313,8 @@ export component SettingsImportPanel inherits VerticalLayout {
                 Button { text: "Speichern"; primary: true; enabled: !SettingsImportState.busy; clicked => { SettingsImportState.setting-save(); } }
             }
         }
-    }
+        UpdatesSection { }
+    } }
 
     // ---- 5: Mitteilungen
     if SettingsImportState.tab == 5: VerticalLayout {

@@ -878,9 +878,11 @@ fn load_settings(win: &MainWindow, v: &Arc<Vault>) {
             let list = v.list_settings().map_err(|e| e.to_string())?;
             let mode = v.fints_product_id_mode().map_err(|e| e.to_string())?;
             let source = v.fints_product_id_source().map_err(|e| e.to_string())?;
-            Ok((list, mode, source))
+            let prefs = update_prefs(&v);
+            Ok((list, mode, source, prefs))
         },
-        |win, (list, mode, source)| {
+        |win, (list, mode, source, prefs)| {
+            show_update_prefs(win, prefs);
             let gs = win.global::<SettingsImportState>();
             gs.set_settings(rows(view::setting_lines(&list)));
             gs.set_sel_setting(-1);
@@ -893,6 +895,7 @@ fn load_settings(win: &MainWindow, v: &Arc<Vault>) {
 }
 
 fn wire_settings(win: &MainWindow) {
+    wire_updates(win);
     let gs = win.global::<SettingsImportState>();
 
     let weak = win.as_weak();
@@ -1079,6 +1082,146 @@ pub fn refresh_news(win: &MainWindow, v: &Arc<Vault>) {
     gs.set_news_body(SharedString::new());
     gs.set_news_has_link(false);
     with_ui(|u| u.news = list);
+    auto_check_updates(win, v);
+}
+
+// ---- updates ---------------------------------------------------------------------------------------
+
+use crate::updates::{AUTO_KEY, CHANNEL_KEY, Channel, LAST_KEY};
+
+/// At most one automatic check per app session (and per day, via `updates.last_check`).
+static AUTO_CHECKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn update_prefs(v: &Vault) -> (Channel, bool, String) {
+    let get = |k: &str| v.get_setting(k.into()).ok().flatten();
+    (
+        crate::updates::channel_setting(get(CHANNEL_KEY).as_deref(), env!("CARGO_PKG_VERSION")),
+        crate::updates::auto_enabled(get(AUTO_KEY).as_deref()),
+        get(LAST_KEY).unwrap_or_default(),
+    )
+}
+
+fn show_update_prefs(win: &MainWindow, (channel, auto, last): (Channel, bool, String)) {
+    let us = win.global::<crate::UpdateState>();
+    us.set_channel(channel.index());
+    us.set_auto(auto);
+    us.set_last(if last.is_empty() {
+        "Noch nie".into()
+    } else {
+        last.into()
+    });
+}
+
+fn auto_check_updates(win: &MainWindow, v: &Arc<Vault>) {
+    let (channel, auto, last) = update_prefs(v);
+    show_update_prefs(win, (channel, auto, last.clone()));
+    if !auto || last == crate::daily::date_days_ago(0) || AUTO_CHECKED.swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+    run_update_check(win, Some(v.clone()), channel, true);
+}
+
+/// Network on a worker thread, never on the UI thread; `quiet` = automatic check, which
+/// reports only a found update.
+fn run_update_check(win: &MainWindow, v: Option<Arc<Vault>>, channel: Channel, quiet: bool) {
+    let us = win.global::<crate::UpdateState>();
+    if us.get_checking() {
+        return;
+    }
+    us.set_checking(true);
+    us.set_notes(SharedString::new());
+    us.set_has_download(false);
+    if !quiet {
+        us.set_result("Wird gesucht …".into());
+    }
+    let weak = win.as_weak();
+    std::thread::spawn(move || {
+        let current = env!("CARGO_PKG_VERSION");
+        let result = crate::updates::check(&crate::updates::CurlFetcher, current, channel);
+        let today = crate::daily::date_days_ago(0);
+        if result.is_ok()
+            && let Some(v) = &v
+        {
+            let _ = v.set_setting(LAST_KEY.into(), today.clone());
+        }
+        let _ = weak.upgrade_in_event_loop(move |win| {
+            let us = win.global::<crate::UpdateState>();
+            us.set_checking(false);
+            if result.is_ok() {
+                us.set_last(today.into());
+            }
+            match result {
+                Ok(Some(u)) => {
+                    us.set_result(
+                        format!(
+                            "GiroCrab {} ist verfügbar (installiert: {current}).",
+                            u.version
+                        )
+                        .into(),
+                    );
+                    us.set_notes(u.notes.into());
+                    us.set_has_download(!u.url.is_empty());
+                    us.set_download_url(u.url.into());
+                }
+                Ok(None) if !quiet => {
+                    us.set_result(format!("GiroCrab {current} ist aktuell.").into())
+                }
+                Err(e) if !quiet => us.set_result(e.into()),
+                _ => {}
+            }
+        });
+    });
+}
+
+fn save_update_setting(win: &MainWindow, key: &'static str, value: &'static str) {
+    let Some(v) = vault_now() else {
+        set_status(win, "Tresor ist gesperrt.");
+        return;
+    };
+    spawn(
+        win,
+        "Wird gespeichert …",
+        move || {
+            v.set_setting(key.into(), value.into())
+                .map_err(|e| e.to_string())
+        },
+        |win, ()| set_status(win, "Gespeichert."),
+    );
+}
+
+fn wire_updates(win: &MainWindow) {
+    let us = win.global::<crate::UpdateState>();
+
+    let weak = win.as_weak();
+    us.on_channel_changed(move |i| {
+        if let Some(win) = weak.upgrade() {
+            save_update_setting(&win, CHANNEL_KEY, Channel::from_index(i).key());
+        }
+    });
+
+    let weak = win.as_weak();
+    us.on_auto_changed(move |on| {
+        if let Some(win) = weak.upgrade() {
+            save_update_setting(&win, AUTO_KEY, if on { "1" } else { "0" });
+        }
+    });
+
+    let weak = win.as_weak();
+    us.on_check_now(move || {
+        let Some(win) = weak.upgrade() else { return };
+        let channel = Channel::from_index(win.global::<crate::UpdateState>().get_channel());
+        run_update_check(&win, vault_now(), channel, false);
+    });
+
+    let weak = win.as_weak();
+    us.on_open_download(move || {
+        let Some(win) = weak.upgrade() else { return };
+        let us = win.global::<crate::UpdateState>();
+        if let Err(e) = crate::updates::open_download(&us.get_download_url()) {
+            us.set_result(e.into());
+        }
+    });
 }
 
 fn dismiss_news(win: &MainWindow, v: &Arc<Vault>, id: &str) {
