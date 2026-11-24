@@ -108,8 +108,8 @@ fn security_issuer_logo(name: &str) -> Option<(&'static str, &'static str)> {
         ("wisdomtree ", "wisdomtree.eu", "#166534"),
         ("vaneck ", "vaneck.com", "#003B71"),
         ("ishares ", "ishares.com", "#1A1A1A"),
-        ("boerse stuttgart ", "boerse-stuttgart.de", "#005CA9"),
-        ("börse stuttgart ", "boerse-stuttgart.de", "#005CA9"),
+        ("boerse stuttgart ", "euwaxgold.de", "#005CA9"),
+        ("börse stuttgart ", "euwaxgold.de", "#005CA9"),
         ("xtrackers ", "dws.com", "#0B7FAB"),
         ("amundi ", "amundi.de", "#0F2B5B"),
         ("spdr ", "ssga.com", "#003B71"),
@@ -445,7 +445,11 @@ impl BookingFinisher {
                 t.merchant.sf_symbol = "chart.line.uptrend.xyaxis".into();
                 if let Some((domain, color)) = security_issuer_logo(name) {
                     t.merchant.domain = domain.into();
-                    t.merchant.domain_candidates = vec![domain.into()];
+                    t.merchant.domain_candidates = match domain {
+                        "euwaxgold.de" => vec![domain.into(), "euwax-gold.de".into(), "boerse-stuttgart.de".into()],
+                        "vaneck.com" => vec![domain.into(), "www.vaneck.com".into()],
+                        _ => vec![domain.into()],
+                    };
                     t.merchant.domain_source = "dictionary".into();
                     t.merchant.color_hex = color.into();
                     t.merchant_domain = Some(domain.into());
@@ -2705,7 +2709,7 @@ mod list_cache_tests {
         for (name, domain) in [
             ("Vanguard FTSE Global All-Cap", "de.vanguard"),
             ("WisdomTree Global High Dividend", "wisdomtree.eu"),
-            ("Boerse Stuttgart EUWAX Gold II", "boerse-stuttgart.de"),
+            ("Boerse Stuttgart EUWAX Gold II", "euwaxgold.de"),
             ("VanEck Morningstar Developed Markets", "vaneck.com"),
             ("iShares Edge MSCI World", "ishares.com"),
         ] {
