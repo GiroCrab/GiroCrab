@@ -1180,7 +1180,9 @@ export component MainWindow inherits Window {
     callback category-move(int);
     callback shortcut(string, bool) -> bool;
     in property <int> search-focus-tick: 0;
-    public function refocus() { fs.focus(); }
+    // An open palette keeps the focus (e.g. a sync finishing calls this); `cmd-close` clears
+    // `cmd-open` before it refocuses, so closing still returns the focus to `fs`.
+    public function refocus() { if (!root.cmd-open) { fs.focus(); } }
 
     // Command palette (Ctrl+K); Mac: CommandPalette.swift. Rows are filtered in Rust on plain text.
     in property <bool> cmd-open: false;

@@ -101,31 +101,44 @@ thread_local! {
 static SESSION: AtomicU64 = AtomicU64::new(0);
 
 /// Adds the account entries loaded on a worker to the open palette, if it is still the
-/// session that asked for them. Keeps the typed query.
+/// session that asked for them. Keeps the typed query and the entry selected meanwhile
+/// (read here on the UI thread, so a newer arrow-key choice is never overwritten).
 fn apply_accounts(win: &MainWindow, session: u64, list: Vec<(i64, String, String)>) {
     if SESSION.load(Ordering::SeqCst) != session || !win.get_cmd_open() {
         return;
     }
-    STATE.with_borrow_mut(|s| s.items = items(list));
-    show(win, &win.get_cmd_query());
+    let keep = STATE.with_borrow_mut(|s| {
+        let keep = s.shown.get(s.index).map(|&i| s.items[i].action);
+        s.items = items(list);
+        keep
+    });
+    show(win, &win.get_cmd_query(), keep);
 }
 
-fn show(win: &MainWindow, query: &str) {
+/// Row of `keep` in the refreshed list; 0 when nothing was selected or the entry is gone.
+fn reselect(items: &[Item], shown: &[usize], keep: Option<Action>) -> usize {
+    keep.and_then(|a| shown.iter().position(|&i| items[i].action == a))
+        .unwrap_or(0)
+}
+
+/// Filters by `query` and selects `keep` if it is still listed (a new query passes `None`).
+fn show(win: &MainWindow, query: &str, keep: Option<Action>) {
     let (mut titles, mut subtitles, mut personal) = (Vec::new(), Vec::new(), Vec::new());
-    STATE.with_borrow_mut(|s| {
+    let index = STATE.with_borrow_mut(|s| {
         s.shown = filter(&s.items, query);
-        s.index = 0;
+        s.index = reselect(&s.items, &s.shown, keep);
         for &i in &s.shown {
             let it = &s.items[i];
             titles.push(SharedString::from(it.title.as_str()));
             subtitles.push(SharedString::from(it.subtitle.as_str()));
             personal.push(it.personal);
         }
+        s.index
     });
     win.set_cmd_titles(ModelRc::new(VecModel::from(titles)));
     win.set_cmd_subtitles(ModelRc::new(VecModel::from(subtitles)));
     win.set_cmd_personal(ModelRc::new(VecModel::from(personal)));
-    win.set_cmd_index(0);
+    win.set_cmd_index(index as i32);
 }
 
 /// Closes the palette and forgets entries and query (also on lock).
@@ -134,7 +147,7 @@ fn close(win: &MainWindow) {
     STATE.with_borrow_mut(|s| *s = State::default());
     win.set_cmd_open(false);
     win.set_cmd_query(SharedString::new());
-    show(win, "");
+    show(win, "", None);
     win.invoke_refocus();
 }
 
@@ -152,7 +165,7 @@ pub(super) fn wire(win: &MainWindow, vault: VaultSlot) {
             }
         });
         win.set_cmd_query(SharedString::new());
-        show(&win, "");
+        show(&win, "", None);
         win.set_cmd_open(true);
         // `try_lock` only on the slot: never blocks the UI thread.
         let handle = vault.try_lock().ok().and_then(|g| g.as_ref().cloned());
@@ -171,7 +184,7 @@ pub(super) fn wire(win: &MainWindow, vault: VaultSlot) {
     let weak = win.as_weak();
     win.on_cmd_search(move |query| {
         if let Some(win) = weak.upgrade() {
-            show(&win, &query);
+            show(&win, &query, None);
         }
     });
     let weak = win.as_weak();
@@ -322,5 +335,25 @@ mod tests {
         let full = items(sample());
         assert_eq!(full.len(), COMMANDS.len() + 2);
         assert_eq!(full[COMMANDS.len()].action, Action::Account(1));
+    }
+
+    #[test]
+    fn late_accounts_keep_the_selected_entry() {
+        let pending = items(Vec::new());
+        let shown = filter(&pending, "");
+        // arrow keys moved to "Neue Überweisung" before the accounts arrived
+        let keep = Some(pending[shown[3]].action);
+        assert_eq!(keep, Some(Action::Shortcut('n')));
+        let full = items(sample());
+        let now = filter(&full, "");
+        assert_eq!(
+            full[now[reselect(&full, &now, keep)]].action,
+            Action::Shortcut('n')
+        );
+        // entry no longer listed, or nothing selected: back to the first row
+        let narrowed = filter(&full, "giro");
+        assert_eq!(reselect(&full, &narrowed, keep), 0);
+        assert_eq!(reselect(&full, &now, None), 0);
+        assert_eq!(reselect(&full, &[], keep), 0);
     }
 }
