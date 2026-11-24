@@ -600,6 +600,7 @@ pub(crate) fn merge_bookings(
             .filter(|(id, _)| *id != winner)
             .collect();
         losers.sort_unstable_by(|(a, ap), (b, bp)| (&keys[a], ap).cmp(&(&keys[b], bp)));
+        let mut repaired_ids: Vec<i64> = Vec::new();
         for (id, position) in losers {
             let fields = local.get_mut(&id).unwrap();
             // seeded by the booking key and the part's own colliding UUID (not its position): the
@@ -616,7 +617,12 @@ pub(crate) fn merge_bookings(
                     reserved.insert(uuid.clone()).then_some(uuid)
                 })
                 .unwrap();
-            pending_splits.insert(id, fields.splits.clone());
+            if !repaired_ids.contains(&id) {
+                repaired_ids.push(id);
+            }
+        }
+        for id in repaired_ids {
+            pending_splits.insert(id, local[&id].splits.clone());
         }
     }
 

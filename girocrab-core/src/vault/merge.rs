@@ -70,6 +70,14 @@ impl Vault {
         crate::mandates::merge_ack(&tx, &acc_map)?;
         crate::recipients::merge_attached(&tx)?;
         crate::merchants::custom::merge_attached(&tx)?;
+        let refund_changes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM main.refund_links WHERE changed_ms > 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        st.refund_links_changed = u64::try_from(refund_changes.max(0)).unwrap_or(0);
         tx.commit()?;
         Ok(st)
     }
@@ -90,6 +98,8 @@ pub struct MergeStats {
     /// Rows this merge changed in the vault (part of [`Vault::change_count`]),
     /// so the app can tell its own changes from merged ones.
     pub changes: u64,
+    /// Refund-link rows written or updated during this merge.
+    pub refund_links_changed: u64,
 }
 
 #[uniffi::export]

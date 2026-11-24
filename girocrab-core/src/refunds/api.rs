@@ -106,7 +106,7 @@ impl Vault {
 
     /// The returned token identifies this exact unlink, not merely the link's creation.
     /// `expected_changed_ms`: the `RefundLink::changed_ms` the caller showed; when the stored
-    /// link changed since (a peer re-created it), nothing is removed (compare-and-set).
+    /// link changed or was replaced since (even with matching `changed_ms`), nothing is removed.
     pub fn unlink_refund(
         &self,
         refund_id: i64,
@@ -119,7 +119,9 @@ impl Vault {
         let tx = db.unchecked_transaction()?;
         let key = key(refund_id, refund_part, original_id, original_part);
         let mut row = super::store::live_row(&tx, &key)?.ok_or_else(invalid)?;
-        if expected_changed_ms.is_some_and(|ms| ms != row.changed_ms) {
+        if let Some(ms) = expected_changed_ms
+            && (ms != row.changed_ms || row.created_ms <= 0)
+        {
             return Err(invalid());
         }
         let stamp = next_stamp(&tx)?;

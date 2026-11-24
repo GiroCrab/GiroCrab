@@ -171,10 +171,13 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                 if (row.deleted_ms.is_none() || !row.moved) && old.0 != target.0 {
                     match survivor_part(conn, "other", old, target.0, true)? {
                         Some(part) => target.1 = part,
-                        // a whole booking with another amount: the link stays on the folded
-                        // twin booking (same vault, deleted with it) and is inactive
+                        // a whole booking with another amount: a live link stays on the folded
+                        // twin booking, while an explicit unlink moves to the survivor booking
                         None if old.1.is_empty() && row.deleted_ms.is_none() => {
                             *target = old.clone()
+                        }
+                        None if row.deleted_ms.is_some() && !row.moved => {
+                            target.1.clear();
                         }
                         None => {}
                     }
@@ -298,7 +301,7 @@ fn retire_part_key(conn: &Connection, row: &mut Row, previous: Key) -> CoreResul
 
 pub(crate) fn move_booking(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
     let affected: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL AND (refund_id=?1 OR original_id=?1))",
+        "SELECT EXISTS(SELECT 1 FROM refund_links WHERE (deleted_ms IS NULL OR NOT moved) AND (refund_id=?1 OR original_id=?1))",
         [from], |r| r.get(0),
     )?;
     if !affected {

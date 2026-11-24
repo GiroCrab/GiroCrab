@@ -168,6 +168,9 @@ fn candidates(
             continue;
         }
         let merchant = &index.merchants[&b.id];
+        if reason.is_some() && !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
+            continue;
+        }
         let tokens = if by_reference {
             reference_tokens(&format!("{} {}", b.purpose, b.reference))
         } else {
@@ -178,16 +181,17 @@ fn candidates(
                 continue;
             }
             if let Some(reason) = reason {
-                if !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
-                    continue;
-                }
                 let matches = match reason {
                     RefundMatch::SameAmount => other_amount.checked_abs() == amount.checked_abs(),
                     RefundMatch::SameMerchant => {
-                        !book.counterparty.trim().is_empty()
-                            && book.counterparty.trim().to_lowercase()
-                                == b.counterparty.trim().to_lowercase()
-                            || !merchant.is_empty() && merchant == &index.merchants[&own.0]
+                        let own_merchant = index.merchants.get(&own.0).map(String::as_str).unwrap_or("");
+                        if !merchant.is_empty() && !own_merchant.is_empty() {
+                            merchant == own_merchant
+                        } else {
+                            !book.counterparty.trim().is_empty()
+                                && book.counterparty.trim().to_lowercase()
+                                    == b.counterparty.trim().to_lowercase()
+                        }
                     }
                     RefundMatch::SameReference => !own_tokens.is_disjoint(&tokens),
                 };
@@ -341,3 +345,4 @@ mod date_tests {
         assert!(reference_tokens("Ref 2026-04/17").contains("20260417"));
     }
 }
+
