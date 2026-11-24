@@ -18,6 +18,7 @@ use crate::i18n::trf;
 
 pub mod advanzia;
 pub mod amazon_documents;
+pub mod axashareplan;
 pub mod bank_directory;
 pub mod bhw;
 pub mod bitcoin_core;

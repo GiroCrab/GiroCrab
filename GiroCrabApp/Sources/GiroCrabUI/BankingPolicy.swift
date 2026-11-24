@@ -171,6 +171,7 @@ public struct BankingGate: Equatable, Sendable {
         case "equateplus": base = "EquatePlus"
         case "quirion": base = "quirion"
         case "sharinbox": base = "Sharinbox (Société Générale)"
+        case "axashareplan": base = "AXA Mitarbeiter Shareplan"
         case "easybank": base = "easybank"
         case "fin4u": base = "Alte Leipziger"
         case "volkswagenbank": base = "Volkswagen Bank"

@@ -225,6 +225,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verifiziert |
 | Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Test gesucht |
+| AXA Mitarbeiter Shareplan | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
 | BHW Bausparkasse | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
@@ -236,9 +237,9 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
-| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
@@ -494,6 +495,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verified |
 | Amazon orders | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Testing wanted |
+| AXA Mitarbeiter Shareplan | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
 | BHW Bausparkasse | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
@@ -505,9 +507,9 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
-| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verified |

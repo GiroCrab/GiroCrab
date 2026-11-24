@@ -42,6 +42,8 @@ pub enum ConnectorKind {
     Quirion,
     /// Sharinbox (Société Générale employee share plans), authenticated inside the embedded browser.
     Sharinbox,
+    /// AXA employee share plan portal, authenticated inside the embedded browser.
+    AxaShareplan,
     /// easybank (formerly Barclays Deutschland) credit cards and statements, see #209.
     Easybank,
     /// Alte Leipziger (Bauspar) via the fin4u customer portal API
@@ -100,6 +102,7 @@ impl ConnectorKind {
             ConnectorKind::Ibkr => "ibkr",
             ConnectorKind::Quirion => "quirion",
             ConnectorKind::Sharinbox => "sharinbox",
+            ConnectorKind::AxaShareplan => "axashareplan",
             ConnectorKind::Easybank => "easybank",
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
@@ -166,6 +169,7 @@ impl ConnectorKind {
             ConnectorKind::Ibkr,
             ConnectorKind::Quirion,
             ConnectorKind::Sharinbox,
+            ConnectorKind::AxaShareplan,
             ConnectorKind::Easybank,
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,

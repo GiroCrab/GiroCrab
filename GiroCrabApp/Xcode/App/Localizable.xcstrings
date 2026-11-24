@@ -2897,6 +2897,28 @@
         }
       }
     },
+    "AXA Shareplan: %u Depot aktualisiert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AXA Shareplan: %u depot updated."
+          }
+        }
+      }
+    },
+    "AXA Shareplan: Die Portalantwort konnte nicht gelesen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "AXA Shareplan: The portal response could not be read."
+          }
+        }
+      }
+    },
     "Ab" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22475,6 +22497,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sign in to Schwäbisch Hall’s “Mein Konto”."
+          }
+        }
+      }
+    },
+    "Melden Sie sich beim AXA Mitarbeiter Shareplan an (Zugangsdaten und SMS-Code)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in to the AXA employee share plan (credentials and SMS code)."
           }
         }
       }

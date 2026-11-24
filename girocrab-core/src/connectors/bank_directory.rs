@@ -232,6 +232,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "sharinbox societe generale société générale sgmarkets mitarbeiteraktien employee shares aktien arbeitgeber",
         ),
         (
+            ConnectorKind::AxaShareplan,
+            "AXA Mitarbeiter Shareplan",
+            "axa shareplan mitarbeiter mitarbeiteraktien peeg employee savings plan",
+        ),
+        (
             ConnectorKind::SchwaebischHall,
             "Schwäbisch Hall",
             "schwaebisch bsh bausparvertrag bauspar",

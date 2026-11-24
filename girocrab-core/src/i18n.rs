@@ -434,6 +434,19 @@ fn english(de: &str) -> Option<&'static str> {
             "Sharinbox: document {0} rejected, field {1} invalid."
         }
         "Mitarbeiteraktien" => "Employee shares",
+        "Mitarbeiter Shareplan" => "Employee share plan",
+        "AXA Shareplan: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "AXA Shareplan: incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte beim AXA Mitarbeiter Shareplan im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to the AXA employee share plan in the browser window and fetch your data."
+        }
+        "Bitte beim AXA Mitarbeiter Shareplan im Browserfenster abrufen." => {
+            "Please fetch your data in the AXA employee share plan browser window."
+        }
+        "AXA Mitarbeiter Shareplan: Anteile des Mitarbeiterbeteiligungsplans (PEEG) mit Stückzahl, Einstandspreis und Wert, eine Position je Plan. Anmeldung im Browserfenster mit SMS-Code. Interne Portal-Schnittstelle; Änderungen sind möglich." => {
+            "AXA employee share plan: the funds of the employee savings plan (PEEG) with quantity, average purchase price and value, one position per fund. Sign in in the browser window with an SMS code. Internal portal interface; subject to change."
+        }
         "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
             "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }
