@@ -1019,6 +1019,74 @@ fn v38_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
     assert_eq!(flow_of(plain_debit), FlowKind::Consumption);
 }
 
+/// `Gehalt` two levels below `Umbuchungen` (through a live folder) gets no role of its own on
+/// the upgrade and inherits `Neutral`, so its bookings stay `Transfer` as in v38. A deleted
+/// folder in between cuts the ancestry instead (`category_roles_backfill_from_builtin_role`).
+#[test]
+fn v38_gehalt_below_live_folder_under_transfers_inherits_neutral() {
+    use crate::merchants::FlowKind;
+
+    let mig_dir = crate::test_support::TempDir::new("roles-v38-gehalt-folder");
+    let src =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v38.girocrab");
+    let dst = mig_dir.join("vault-v38-gehalt-folder.girocrab");
+    std::fs::copy(&src, &dst).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&dst).unwrap();
+        let hex_key = "47".repeat(32);
+        conn.pragma_update(None, "key", format!("x'{hex_key}'"))
+            .unwrap();
+        let umb_id: i64 = conn
+            .query_row(
+                "SELECT id FROM categories WHERE builtin_role = 'Umbuchungen'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order)
+             VALUES (?1, 'Zwischenordner', 'folder', '#445566', 99)",
+            [umb_id],
+        )
+        .unwrap();
+        let folder = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE categories SET parent_id = ?1 WHERE builtin_role = 'Gehalt'",
+            [folder],
+        )
+        .unwrap();
+    }
+
+    let v = Vault::open(dst.to_string_lossy().into(), vec![0x47; 32]).unwrap();
+    let cats = v.list_categories(None, None).unwrap();
+    let gehalt = cats.iter().find(|c| c.name == "Gehalt").unwrap();
+    assert_eq!(gehalt.role, None);
+    assert_eq!(gehalt.effective_role, CategoryRole::Neutral);
+
+    let txs = v
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions;
+    let debit = txs.iter().find(|t| t.amount_cents < 0).unwrap().id;
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET counterparty='Max Mustermann', purpose='Test', booking_text='Überweisung', counterparty_iban='', salary_flag=0 WHERE id=?1",
+            [debit],
+        )
+        .unwrap();
+    v.set_transaction_category(debit, Some(gehalt.id)).unwrap();
+    let flow = v
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions
+        .into_iter()
+        .find(|t| t.id == debit)
+        .unwrap()
+        .flow;
+    assert_eq!(flow, FlowKind::Transfer);
+}
+
 /// Device A merges duplicate Y into X (`merged_into = X`) before seeing device B's
 /// newer role edit on Y: syncing must forward Y's newer role to survivor X, while
 /// ordinary deleted categories (`merged_into = NULL`) never alter live categories.

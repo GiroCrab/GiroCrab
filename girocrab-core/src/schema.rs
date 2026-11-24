@@ -62,7 +62,8 @@
 //!   in `accounts.archive_unknown` until an import or the user settles their state.
 //! - 39: explicit category financial roles (#931): `categories.role` (NULL = inherit from
 //!   parent, root default `consumption`) and its sync stamp `categories.role_ms`, seeded
-//!   from `categories.builtin_role` with stamp 0 so user edits win on sync.
+//!   from `categories.builtin_role` with stamp 0 so user edits win on sync, only where
+//!   `builtin_role` decided the classification before ([`category_roles`]).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -1259,7 +1260,9 @@ mod tests {
                (14, 9, 'Umbuchungen (verschachtelt)', 'Umbuchungen'),
                (15, 1, 'Gehalt (unter Sparen)', 'Gehalt'),
                (16, 3, 'Gehalt (unter Kredite)', 'Gehalt'),
-               (19, 9, 'Gehalt (unter eigener Wurzel)', 'Gehalt');
+               (19, 9, 'Gehalt (unter eigener Wurzel)', 'Gehalt'),
+               (20, 4, 'Lebender Zwischenordner', NULL),
+               (21, 20, 'Gehalt (unter lebendem Zwischenordner)', 'Gehalt');
              INSERT INTO categories(id, parent_id, name, builtin_role, deleted_ms) VALUES
                (17, 4, 'Gelöschte Zwischenkategorie', NULL, 1);
              INSERT INTO categories(id, parent_id, name, builtin_role) VALUES
@@ -1301,6 +1304,10 @@ mod tests {
         // `Umbuchungen` above it neither counts for v38 nor for the role resolver.
         assert_eq!(read(18), (Some("salary".into()), 0));
         assert_eq!(read(19), (Some("salary".into()), 0));
+        // The same depth through a live intermediate keeps the ancestry: no own role,
+        // `Gehalt` inherits `Neutral` from `Umbuchungen` (role_tests.rs checks the flow).
+        assert_eq!(read(20), (None, 0));
+        assert_eq!(read(21), (None, 0));
         // Idempotent: re-running never overwrites an explicit role or an explicit
         // reset to inherit (`role = NULL, role_ms > 0`).
         conn.execute(

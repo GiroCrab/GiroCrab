@@ -43,7 +43,8 @@ and `migrate` runs the missing ones in a single transaction.
 | 36 | `accounts.bank_label` / `bank_label_ms`: per-account bank label (#1467) |
 | 37 | one sidebar section per account kind (#1003): accounts of the old section "Giro & Tagesgeld" move by `accounts.kind` |
 | 38 | repair (#998): accounts an import archived because of a cancelled refresh are active again, marked in `accounts.archive_unknown` |
-| 39+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 39 | `categories.role` / `role_ms`: financial role of a category, inherited down the tree (#931); seeded with stamp 0 only where `builtin_role` decided the classification before |
+| 40+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 
