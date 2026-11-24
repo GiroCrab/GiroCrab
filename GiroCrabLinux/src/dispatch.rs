@@ -478,6 +478,10 @@ fn call(method: &str, a: &Value) -> R {
         "bic_for_iban" => ok(girocrab_core::connectors::fints_directory::bic_for_iban(
             arg(a, "iban")?,
         )),
+        // the recipient's bank under the IBAN field and in the recipient lists (#1584)
+        "bank_name_for_iban" => {
+            ok(girocrab_core::connectors::fints_directory::bank_name_for_iban(arg(a, "iban")?))
+        }
         "parse_amount_to_cents" => {
             ok(girocrab_core::parse_amount_to_cents(arg(a, "text")?).map_err(|e| e.to_string())?)
         }
@@ -2680,6 +2684,20 @@ mod tests {
         assert_eq!(
             call_ok("bic_for_iban", json!({ "iban": "DE89370400440532013000" })),
             json!("COBADEFF")
+        );
+        assert_eq!(
+            call_ok(
+                "bank_name_for_iban",
+                json!({ "iban": "DE89370400440532013000" })
+            ),
+            json!("Commerzbank")
+        );
+        assert_eq!(
+            call_ok(
+                "bank_name_for_iban",
+                json!({ "iban": "AT611904300234573201" })
+            ),
+            Value::Null
         );
         // Kontoauswahl (#346): a second login reaching accounts the first one delivers
         let second = call("seed_demo_account_selection", json!({}));
