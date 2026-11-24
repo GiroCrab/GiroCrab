@@ -27,7 +27,7 @@ lesend — und zeigt acht Compose-Oberflächen (sieben Screens plus Buchungsdeta
   Snapshot und überleben keinen harten Lock. Dazu 3.2b (Regeln, Daueraufträge, Mandate, Kredite,
   Ankündigungen), 3.3 Cursor-Paging, 3.4 Analysesummen und das Lesen des Snapshots außerhalb des
   Main-Threads.
-- **Alpha.** Debug- und Release-APK als CI-Artefakt, 53 instrumentierte Tests im Job
+- **Alpha.** Debug- und Release-APK als CI-Artefakt, 58 instrumentierte Tests im Job
   `android-instrumented`. Das Alpha-Label fällt nach Stufe 2.
 
 ## Ist-Stand im Einzelnen
