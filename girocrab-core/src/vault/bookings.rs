@@ -1086,7 +1086,7 @@ impl Vault {
         let finisher = Arc::new(BookingFinisher::load(
             db,
             self.merchant_rules(db)?,
-            self.refund_projection(db)?,
+            self.refund_markers(db)?,
         )?);
         self.list_cache
             .keep(db, stamp, |s| s.finisher = Some(finisher.clone()));

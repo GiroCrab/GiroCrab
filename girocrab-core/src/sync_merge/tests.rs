@@ -4644,6 +4644,11 @@ fn twin_fold_remaps_provenance_even_when_current_link_endpoints_are_on_the_bank(
         &v,
         &format!("UPDATE transactions SET amount_cents=100 WHERE id={refund}"),
     );
+    // a whole-booking link moves only to a booking of the same amount
+    exec(
+        &v,
+        &format!("UPDATE transactions SET amount_cents=-100 WHERE id={target}"),
+    );
     v.link_refund(refund, String::new(), source, String::new())
         .unwrap();
     crate::importers::portal_import::hand_over(&v.db().unwrap(), source, target).unwrap();
