@@ -93,7 +93,9 @@ fn security_display_name(purpose: &str) -> Option<&str> {
     if name.is_empty()
         || !name.chars().any(char::is_alphabetic)
         || !quantity.chars().any(|c| c.is_ascii_digit())
-        || !quantity.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+        || !quantity
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
     {
         return None;
     }
@@ -433,8 +435,7 @@ impl BookingFinisher {
         }
         if t.flow == FlowKind::Investment
             && self.merchants.enabled()
-            && ((t.amount_cents < 0
-                && is_imported_security_purchase_category(&t.category_path))
+            && ((t.amount_cents < 0 && is_imported_security_purchase_category(&t.category_path))
                 || (t.amount_cents > 0 && is_security_sale_category(&t.category_path)))
             && let Some(name) = security_display_name(&t.purpose)
         {
@@ -446,7 +447,11 @@ impl BookingFinisher {
                 if let Some((domain, color)) = security_issuer_logo(name) {
                     t.merchant.domain = domain.into();
                     t.merchant.domain_candidates = match domain {
-                        "euwaxgold.de" => vec![domain.into(), "euwax-gold.de".into(), "boerse-stuttgart.de".into()],
+                        "euwaxgold.de" => vec![
+                            domain.into(),
+                            "euwax-gold.de".into(),
+                            "boerse-stuttgart.de".into(),
+                        ],
                         "vaneck.com" => vec![domain.into(), "www.vaneck.com".into()],
                         _ => vec![domain.into()],
                     };
@@ -2721,10 +2726,22 @@ mod list_cache_tests {
     #[test]
     fn security_display_name_preserves_full_fund_name() {
         for (purpose, expected) in [
-            ("Vanguard FTSE All-World High Dividend Yield (Dist) 0.931214 Stk", Some("Vanguard FTSE All-World High Dividend Yield (Dist)")),
-            ("WisdomTree Global High Dividend (Dist) 3.289473 Stk", Some("WisdomTree Global High Dividend (Dist)")),
-            ("Boerse Stuttgart EUWAX Gold II 0.919278 Stk", Some("Boerse Stuttgart EUWAX Gold II")),
-            ("VanEck Morningstar Developed Markets Dividend Leaders (Dist) 1.36215 Stk", Some("VanEck Morningstar Developed Markets Dividend Leaders (Dist)")),
+            (
+                "Vanguard FTSE All-World High Dividend Yield (Dist) 0.931214 Stk",
+                Some("Vanguard FTSE All-World High Dividend Yield (Dist)"),
+            ),
+            (
+                "WisdomTree Global High Dividend (Dist) 3.289473 Stk",
+                Some("WisdomTree Global High Dividend (Dist)"),
+            ),
+            (
+                "Boerse Stuttgart EUWAX Gold II 0.919278 Stk",
+                Some("Boerse Stuttgart EUWAX Gold II"),
+            ),
+            (
+                "VanEck Morningstar Developed Markets Dividend Leaders (Dist) 1.36215 Stk",
+                Some("VanEck Morningstar Developed Markets Dividend Leaders (Dist)"),
+            ),
             ("ETF 1,25 Stk.", Some("ETF")),
             ("Kauf ohne Stückzahl", None),
             ("ETF abc Stk", None),
