@@ -70,10 +70,14 @@ scripts/verify-release-integrity.sh --state build/integrity-state.json
 
 Mit `--state` vergleicht das Skript mit früheren Läufen und meldet eine Sicherheitssperre mit kleinerer `sequence` sowie einen
 verschwundenen Update-Feed. Das gelingt nur, wenn beides schon einmal gefunden und gespeichert wurde, und Schreibfehler meldet
-es nicht. Prüfe deshalb nach jedem Lauf zweierlei: Die Ausgabe enthält `ok: appcast.xml signature` und
-`ok: banking-policy.json sequence …` (ohne gültigen öffentlichen Schlüssel überspringt das Skript die jeweilige Prüfung nur mit
-einem Hinweis). In der Datei steht `policySequence` mit der ausgegebenen Nummer und `appcastSeen` als `true`. Bewahre die Datei
-auf (`build/` wird beim Aufräumen leicht gelöscht).
+es nicht. Ein Lauf ist nur vollständig, wenn
+
+- die Ausgabe mit `==> all checks passed` endet (Exit-Code 0; sonst stehen die Abweichungen als `FINDING` in der Ausgabe),
+- sie `ok: appcast.xml signature` und `ok: banking-policy.json sequence …` enthält (ohne gültigen öffentlichen Schlüssel
+  überspringt das Skript die jeweilige Prüfung nur mit einem Hinweis) und
+- in der Datei `policySequence` mit der ausgegebenen Nummer und `appcastSeen` als `true` steht.
+
+Bewahre die Datei auf (`build/` wird beim Aufräumen leicht gelöscht).
 
 Das heruntergeladene Disk-Image auf dem Mac:
 
