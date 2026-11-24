@@ -59,8 +59,8 @@ struct Position {
     value: i64,
 }
 
-/// Share rights (claims to shares that are allotted later): only the number is shown by the
-/// portal, so the position carries no price and no value. `None` = the page lists none.
+/// Share rights (claims to shares that are allotted later): the portal shows only their number.
+/// `None` = the page lists none.
 fn rights(depot: &Value) -> CoreResult<Option<f64>> {
     let rights = &depot["rights"];
     if rights.is_null() {
@@ -175,7 +175,14 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
     let depot = &root["depot"];
     let positions = positions(depot)?;
     let rights = rights(depot)?;
-    let total: i64 = positions.iter().map(|p| p.value).sum();
+    // The portal gives rights no price. With exactly one security on the page they are valued at
+    // its price (one right = one share); with several the right cannot be assigned, so no value.
+    let right_price = match positions.as_slice() {
+        [only] => only.price,
+        _ => 0.0,
+    };
+    let right_value = rights.map_or(0, |q| cents_of(q * right_price));
+    let total: i64 = positions.iter().map(|p| p.value).sum::<i64>() + right_value;
     let mut result = FetchResult {
         bank_name: Some("Sharinbox".into()),
         ..Default::default()
@@ -200,7 +207,7 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
         });
     }
     if let Some(quantity) = rights {
-        // own position, no ISIN, price or value yet: the note is part of the name
+        // own position without ISIN: the note is part of the name
         result.holdings.push(RemoteHolding {
             classification: Default::default(),
             direct_crypto: false,
@@ -208,6 +215,8 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
             holding: Holding {
                 name: tr("Aktienrechte (noch nicht zugeteilt)").into(),
                 quantity,
+                current_price_cents: cents_of(right_price),
+                value_cents: right_value,
                 ..Default::default()
             },
         });
@@ -432,19 +441,26 @@ mod tests {
     }
 
     #[test]
-    fn share_rights_become_their_own_position_without_value() {
+    fn share_rights_become_their_own_position_valued_at_the_share_price() {
         let mut f = fixture();
         f["depot"]["rights"] = json!({"quantity": 2085.0});
         let r = snapshot(&f.to_string()).unwrap();
         assert_eq!(r.holdings.len(), 2);
         let h = &r.holdings[1].holding;
-        assert_eq!(
-            (h.isin.as_str(), h.quantity, h.value_cents),
-            ("", 2085.0, 0)
-        );
+        // one security (45.14 EUR): the rights are valued at its price
+        assert_eq!((h.isin.as_str(), h.quantity), ("", 2085.0));
+        assert_eq!((h.current_price_cents, h.value_cents), (4514, 9_411_690));
         assert!(h.name.contains("noch nicht zugeteilt"));
-        // the total of the account stays the value of the shares held
-        assert_eq!(r.accounts[0].balance_cents, 451_400);
+        assert_eq!(r.accounts[0].balance_cents, 451_400 + 9_411_690);
+        // several securities: no way to tell which one, so no value
+        f["depot"]["items"] = json!([
+            item("FR0000120271", 100.0, 45.14, 4514.0),
+            item("FR0000120628", 10.0, 30.0, 300.0)
+        ]);
+        let r = snapshot(&f.to_string()).unwrap();
+        assert_eq!(r.holdings[2].holding.value_cents, 0);
+        assert_eq!(r.accounts[0].balance_cents, 451_400 + 30_000);
+        f["depot"]["items"] = json!([item("FR0000120271", 100.0, 45.14, 4514.0)]);
         // zero rights, no entry, negative or missing quantity
         f["depot"]["rights"] = json!({"quantity": 0.0});
         assert_eq!(snapshot(&f.to_string()).unwrap().holdings.len(), 1);
@@ -452,9 +468,10 @@ mod tests {
         assert!(snapshot(&f.to_string()).is_err());
         f["depot"]["rights"] = json!({});
         assert!(snapshot(&f.to_string()).is_err());
-        // rights alone are a valid depot
+        // rights alone are a valid depot, without a price they have no value
         f["depot"] = json!({"items": [], "rights": {"quantity": 5.0}});
-        assert_eq!(snapshot(&f.to_string()).unwrap().holdings.len(), 1);
+        let r = snapshot(&f.to_string()).unwrap();
+        assert_eq!((r.holdings.len(), r.accounts[0].balance_cents), (1, 0));
     }
 
     #[test]
