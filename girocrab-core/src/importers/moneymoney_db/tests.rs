@@ -3007,6 +3007,55 @@ fn imports_category_rules() {
     assert_eq!(v.list_rules().unwrap().len(), rules.len());
 }
 
+#[test]
+fn uppercases_lowercase_operators_of_category_rules() {
+    let up = uppercase_operators;
+    assert_eq!(
+        up("Stadtwerke or Rheinenergie or Eprimo or Stadtkasse"),
+        "Stadtwerke OR Rheinenergie OR Eprimo OR Stadtkasse"
+    );
+    assert_eq!(
+        up("(Lidl and not Aldi) or Rewe"),
+        "(Lidl AND NOT Aldi) OR Rewe"
+    );
+    assert_eq!(up("not Aldi"), "NOT Aldi");
+    // words that merely contain an operator, phrases, regexes and field values stay
+    assert_eq!(up("Order orange nothing"), "Order orange nothing");
+    assert_eq!(
+        up("\"Lidl or Aldi\" or /a or b/"),
+        "\"Lidl or Aldi\" OR /a or b/"
+    );
+    assert_eq!(up("/a\\/ or b/ or x"), "/a\\/ or b/ OR x");
+    assert_eq!(
+        up("purpose:or or name:\"x and y\""),
+        "purpose:or OR name:\"x and y\""
+    );
+    assert_eq!(
+        up("name:/a or b/ and amount<0"),
+        "name:/a or b/ AND amount<0"
+    );
+    assert_eq!(up("https://a.de or x"), "https://a.de OR x");
+    assert_eq!(up("name:REWE OR name:EDEKA"), "name:REWE OR name:EDEKA");
+}
+
+#[test]
+fn imports_lowercase_operators_as_working_rule() {
+    let v = vault();
+    let path = fake_db_with(
+        false,
+        "UPDATE categories SET rules = 'Stadtwerke or Rheinenergie' WHERE rowid = 2;",
+    );
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    v.import_moneymoney_database(path, PW.into(), options_from(&p, false))
+        .unwrap();
+    let rules = v.list_rules().unwrap();
+    let rule = rules.iter().find(|r| r.name == "Supermarkt").unwrap();
+    assert_eq!(rule.pattern, "Stadtwerke OR Rheinenergie");
+    assert!(rule.enabled);
+}
+
 /// Records every progress report; cancels after `cancel_after` of them.
 struct Recorder {
     seen: std::sync::Mutex<Vec<MoneyMoneyDbImportProgress>>,
