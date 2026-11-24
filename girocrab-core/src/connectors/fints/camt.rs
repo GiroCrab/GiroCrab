@@ -284,7 +284,8 @@ fn parse_doc(
                 {
                     closing_rank = rank;
                     report.closing_balance_cents = Some(if bal_ind == "DBIT" { -c } else { c });
-                    report.closing_date = Some(bal_date.chars().take(10).collect());
+                    // a missing or impossible date (2025-02-29) stays unknown; the amount counts anyway
+                    report.closing_date = crate::dates::parse_iso(&bal_date).map(crate::dates::iso);
                     report.currency = Some(bal_ccy.clone()).filter(|c| !c.is_empty());
                 }
                 // tolerate sloppy nesting
@@ -663,6 +664,26 @@ mod tests {
                 .replacen("<Bal>", &format!("{itav}<Bal>"), 1);
         let (_, rep) = parse(&two_available, "acc");
         assert_eq!(rep.closing_balance_cents, Some(5_00), "first of a rank");
+    }
+
+    #[test]
+    fn closing_balance_without_a_real_date_keeps_its_amount() {
+        // #1828: no date or an impossible one must not become the account's balance date
+        let dt = "<Dt><Dt>2026-11-09</Dt></Dt>";
+        assert!(SAMPLE_08.contains(dt), "sample changed");
+        for (date, want) in [
+            ("", None),
+            ("<Dt><Dt>2025-02-29</Dt></Dt>", None),
+            ("<Dt><Dt>2024-02-29</Dt></Dt>", Some("2024-02-29")),
+            (
+                "<Dt><DtTm>2026-11-09T18:00:00</DtTm></Dt>",
+                Some("2026-11-09"),
+            ),
+        ] {
+            let (_, rep) = parse(&SAMPLE_08.replacen(dt, date, 1), "acc");
+            assert_eq!(rep.closing_balance_cents, Some(1_234_56), "{date}");
+            assert_eq!(rep.closing_date.as_deref(), want, "{date}");
+        }
     }
 
     #[test]
