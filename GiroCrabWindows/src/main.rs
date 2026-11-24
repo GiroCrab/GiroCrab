@@ -1498,9 +1498,14 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
             st.vault = Arc::downgrade(vault);
             st.reveal_limit = 0;
             st.selected_booking = None;
-            // categories of the previous vault must not stand in for a failed read
+            // nothing of the previous vault stands in for a failed read or stays actionable
             st.categories.clear();
+            st.marked.clear();
+            st.rows.clear();
+            st.shown.clear();
+            st.balances = daily::Balances::default();
         });
+        REFUND_SHOWN.with(|k| k.set(None));
         win.set_privacy(false);
         win.set_busy(false);
     }
@@ -1537,6 +1542,8 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                             st.selected_booking = None;
                         }
                     });
+                    // new rows: the refund card follows them, like after `commit_load`
+                    REFUND_SHOWN.with(|k| k.set(None));
                     if missing {
                         refunds_ui::cancel_reveal();
                     }
@@ -2371,8 +2378,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(win) = weak.upgrade() else { return };
             refunds_ui::cancel_reveal();
             with_state(|st| st.selected_booking = Some(id as i64));
-            refunds_ui::refresh_card(&win);
-            render_booking_rows(&win);
+            // one path for the card and its key, so a later filter redraw stays in step
+            render_bookings(&win);
         });
     }
     wire_batch_actions(&win, vault.clone());
