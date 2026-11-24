@@ -8,6 +8,7 @@ import { MandatesState, MdRow, MandatesPanel } from "mandates_dialog.slint";
 import { SettingsImportState, SiRow, SettingsImportPanel } from "settings_import_dialog.slint";
 export { GroupsState }
 export { SettingsImportState, SiRow }
+export { UpdateState } from "updates.slint";
 export { AssetsState }
 export { MandatesState, MdRow }
 export { RecLine }
@@ -800,6 +801,8 @@ export component MainWindow inherits Window {
     in property <bool> tr-recipient-blocked: false;
     in property <string> tr-locked-name;
     in property <string> tr-locked-iban;
+    in property <string> tr-bank;
+    callback transfer-iban-edited(string);
     in property <string> tr-recipient-hint;
     callback transfer-account-changed(int);
     in-out property <string> transfer-status;
@@ -848,6 +851,8 @@ export component MainWindow inherits Window {
     in property <string> table-empty;
     in-out property <int> table-selected: -1;
     callback view-changed();
+    // Depot view: writes the active tab as CSV (depot_export_ui.rs).
+    callback depot-export-csv();
     callback table-select(int);
     in property <[string]> doc-accounts;
     in-out property <int> doc-account-index: 0;
@@ -1712,6 +1717,7 @@ export component MainWindow inherits Window {
                     SegButton { text: "Positionen"; checked: root.depot-tab == 0; clicked => { root.depot-tab = 0; root.view-changed(); } }
                     SegButton { text: "Aktivitäten"; checked: root.depot-tab == 1; clicked => { root.depot-tab = 1; root.view-changed(); } }
                     Rectangle { horizontal-stretch: 4; }
+                    GhostButton { text: "Als CSV exportieren …"; enabled: !root.busy; clicked => { root.depot-export-csv(); } }
                 }
                 if root.view-mode == 5: HorizontalLayout {
                     spacing: 8px;
@@ -2023,12 +2029,13 @@ export component MainWindow inherits Window {
                     selected(value) => { root.transfer-account-changed(self.current-index); }
                 }
                 if !root.tr-recipient-locked : tr-name := LineEdit { text <=> root.transfer-pre-name; edited => { root.girocode-open = false; } placeholder-text: "Empfänger (Name)"; }
-                if !root.tr-recipient-locked : tr-iban := LineEdit { text <=> root.transfer-pre-iban; edited => { root.girocode-open = false; } placeholder-text: "IBAN des Empfängers"; }
+                if !root.tr-recipient-locked : tr-iban := LineEdit { text <=> root.transfer-pre-iban; edited => { root.girocode-open = false; root.transfer-iban-edited(self.text); } placeholder-text: "IBAN des Empfängers"; }
                 if root.tr-recipient-locked : VerticalLayout {
                     spacing: 4px;
                     if root.tr-locked-name != "" : Text { text: root.tr-locked-name; color: Theme.text; font-size: 13px; }
                     if root.tr-locked-iban != "" : Text { text: root.tr-locked-iban; color: Theme.text; font-size: 13px; }
                 }
+                Text { text: root.tr-bank; color: Theme.muted; font-size: 11px; min-height: 14px; overflow: elide; }
                 if root.tr-recipient-hint != "" : Text {
                     text: root.tr-recipient-hint;
                     color: Theme.muted; font-size: 11px; wrap: word-wrap;
