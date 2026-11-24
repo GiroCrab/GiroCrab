@@ -202,7 +202,11 @@ struct TwoFactorSheet: View {
                     Text("Gültig noch etwa \(s / 60) Min.").appFont(.caption).foregroundStyle(.tertiary)
                 }
 
-                SyncPromptButtons(cancel: model.skipCurrentSync) {
+                SyncPromptButtons(cancel: model.skipCurrentSync, leading: active.canSkipOrder ? AnyView(
+                    Button("TAN auslassen") { model.skipOrder() }
+                        .disabled(active.busy)
+                        .help("Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert.")
+                ) : nil) {
                     if c.kind == .code || c.kind == .imageCode || (c.kind == .redirect && showManualRedirect) {
                         Button(action: submit) {
                             Text("Weiter").frame(maxWidth: .infinity)

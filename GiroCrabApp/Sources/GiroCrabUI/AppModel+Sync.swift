@@ -465,13 +465,16 @@ extension AppModel {
         }
         switch step {
         case .needsChallenge(let c):
-            activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: false)
+            activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: false,
+                                              canSkipOrder: activeSession?.isFetching() ?? false)
             if c.kind == .decoupledPush || c.kind == .progress { schedulePoll(connection: connection, interval: c.pollIntervalSeconds) }
         case .stillWaiting(let c):
             if activeChallenge == nil {
-                activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: true)
+                activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: true,
+                                                  canSkipOrder: activeSession?.isFetching() ?? false)
             } else {
                 activeChallenge?.challenge = c  // progress steps bring a new text
+                activeChallenge?.canSkipOrder = activeSession?.isFetching() ?? false
                 activeChallenge?.waiting = true
                 activeChallenge?.busy = false
             }
@@ -599,6 +602,25 @@ extension AppModel {
             do {
                 let step = try await session.submitCode(code: code)
                 // "Überspringen" while the code was on its way: drop the late answer
+                guard self.activeSession === session else { return }
+                self.handle(step, connection: ch.connection)
+            } catch {
+                guard self.activeSession === session else { return }
+                self.finishSync(error: error)
+            }
+        }
+    }
+
+    /// "TAN auslassen" (#1730): leaves out the order the bank wants a TAN for during the
+    /// fetch; the sync goes on with the rest and reports the order as a warning.
+    func skipOrder() {
+        guard let session = activeSession, let ch = activeChallenge, ch.canSkipOrder, !ch.busy else { return }
+        pollTask?.cancel()
+        activeChallenge?.busy = true
+        activeChallenge?.error = nil
+        Task {
+            do {
+                let step = try await session.skip()
                 guard self.activeSession === session else { return }
                 self.handle(step, connection: ch.connection)
             } catch {

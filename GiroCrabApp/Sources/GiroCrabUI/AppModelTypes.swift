@@ -453,6 +453,9 @@ struct ActiveChallenge: Identifiable {
     var waiting: Bool
     var busy: Bool = false
     var error: String?
+    /// The TAN is for one order of the fetch (balance, bookings …), not the login:
+    /// "TAN auslassen" leaves that order out and the rest is stored (#1730).
+    var canSkipOrder = false
     /// The TAN of a transfer order that was sent (not its login SCA, not a sync's challenge):
     /// only then does the sheet show the order comparison (#949).
     var orderApproval = false
