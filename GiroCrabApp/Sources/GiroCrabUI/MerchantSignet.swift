@@ -55,6 +55,11 @@ struct MerchantSignet: View {
                 // small favicons only for known brands – a guessed domain must deliver a sharp logo
                 shape.fill(Color.white)
                 small.resizable().interpolation(.high).scaledToFit().padding(size * 0.2)
+            } else if !merchant.known && merchant.sfSymbol == "chart.line.uptrend.xyaxis" {
+                shape.fill(brand.opacity(0.09))
+                Image(systemName: merchant.sfSymbol)
+                    .font(.system(size: size * 0.42, weight: .medium))
+                    .foregroundStyle(Color.readable(hex: merchant.colorHex))
             } else if !merchant.known && !categorySymbol.isEmpty {
                 shape.fill(Theme.neutralTile)
                 Image(systemName: categorySymbol)
