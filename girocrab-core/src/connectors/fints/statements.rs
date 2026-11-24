@@ -8,6 +8,13 @@ use crate::connectors::{ConnectContext, RemoteTransaction, today};
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 
+/// Closing balance of a statements answer (`:62F:` / camt `CLBD`): the booked balance.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Closing {
+    pub cents: i64,
+    pub date: Option<String>,
+}
+
 /// Start date of a statement request: `since`, but not further back than the
 /// bank's storage period (`storage_days`, 0 = unknown). Dates are `YYYY-MM-DD`.
 pub(super) fn stored_since(since: &str, today: &str, storage_days: i64) -> String {
@@ -210,7 +217,7 @@ impl FinTsConnector {
         ctx: &ConnectContext,
         acc: &SepaAccount,
         label: &str,
-    ) -> CoreResult<(Vec<RemoteTransaction>, Option<i64>)> {
+    ) -> CoreResult<(Vec<RemoteTransaction>, Option<Closing>)> {
         let format = self.st.camt_formats.first().cloned().unwrap_or_default();
         // never ask for more than the bank keeps: an older start ends in a partial reply (3997)
         let since = stored_since(&ctx.since, &today(), self.st.caz_storage_days);
@@ -238,8 +245,11 @@ impl FinTsConnector {
                         let (t, rep) = camt::parse(&crate::text::decode_xml_bytes(xml), label);
                         txs.extend(t);
                         add_pending(rep.pending);
-                        if rep.closing_balance_cents.is_some() {
-                            closing = rep.closing_balance_cents;
+                        if let Some(cents) = rep.closing_balance_cents {
+                            closing = Some(Closing {
+                                cents,
+                                date: rep.closing_date,
+                            });
                         }
                     }
                 }
@@ -372,7 +382,7 @@ impl FinTsConnector {
         acc: &SepaAccount,
         label: &str,
         currency: &str,
-    ) -> CoreResult<(Vec<RemoteTransaction>, Option<i64>)> {
+    ) -> CoreResult<(Vec<RemoteTransaction>, Option<Closing>)> {
         let v = self.version("HKKAZ");
         let acct = if v >= 7 {
             Self::kti(acc)
@@ -410,7 +420,11 @@ impl FinTsConnector {
         }
         self.truncated_statements |= touchdown.is_some();
         let (txs, stmt) = mt940::parse(&crate::text::decode_bank_bytes(&data), label, currency);
-        Ok((txs, stmt.closing_balance_cents))
+        let closing = stmt.closing_balance_cents.map(|cents| Closing {
+            cents,
+            date: stmt.closing_date,
+        });
+        Ok((txs, closing))
     }
 
     /// The statement transaction the bank offers: HKEKA (statement in a chosen

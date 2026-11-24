@@ -233,6 +233,8 @@ fn parse_doc(
     let mut entries: Vec<Entry> = Vec::new();
     let mut cur: Option<Entry> = None;
     let mut report = CamtReport::default();
+    // 0 = no closing balance yet, 1 = available, 2 = booked
+    let mut closing_rank: u8 = 0;
     let (mut bal_type, mut bal_amt, mut bal_ind, mut bal_date, mut bal_ccy) = (
         String::new(),
         String::new(),
@@ -270,11 +272,17 @@ fn parse_doc(
                 {
                     entries.push(e);
                 }
+                // booked (CLBD/ITBD) beats available (CLAV/ITAV); within a rank the first stays
+                let rank = match bal_type.as_str() {
+                    "CLBD" | "ITBD" => 2,
+                    "CLAV" | "ITAV" => 1,
+                    _ => 0,
+                };
                 if name == "Bal"
-                    && matches!(bal_type.as_str(), "CLBD" | "ITBD" | "CLAV" | "ITAV")
-                    && report.closing_balance_cents.is_none()
+                    && rank > closing_rank
                     && let Some(c) = decimal(&bal_amt, '.').and_then(cents)
                 {
+                    closing_rank = rank;
                     report.closing_balance_cents = Some(if bal_ind == "DBIT" { -c } else { c });
                     report.closing_date = Some(bal_date.chars().take(10).collect());
                     report.currency = Some(bal_ccy.clone()).filter(|c| !c.is_empty());
@@ -628,6 +636,33 @@ mod tests {
         assert_eq!(txs[0].gvc, "106");
         assert_eq!(txs[0].purpose_code, "");
         assert_eq!(txs[1].purpose_code, "SALA");
+    }
+
+    #[test]
+    fn booked_closing_balance_beats_an_available_one() {
+        // #1828: the available balance (CLAV) before the booked one (CLBD) must not win
+        let clav = r#"<Bal><Tp><CdOrPrtry><Cd>CLAV</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">999.99</Amt><CdtDbtInd>CRDT</CdtDbtInd><Dt><Dt>2026-11-10</Dt></Dt></Bal>"#;
+        let clbd =
+            r#"<Bal><Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp><Amt Ccy="EUR">1234.56</Amt>"#;
+        assert!(SAMPLE_08.contains(clbd), "sample changed");
+        let xml = SAMPLE_08.replacen("<Bal>", &format!("{clav}<Bal>"), 1);
+        assert!(xml.find("CLAV").unwrap() < xml.find("CLBD").unwrap());
+        let (_, rep) = parse(&xml, "acc");
+        assert_eq!(rep.closing_balance_cents, Some(1_234_56));
+        assert_eq!(rep.closing_date.as_deref(), Some("2026-11-09"));
+
+        // without a booked balance the available one is used; the first of a rank stays
+        let only_clav = xml.replacen("CLBD", "XPCD", 1);
+        let (_, rep) = parse(&only_clav, "acc");
+        assert_eq!(rep.closing_balance_cents, Some(999_99));
+        assert_eq!(rep.closing_date.as_deref(), Some("2026-11-10"));
+        let itav = clav.replace("999.99", "5.00").replace("CLAV", "ITAV");
+        let two_available =
+            SAMPLE_08
+                .replacen("CLBD", "CLAV", 1)
+                .replacen("<Bal>", &format!("{itav}<Bal>"), 1);
+        let (_, rep) = parse(&two_available, "acc");
+        assert_eq!(rep.closing_balance_cents, Some(5_00), "first of a rank");
     }
 
     #[test]
