@@ -372,11 +372,10 @@ impl FinTsConnector {
             self.st.caz_storage_days = days;
         }
         if crate::depot_debug::enabled() && reply.all("HIPINS").next().is_some() {
-            let card: Vec<String> = ["HKKKU", "DKKKU"]
-                .iter()
-                .filter_map(|t| self.st.tan_required.get(*t).map(|r| format!("{t}={r}")))
-                .collect();
-            crate::depot_debug::log(&format!("fints HIPINS cards: [{}]", card.join(",")));
+            let mut jobs: Vec<(&String, &bool)> = self.st.tan_required.iter().collect();
+            jobs.sort();
+            let jobs: Vec<String> = jobs.iter().map(|(t, r)| format!("{t}={r}")).collect();
+            crate::depot_debug::log(&format!("fints HIPINS: [{}]", jobs.join(",")));
         }
         for cazs in reply.all("HICAZS") {
             for el in &cazs.elements {

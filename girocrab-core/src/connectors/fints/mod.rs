@@ -105,6 +105,10 @@ struct FinTsState {
     versions: HashMap<String, Vec<u32>>,
     /// HKxxx -> TAN required (HIPINS).
     tan_required: HashMap<String, bool>,
+    /// Jobs the bank answered with a TAN demand (0030) or an app approval (3955/3956) the last time
+    /// they were sent outside an approved dialog (#1828). Automatic syncs leave them out.
+    #[serde(default)]
+    sca_seen: std::collections::BTreeSet<String>,
     /// camt descriptors from HICAZS, best first.
     #[serde(default)]
     camt_formats: Vec<String>,
@@ -296,6 +300,9 @@ pub struct FinTsConnector {
     /// A statement request still had pages left after the last one GiroCrab
     /// reads: the list is not complete (#1043).
     truncated_statements: bool,
+    /// The bank asked for a TAN or an approval in this dialog and it was given: a later reply
+    /// without SCA (a further page, another job) says nothing about the next sync (#1828).
+    sca_in_dialog: bool,
     /// The order was handed to the bank: from here on, an unclear reply or a
     /// lost connection means "result unknown", never "not executed".
     order_submitted: bool,
@@ -379,6 +386,7 @@ impl FinTsConnector {
             tan_medium_override: String::new(),
             partial_statements: false,
             truncated_statements: false,
+            sca_in_dialog: false,
             order_submitted: false,
             result: TransferResult::default(),
             order: None,

@@ -27,10 +27,16 @@ pub(super) fn approval_pending(reply: &BankReply) -> bool {
         && (reply.has("3956") || !reply.codes.iter().any(|c| c.0.starts_with('0')))
 }
 
+/// Code of the error `request` returns without sending anything: the bank wanted a TAN
+/// or an approval for this job the last time (`sca_seen`) and an automatic sync does not
+/// ask for one (#1828). Not a bank code; no bank message uses it.
+pub(super) const SCA_NOT_ASKED: &str = "SCA";
+
 /// `request` failed because the bank wanted a TAN (0030) or an app approval
 /// that was not given in time (3956): asking again sends the next one (#1083).
+/// Also when `request` did not send the job at all ([`SCA_NOT_ASKED`]).
 pub(super) fn tan_demanded(e: &CoreError) -> bool {
-    matches!(e, CoreError::Bank { code, .. } if matches!(code.as_str(), "0030" | "3956"))
+    matches!(e, CoreError::Bank { code, .. } if matches!(code.as_str(), "0030" | "3956" | SCA_NOT_ASKED))
 }
 
 /// Statements this far back are handed out without a TAN (PSD2, RTS art. 10);
@@ -398,6 +404,7 @@ impl FinTsConnector {
         self.rah_stream = None;
         self.dialog_id = "0".into();
         self.msg_no = 1;
+        self.sca_in_dialog = false;
     }
 
     pub(super) fn hkidn(&self, ctx: &ConnectContext, n: u32) -> Vec<u8> {
@@ -473,6 +480,7 @@ impl FinTsConnector {
                 poll_interval_seconds: 3,
             };
             self.challenge = Some(c.clone());
+            self.sca_in_dialog = true;
             return Ok(Some(if reply.has("3956") {
                 Phase::Pending(c)
             } else {
@@ -499,6 +507,7 @@ impl FinTsConnector {
                 poll_interval_seconds: 0,
             };
             self.challenge = Some(c.clone());
+            self.sca_in_dialog = true;
             return Ok(Some(Phase::Challenge(c)));
         }
         Ok(None)
@@ -638,6 +647,16 @@ impl FinTsConnector {
         if ctx.cancelled.is_set() {
             return Err(CoreError::SessionClosed);
         }
+        // #1828: the bank wanted a TAN for this job the last time; an automatic sync does not ask
+        if ctx.prompt.is_none() && self.st.sca_seen.contains(seg_id) {
+            return Err(CoreError::Bank {
+                code: SCA_NOT_ASKED.into(),
+                message: trf(
+                    "Die Bank verlangt für {0} eine TAN. Automatische Abrufe fragen nicht danach, ein selbst gestarteter Abruf schon.",
+                    &[&seg_id],
+                ),
+            });
+        }
         let prompt = ctx.prompt.as_ref();
         let sec = self.sec();
         let mut payload = vec![segment];
@@ -646,6 +665,13 @@ impl FinTsConnector {
         }
         let mut reply = self.send(ctx, payload, &sec, None).await?;
         let wants_sca = reply.has("3955") || reply.has("3956") || reply.has("0030");
+        // #1828: what the next automatic sync leaves out. After an approval in this dialog
+        // (a later page, another job) a reply without SCA says nothing about the next sync.
+        if wants_sca {
+            self.st.sca_seen.insert(seg_id.to_string());
+        } else if reply.errors().is_empty() && !self.sca_in_dialog {
+            self.st.sca_seen.remove(seg_id);
+        }
         if let Some(prompt) = prompt.filter(|_| wants_sca) {
             // only this reply's task counts, not one left from the login
             self.task_reference = None;
