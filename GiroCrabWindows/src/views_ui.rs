@@ -474,6 +474,9 @@ fn set_shares(win: &MainWindow, shares: &[portfolio::Share]) {
 pub fn render_view(win: &MainWindow) {
     let privacy = privacy_on(win);
     let mode = win.get_view_mode();
+    if mode != MODE_DEPOT {
+        crate::position_history_ui::prepare(win, None, german_date, privacy_on);
+    }
     let eur = move |c: i64| eur_text(c, "EUR", privacy);
     let date = |d: &str| german_date(d);
     win.set_period_labels(ModelRc::new(VecModel::from(
@@ -511,10 +514,12 @@ pub fn render_view(win: &MainWindow) {
                 DepotTab::Positions => {
                     set_columns(win, &portfolio::POSITION_COLUMNS);
                     set_rows(win, view.positions, "Keine Positionen");
+                    crate::position_history_ui::prepare(win, Some(&data), german_date, privacy_on);
                 }
                 DepotTab::Activities => {
                     set_columns(win, &portfolio::ACTIVITY_COLUMNS);
                     set_rows(win, view.activities, "Keine Aktivitäten im Zeitraum");
+                    crate::position_history_ui::prepare(win, None, german_date, privacy_on);
                 }
             }
             with_ui(|u| u.depot = Some(data));
@@ -1321,6 +1326,7 @@ fn wire_rules(win: &MainWindow, slot: &VaultSlot) {
 // ------------------------------------------------------------------------------ wiring
 
 pub fn wire(win: &MainWindow, vault: VaultSlot) {
+    crate::position_history_ui::install(vault.clone());
     let model = Rc::new(VecModel::<SideRow>::default());
     win.set_side_rows(ModelRc::from(model.clone()));
     with_ui(|u| u.side_model = Some(model));

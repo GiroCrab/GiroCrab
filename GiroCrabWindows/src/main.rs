@@ -21,6 +21,7 @@ mod nav;
 mod planning;
 mod policy;
 mod portfolio;
+mod position_history_ui;
 mod recurring_ui;
 mod recurring_view;
 mod settings_import;
