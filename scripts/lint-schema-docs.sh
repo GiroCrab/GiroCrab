@@ -7,8 +7,9 @@ cd "$(dirname "$0")/.."
 schema=girocrab-core/src/schema.rs
 doc=docs/ARCHITECTURE.md
 
-# One `Step::…` entry per line between `const STEPS` and its closing `];` (rustfmt keeps it so).
-n=$(awk '/^const STEPS: /{on=1; next} on && /^\];/{exit} on && /^[[:space:]]*Step::/{c++} END{print c+0}' "$schema")
+# Every `Step::…` between `const STEPS` and its closing `];`, also several on one line;
+# `//` comments are left out.
+n=$(awk '/^const STEPS: /{on=1; next} on && /^\];/{exit} on { sub(/\/\/.*/, ""); c += gsub(/Step::/, "") } END{print c+0}' "$schema")
 if [ "$n" -lt 1 ]; then
     echo "$schema: no entries found in STEPS (did its layout change? update $0)" >&2
     exit 1
