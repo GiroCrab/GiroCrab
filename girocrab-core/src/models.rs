@@ -581,6 +581,19 @@ pub struct Booking {
     #[uniffi(default)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub tags: Vec<crate::tags::BookingTag>,
+    /// `none`, `refund`, `original`, or `both`, based on allocated endpoint roles.
+    #[uniffi(default = "none")]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub refund_marker: String,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub refund_cents: i64,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub refunded_cents: i64,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub split_count: u32,
 }
 
 /// Dry-run result of a MoneyMoney import (nothing stored).

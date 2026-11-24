@@ -198,12 +198,18 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
             [k],
             |r| r.get(0),
         )?;
+        let source_had_splits: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
+            [o],
+            |r| r.get(0),
+        )?;
         if same_amount && !keep_has_splits {
             conn.execute(
                 "UPDATE transaction_splits SET transaction_id = ?1 WHERE transaction_id = ?2",
                 params![k, o],
             )?;
         }
+        crate::refunds::fold_booking(conn, o, k, same_amount, source_had_splits)?;
         // a loan link of `keep` wins (transaction_id is the key)
         conn.execute(
             "UPDATE OR IGNORE loan_links SET transaction_id = ?1 WHERE transaction_id = ?2",
@@ -756,6 +762,7 @@ impl Vault {
                       WHERE transactions.id = ?1",
                     params![live, stale],
                 )?;
+                crate::refunds::move_booking(&tx, stale, live)?;
             }
             tx.execute(
                 "UPDATE transactions SET external_id = 'switch-stale-' || id || ':' || substr(external_id, 11)
@@ -830,6 +837,194 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::models::BookingFilter;
+
+    #[test]
+    fn duplicate_account_fold_preserves_refund_parts_only_for_matching_amounts() {
+        for (same_amount, whole) in [(true, false), (false, false), (true, true), (false, true)] {
+            let dir = crate::test_support::TempDir::new("refund-duplicate-account");
+            let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![6; 32]).unwrap();
+            let keep = v
+                .create_offline_account(
+                    "Keep".into(),
+                    crate::models::AccountKind::Cash,
+                    "EUR".into(),
+                    0,
+                )
+                .unwrap();
+            let dup = v
+                .create_offline_account(
+                    "Duplicate".into(),
+                    crate::models::AccountKind::Cash,
+                    "EUR".into(),
+                    0,
+                )
+                .unwrap();
+            let add = |acc, amount| {
+                v.save_manual_booking(
+                    acc,
+                    None,
+                    crate::offline::ManualBookingSetup {
+                        booking_date: "2026-01-01".into(),
+                        amount_cents: amount,
+                        counterparty: String::new(),
+                        purpose: String::new(),
+                        category_id: None,
+                        note: String::new(),
+                    },
+                )
+                .unwrap()
+            };
+            let k = add(keep, if same_amount { -100 } else { -200 });
+            let o = add(dup, -100);
+            let r = add(keep, 60);
+            {
+                let db = v.db().unwrap();
+                db.execute(
+                    "UPDATE transactions SET external_id='original' WHERE id IN (?1,?2)",
+                    params![k, o],
+                )
+                .unwrap();
+            }
+            if whole {
+                v.link_refund(r, String::new(), o, String::new()).unwrap();
+            }
+            v.set_transaction_splits(
+                o,
+                (if whole {
+                    vec![-100, 20, -20]
+                } else {
+                    vec![-60, -40]
+                })
+                .into_iter()
+                .map(|amount| crate::models::TransactionSplitInput {
+                    uuid: None,
+                    category_id: None,
+                    amount_cents: amount,
+                    note: String::new(),
+                })
+                .collect(),
+            )
+            .unwrap();
+            let uuid = v.list_transaction_splits(o).unwrap()[0].uuid.clone();
+            if !whole {
+                v.link_refund(r, String::new(), o, uuid.clone()).unwrap();
+            }
+            {
+                let db = v.db().unwrap();
+                let tx = db.unchecked_transaction().unwrap();
+                merge_duplicate_account(&tx, keep, dup).unwrap();
+                tx.execute("DELETE FROM accounts WHERE id=?1", [dup])
+                    .unwrap();
+                tx.commit().unwrap();
+            }
+            let links = v.refund_links(r).unwrap();
+            if same_amount {
+                assert_eq!(links[0].original_id, k);
+                assert_eq!(
+                    links[0].original_part,
+                    if whole { String::new() } else { uuid }
+                );
+                assert_eq!(links[0].allocated_cents, if whole { 0 } else { 60 });
+            } else {
+                assert!(links.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_account_fold_keeps_unlink_and_provenance_on_unaffected_endpoints() {
+        let dir = crate::test_support::TempDir::new("refund-duplicate-provenance");
+        let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![6; 32]).unwrap();
+        let keep = v
+            .create_offline_account(
+                "Keep".into(),
+                crate::models::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let dup = v
+            .create_offline_account(
+                "Duplicate".into(),
+                crate::models::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let add = |account, cents| {
+            v.save_manual_booking(
+                account,
+                None,
+                crate::offline::ManualBookingSetup {
+                    booking_date: "2026-01-01".into(),
+                    amount_cents: cents,
+                    counterparty: String::new(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap()
+        };
+        let canonical = add(keep, -100);
+        let source = add(dup, -100);
+        let target = add(keep, -100);
+        let refund = add(keep, 100);
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET external_id='original' WHERE id IN (?1,?2)",
+                params![canonical, source],
+            )
+            .unwrap();
+        v.link_refund(refund, String::new(), source, String::new())
+            .unwrap();
+        crate::importers::portal_import::hand_over(&v.db().unwrap(), source, target).unwrap();
+        let token: i64 = v
+            .db()
+            .unwrap()
+            .query_row("SELECT MAX(changed_ms)+1000 FROM refund_links", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        {
+            let db = v.db().unwrap();
+            db.execute(
+                "UPDATE refund_links SET moved=0,changed_ms=?2,deleted_ms=?2,unlink_id='peer-unlink' WHERE original_id=?1",
+                params![source, token],
+            )
+            .unwrap();
+            db.execute(
+                "UPDATE transactions SET deleted_ms=?2 WHERE id=?1",
+                params![canonical, token],
+            )
+            .unwrap();
+            let tx = db.unchecked_transaction().unwrap();
+            merge_duplicate_account(&tx, keep, dup).unwrap();
+            tx.execute("DELETE FROM accounts WHERE id=?1", [dup])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(v.refund_links(refund).unwrap()[0].inactive);
+        let mapped:i64=v.db().unwrap().query_row("SELECT moved_from_original_id FROM refund_links WHERE original_id=?1 AND deleted_ms IS NULL",[target],|r|r.get(0)).unwrap();
+        assert_eq!(mapped, canonical);
+        v.restore_refund(
+            refund,
+            String::new(),
+            canonical,
+            String::new(),
+            "peer-unlink".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            v.refund_links(refund)
+                .unwrap()
+                .iter()
+                .map(|l| l.allocated_cents)
+                .sum::<i64>(),
+            100
+        );
+    }
 
     #[test]
     fn session_hand_over_and_clear_keep_the_other_state() {
@@ -1910,6 +2105,73 @@ mod tests {
             !stale_id.starts_with("mm-"),
             "no takeover candidate any more: {stale_id}"
         );
+    }
+
+    #[test]
+    fn connection_switch_retargets_only_unique_signed_survivor_parts() {
+        for amounts in [
+            vec![-6000, -2600],
+            vec![-3400, -2600, -2600],
+            vec![-4300, -4300],
+            vec![2600, -11200],
+        ] {
+            let dir = crate::test_support::TempDir::new("refund-switch-survivor");
+            let (v, c, giro, _, live) = comdirect_vault(dir.path(), "v.db");
+            let (stale, refund) = {
+                let db = v.db().unwrap();
+                db.execute(
+                    "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents)
+                    VALUES (?1,'mm-switch-rest-1','2026-11-03',-8600)",
+                    [giro],
+                )
+                .unwrap();
+                let stale = db.last_insert_rowid();
+                db.execute(
+                    "INSERT INTO transactions(account_id,external_id,booking_date,amount_cents)
+                    VALUES (?1,'refund','2026-11-03',2600)",
+                    [giro],
+                )
+                .unwrap();
+                (stale, db.last_insert_rowid())
+            };
+            let parts = |amounts: &[i64]| {
+                amounts
+                    .iter()
+                    .map(|amount| crate::models::TransactionSplitInput {
+                        uuid: None,
+                        amount_cents: *amount,
+                        category_id: None,
+                        note: String::new(),
+                    })
+                    .collect()
+            };
+            v.set_transaction_splits(stale, parts(&[-6000, -2600]))
+                .unwrap();
+            v.set_transaction_splits(live, parts(&amounts)).unwrap();
+            let old = v.list_transaction_splits(stale).unwrap()[1].uuid.clone();
+            let matches = v
+                .list_transaction_splits(live)
+                .unwrap()
+                .into_iter()
+                .filter(|p| p.amount_cents == -2600)
+                .collect::<Vec<_>>();
+            let expected = (matches.len() == 1).then(|| matches[0].uuid.clone());
+            v.link_refund(refund, String::new(), stale, old.clone())
+                .unwrap();
+            assert_eq!(v.switch_comdirect_access(c).unwrap(), "fints:20041155");
+            let links = v.refund_links(refund).unwrap();
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].original_id, live);
+            assert_eq!(
+                links[0].original_part,
+                expected.as_ref().unwrap_or(&old).clone()
+            );
+            assert_eq!(
+                links[0].allocated_cents,
+                if expected.is_some() { 2600 } else { 0 }
+            );
+            assert_eq!(links[0].inactive, expected.is_none());
+        }
     }
 
     // ---------------------------------------------------------------- card holds (#1134)

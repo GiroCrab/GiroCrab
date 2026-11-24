@@ -60,6 +60,7 @@ pub mod planned;
 pub mod planning;
 pub mod recipients;
 pub mod recurring;
+pub mod refunds;
 pub mod report_sanitizer;
 pub mod rules;
 pub mod salary;

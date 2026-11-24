@@ -52,3 +52,4 @@ and test results in audits. Use issues for plans and open questions.
 | --- | --- |
 | [0001 – Bank connector architecture](0001-connector-architecture.md) | Proposed |
 | [0002 – Challenges during a fetch](0002-challenges-during-fetch.md) | Proposed |
+| [0003 – Refund links and stable split identities](0003-refund-links.md) | Proposed |
