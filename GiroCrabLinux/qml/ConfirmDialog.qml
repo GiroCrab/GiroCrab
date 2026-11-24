@@ -25,7 +25,7 @@ Sheet {
         width: dlg.availableWidth
         spacing: 12
         Text { text: dlg.heading; font.pixelSize: Theme.body + 2; font.weight: Font.Bold; color: Theme.text; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-        Text { text: dlg.message; font.pixelSize: Theme.body; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        Text { text: dlg.message; visible: text !== ""; font.pixelSize: Theme.body; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         RowLayout {
             Layout.fillWidth: true
             Item { Layout.fillWidth: true }

@@ -3276,11 +3276,12 @@ QtObject {
         ruleDraft = booking ? newRuleDraft(booking) : null
         showRuleEditor = true
     }
-    /// The id of the saved rule, else null (error shown).
-    function saveRule(rule) {
+    /// The id of the saved rule, else null (error shown). Applies just this rule, to the
+    /// uncategorised bookings or to all (the scope question of „Speichern & anwenden“).
+    function saveRule(rule, onlyUncategorized) {
         try {
             const id = core("save_rule", { rule: rule })
-            core("apply_rules", { only_uncategorized: false })
+            core("apply_rule", { rule_id: id, only_uncategorized: onlyUncategorized })
             // the editor reads the saved rule (its new id) right away: rules now, the rest async
             reloadRulesNow()
             reloadAll()
