@@ -81,7 +81,9 @@ made after migration. If an older build is unavoidable, stop sync on all devices
 preserve a separate copy of the upgraded vault, and restore the pre-upgrade backup
 in an isolated location. That backup lacks edits made since it was taken; neither
 reinstalling the app nor restoring the backup transfers those edits back. Do not
-merge newer snapshots into the restored vault. Resume shared sync only after all
+merge newer snapshots into the restored vault. Before resuming, move or archive the
+upgraded snapshots out of the active sync location (or point every device at a
+clean shared location for the restored vault). Resume shared sync only after all
 devices use compatible builds and the same chosen vault history.
 
 ### One pure resolver, never widening
@@ -92,10 +94,11 @@ nonzero sign. Missing UUIDs, including a whole-booking marker while the booking
 is split, make the link inactive. There is no read-time amount matching.
 
 Replacement happens in the local split-vector save: drop unless a same-amount
-replacement exists in the same edit. Exactly one new part may inherit the UUID
-of exactly one removed referenced part of the same signed amount. Retained parts
-are not replacement candidates. Multiple removed referenced parts or multiple
-new candidates of that amount mean no inheritance. Otherwise the old UUID
+replacement exists in the same edit. A new part inherits a removed UUID only if
+the edit removes exactly one part of that signed amount, that part is referenced,
+and exactly one new part has the amount. All removed parts count, referenced or
+not. Retained parts are not replacement candidates. Several removed parts or
+several new candidates of that amount mean no inheritance. Otherwise the old UUID
 disappears; a later edit creating that amount cannot revive it. The vector and
 its identities sync as one unit; this does not write any link row.
 
@@ -136,7 +139,9 @@ from it, even when several parts have equal amounts. Other identity take-overs
 preserve a surviving UUID first. When an endpoint disappears on the survivor,
 the take-over persists a replacement only if exactly one survivor endpoint has
 the old endpoint's signed amount. A whole-booking source uses the booking amount;
-an unsplit survivor contributes one whole-booking endpoint. Two equal matches,
+an unsplit survivor contributes one whole-booking endpoint. A split part never
+moves to the whole booking of an unsplit survivor, even with an equal signed
+amount: it stays inactive. Two equal matches,
 no match, or an already missing source part leave the old part inactive. Link
 snapshots are not used to resurrect a missing source. Imported-part consolidation
 applies this rule to an existing whole-booking link on the bank booking too.
@@ -182,7 +187,9 @@ resolve endpoints, generate timestamps or rewrite payloads during link merge.
 [Unlink](../../girocrab-core/src/refunds/api.rs) persists and returns a fresh
 UUID-v4 operation identity as its undo token (`unlink_id`). Restore succeeds
 only if the row is still deleted, its nonempty operation identity equals that
-token and it is not a moved marker. It retains the original creation
+token and it is not a moved marker. A restored row is active only while its
+endpoints pass the resolver (e.g. a whole-booking link stays inactive while that
+booking is split and becomes active again once it is unsplit). It retains the original creation
 stamp and allocation priority; a newer peer tombstone cannot be revived by an
 older undo. Explicitly re-linking a tombstoned key instead gets a fresh creation
 stamp rather than reviving its old priority.

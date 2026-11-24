@@ -58,6 +58,17 @@ fn load_rows(conn: &Connection, schema: &str) -> CoreResult<Vec<Row>> {
     load_rows_where(conn, schema, "1", [])
 }
 
+/// The live link row of `key`, read alone (no full table load).
+pub(super) fn live_row(conn: &Connection, key: &Key) -> CoreResult<Option<Row>> {
+    Ok(load_rows_where(
+        conn,
+        "main",
+        "refund_id=?1 AND refund_part=?2 AND original_id=?3 AND original_part=?4 AND deleted_ms IS NULL",
+        params![key.refund.0, key.refund.1, key.original.0, key.original.1],
+    )?
+    .pop())
+}
+
 /// The link rows that name booking `id` as an endpoint or as a move source.
 fn rows_of_booking(conn: &Connection, id: i64) -> CoreResult<Vec<Row>> {
     load_rows_where(
@@ -414,7 +425,7 @@ pub(crate) fn move_endpoints(
         target.moved = false;
         target.moved_from = Some(row.key.clone());
         target.moved_from_key = source_key(conn, &row.key)?;
-        let destination = rows.iter().find(|r| r.key == target.key);
+        let destination = by_key.get(&target.key).copied();
         if counts[&target.key] == 1
             && destination.is_none_or(|d| {
                 d.deleted_ms.is_some() && (d.moved || d.changed_ms < row.changed_ms)
@@ -441,6 +452,10 @@ fn source_key(conn: &Connection, key: &Key) -> CoreResult<String> {
 }
 
 fn merge_rows(conn: &Connection, rows: impl IntoIterator<Item = Row>) -> CoreResult<()> {
+    let mut rows = rows.into_iter().peekable();
+    if rows.peek().is_none() {
+        return Ok(());
+    }
     let mut local: HashMap<_, _> = load_rows(conn, "main")?
         .into_iter()
         .map(|r| (r.key.clone(), r))
@@ -449,10 +464,15 @@ fn merge_rows(conn: &Connection, rows: impl IntoIterator<Item = Row>) -> CoreRes
         let wins = match local.get(&other.key) {
             None => true,
             Some(current) => {
+                // equal rank: a row with provenance beats one without; two different
+                // provenances by key order, so the arrival order does not decide
                 other.rank() > current.rank()
                     || (other.rank() == current.rank()
-                        && current.moved_from.is_none()
-                        && other.moved_from.is_some())
+                        && match (&current.moved_from, &other.moved_from) {
+                            (None, Some(_)) => true,
+                            (Some(c), Some(o)) => o > c,
+                            _ => false,
+                        })
             }
         };
         if wins {

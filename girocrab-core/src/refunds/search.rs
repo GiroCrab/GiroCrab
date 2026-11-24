@@ -66,18 +66,32 @@ pub(super) fn reference_tokens(text: &str) -> HashSet<String> {
         .collect()
 }
 
+/// A real calendar date (`YYYY-MM-DD`, `DD.MM.YYYY`, `DD/MM/YY` …): left out of the reference
+/// tokens. An impossible date-shaped value (`2026-42-17`, `2025-02-29`) stays a reference.
 fn is_date(word: &str) -> bool {
     let word = word.trim_matches(|c: char| !c.is_alphanumeric());
     let fields: Vec<_> = word.split(['-', '/', '.']).collect();
     let digits = |f: &str, n| f.len() == n && f.bytes().all(|b| b.is_ascii_digit());
-    match fields.as_slice() {
-        [a, b, c] => {
-            (digits(b, 1) || digits(b, 2))
-                && (digits(a, 4) && (digits(c, 1) || digits(c, 2))
-                    || (digits(a, 1) || digits(a, 2)) && (digits(c, 4) || digits(c, 2)))
+    let num = |f: &str| f.parse::<i16>().ok();
+    let (year, month, day) = match fields.as_slice() {
+        [a, b, c]
+            if digits(a, 4) && (digits(b, 1) || digits(b, 2)) && (digits(c, 1) || digits(c, 2)) =>
+        {
+            (num(a), num(b), num(c))
         }
-        _ => false,
-    }
+        [a, b, c]
+            if (digits(a, 1) || digits(a, 2))
+                && (digits(b, 1) || digits(b, 2))
+                && (digits(c, 4) || digits(c, 2)) =>
+        {
+            let year = num(c).map(|y| if c.len() == 2 { 2000 + y } else { y });
+            (year, num(b), num(a))
+        }
+        _ => return false,
+    };
+    matches!((year, month, day), (Some(y), Some(m), Some(d))
+        if i8::try_from(m).ok().zip(i8::try_from(d).ok())
+            .is_some_and(|(m, d)| jiff::civil::Date::new(y, m, d).is_ok()))
 }
 
 fn days_between(a: &str, b: &str) -> Option<i64> {
@@ -261,6 +275,10 @@ impl Vault {
             RefundMatch::SameMerchant,
             RefundMatch::SameReference,
         ] {
+            // full: no further (more expensive) search for a weaker reason
+            if out.len() == 3 {
+                break;
+            }
             for c in candidates(self, &db, &p, &own, "", 3, false, Some(reason))? {
                 if out.len() == 3 {
                     return Ok(out);
@@ -277,5 +295,23 @@ impl Vault {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod date_tests {
+    use super::*;
+
+    /// CodeRabbit (#1852): only real calendar dates are left out of the reference tokens.
+    #[test]
+    fn only_real_dates_are_dropped_from_references() {
+        for date in ["2024-02-29", "29.02.2024", "31/12/26", "2026-1-5"] {
+            assert!(is_date(date), "{date}");
+        }
+        for not_a_date in ["2026-42-17", "2025-02-29", "31.04.2026", "00.01.2026"] {
+            assert!(!is_date(not_a_date), "{not_a_date}");
+        }
+        assert!(reference_tokens("Ref 2026-42-17").contains("20264217"));
+        assert!(reference_tokens("Ref 2026-04-17").is_empty());
     }
 }

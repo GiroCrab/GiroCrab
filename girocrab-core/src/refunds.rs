@@ -331,9 +331,10 @@ impl Resolved {
                 *remaining.get_mut(r).expect("resolved endpoint") -= a.cents;
                 *remaining.get_mut(o).expect("resolved endpoint") -= a.cents;
                 let s = summaries.get_mut(&r.0).expect("resolved booking");
-                s.refund_cents = s.refund_cents.checked_add(a.cents).ok_or_else(invalid)?;
+                // markers only: a sum beyond i64 saturates instead of failing every booking read
+                s.refund_cents = s.refund_cents.saturating_add(a.cents);
                 let s = summaries.get_mut(&o.0).expect("resolved booking");
-                s.refunded_cents = s.refunded_cents.checked_add(a.cents).ok_or_else(invalid)?;
+                s.refunded_cents = s.refunded_cents.saturating_add(a.cents);
             }
         }
         Ok(Self {
