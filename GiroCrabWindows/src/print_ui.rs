@@ -37,9 +37,10 @@ pub fn start(
 ) {
     std::thread::spawn(move || {
         let period = print::period_label(Some(from_date.as_str()).filter(|d| !d.is_empty()), None);
-        let locale = std::env::var("LC_ALL")
-            .or_else(|_| std::env::var("LANG"))
-            .unwrap_or_default();
+        let locale =
+            print::first_locale([std::env::var("LC_ALL").ok(), std::env::var("LANG").ok()])
+                .or_else(system_locale)
+                .unwrap_or_default();
         let html = print::render_html(&Report {
             account,
             period,
@@ -56,4 +57,28 @@ pub fn start(
         };
         let _ = weak.upgrade_in_event_loop(move |win| win.set_sync_status(msg.into()));
     });
+}
+
+/// Benutzer-Locale von Windows (`en-US`), gelesen aus der Registry ohne Konsolenfenster.
+#[cfg(windows)]
+fn system_locale() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Control Panel\International",
+            "/v",
+            "LocaleName",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    print::reg_sz_value(&String::from_utf8_lossy(&out.stdout), "LocaleName")
+}
+
+/// Außerhalb von Windows reichen `LC_ALL`/`LANG`.
+#[cfg(not(windows))]
+fn system_locale() -> Option<String> {
+    None
 }

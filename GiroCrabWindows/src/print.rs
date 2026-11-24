@@ -15,13 +15,15 @@ pub enum Paper {
 }
 
 impl Paper {
-    /// Letter für US/CA-Locales (`en_US.UTF-8`, `en-CA`), sonst A4.
+    /// Letter für die Regionen US und CA (`en_US.UTF-8`, `fr-CA`), unabhängig von der Sprache, sonst A4.
     pub fn from_locale(locale: &str) -> Self {
-        let l = locale.to_ascii_uppercase().replace('-', "_");
-        if l.starts_with("EN_US") || l.starts_with("EN_CA") {
-            Paper::Letter
-        } else {
-            Paper::A4
+        let base = locale.split(['.', '@']).next().unwrap_or("");
+        let region = base.split(['_', '-']).skip(1).find(|p| p.len() == 2);
+        match region {
+            Some(r) if r.eq_ignore_ascii_case("US") || r.eq_ignore_ascii_case("CA") => {
+                Paper::Letter
+            }
+            _ => Paper::A4,
         }
     }
 
@@ -134,9 +136,10 @@ fn shown(privacy: bool, text: &str) -> String {
     }
 }
 
+/// Im Privatmodus bleibt der Währungscode sichtbar, nur der Betrag wird verdeckt.
 fn money(privacy: bool, cents: i64, currency: &str) -> String {
     if privacy {
-        MASK.to_string()
+        format!("{MASK} {}", html_escape(currency))
     } else {
         html_escape(&format_amount(cents, currency))
     }
@@ -210,6 +213,23 @@ pub fn write_temp(html: &str) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+/// Erster nicht leerer Wert in Reihenfolge (`LC_ALL` vor `LANG`); leere Variablen gelten als nicht gesetzt.
+pub fn first_locale<I: IntoIterator<Item = Option<String>>>(values: I) -> Option<String> {
+    values.into_iter().flatten().find(|v| !v.trim().is_empty())
+}
+
+/// Wert `name` vom Typ `REG_SZ` aus der Ausgabe von `reg query` (z. B. `LocaleName    REG_SZ    en-US`).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn reg_sz_value(output: &str, name: &str) -> Option<String> {
+    output.lines().find_map(|l| {
+        let mut parts = l.split_whitespace();
+        if parts.next()? != name || parts.next()? != "REG_SZ" {
+            return None;
+        }
+        parts.next().map(str::to_string)
+    })
+}
+
 /// Öffnet die Datei im Standardprogramm für HTML (dem Browser). Kein Win32-Code nötig.
 pub fn open_in_browser(path: &Path) -> std::io::Result<()> {
     let program = if cfg!(windows) {
@@ -220,10 +240,15 @@ pub fn open_in_browser(path: &Path) -> std::io::Result<()> {
         "xdg-open"
     };
     // `status()` wartet auf den kurzen Starter-Prozess (kein Zombie, `clippy::zombie_processes`).
-    std::process::Command::new(program)
-        .arg(path)
-        .status()
-        .map(|_| ())
+    let status = std::process::Command::new(program).arg(path).status()?;
+    // `explorer` meldet auch bei Erfolg oft Exitcode 1: dort zählt nur ein Startfehler.
+    if cfg!(windows) || status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "{program} beendet mit {status}"
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -266,7 +291,13 @@ mod tests {
     fn paper_sets_page_size() {
         assert_eq!(Paper::from_locale("en_US.UTF-8"), Paper::Letter);
         assert_eq!(Paper::from_locale("en-CA"), Paper::Letter);
+        assert_eq!(Paper::from_locale("fr_CA"), Paper::Letter);
+        assert_eq!(Paper::from_locale("fr-CA"), Paper::Letter);
+        assert_eq!(Paper::from_locale("es-US"), Paper::Letter);
         assert_eq!(Paper::from_locale("de_DE.UTF-8"), Paper::A4);
+        assert_eq!(Paper::from_locale("en_GB@euro"), Paper::A4);
+        assert_eq!(Paper::from_locale("C"), Paper::A4);
+        assert_eq!(Paper::from_locale(""), Paper::A4);
         assert!(render_html(&report(false, Paper::A4, vec![])).contains("size: A4"));
         assert!(render_html(&report(false, Paper::Letter, vec![])).contains("size: Letter"));
     }
@@ -299,6 +330,19 @@ mod tests {
             assert!(!html.contains(secret), "{secret} leaked");
         }
         assert!(html.contains("2026-03-01"));
+        assert!(html.contains(&format!("{MASK} EUR")));
+    }
+
+    #[test]
+    fn locale_skips_empty_values_and_reads_registry_output() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(first_locale([s(""), s("fr_CA.UTF-8")]), s("fr_CA.UTF-8"));
+        assert_eq!(first_locale([s("en_US"), s("de_DE")]), s("en_US"));
+        assert_eq!(first_locale([None, s("  ")]), None);
+        let out = "\r\nHKEY_CURRENT_USER\\Control Panel\\International\r\n    LocaleName    REG_SZ    en-US\r\n\r\n";
+        assert_eq!(reg_sz_value(out, "LocaleName"), s("en-US"));
+        assert_eq!(reg_sz_value(out, "sCountry"), None);
+        assert_eq!(reg_sz_value("", "LocaleName"), None);
     }
 
     #[test]
