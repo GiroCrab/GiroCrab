@@ -1379,7 +1379,7 @@ struct LoadMoreBookingsFooter: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("\(model.bookings.count) von \(model.bookings.count + model.remainingBookingCount) Buchungen geladen – ältere Buchungen sind noch nicht sichtbar.")
+            Text("\(model.loadedMatchingCount) von \(model.loadedMatchingCount + model.remainingBookingCount) Buchungen geladen – ältere Buchungen sind noch nicht sichtbar.")
                 .appFont(.caption).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             // always laid out, only faded: the footer keeps its height while a page loads
