@@ -52,7 +52,7 @@ impl Vault {
 
     /// Effective financial role of every live category (#931): walks up `parent_id`
     /// until the first explicit `role` is found, defaulting to `CategoryRole::Consumption`.
-    pub(super) fn category_roles(conn: &Connection) -> CoreResult<HashMap<i64, CategoryRole>> {
+    pub(crate) fn category_roles(conn: &Connection) -> CoreResult<HashMap<i64, CategoryRole>> {
         let mut stmt =
             conn.prepare("SELECT id, parent_id, role FROM categories WHERE deleted_ms IS NULL")?;
         let rows: HashMap<i64, (Option<i64>, Option<CategoryRole>)> = stmt

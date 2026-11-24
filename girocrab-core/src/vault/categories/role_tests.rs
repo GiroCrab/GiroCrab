@@ -97,6 +97,50 @@ fn custom_names_paths_budgets_and_imports_stay_literal() {
     });
 }
 
+/// An import that reuses a built-in top-level category takes over its name
+/// (`builtin_role` is cleared) but keeps the role it started with: its bookings stay
+/// investments. Before #931 clearing `builtin_role` also dropped the classification; the
+/// ADR lists this as a deliberate exception.
+#[test]
+fn import_reusing_a_builtin_root_keeps_its_seeded_role() {
+    let dir = crate::test_support::TempDir::new("roles-import-reuse");
+    let v = vault(&dir);
+    v.seed_starter_categories().unwrap();
+    let saving = v
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name == "Sparen & Investieren")
+        .unwrap();
+    assert_eq!(saving.role, Some(CategoryRole::Investment));
+    let db = v.db().unwrap();
+    let imported = crate::importers::moneymoney_import::find_or_create_category(
+        &db,
+        &["Sparen & Investieren".into()],
+        &mut HashMap::new(),
+        &mut 0,
+    )
+    .unwrap();
+    assert_eq!(imported, saving.id);
+    let (builtin, role_ms): (Option<String>, i64) = db
+        .query_row(
+            "SELECT builtin_role, role_ms FROM categories WHERE id = ?1",
+            [saving.id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    drop(db);
+    assert_eq!((builtin, role_ms), (None, 0));
+    let after = v
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == saving.id)
+        .unwrap();
+    assert_eq!(after.role, Some(CategoryRole::Investment));
+    assert_eq!(after.effective_role, CategoryRole::Investment);
+}
+
 #[test]
 fn renamed_builtin_keeps_role_and_custom_name_does_not_classify() {
     let dir = crate::test_support::TempDir::new("roles-flow");
@@ -582,7 +626,8 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
             let mut top_role = String::new();
             let mut is_transfer = false;
             let mut cur = Some(id);
-            for _ in 0..=32 {
+            // v38's bound (`category_flows`): 32 categories
+            for _ in 0..32 {
                 let Some((parent, role)) = cur.and_then(|c| rows.get(&c)) else {
                     break;
                 };

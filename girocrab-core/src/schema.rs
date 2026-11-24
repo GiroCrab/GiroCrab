@@ -126,7 +126,8 @@ const STEPS: &[Step] = &[
 /// explicit user choice on another device wins on sync. Idempotent.
 ///
 /// Only where `builtin_role` decided the v38 classification (root's role, or any transfer
-/// ancestor), so rearranged trees keep their flows: roots, transfer categories at any depth,
+/// ancestor), so rearranged trees keep their flows: roots (also below a deleted parent, where
+/// the v38 walk stopped), transfer categories at any depth,
 /// and `Gehalt` unless a live ancestor (as `Vault::category_roles` walks them) got
 /// `investment`, `loan` or `neutral` – `salary` there would stop the inheritance of that role.
 fn category_roles(conn: &Connection) -> CoreResult<()> {
@@ -137,16 +138,19 @@ fn category_roles(conn: &Connection) -> CoreResult<()> {
     }
     conn.execute_batch(
         "UPDATE categories SET role = 'investment'
-          WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL
+          WHERE role IS NULL AND role_ms = 0
+            AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM categories WHERE deleted_ms IS NULL))
             AND builtin_role IN ('Sparen & Investieren', 'ETF-Sparpläne', 'Aktien');
          UPDATE categories SET role = 'loan'
-          WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL
+          WHERE role IS NULL AND role_ms = 0
+            AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM categories WHERE deleted_ms IS NULL))
             AND builtin_role = 'Kredite & Darlehen';
          UPDATE categories SET role = 'neutral'
           WHERE role IS NULL AND role_ms = 0
             AND builtin_role IN ('Umbuchungen', 'import:transfers');
          UPDATE categories SET role = 'income'
-          WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL
+          WHERE role IS NULL AND role_ms = 0
+            AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM categories WHERE deleted_ms IS NULL))
             AND builtin_role = 'Einnahmen';
          WITH RECURSIVE ancestors(id, ancestor, depth) AS (
              SELECT id, parent_id, 1 FROM categories WHERE builtin_role = 'Gehalt'
@@ -1266,7 +1270,8 @@ mod tests {
              INSERT INTO categories(id, parent_id, name, builtin_role, deleted_ms) VALUES
                (17, 4, 'Gelöschte Zwischenkategorie', NULL, 1);
              INSERT INTO categories(id, parent_id, name, builtin_role) VALUES
-               (18, 17, 'Gehalt (unter gelöschter Zwischenkategorie)', 'Gehalt');",
+               (18, 17, 'Gehalt (unter gelöschter Zwischenkategorie)', 'Gehalt'),
+               (22, 17, 'Kredite (unter gelöschtem Ordner)', 'Kredite & Darlehen');",
         )
         .unwrap();
         migrate(&mut conn).unwrap();
@@ -1308,6 +1313,9 @@ mod tests {
         // `Gehalt` inherits `Neutral` from `Umbuchungen` (role_tests.rs checks the flow).
         assert_eq!(read(20), (None, 0));
         assert_eq!(read(21), (None, 0));
+        // Without a live parent a category was its own top level in v38: `Kredite` there
+        // was a loan (case 13 is the control under a live custom root).
+        assert_eq!(read(22), (Some("loan".into()), 0));
         // Idempotent: re-running never overwrites an explicit role or an explicit
         // reset to inherit (`role = NULL, role_ms > 0`).
         conn.execute(
@@ -1522,5 +1530,156 @@ mod tests {
             .query_row("SELECT count(*) FROM account_groups", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
+    }
+
+    /// Step 39 (#931) keeps the v38 classification of every category, checked on random
+    /// v38 trees: built-ins (every starter name and `import:transfers`) at random places,
+    /// custom categories and deleted ones, also between live ones. The v38 side is a copy of the
+    /// old `category_flows` walk plus how `classify_by_kind`/`BookingFinisher::finish` used
+    /// it; the new side is `Vault::category_roles` after the step. Trees stay below the
+    /// 32-level walk bound, whose v38 artefacts the step deliberately does not reproduce.
+    #[test]
+    fn category_roles_keep_v38_classification_on_random_trees() {
+        use rusqlite::params;
+        use std::collections::HashMap;
+
+        #[derive(Debug, PartialEq, Clone, Copy)]
+        enum Effect {
+            Transfer,
+            Investment,
+            Loan,
+            None,
+        }
+
+        // v38: `category_flows` over live rows (`0..32`), then the category's part in
+        // `classify_by_kind` (investment before loan) and `finish` (a transfer category wins).
+        fn v38_effects(conn: &Connection) -> HashMap<i64, Effect> {
+            let mut st = conn
+                .prepare(
+                    "SELECT id, parent_id, builtin_role FROM categories WHERE deleted_ms IS NULL",
+                )
+                .unwrap();
+            let rows: HashMap<i64, (Option<i64>, Option<String>)> = st
+                .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let inv_path = |p: &str| {
+                let p = p.to_lowercase();
+                [
+                    "investment",
+                    "invest",
+                    "wertpapier",
+                    "aktie",
+                    "etf",
+                    "depot",
+                    "sparen",
+                    "vorsorge",
+                ]
+                .iter()
+                .any(|n| p.contains(n))
+            };
+            let mut out = HashMap::new();
+            for &id in rows.keys() {
+                let (mut top, mut transfer) = (String::new(), false);
+                let mut cur = Some(id);
+                for _ in 0..32 {
+                    let Some((parent, role)) = cur.and_then(|c| rows.get(&c)) else {
+                        break;
+                    };
+                    top = role.clone().unwrap_or_default();
+                    transfer |= matches!(role.as_deref(), Some("Umbuchungen" | "import:transfers"));
+                    cur = *parent;
+                }
+                let effect = if transfer {
+                    Effect::Transfer
+                } else if top == "Sparen & Investieren" || inv_path(&top) {
+                    Effect::Investment
+                } else if top == "Kredite & Darlehen" {
+                    Effect::Loan
+                } else {
+                    Effect::None
+                };
+                out.insert(id, effect);
+            }
+            out
+        }
+
+        fn new_effects(conn: &Connection) -> HashMap<i64, Effect> {
+            use crate::models::CategoryRole as R;
+            crate::vault::Vault::category_roles(conn)
+                .unwrap()
+                .into_iter()
+                .map(|(id, role)| {
+                    let effect = match role {
+                        R::Neutral => Effect::Transfer,
+                        R::Investment => Effect::Investment,
+                        R::Loan => Effect::Loan,
+                        R::Consumption | R::Income | R::Salary => Effect::None,
+                    };
+                    (id, effect)
+                })
+                .collect()
+        }
+
+        let mut builtins: Vec<&str> = vec!["import:transfers"];
+        for (name, _, _, kids) in crate::demo::STARTER_TREE {
+            builtins.push(name);
+            builtins.extend(kids.iter().map(|(k, _)| *k));
+        }
+
+        // xorshift64*: deterministic, no dependency
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = |n: u64| -> u64 {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state.wrapping_mul(0x2545_F491_4F6C_DD1D) % n
+        };
+
+        let conn = schema_at(SCHEMA_VERSION as usize);
+        for tree in 0..2000 {
+            conn.execute_batch("DELETE FROM categories").unwrap();
+            let size = 1 + next(24) as i64;
+            let mut depth: HashMap<i64, u64> = HashMap::new();
+            let mut rows = Vec::new();
+            for id in 1..=size {
+                // parent: none or an earlier row (kept below 30 levels); a parent that
+                // no longer exists is ruled out by the foreign key
+                let parent = match next(10) {
+                    0..=2 => None,
+                    _ if id > 1 => {
+                        let p = 1 + next(id as u64 - 1) as i64;
+                        (depth[&p] < 29).then_some(p)
+                    }
+                    _ => None,
+                };
+                depth.insert(id, parent.and_then(|p| depth.get(&p)).map_or(0, |d| d + 1));
+                let builtin = (next(3) > 0).then(|| builtins[next(builtins.len() as u64) as usize]);
+                let deleted = (next(8) == 0).then_some(1i64);
+                conn.execute(
+                    "INSERT INTO categories(id, parent_id, name, builtin_role, deleted_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![id, parent, format!("c{id}"), builtin, deleted],
+                )
+                .unwrap();
+                rows.push(format!(
+                    "{id} parent={parent:?} builtin={builtin:?} deleted={}",
+                    deleted.is_some()
+                ));
+            }
+            let before = v38_effects(&conn);
+            category_roles(&conn).unwrap();
+            let after = new_effects(&conn);
+            for (id, effect) in &before {
+                assert_eq!(
+                    after.get(id),
+                    Some(effect),
+                    "tree {tree}, category {id}: v38 {effect:?}, after step 39 {:?}\n{}",
+                    after.get(id),
+                    rows.join("\n")
+                );
+            }
+        }
     }
 }
