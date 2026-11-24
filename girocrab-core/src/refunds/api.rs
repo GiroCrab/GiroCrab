@@ -22,7 +22,7 @@ fn direct(state: &State, e: &Endpoint, positive: bool) -> CoreResult<i64> {
     Ok(amount)
 }
 
-fn descends_from(rows: &[Row], row: &Row, ancestor: &Key) -> bool {
+fn descends_from(rows: &HashMap<&Key, &Row>, row: &Row, ancestor: &Key) -> bool {
     if row.key == *ancestor {
         return true;
     }
@@ -35,10 +35,7 @@ fn descends_from(rows: &[Row], row: &Row, ancestor: &Key) -> bool {
         if !visited.insert(current) {
             break;
         }
-        key = rows
-            .iter()
-            .find(|row| row.key == *current)
-            .and_then(|row| row.moved_from.as_ref());
+        key = rows.get(current).and_then(|row| row.moved_from.as_ref());
     }
     false
 }
@@ -163,8 +160,9 @@ impl Vault {
         row.changed_ms = next_stamp(&tx)?;
         row.deleted_ms = None;
         let restored = row.clone();
+        let by_key = rows_by_key(&state.rows);
         if !resolve(&state).iter().any(|a| {
-            descends_from(&state.rows, &a.row, &key) && a.refund.is_some() && a.original.is_some()
+            descends_from(&by_key, &a.row, &key) && a.refund.is_some() && a.original.is_some()
         }) {
             return Err(invalid());
         }
