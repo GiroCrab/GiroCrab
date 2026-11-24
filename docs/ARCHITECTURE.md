@@ -38,12 +38,23 @@ and `migrate` runs the missing ones in a single transaction.
 | 31 | `booking_documents.seen_at`: read status of documents; the document list index carries the column, a partial index finds the unread ones |
 | 32 | `accounts.note` / `note_ms`: the account note syncs like the name (#980); moves the setting `account.note.<id>` onto the account |
 | 33 | `hidden_recipients`: IBANs left out of the transfer suggestions (#978); index `tx_recipients` over the outgoing bookings with an IBAN |
-| 34+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 34 | `accounts.include_in_total` / `total_ms`: per-account switch for the totals (#337); existing order accounts start excluded |
+| 35 | `merchant_switches`, `custom_merchants`: merchant recognition settings and own merchants, both merged (#1373) |
+| 36 | `accounts.bank_label` / `bank_label_ms`: per-account bank label (#1467) |
+| 37 | one sidebar section per account kind (#1003): accounts of the old section "Giro & Tagesgeld" move by `accounts.kind` |
+| 38 | repair (#998): accounts an import archived because of a cancelled refresh are active again, marked in `accounts.archive_unknown` |
+| 39 | `transaction_splits.uuid` / `position`: stable split-part identities, deterministic UUIDv5 backfill (#714) |
+| 40 | `refund_links`: refund links between bookings or split parts (#714) |
+| 41 | `transactions.date_ms`: edit stamp of a manual booking's date, synced on its own (#714) |
+| 42 | `accounts.last_fetch_unix`: last single-account fetch, shown with the later of it and the login's sync time (#1716) |
+| 43+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 
 1. Append a step to `STEPS` (SQL, or a hook for Rust logic such as backfills). Never edit or
-   reorder an existing step: vaults in the wild have already run it.
+   reorder an existing step: vaults in the wild have already run it. Describe the step in the
+   module comment of `schema.rs` and in the table above, and move the "future changes" row on
+   (`scripts/lint-schema-docs.sh`, CI).
 2. Run `cargo run -q -p girocrab-core --example make_fixture_vault`. It writes
    `girocrab-core/tests/fixtures/vault-v{N}.girocrab`; commit it. Never regenerate or edit an
    older fixture – each stands for vaults written by that version.

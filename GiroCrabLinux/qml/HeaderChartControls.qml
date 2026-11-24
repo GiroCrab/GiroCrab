@@ -5,7 +5,8 @@ import QtQuick.Layouts
 // HeaderChartControls.swift (#634): the row below the header chart. Hidden, line, bars or pie
 // in one segmented group, then the bar width („Balken je“). „Ausgeblendet“ folds only the
 // chart (the row, balance, KPIs and filters stay) and keeps the chosen type for when the chart
-// is shown again. Same prefs as the right-click menu and Einstellungen (BalanceChartPrefs).
+// is shown again. The whole row hides only with a minimised header, not with
+// „Auswertungen anzeigen“ (#1760). Same prefs as the right-click menu and Einstellungen (BalanceChartPrefs).
 RowLayout {
     id: controls
     /// BarUnitMenu: the units to offer ([] = no menu), the current one and what "auto" stands for.

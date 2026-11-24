@@ -13,9 +13,6 @@ struct BookingStreamView: View {
 
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
-    #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var hSize
-    #endif
 
     var body: some View {
         @Bindable var model = model
@@ -137,16 +134,6 @@ struct BookingStreamView: View {
                 }
             }
             .background(Theme.systemBackground)
-            #if os(iOS)
-            // iPhone: the detail column is not reachable by tapping, so show it as a sheet.
-            .capturableSheet(isPresented: Binding(
-                get: { hSize == .compact && model.showBookingSheet && model.selectedBookingID != nil },
-                set: { if !$0 { model.showBookingSheet = false } }
-            )) {
-                NavigationStack { InspectorView() }
-                    .presentationDetents([.medium, .large])
-            }
-            #endif
             // Drop a receipt anywhere on the stream: matched by amount/date/merchant.
             .dropDestination(for: URL.self) { urls, _ in
                 model.dropAnywhere(urls)
