@@ -249,6 +249,111 @@ pub fn keep_selection(rows: &[Row], shown: &[usize], selected: Option<i64>) -> O
     shown.iter().any(|&i| rows[i].id == id).then_some(id)
 }
 
+/// Income and expenses of the ticked bookings in one currency.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CurrencySum {
+    pub currency: String,
+    pub income: i64,
+    /// Zero or negative.
+    pub expense: i64,
+}
+
+impl CurrencySum {
+    pub fn balance(&self) -> i64 {
+        self.income + self.expense
+    }
+}
+
+/// Sums of the ticked bookings (#878). Currencies are never added up (#569): EUR is the main
+/// total, every other currency stays separate in `extra`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SelectionSummary {
+    pub count: usize,
+    pub main: CurrencySum,
+    /// Other currencies, sorted by code.
+    pub extra: Vec<CurrencySum>,
+}
+
+/// Sums the given (already loaded) rows; no vault access.
+pub fn selection_summary<'a>(rows: impl IntoIterator<Item = &'a Row>) -> SelectionSummary {
+    let mut s = SelectionSummary {
+        main: CurrencySum {
+            currency: "EUR".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for r in rows {
+        s.count += 1;
+        let code = if r.currency.is_empty() {
+            "EUR"
+        } else {
+            r.currency.as_str()
+        };
+        let slot = if code == "EUR" {
+            &mut s.main
+        } else if let Some(i) = s.extra.iter().position(|c| c.currency == code) {
+            &mut s.extra[i]
+        } else {
+            s.extra.push(CurrencySum {
+                currency: code.into(),
+                ..Default::default()
+            });
+            let last = s.extra.len() - 1;
+            &mut s.extra[last]
+        };
+        if r.amount_cents >= 0 {
+            slot.income += r.amount_cents;
+        } else {
+            slot.expense += r.amount_cents;
+        }
+    }
+    s.extra.sort_by(|a, b| a.currency.cmp(&b.currency));
+    s
+}
+
+/// What the selection bar shows; amounts masked in privacy mode, the count stays visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionTexts {
+    pub count: String,
+    pub income: String,
+    pub expense: String,
+    pub balance: String,
+    /// `Zusätzlich: …` with the balance per other currency, "" when there is none.
+    pub extra: String,
+}
+
+pub fn selection_texts(
+    s: &SelectionSummary,
+    privacy: bool,
+    money: impl Fn(i64, &str) -> String,
+) -> SelectionTexts {
+    let m = |cents: i64, cur: &str| mask(&money(cents, cur), privacy);
+    let extra = if s.extra.is_empty() {
+        String::new()
+    } else {
+        let parts: Vec<String> = s
+            .extra
+            .iter()
+            .map(|c| {
+                if privacy {
+                    format!("{} {MASK}", c.currency)
+                } else {
+                    money(c.balance(), &c.currency)
+                }
+            })
+            .collect();
+        format!("Zusätzlich: {}", parts.join(" · "))
+    };
+    SelectionTexts {
+        count: format!("{} Buchungen", s.count),
+        income: m(s.main.income, "EUR"),
+        expense: m(s.main.expense, "EUR"),
+        balance: m(s.main.balance(), "EUR"),
+        extra,
+    }
+}
+
 /// Running balance per booking and end-of-day balance of a one-account view (#577).
 /// Empty (`currency` == "") for several accounts, groups, categories or mixed currencies,
 /// so balances are never summed across currencies (#569).
@@ -644,6 +749,70 @@ mod tests {
             ),
             row(3, "Stadtwerke", "Strom Abschlag", -8900, None, false),
         ]
+    }
+
+    fn row_in(id: i64, cents: i64, currency: &str) -> Row {
+        Row {
+            currency: currency.into(),
+            ..row(id, "X", "", cents, None, false)
+        }
+    }
+
+    fn plain(cents: i64, cur: &str) -> String {
+        format!("{cents} {cur}")
+    }
+
+    #[test]
+    fn selection_summary_splits_income_and_expenses() {
+        let s = selection_summary(&sample());
+        assert_eq!(s.count, 3);
+        assert_eq!(s.main.currency, "EUR");
+        assert_eq!(s.main.income, 300000);
+        assert_eq!(s.main.expense, -11250);
+        assert_eq!(s.main.balance(), 288750);
+        assert!(s.extra.is_empty());
+    }
+
+    #[test]
+    fn selection_summary_never_adds_currencies() {
+        let rows = vec![
+            row_in(1, 1000, "EUR"),
+            row_in(2, 500, "USD"),
+            row_in(3, -200, "USD"),
+            row_in(4, -300, "CHF"),
+            row_in(5, 100, ""),
+        ];
+        let s = selection_summary(&rows);
+        assert_eq!(s.count, 5);
+        assert_eq!((s.main.income, s.main.expense), (1100, 0));
+        let codes: Vec<&str> = s.extra.iter().map(|c| c.currency.as_str()).collect();
+        assert_eq!(codes, ["CHF", "USD"]);
+        assert_eq!((s.extra[0].income, s.extra[0].expense), (0, -300));
+        assert_eq!((s.extra[1].income, s.extra[1].expense), (500, -200));
+        let t = selection_texts(&s, false, plain);
+        assert_eq!(t.balance, "1100 EUR");
+        assert_eq!(t.extra, "Zusätzlich: -300 CHF · 300 USD");
+    }
+
+    #[test]
+    fn selection_summary_of_nothing_is_zero() {
+        let s = selection_summary(&[] as &[Row]);
+        assert_eq!(s.count, 0);
+        assert_eq!(s.main.balance(), 0);
+        assert!(s.extra.is_empty());
+        let t = selection_texts(&s, false, plain);
+        assert_eq!((t.count.as_str(), t.extra.as_str()), ("0 Buchungen", ""));
+    }
+
+    #[test]
+    fn selection_texts_mask_amounts_in_privacy_mode() {
+        let rows = vec![row_in(1, -2350, "EUR"), row_in(2, 900, "USD")];
+        let t = selection_texts(&selection_summary(&rows), true, plain);
+        assert_eq!(t.count, "2 Buchungen");
+        assert_eq!(t.income, MASK);
+        assert_eq!(t.expense, MASK);
+        assert_eq!(t.balance, MASK);
+        assert_eq!(t.extra, format!("Zusätzlich: USD {MASK}"));
     }
 
     #[test]

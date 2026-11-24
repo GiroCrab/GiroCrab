@@ -235,7 +235,48 @@ impl Vault {
         self.data_replaced();
         copied?;
         Self::migrate(&mut main)?;
+        Self::restored_life_wins(&main)?;
         Self::repair(&main);
+        Ok(())
+    }
+
+    /// A restore says "this state counts" (#1090): the backup's live bank
+    /// connections and accounts are created again now, so the sync merge
+    /// (`join_life`) keeps them against a deletion another device made after
+    /// the backup and brings them back there too. Their bookings deleted with
+    /// them follow the account (cascade tombstones). Deletions made after the
+    /// restore are newer and win as usual. Individually deleted bookings,
+    /// categories, rules and tags have no creation stamp and stay deleted.
+    ///
+    /// Accounts the backup holds deleted under a live connection must stay
+    /// deleted on the next fetch (`fetch_keeps_account_deleted`: deleted after
+    /// the connection was created), so they and the bookings deleted with them
+    /// move to just after the renewed creation.
+    fn restored_life_wins(conn: &Connection) -> CoreResult<()> {
+        let now = crate::dates::now_ms();
+        let later = now + 1;
+        let deleted_under_live = "SELECT id, deleted_ms FROM accounts
+             WHERE deleted_ms IS NOT NULL AND deleted_ms < ?1
+               AND connection_id IN (SELECT id FROM bank_connections WHERE deleted_ms IS NULL AND IFNULL(created_ms, 0) < accounts.deleted_ms)";
+        // the cascade first: it is found by the account's old deletion stamp
+        conn.execute(
+            &format!(
+                "UPDATE transactions SET deleted_ms = ?1 WHERE (account_id, deleted_ms) IN ({deleted_under_live})"
+            ),
+            [later],
+        )?;
+        conn.execute(
+            &format!("UPDATE accounts SET deleted_ms = ?1 WHERE id IN (SELECT id FROM ({deleted_under_live}))"),
+            [later],
+        )?;
+        conn.execute(
+            "UPDATE bank_connections SET created_ms = ?1 WHERE deleted_ms IS NULL AND created_ms < ?1",
+            [now],
+        )?;
+        conn.execute(
+            "UPDATE accounts SET created_ms = ?1 WHERE deleted_ms IS NULL AND created_ms < ?1",
+            [now],
+        )?;
         Ok(())
     }
 }
