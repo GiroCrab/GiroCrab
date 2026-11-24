@@ -1660,6 +1660,28 @@ mod tests {
         assert!(edit(&v, &Edit::Restore(p, token)).is_err());
     }
 
+    /// CodeRabbit (#1856): an unlink names the revision the dialog showed; a link recreated
+    /// meanwhile (new revision) is not removed by it.
+    #[test]
+    fn unlink_with_a_stale_revision_keeps_the_recreated_link() {
+        let (_dir, v, f) = fixture();
+        let p = Pair {
+            refund: f.refund,
+            refund_part: f.part.clone(),
+            original: f.original,
+            original_part: String::new(),
+        };
+        edit(&v, &Edit::Link(p.clone())).unwrap();
+        let shown = v.refund_links(f.refund).unwrap()[0].changed_ms;
+        edit(&v, &Edit::Unlink(p.clone(), Some(shown))).unwrap();
+        edit(&v, &Edit::Link(p.clone())).unwrap();
+        assert!(edit(&v, &Edit::Unlink(p.clone(), Some(shown))).is_err());
+        assert_eq!(v.refund_links(f.refund).unwrap().len(), 1);
+        let current = v.refund_links(f.refund).unwrap()[0].changed_ms;
+        assert!(edit(&v, &Edit::Unlink(p, Some(current))).unwrap().0);
+        assert!(v.refund_links(f.refund).unwrap().is_empty());
+    }
+
     #[test]
     fn reloading_reads_current_sign_and_omits_dropped_links() {
         let (_dir, v, f) = fixture();

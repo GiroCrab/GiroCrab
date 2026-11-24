@@ -3222,7 +3222,7 @@ mod tests {
     fn partial_reload_and_target_changes_have_recovery_paths() {
         let source = include_str!("main.rs");
         let reload = source
-            .split("fn reload(")
+            .split("fn reload_with(")
             .nth(1)
             .unwrap()
             .split("\nfn ")
