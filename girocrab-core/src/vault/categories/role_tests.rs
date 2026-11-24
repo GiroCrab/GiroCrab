@@ -330,10 +330,10 @@ fn category_role_inheritance_and_override() {
     assert_eq!(find(grand).effective_role, CategoryRole::Investment);
 
     // Non-existent category returns NotFound.
-    assert!(
-        v.set_category_role(999_999, Some(CategoryRole::Neutral))
-            .is_err()
-    );
+    assert!(matches!(
+        v.set_category_role(999_999, Some(CategoryRole::Neutral)),
+        Err(CoreError::NotFound { .. })
+    ));
 }
 
 #[test]
@@ -525,6 +525,23 @@ fn role_inheritance_matches_list_and_booking_at_depth_32() {
 fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
     use crate::merchants::{FlowKind, MerchantKind, normalise};
 
+    /// v38 `is_investment_category_path`, applied to the top-level `builtin_role`.
+    fn is_inv_path(path: &str) -> bool {
+        let p = path.to_lowercase();
+        [
+            "investment",
+            "invest",
+            "wertpapier",
+            "aktie",
+            "etf",
+            "depot",
+            "sparen",
+            "vorsorge",
+        ]
+        .iter()
+        .any(|n| p.contains(n))
+    }
+
     /// Self-contained copy of the pre-#931 `classify_by_kind` logic, without
     /// calling into `CategoryRole` or the new `merchants::classify_by_kind`.
     fn legacy_classify(
@@ -537,22 +554,6 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
         account_kind: AccountKind,
     ) -> FlowKind {
         let contains_any = |text: &str, needles: &[&str]| needles.iter().any(|n| text.contains(n));
-        let is_inv_path = |path: &str| {
-            let p = path.to_lowercase();
-            contains_any(
-                &p,
-                &[
-                    "investment",
-                    "invest",
-                    "wertpapier",
-                    "aktie",
-                    "etf",
-                    "depot",
-                    "sparen",
-                    "vorsorge",
-                ],
-            )
-        };
         let t = normalise(&format!("{counterparty} {purpose} {booking_text}"));
         if contains_any(
             &t,
@@ -651,20 +652,25 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
         );
         for (id, (top_role, is_transfer)) in &legacy_cats {
             let role = new_roles[id];
+            // The one category effect v38 applied: a transfer ancestor beats the top-level
+            // role (`BookingFinisher::finish`), investment beats loan (`classify_by_kind`).
+            let legacy = if *is_transfer {
+                Some(CategoryRole::Neutral)
+            } else if top_role == "Sparen & Investieren" || is_inv_path(top_role) {
+                Some(CategoryRole::Investment)
+            } else if top_role == "Kredite & Darlehen" {
+                Some(CategoryRole::Loan)
+            } else {
+                None
+            };
+            let new = matches!(
+                role,
+                CategoryRole::Investment | CategoryRole::Loan | CategoryRole::Neutral
+            )
+            .then_some(role);
             assert_eq!(
-                *is_transfer,
-                role == CategoryRole::Neutral,
-                "{label}: cat {id} transfer mismatch (top={top_role:?}, role={role:?})"
-            );
-            assert_eq!(
-                top_role == "Sparen & Investieren",
-                role == CategoryRole::Investment,
-                "{label}: cat {id} investment mismatch (top={top_role:?}, role={role:?})"
-            );
-            assert_eq!(
-                top_role == "Kredite & Darlehen",
-                role == CategoryRole::Loan,
-                "{label}: cat {id} loan mismatch (top={top_role:?}, role={role:?})"
+                legacy, new,
+                "{label}: cat {id} effect mismatch (top={top_role:?}, transfer={is_transfer}, role={role:?})"
             );
         }
 
@@ -821,6 +827,43 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
     std::fs::copy(&src, &dst).unwrap();
     let migrated = Vault::open(dst.to_string_lossy().into(), vec![0x47; 32]).unwrap();
     verify_vault("migrated-v38", &migrated);
+
+    // 3. Control: a transfer category below `Sparen & Investieren` (top level) with a booking.
+    // v38 made it a transfer although the top-level role is an investment one.
+    let nested_dir = crate::test_support::TempDir::new("roles-regression-v38-nested");
+    let dst = nested_dir.join("vault-v38-nested.girocrab");
+    std::fs::copy(&src, &dst).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&dst).unwrap();
+        conn.pragma_update(None, "key", format!("x'{}'", "47".repeat(32)))
+            .unwrap();
+        let nested: i64 = conn
+            .query_row(
+                "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, builtin_role)
+                 SELECT id, 'Depotüberträge', 'arrow.left.arrow.right', '#445566', 99, 'import:transfers'
+                   FROM categories WHERE builtin_role = 'Sparen & Investieren'
+                 RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "UPDATE transactions SET category_id = ?1
+              WHERE id = (SELECT MIN(id) FROM transactions WHERE deleted_ms IS NULL)",
+            [nested],
+        )
+        .unwrap();
+    }
+    let nested = Vault::open(dst.to_string_lossy().into(), vec![0x47; 32]).unwrap();
+    let nested_role = nested
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name == "Depotüberträge")
+        .unwrap()
+        .effective_role;
+    assert_eq!(nested_role, CategoryRole::Neutral);
+    verify_vault("migrated-v38-nested-transfer", &nested);
 }
 
 /// Intentional #931 role-inheritance semantics when reorganizing built-in

@@ -2125,6 +2125,27 @@ mod tests {
             "set_category_budget",
             json!({ "category_id": cat["id"], "budget_cents": 12000 }),
         );
+        // Category role (#931): the JSON argument names and the enum spelling at the bridge.
+        let role_of = |field: &str| {
+            call("list_categories", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == cat["id"])
+                .unwrap()[field]
+                .clone()
+        };
+        call(
+            "set_category_role",
+            json!({ "category_id": cat["id"], "role": "Neutral" }),
+        );
+        assert_eq!(role_of("role"), json!("Neutral"));
+        assert_eq!(role_of("effective_role"), json!("Neutral"));
+        call(
+            "set_category_role",
+            json!({ "category_id": cat["id"], "role": null }),
+        );
+        assert_eq!(role_of("role"), Value::Null);
         call(
             "update_category",
             json!({ "id": cat["id"], "name": "Umbenannt", "parent_id": null,

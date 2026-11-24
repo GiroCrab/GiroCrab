@@ -5271,6 +5271,17 @@ fn show_in_diagrams_zero_maps_to_neutral_role() {
         )
         .unwrap();
     import_with(&local, &mm, |_| {});
+    // The import marks the existing category, as a role nobody chose.
+    let (role, role_ms): (Option<String>, i64) = local
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT role, role_ms FROM categories WHERE uuid = 'uuid-ausgelegt'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((role.as_deref(), role_ms), (Some("neutral"), 0));
     local
         .merge_other_vault(
             remote_dir.join("v.db").to_string_lossy().into(),

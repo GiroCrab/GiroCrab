@@ -62,8 +62,10 @@
 //!   in `accounts.archive_unknown` until an import or the user settles their state.
 //! - 39: explicit category financial roles (#931): `categories.role` (NULL = inherit from
 //!   parent, root default `consumption`) and its sync stamp `categories.role_ms`, seeded
-//!   from `categories.builtin_role` with stamp 0 so user edits win on sync, only where
-//!   `builtin_role` decided the classification before ([`category_roles`]).
+//!   from `categories.builtin_role` with stamp 0 so user edits win on sync
+//!   ([`category_roles`]): `investment`, `loan` and `neutral` only where `builtin_role`
+//!   decided the classification before; `income` and `salary` as defaults that change no
+//!   classification yet.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -125,11 +127,13 @@ const STEPS: &[Step] = &[
 /// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
 /// explicit user choice on another device wins on sync. Idempotent.
 ///
-/// Only where `builtin_role` decided the v38 classification (root's role, or any transfer
-/// ancestor), so rearranged trees keep their flows: roots (also below a deleted parent, where
-/// the v38 walk stopped), transfer categories at any depth,
-/// and `Gehalt` unless a live ancestor (as `Vault::category_roles` walks them) got
-/// `investment`, `loan` or `neutral` – `salary` there would stop the inheritance of that role.
+/// Two purposes. `investment`, `loan` and `neutral` only where `builtin_role` decided the v38
+/// classification (root's role, or any transfer ancestor), so rearranged trees keep their
+/// flows: roots (also below a deleted parent, where the v38 walk stopped) and transfer
+/// categories at any depth. `income` (root `Einnahmen`) and `salary` (`Gehalt`) are defaults
+/// for later steps of #931 and change no classification yet; `Gehalt` gets `salary` unless a
+/// live ancestor (as `Vault::category_roles` walks them) got `investment`, `loan` or
+/// `neutral`, because `salary` there would stop the inheritance of that role.
 fn category_roles(conn: &Connection) -> CoreResult<()> {
     for (col, def) in [("role", "TEXT"), ("role_ms", "INTEGER NOT NULL DEFAULT 0")] {
         if !has_column(conn, "main", "categories", col)? {
