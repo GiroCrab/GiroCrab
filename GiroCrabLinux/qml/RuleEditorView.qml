@@ -360,6 +360,8 @@ Sheet {
         message: current !== null && current.category_id !== 0
                  ? qsTr("Bei „Alle Buchungen“ kann die Regel auch manuell gesetzte Kategorien überschreiben.") : ""
         secondaryTitle: qsTr("Nur unkategorisierte Buchungen")
+        // three long choices: a vertical list as on the Mac, fits at any text size
+        stackedButtons: true
         actionTitle: qsTr("Alle Buchungen")
         destructive: current !== null && current.category_id !== 0
         onSecondary: editor.save(current, true)
