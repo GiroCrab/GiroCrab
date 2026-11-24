@@ -1309,6 +1309,10 @@ fn convert_legacy_copies(db: &rusqlite::Connection, account_id: i64) -> Result<u
     };
     for id in &copies {
         db.execute(&copy_sql, [id])?;
+        let survivor: i64 = db.query_row(
+            "SELECT c.id FROM transactions c JOIN transactions old ON c.account_id=old.account_id AND c.external_id=?2 || old.external_id WHERE old.id=?1",
+            params![id, HOLD_PREFIX], |r| r.get(0))?;
+        crate::refunds::move_booking(db, *id, survivor)?;
         crate::sync_merge::soft_delete_booking(db, *id)?;
     }
     Ok(copies.len() as u32)
@@ -1437,6 +1441,50 @@ pub(crate) fn merge_imported_split_parts(
                 params![bank_id, stable, uuid],
             )?;
         }
+        let uuids = db
+            .prepare_cached(
+                "SELECT uuid FROM transaction_splits WHERE transaction_id=?1 ORDER BY position,id",
+            )?
+            .query_map([bank_id], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut endpoints: std::collections::HashMap<_, _> = parts
+            .iter()
+            .zip(uuids.iter())
+            .map(|(part, uuid)| {
+                (
+                    crate::refunds::Endpoint(part.0, String::new()),
+                    crate::refunds::Endpoint(bank_id, uuid.clone()),
+                )
+            })
+            .collect();
+        let matching: Vec<_> = lines
+            .iter()
+            .zip(uuids)
+            .filter(|(line, _)| line.amount_cents == bank_cents)
+            .map(|(_, uuid)| uuid)
+            .collect();
+        if let [uuid] = matching.as_slice() {
+            endpoints.insert(
+                crate::refunds::Endpoint(bank_id, String::new()),
+                crate::refunds::Endpoint(bank_id, uuid.clone()),
+            );
+        }
+        // only when a link names one of these bookings (no link-table scan otherwise)
+        let touched = parts
+            .iter()
+            .map(|p| p.0)
+            .chain([bank_id])
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let linked: bool = db.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM refund_links WHERE refund_id IN ({touched}) OR original_id IN ({touched}))"),
+            [],
+            |r| r.get(0),
+        )?;
+        if linked {
+            crate::refunds::move_endpoints(db, &endpoints)?;
+        }
         crate::planning::clear_split_category(db, bank_id)?;
         if !bank_checked && parts.iter().all(|p| p.4) {
             db.execute(
@@ -1492,6 +1540,7 @@ pub(crate) fn hand_over(db: &rusqlite::Connection, from: i64, to: i64) -> Result
           WHERE id = ?2 AND checked = 0 AND (SELECT checked FROM transactions WHERE id = ?1) = 1",
         params![from, to, now],
     )?;
+    crate::refunds::move_booking(db, from, to)?;
     crate::sync_merge::soft_delete_booking(db, from)
 }
 

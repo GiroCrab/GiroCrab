@@ -1,0 +1,281 @@
+use super::*;
+
+pub(super) struct SearchIndex {
+    books: Vec<i64>,
+    merchants: HashMap<i64, String>,
+    linked: HashSet<Key>,
+}
+
+fn index<'a>(v: &Vault, db: &Connection, p: &'a Resolved) -> CoreResult<&'a SearchIndex> {
+    let rules = v.merchant_rules(db)?;
+    Ok(p.search.get_or_init(|| {
+        let mut books: Vec<_> = p.state.books.values().filter(|b| b.live).collect();
+        books.sort_by(|a, b| {
+            b.date
+                .cmp(&a.date)
+                .then_with(|| a.identity.cmp(&b.identity))
+        });
+        let mut names = HashMap::new();
+        let merchants = books
+            .iter()
+            .map(|b| {
+                let name = names
+                    .entry((&b.counterparty, &b.purpose))
+                    .or_insert_with(|| {
+                        rules
+                            .resolve_with_bundled(&b.counterparty, &b.purpose)
+                            .0
+                            .name
+                    });
+                (b.id, name.clone())
+            })
+            .collect();
+        let mut linked = HashSet::new();
+        for a in &p.allocations {
+            if a.refund.is_none() || a.original.is_none() {
+                continue;
+            }
+            linked.insert(a.row.key.clone());
+            if let (Some(refund), Some(original)) = (&a.refund, &a.original) {
+                linked.insert(Key {
+                    refund: refund.clone(),
+                    original: original.clone(),
+                });
+            }
+        }
+        SearchIndex {
+            books: books.into_iter().map(|b| b.id).collect(),
+            merchants,
+            linked,
+        }
+    }))
+}
+
+pub(super) fn reference_tokens(text: &str) -> HashSet<String> {
+    text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')' | '+'))
+        .filter(|w| !w.chars().all(|c| c.is_ascii_digit() || c == '.') && !is_date(w))
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_uppercase)
+                .collect::<String>()
+        })
+        .filter(|w| {
+            w.chars().count() >= 6 && w.chars().any(|c| c.is_ascii_digit()) && w != "NOTPROVIDED"
+        })
+        .collect()
+}
+
+fn is_date(word: &str) -> bool {
+    let word = word.trim_matches(|c: char| !c.is_alphanumeric());
+    let fields: Vec<_> = word.split(['-', '/', '.']).collect();
+    let digits = |f: &str, n| f.len() == n && f.bytes().all(|b| b.is_ascii_digit());
+    match fields.as_slice() {
+        [a, b, c] => {
+            (digits(b, 1) || digits(b, 2))
+                && (digits(a, 4) && (digits(c, 1) || digits(c, 2))
+                    || (digits(a, 1) || digits(a, 2)) && (digits(c, 4) || digits(c, 2)))
+        }
+        _ => false,
+    }
+}
+
+fn days_between(a: &str, b: &str) -> Option<i64> {
+    Some(
+        crate::dates::days_between(
+            crate::dates::parse_iso(a.get(..10)?)?,
+            crate::dates::parse_iso(b.get(..10)?)?,
+        )
+        .abs(),
+    )
+}
+
+fn candidates(
+    v: &Vault,
+    db: &Connection,
+    p: &Resolved,
+    own: &Endpoint,
+    query: &str,
+    limit: usize,
+    include_exhausted: bool,
+    reason: Option<RefundMatch>,
+) -> CoreResult<Vec<RefundCandidate>> {
+    let book = p
+        .state
+        .books
+        .get(&own.0)
+        .filter(|b| b.live)
+        .ok_or_else(invalid)?;
+    book.check_capacity()?;
+    let amount = book
+        .amount_of(&own.1)
+        .filter(|a| *a != 0)
+        .ok_or_else(invalid)?;
+    if p.open(own) == 0 || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let query = query.trim().to_lowercase();
+    let index = index(v, db, p)?;
+    let mut out = Vec::new();
+    let mut exhausted = Vec::new();
+    // reference tokens once per booking, not per endpoint pair
+    let by_reference = reason == Some(RefundMatch::SameReference);
+    let own_tokens = if by_reference {
+        reference_tokens(&format!("{} {}", book.purpose, book.reference))
+    } else {
+        HashSet::new()
+    };
+    let books = index
+        .books
+        .iter()
+        .map(|id| &p.state.books[id])
+        .filter(|b| b.live && b.id != book.id && b.currency == book.currency);
+    for b in books {
+        if b.check_capacity().is_err() {
+            continue;
+        }
+        let merchant = &index.merchants[&b.id];
+        let tokens = if by_reference {
+            reference_tokens(&format!("{} {}", b.purpose, b.reference))
+        } else {
+            HashSet::new()
+        };
+        for (endpoint, other_amount) in b.endpoints() {
+            if other_amount == 0 || (other_amount > 0) == (amount > 0) {
+                continue;
+            }
+            if let Some(reason) = reason {
+                if !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
+                    continue;
+                }
+                let matches = match reason {
+                    RefundMatch::SameAmount => other_amount.checked_abs() == amount.checked_abs(),
+                    RefundMatch::SameMerchant => {
+                        !book.counterparty.trim().is_empty()
+                            && book.counterparty.trim().to_lowercase()
+                                == b.counterparty.trim().to_lowercase()
+                            || !merchant.is_empty() && merchant == &index.merchants[&own.0]
+                    }
+                    RefundMatch::SameReference => !own_tokens.is_disjoint(&tokens),
+                };
+                if !matches {
+                    continue;
+                }
+            }
+            let key = if amount > 0 {
+                Key {
+                    refund: own.clone(),
+                    original: endpoint.clone(),
+                }
+            } else {
+                Key {
+                    refund: endpoint.clone(),
+                    original: own.clone(),
+                }
+            };
+            if index.linked.contains(&key) {
+                continue;
+            }
+            let open_cents = p.open(&endpoint);
+            if open_cents == 0 && (!include_exhausted || exhausted.len() >= limit) {
+                continue;
+            }
+            let label = b.label_of(&endpoint.1);
+            if !query.is_empty()
+                && !format!(
+                    "{} {} {} {} {}",
+                    b.counterparty, b.purpose, b.reference, label, merchant
+                )
+                .to_lowercase()
+                .contains(&query)
+            {
+                continue;
+            }
+            let category_id = b
+                .parts
+                .iter()
+                .find(|p| p.uuid == endpoint.1)
+                .map_or(b.category_id, |p| p.category_id);
+            let rows = if open_cents == 0 {
+                &mut exhausted
+            } else {
+                &mut out
+            };
+            rows.push(RefundCandidate {
+                transaction_id: b.id,
+                part: endpoint.1,
+                part_label: label,
+                account_id: b.account_id,
+                booking_date: b.date.clone(),
+                counterparty: b.counterparty.clone(),
+                merchant_name: merchant.clone(),
+                amount_cents: other_amount,
+                open_cents,
+                currency: b.currency.clone(),
+                category_id,
+            });
+            if out.len() == limit {
+                return Ok(out);
+            }
+        }
+    }
+    out.extend(exhausted.into_iter().take(limit - out.len()));
+    Ok(out)
+}
+
+#[uniffi::export]
+impl Vault {
+    /// Both directions use the selected endpoint's sign, including zero-total bookings.
+    pub fn refund_candidates(
+        &self,
+        transaction_id: i64,
+        own_part: String,
+        query: String,
+        limit: u32,
+    ) -> CoreResult<Vec<RefundCandidate>> {
+        let db = self.db()?;
+        let p = self.refund_projection(&db)?;
+        candidates(
+            self,
+            &db,
+            &p,
+            &Endpoint(transaction_id, own_part),
+            &query,
+            limit as usize,
+            true,
+            None,
+        )
+    }
+
+    pub fn refund_suggestions(
+        &self,
+        transaction_id: i64,
+        own_part: String,
+    ) -> CoreResult<Vec<RefundSuggestion>> {
+        let db = self.db()?;
+        let p = self.refund_projection(&db)?;
+        let own = Endpoint(transaction_id, own_part);
+        let mut out: Vec<RefundSuggestion> = Vec::new();
+        for reason in [
+            RefundMatch::SameAmount,
+            RefundMatch::SameMerchant,
+            RefundMatch::SameReference,
+        ] {
+            for c in candidates(self, &db, &p, &own, "", 3, false, Some(reason))? {
+                if out.len() == 3 {
+                    return Ok(out);
+                }
+                if out.iter().any(|s| {
+                    s.candidate.transaction_id == c.transaction_id && s.candidate.part == c.part
+                }) {
+                    continue;
+                }
+                out.push(RefundSuggestion {
+                    candidate: c,
+                    reason,
+                });
+            }
+        }
+        Ok(out)
+    }
+}
