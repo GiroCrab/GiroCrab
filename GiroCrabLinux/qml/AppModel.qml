@@ -4360,6 +4360,8 @@ QtObject {
         const top = categories.find(c => c.depth === 0)
         switch (name) {
         case "refund": case "refund-reverse": case "refund-before": case "refund-linked": {
+            // fictional bookings only ever go into the demo vault
+            if (!demoActive) break
             const vaultIdentity = core("refund_vault_identity")
             loadOffMain("refundDemo", () => [["seed_refund_demo", { vault_identity: vaultIdentity, date: new Date().toISOString().slice(0, 10), linked: name === "refund-linked" }]], r => {
                 reloadAll()

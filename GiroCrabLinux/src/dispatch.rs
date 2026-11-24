@@ -3730,12 +3730,15 @@ mod tests {
         ))
         .unwrap();
         assert!(wrong.get("err").is_some(), "wrong password must be refused");
-        assert_eq!(pin_refund_target(&v), refund_pin);
+        // a failed restore may have replaced data too: the earlier pin is gone
+        let fresh_pin = pin_refund_target(&v);
+        assert_ne!(fresh_pin, refund_pin);
         call_ok(
             "restore_backup",
             json!({ "backup_path": backup.display().to_string(), "password": "geheim1234" }),
         );
-        let mut args = json!({"action":"link", "vault_identity":refund_pin,
+        assert_ne!(pin_refund_target(&v), fresh_pin);
+        let mut args = json!({"action":"link", "vault_identity":fresh_pin,
             "refund_id":refund_fixture["refund"], "refund_part":refund_fixture["part"],
             "original_id":refund_fixture["original"], "original_part":""});
         assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_err());

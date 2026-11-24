@@ -154,12 +154,17 @@ test("refund edits capture a vault token before queuing the worker", () => {
 test("refund demo seeding captures a vault token before queuing the worker", () => {
     let queued;
     const s = {
-        categories: [],
+        categories: [], demoActive: false,
         core(method) { assert.equal(method, "refund_vault_identity"); return "old-vault"; },
         loadOffMain(channel, request) { assert.equal(channel, "refundDemo"); queued = request; },
     };
     vm.createContext(s);
-    vm.runInContext(`(function(name) {${bodyAfter("function presentDemoSheet(")}})("refund-linked")`, s);
+    const present = () => vm.runInContext(`(function(name) {${bodyAfter("function presentDemoSheet(")}})("refund-linked")`, s);
+    // the own vault is never seeded
+    present();
+    assert.equal(queued, undefined);
+    s.demoActive = true;
+    present();
     s.core = () => "new-vault";
     assert.equal(queued()[0][0], "seed_refund_demo");
     assert.equal(queued()[0][1].vault_identity, "old-vault");
