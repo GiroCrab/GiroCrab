@@ -304,6 +304,9 @@ pub struct FinTsConnector {
     /// it was only asked, skipped or refused): a later reply without SCA (a further page,
     /// another job) says nothing about the next sync (#1828).
     sca_in_dialog: bool,
+    /// `sca_seen` changed during this connector's requests: a fetch that fails still hands the
+    /// state back (`state_after_failed_fetch`, #1828).
+    sca_seen_changed: bool,
     /// The order was handed to the bank: from here on, an unclear reply or a
     /// lost connection means "result unknown", never "not executed".
     order_submitted: bool,
@@ -388,6 +391,7 @@ impl FinTsConnector {
             partial_statements: false,
             truncated_statements: false,
             sca_in_dialog: false,
+            sca_seen_changed: false,
             order_submitted: false,
             result: TransferResult::default(),
             order: None,
@@ -893,6 +897,16 @@ impl BankConnector for FinTsConnector {
     async fn finish(&mut self, ctx: &ConnectContext) {
         let sec = self.sec();
         self.end_dialog(ctx, &sec).await;
+    }
+
+    /// A bank that wants a TAN for every job fails the whole fetch (nothing was read), and the
+    /// next automatic sync would send the same jobs again: the jobs this fetch found out about
+    /// are kept (#1828). The state as it is, the way a fetch that worked hands it back.
+    fn state_after_failed_fetch(&self) -> Option<SecretJson> {
+        if !self.sca_seen_changed {
+            return None;
+        }
+        SecretJson::encode(&self.st).ok()
     }
 
     async fn send_transfer(

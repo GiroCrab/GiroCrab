@@ -693,6 +693,12 @@ pub trait BankConnector: Send {
     async fn fetch(&mut self, ctx: &ConnectContext) -> CoreResult<FetchResult>;
     /// Close the bank session (FinTS dialog end, logout). Best effort.
     async fn finish(&mut self, _ctx: &ConnectContext) {}
+    /// The connector state to keep although `fetch` failed: what the connector learned about
+    /// the bank on the way (FinTS: the jobs it wants a TAN for, #1828). The sync session
+    /// stores it before it reports the error. `None`: nothing worth keeping.
+    fn state_after_failed_fetch(&self) -> Option<SecretJson> {
+        None
+    }
     /// User cancelled a transfer that is not finished. Connectors whose order
     /// can outlive the session (bunq draft) override this to withdraw it and
     /// report whether the bank confirmed. Default: `finish`, nothing to withdraw.

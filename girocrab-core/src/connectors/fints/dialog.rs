@@ -672,9 +672,9 @@ impl FinTsConnector {
         // #1828: what the next automatic sync leaves out. After an approval in this dialog
         // (a later page, another job) a reply without SCA says nothing about the next sync.
         if wants_sca {
-            self.st.sca_seen.insert(seg_id.to_string());
+            self.sca_seen_changed |= self.st.sca_seen.insert(seg_id.to_string());
         } else if reply.errors().is_empty() && !self.sca_in_dialog {
-            self.st.sca_seen.remove(seg_id);
+            self.sca_seen_changed |= self.st.sca_seen.remove(seg_id);
         }
         if let Some(prompt) = prompt.filter(|_| wants_sca) {
             // only this reply's task counts, not one left from the login

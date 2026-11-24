@@ -2234,6 +2234,53 @@ async fn an_automatic_fetch_leaves_out_what_the_bank_wants_a_tan_for() {
 }
 
 #[tokio::test]
+async fn a_failed_fetch_hands_back_the_jobs_it_found_out_about() {
+    // #1828: a bank that wants a TAN for every job: nothing is read, the sync fails, and the
+    // state with `sca_seen` still has to reach the sync session, or the next sync asks again
+    let (url, _seen) = mock_bank(vec![SAL_TAN_DEMANDED]);
+    let mut c = savings_needing_sca(&url);
+    assert!(
+        c.state_after_failed_fetch().is_none(),
+        "nothing learned yet"
+    );
+    assert!(c.fetch(&test_ctx()).await.is_err());
+    let kept: FinTsState = c.state_after_failed_fetch().unwrap().decode().unwrap();
+    assert!(kept.sca_seen.contains("HKSAL"), "{:?}", kept.sca_seen);
+    // the next sync, from that state, sends nothing for it
+    let (url, seen) = mock_bank(vec![SAL_A]);
+    let mut next = savings_needing_sca(&url);
+    next.st = kept;
+    assert!(next.fetch(&test_ctx()).await.is_err());
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "{:?}",
+        seen.lock().unwrap()
+    );
+    // and had nothing new to tell
+    assert!(next.state_after_failed_fetch().is_none());
+}
+
+#[tokio::test]
+async fn forgetting_a_job_is_kept_too_when_the_fetch_fails() {
+    // the bank answers the job without SCA now (so it is forgotten), another job then fails
+    let (url, _seen) = mock_bank(vec![SAL_A]);
+    let mut c = savings_needing_sca_seen(&url, &["HKSAL", "HKKAZ"]);
+    let (prompt, asked) = answering_prompt(|_| None);
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        ..test_ctx()
+    };
+    c.fetch(&ctx).await.unwrap();
+    drop(ctx);
+    assert!(asked.await.unwrap().is_empty());
+    let kept: FinTsState = c.state_after_failed_fetch().unwrap().decode().unwrap();
+    assert_eq!(
+        kept.sca_seen.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["HKKAZ"]
+    );
+}
+
+#[tokio::test]
 async fn a_job_answered_without_sca_is_sent_again_by_the_next_automatic_sync() {
     // #1828: the bank no longer wants a TAN (an exemption, a new login method): forgotten
     let (url, seen) = mock_bank(vec![SAL_A]);
