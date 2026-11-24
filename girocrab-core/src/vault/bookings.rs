@@ -68,7 +68,7 @@ fn is_imported_security_purchase_category(path: &str) -> bool {
     let parts: Vec<_> = path.split('›').map(|p| p.trim()).collect();
     parts.len() >= 2
         && parts.last().is_some_and(|p| {
-            p.eq_ignore_ascii_case("Wertpapieranlage") || p.eq_ignore_ascii_case("ETF-Sparpläne")
+            matches!(p.to_lowercase().as_str(), "wertpapieranlage" | "etf-sparpläne")
         })
         && (parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Anlegen")
             || parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Investieren"))
@@ -435,6 +435,7 @@ impl BookingFinisher {
         }
         if t.flow == FlowKind::Investment
             && self.merchants.enabled()
+            && !t.merchant.key.starts_with("u:")
             && ((t.amount_cents < 0 && is_imported_security_purchase_category(&t.category_path))
                 || (t.amount_cents > 0 && is_security_sale_category(&t.category_path)))
             && let Some(name) = security_display_name(&t.purpose)
@@ -459,6 +460,11 @@ impl BookingFinisher {
                     t.merchant.color_hex = color.into();
                     t.merchant_domain = Some(domain.into());
                     t.merchant_hex_color = color.into();
+                } else if t.merchant.domain_source == "company" {
+                    t.merchant.domain.clear();
+                    t.merchant.domain_candidates.clear();
+                    t.merchant.domain_source.clear();
+                    t.merchant_domain = None;
                 }
             }
         }
@@ -2286,7 +2292,7 @@ mod own_transfer_tests {
                 "Unbekanntes Wertpapier",
                 -250_00,
                 "Kauf",
-                Some("Ausgaben/Sparen & Investieren/ETF-Sparpläne"),
+                Some("Ausgaben/Sparen & Investieren/ETF-SPARPLÄNE"),
             ),
             (
                 "Unbekanntes Wertpapier",
@@ -2757,6 +2763,9 @@ mod list_cache_tests {
         ));
         assert!(super::is_imported_security_purchase_category(
             "Sparen & Anlegen › Wertpapieranlage"
+        ));
+        assert!(super::is_imported_security_purchase_category(
+            "Ausgaben › SPAREN & INVESTIEREN › ETF-SPARPLÄNE"
         ));
         assert!(!super::is_imported_security_purchase_category(
             "Ausgaben › Sparen & Anlegen › Tagesgeld"
