@@ -3026,6 +3026,8 @@ fn uppercases_lowercase_operators_of_category_rules() {
         "\"Lidl or Aldi\" OR /a or b/"
     );
     assert_eq!(up("/a\\/ or b/ or x"), "/a\\/ or b/ OR x");
+    // a backslash escapes only a slash (like the search parser): `\\/` keeps the regex open
+    assert_eq!(up("/a\\\\/ or b/ or x"), "/a\\\\/ or b/ OR x");
     assert_eq!(
         up("purpose:or or name:\"x and y\""),
         "purpose:or OR name:\"x and y\""

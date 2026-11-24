@@ -2977,7 +2977,7 @@ fn uppercase_operators(expr: &str) -> String {
             let c = chars[*i];
             out.push(c);
             *i += 1;
-            if c == '\\' && end == '/' && *i < chars.len() {
+            if c == '\\' && end == '/' && chars.get(*i) == Some(&'/') {
                 out.push(chars[*i]);
                 *i += 1;
             } else if c == end {
