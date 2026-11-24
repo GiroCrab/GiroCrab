@@ -5204,4 +5204,83 @@ fn show_in_diagrams_zero_maps_to_neutral_role() {
         find("Ausgelegt").effective_role,
         crate::models::CategoryRole::Consumption
     );
+
+    // Sync precedence: an explicit reset to inherit on another device beats
+    // the role this import set, although the reset is older than the import.
+    let remote_dir = crate::test_support::TempDir::new("mm-role-sync-remote");
+    let local_dir = crate::test_support::TempDir::new("mm-role-sync-local");
+    let remote = Vault::open(
+        remote_dir.join("v.db").to_string_lossy().into(),
+        vec![7; 32],
+    )
+    .unwrap();
+    let local = Vault::open(local_dir.join("v.db").to_string_lossy().into(), vec![7; 32]).unwrap();
+    let r_id = remote
+        .create_category("Ausgelegt".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let l_id = local
+        .create_category("Ausgelegt".into(), None, "tag".into(), "".into())
+        .unwrap();
+    remote
+        .db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET uuid = 'uuid-ausgelegt', role = NULL, role_ms = 1700000000000 WHERE id = ?1",
+            [r_id],
+        )
+        .unwrap();
+    local
+        .db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET uuid = 'uuid-ausgelegt', role = NULL, role_ms = 0 WHERE id = ?1",
+            [l_id],
+        )
+        .unwrap();
+    // Seed a dummy booking on `local` so the importer updates the existing category
+    // tree instead of replacing an empty vault's tree.
+    let grp: i64 = local
+        .db()
+        .unwrap()
+        .query_row(
+            "INSERT INTO account_groups(name, sf_symbol, sort_order) VALUES ('G', 'bank', 1) RETURNING id",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let acc: i64 = local
+        .db()
+        .unwrap()
+        .query_row(
+            "INSERT INTO accounts(group_id, external_ref, name) VALUES (?1, 'a1', 'Giro') RETURNING id",
+            [grp],
+            |r| r.get(0),
+        )
+        .unwrap();
+    local
+        .db()
+        .unwrap()
+        .execute(
+            "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents) VALUES (?1, 't1', '2026-01-01', -100)",
+            [acc],
+        )
+        .unwrap();
+    import_with(&local, &mm, |_| {});
+    local
+        .merge_other_vault(
+            remote_dir.join("v.db").to_string_lossy().into(),
+            vec![7; 32],
+        )
+        .unwrap();
+    let merged = local
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name == "Ausgelegt")
+        .unwrap();
+    assert_eq!(merged.role, None);
+    assert_eq!(
+        merged.effective_role,
+        crate::models::CategoryRole::Consumption
+    );
 }

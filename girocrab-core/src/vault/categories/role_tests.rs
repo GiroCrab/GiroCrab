@@ -479,7 +479,94 @@ fn role_inheritance_matches_list_and_booking_at_depth_32() {
 /// `builtin_role`-based logic.
 #[test]
 fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
-    use crate::merchants::{FlowKind, classify};
+    use crate::merchants::{FlowKind, MerchantKind, normalise};
+
+    /// Self-contained copy of the pre-#931 `classify_by_kind` logic, without
+    /// calling into `CategoryRole` or the new `merchants::classify_by_kind`.
+    fn legacy_classify(
+        amount_cents: i64,
+        counterparty: &str,
+        purpose: &str,
+        booking_text: &str,
+        merchant_kind: MerchantKind,
+        top_category: &str,
+        account_kind: AccountKind,
+    ) -> FlowKind {
+        let contains_any = |text: &str, needles: &[&str]| needles.iter().any(|n| text.contains(n));
+        let is_inv_path = |path: &str| {
+            let p = path.to_lowercase();
+            contains_any(
+                &p,
+                &[
+                    "investment",
+                    "invest",
+                    "wertpapier",
+                    "aktie",
+                    "etf",
+                    "depot",
+                    "sparen",
+                    "vorsorge",
+                ],
+            )
+        };
+        let t = normalise(&format!("{counterparty} {purpose} {booking_text}"));
+        if contains_any(
+            &t,
+            &["saveback", "round up", "roundup", "round-up", "aufrunden"],
+        ) {
+            return FlowKind::Perk;
+        }
+        if top_category == "Sparen & Investieren"
+            || matches!(
+                merchant_kind,
+                MerchantKind::Etf | MerchantKind::Crypto | MerchantKind::Stock
+            )
+            || contains_any(
+                &t,
+                &[
+                    "sparplan",
+                    "wertpapierkauf",
+                    "kauf order",
+                    "wertp.abrechn",
+                    "wertp abrechn",
+                    "wertpapierabrechnung",
+                    "wp-abrechnung",
+                    "wp abrechnung",
+                ],
+            )
+            || is_inv_path(top_category)
+        {
+            return FlowKind::Investment;
+        }
+        if top_category == "Kredite & Darlehen"
+            || account_kind == AccountKind::Loan
+            || contains_any(&t, &["darlehen", "tilgung", "kreditrate"])
+        {
+            return FlowKind::Loan;
+        }
+        if matches!(top_category, "Umbuchungen" | "import:transfers")
+            || contains_any(
+                &t,
+                &[
+                    "umbuchung",
+                    "eigenes konto",
+                    "eigene konten",
+                    "kreditkartenabrechnung",
+                    "zahlung erhalten",
+                    "einzahlung",
+                    "bankeinzug",
+                    "übertrag",
+                ],
+            )
+        {
+            return FlowKind::Transfer;
+        }
+        if amount_cents > 0 {
+            FlowKind::Income
+        } else {
+            FlowKind::Consumption
+        }
+    }
 
     fn legacy_category_flow(db: &Connection) -> HashMap<i64, (String, bool)> {
         let mut st = db
@@ -554,16 +641,12 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
                 .map(|(r, t)| (r.as_str(), *t))
                 .unwrap_or(("", false));
             let bundled = merchants.bundled(&b.counterparty, &b.purpose);
-            let mut info = merchants.resolve(&b.counterparty, &b.purpose);
-            info.kind = bundled.kind;
-            // Call `merchants::classify` directly so the legacy investment-path
-            // heuristic (`is_investment_category_path`) is preserved in the oracle.
-            let mut legacy = classify(
+            let mut legacy = legacy_classify(
                 b.amount_cents,
                 &b.counterparty,
                 &b.purpose,
                 &b.booking_text,
-                &info,
+                bundled.kind,
                 top_role,
                 b.account_kind,
             );
@@ -829,4 +912,220 @@ fn moved_builtin_category_follows_tree_role_inheritance() {
         .set_transaction_category(tx_id, Some(promoted_etf.id))
         .unwrap();
     assert_eq!(flow_of(&upgraded, tx_id), FlowKind::Investment);
+}
+
+/// Rearranged v38 trees preserve legacy classification on upgrade to v39:
+/// - `Gehalt` moved under `Umbuchungen` keeps `Transfer` for bookings assigned
+///   to it (matching v38's "a transfer category still wins" rule in
+///   `BookingFinisher::finish`); later explicit `set_category_role` still
+///   overrides via nearest-role inheritance.
+/// - `Sparen & Investieren` already moved under a custom root in v38 stays
+///   `Consumption` on upgrade (matching legacy root-only `top_role`).
+#[test]
+fn v38_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
+    use crate::merchants::FlowKind;
+
+    let mig_dir = crate::test_support::TempDir::new("roles-v38-rearranged");
+    let src =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v38.girocrab");
+    let dst = mig_dir.join("vault-v38-rearranged.girocrab");
+    std::fs::copy(&src, &dst).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&dst).unwrap();
+        let hex_key = "47".repeat(32);
+        conn.pragma_update(None, "key", format!("x'{hex_key}'"))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order)
+             VALUES (NULL, 'Eigene Wurzel', 'folder', '#445566', 99)",
+            [],
+        )
+        .unwrap();
+        let custom_root = conn.last_insert_rowid();
+        let umb_id: i64 = conn
+            .query_row(
+                "SELECT id FROM categories WHERE builtin_role = 'Umbuchungen'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "UPDATE categories SET parent_id = ?1 WHERE builtin_role = 'Gehalt'",
+            [umb_id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE categories SET parent_id = ?1 WHERE builtin_role = 'Sparen & Investieren'",
+            [custom_root],
+        )
+        .unwrap();
+    }
+
+    let v = Vault::open(dst.to_string_lossy().into(), vec![0x47; 32]).unwrap();
+    let cats = v.list_categories(None, None).unwrap();
+    let gehalt = cats.iter().find(|c| c.name == "Gehalt").unwrap();
+    let sparen = cats
+        .iter()
+        .find(|c| c.name == "Sparen & Investieren")
+        .unwrap();
+    assert_eq!(gehalt.role, None);
+    assert_eq!(gehalt.effective_role, CategoryRole::Neutral);
+    assert_eq!(sparen.role, None);
+    assert_eq!(sparen.effective_role, CategoryRole::Consumption);
+
+    let txs = v
+        .list_transactions(BookingFilter::default())
+        .unwrap()
+        .transactions;
+    let plain_debit = txs.iter().find(|t| t.amount_cents < 0).unwrap().id;
+    let salary_tx = txs.iter().find(|t| t.is_salary).unwrap().id;
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET counterparty='Max Mustermann', purpose='Test', booking_text='Überweisung', counterparty_iban='', salary_flag=0 WHERE id=?1",
+            [plain_debit],
+        )
+        .unwrap();
+
+    let flow_of = |id: i64| {
+        v.list_transactions(BookingFilter::default())
+            .unwrap()
+            .transactions
+            .into_iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .flow
+    };
+
+    // In v38, a transfer ancestor always wins in `BookingFinisher::finish`
+    // (`is_own_transfer(..., transfer_category)`): both plain and salary-flagged
+    // bookings in `Umbuchungen › Gehalt` stay `Transfer`.
+    v.set_transaction_category(plain_debit, Some(gehalt.id))
+        .unwrap();
+    v.set_transaction_category(salary_tx, Some(gehalt.id))
+        .unwrap();
+    assert_eq!(flow_of(plain_debit), FlowKind::Transfer);
+    assert_eq!(flow_of(salary_tx), FlowKind::Transfer);
+
+    // Later explicit role edit on `Gehalt` overrides inherited `Neutral`.
+    v.set_category_role(gehalt.id, Some(CategoryRole::Consumption))
+        .unwrap();
+    assert_eq!(flow_of(plain_debit), FlowKind::Consumption);
+    assert_eq!(flow_of(salary_tx), FlowKind::Income);
+
+    // `Sparen & Investieren` already under custom root in v38 stays `Consumption`.
+    v.set_transaction_category(plain_debit, Some(sparen.id))
+        .unwrap();
+    assert_eq!(flow_of(plain_debit), FlowKind::Consumption);
+}
+
+/// Device A merges duplicate Y into X (`merged_into = X`) before seeing device B's
+/// newer role edit on Y: syncing must forward Y's newer role to survivor X, while
+/// ordinary deleted categories (`merged_into = NULL`) never alter live categories.
+#[test]
+fn merged_duplicate_tombstone_forwards_newer_role_to_survivor() {
+    let a_dir = crate::test_support::TempDir::new("roles-tombstone-a");
+    let b_dir = crate::test_support::TempDir::new("roles-tombstone-b");
+    let a = vault(&a_dir);
+    let b = vault(&b_dir);
+
+    let ax = a
+        .create_category("Kaution".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let ay = a
+        .create_category("Kaution Alt".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let a_other = a
+        .create_category("Sonstiges".into(), None, "tag".into(), "".into())
+        .unwrap();
+    // Give X an older role (Consumption @ 100) and mark Y merged into X on device A.
+    {
+        let db = a.db().unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'uuid-x', role = 'consumption', role_ms = 100 WHERE id = ?1",
+            [ax],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'uuid-y', deleted_ms = 200, merged_into = 'uuid-x', role = NULL, role_ms = 0 WHERE id = ?1",
+            [ay],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'uuid-other', role = 'consumption', role_ms = 100 WHERE id = ?1",
+            [a_other],
+        )
+        .unwrap();
+    }
+
+    // Device B still has Y live and gives Y a newer role (`Neutral` @ 500), plus
+    // an ordinary deleted category `uuid-del` with an even newer role (`Loan` @ 900).
+    let bx = b
+        .create_category("Kaution".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let by = b
+        .create_category("Kaution Alt".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let b_del = b
+        .create_category("Gelöscht".into(), None, "tag".into(), "".into())
+        .unwrap();
+    {
+        let db = b.db().unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'uuid-x', role = 'consumption', role_ms = 100 WHERE id = ?1",
+            [bx],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'uuid-y', role = 'neutral', role_ms = 500 WHERE id = ?1",
+            [by],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'uuid-del', deleted_ms = 600, merged_into = NULL, role = 'loan', role_ms = 900 WHERE id = ?1",
+            [b_del],
+        )
+        .unwrap();
+    }
+
+    a.merge_other_vault(b_dir.join("v.db").to_string_lossy().into(), vec![7; 32])
+        .unwrap();
+    let cats = a.list_categories(None, None).unwrap();
+    let x = cats.iter().find(|c| c.name == "Kaution").unwrap();
+    let other = cats.iter().find(|c| c.name == "Sonstiges").unwrap();
+    assert_eq!(x.role, Some(CategoryRole::Neutral));
+    assert_eq!(x.effective_role, CategoryRole::Neutral);
+    assert_eq!(other.role, Some(CategoryRole::Consumption));
+}
+
+/// Clearing or editing a role stamps `role_ms` strictly above any stored ahead-of-clock
+/// peer timestamp so the local change wins the next iCloud merge.
+#[test]
+fn set_category_role_monotonic_stamp_beats_ahead_peer() {
+    let dir = crate::test_support::TempDir::new("roles-monotonic-ms");
+    let v = vault(&dir);
+    let id = v
+        .create_category("Ausgelegt".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let ahead = crate::dates::now_ms() + 60_000;
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET role = 'neutral', role_ms = ?2 WHERE id = ?1",
+            rusqlite::params![id, ahead],
+        )
+        .unwrap();
+
+    v.set_category_role(id, None).unwrap();
+    let (role, role_ms): (Option<String>, i64) = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT role, role_ms FROM categories WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(role, None);
+    assert!(role_ms > ahead, "expected role_ms ({role_ms}) > {ahead}");
 }

@@ -202,7 +202,7 @@ struct ReceiptCard: View {
                     "Umbuchung erkannt: Die Gegenkonto-IBAN gehört zu einem eigenen Konto."
                 } else if let cid = booking.categoryId,
                           model.categories.first(where: { $0.id == cid })?.effectiveRole == .neutral {
-                    "Umbuchung erkannt: Die Kategorie der Buchung hat die Rolle „Neutral“."
+                    "Umbuchung erkannt: Die Kategorie der Buchung zählt nicht als Einnahme oder Ausgabe."
                 } else {
                     "Umbuchung erkannt: Der Buchungstext deutet auf eine Übertragung zwischen eigenen Konten oder eine Abrechnung hin."
                 }

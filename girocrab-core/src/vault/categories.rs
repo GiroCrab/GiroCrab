@@ -563,7 +563,7 @@ impl Vault {
     ) -> Result<(), CoreError> {
         let db = self.db()?;
         let n = db.execute(
-            "UPDATE categories SET role = ?1, role_ms = ?3 WHERE id = ?2 AND deleted_ms IS NULL",
+            "UPDATE categories SET role = ?1, role_ms = MAX(?3, role_ms + 1) WHERE id = ?2 AND deleted_ms IS NULL",
             params![
                 role.map(CategoryRole::as_str),
                 category_id,

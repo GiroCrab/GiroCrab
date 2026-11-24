@@ -323,7 +323,7 @@ Rectangle {
                     text: !visible ? ""
                         : ownIban ? qsTr("Umbuchung erkannt: Die Gegenkonto-IBAN gehört zu einem eigenen Konto.")
                         : (bookingCategory && bookingCategory.effective_role === "Neutral")
-                          ? qsTr("Umbuchung erkannt: Die Kategorie der Buchung hat die Rolle „Neutral“.")
+                          ? qsTr("Umbuchung erkannt: Die Kategorie der Buchung zählt nicht als Einnahme oder Ausgabe.")
                         : qsTr("Umbuchung erkannt: Der Buchungstext deutet auf eine Übertragung zwischen eigenen Konten oder eine Abrechnung hin.")
                     font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.Wrap; Layout.fillWidth: true
                 }

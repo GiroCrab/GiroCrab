@@ -233,6 +233,44 @@ fn combine_categories(state: &mut BTreeMap<String, Cat>) -> bool {
     any
 }
 
+/// Forwards newer explicit role edits stored on a `merged_into` tombstone to
+/// its live survivor (e.g. device B edited category Y's role before receiving
+/// device A's duplicate merge of Y into X). Ordinary deletions (`merged_into`
+/// is `None`) do not touch any live category.
+fn forward_merged_roles(state: &mut BTreeMap<String, Cat>) {
+    let updates: Vec<(String, Option<String>, i64)> = state
+        .values()
+        .filter_map(|c| {
+            let mut target = c.merged_into.as_deref()?;
+            for _ in 0..32 {
+                let next = state.get(target)?;
+                if let Some(m) = next.merged_into.as_deref() {
+                    if m == target {
+                        return None;
+                    }
+                    target = m;
+                } else {
+                    return next
+                        .deleted_ms
+                        .is_none()
+                        .then(|| (target.to_string(), c.category_role.clone(), c.role_ms));
+                }
+            }
+            None
+        })
+        .collect();
+    for (target, role, role_ms) in updates {
+        if let Some(survivor) = state.get_mut(&target) {
+            take_newer(
+                &mut survivor.category_role,
+                &mut survivor.role_ms,
+                role,
+                role_ms,
+            );
+        }
+    }
+}
+
 /// Merges `other.categories` into this vault: upsert by uuid, newest stamp per
 /// field, deletions win, same-named live siblings combined. Returns other id
 /// -> local id (combined rows map to their survivor; a deleted row without a
@@ -307,6 +345,7 @@ pub(crate) fn merge_categories(
             break;
         }
     }
+    forward_merged_roles(&mut state);
 
     // write: new rows first (parked as deleted = -1, outside the unique name
     // index), then every changed row, then unpark the live ones at once

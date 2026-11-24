@@ -31233,13 +31233,13 @@
         }
       }
     },
-    "Umbuchung erkannt: Die Kategorie der Buchung hat die Rolle „Neutral“." : {
+    "Umbuchung erkannt: Die Kategorie der Buchung zählt nicht als Einnahme oder Ausgabe." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Transfer detected: the booking's category has the role “Neutral”."
+            "value" : "Transfer detected: the booking's category does not count as income or expense."
           }
         }
       }

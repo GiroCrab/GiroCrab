@@ -130,12 +130,30 @@ fn category_roles(conn: &Connection) -> CoreResult<()> {
         }
     }
     conn.execute_batch(
-        "UPDATE categories SET role = 'investment' WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Sparen & Investieren';
-         UPDATE categories SET role = 'investment' WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL AND builtin_role IN ('ETF-Sparpläne', 'Aktien');
-         UPDATE categories SET role = 'loan'       WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Kredite & Darlehen';
-         UPDATE categories SET role = 'neutral'    WHERE role IS NULL AND role_ms = 0 AND builtin_role IN ('Umbuchungen', 'import:transfers');
-         UPDATE categories SET role = 'income'     WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Einnahmen';
-         UPDATE categories SET role = 'salary'     WHERE role IS NULL AND role_ms = 0 AND builtin_role = 'Gehalt';",
+        "UPDATE categories SET role = 'investment'
+          WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL
+            AND builtin_role IN ('Sparen & Investieren', 'ETF-Sparpläne', 'Aktien');
+         UPDATE categories SET role = 'loan'
+          WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL
+            AND builtin_role = 'Kredite & Darlehen';
+         UPDATE categories SET role = 'neutral'
+          WHERE role IS NULL AND role_ms = 0
+            AND builtin_role IN ('Umbuchungen', 'import:transfers');
+         UPDATE categories SET role = 'income'
+          WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL
+            AND builtin_role = 'Einnahmen';
+         WITH RECURSIVE transfer_tree(id, depth) AS (
+             SELECT id, 0 FROM categories WHERE builtin_role IN ('Umbuchungen', 'import:transfers')
+             UNION ALL
+             SELECT c.id, t.depth + 1
+               FROM categories c
+               JOIN transfer_tree t ON c.parent_id = t.id
+              WHERE t.depth < 32
+         )
+         UPDATE categories SET role = 'salary'
+          WHERE role IS NULL AND role_ms = 0
+            AND builtin_role = 'Gehalt'
+            AND id NOT IN (SELECT id FROM transfer_tree);",
     )?;
     Ok(())
 }
@@ -1226,7 +1244,11 @@ mod tests {
                (7, 6, 'Gehalt', 'Gehalt'),
                (8, NULL, 'Lebensmittel', 'Lebensmittel'),
                (9, NULL, 'Eigene Kategorie', NULL),
-               (10, NULL, 'ETF-Sparpläne', 'ETF-Sparpläne');",
+               (10, NULL, 'ETF-Sparpläne', 'ETF-Sparpläne'),
+               (11, 4, 'Gehalt (unter Umbuchungen)', 'Gehalt'),
+               (12, 9, 'Sparen (unter eigener Wurzel)', 'Sparen & Investieren'),
+               (13, 9, 'Kredite (unter eigener Wurzel)', 'Kredite & Darlehen'),
+               (14, 9, 'Umbuchungen (verschachtelt)', 'Umbuchungen');",
         )
         .unwrap();
         migrate(&mut conn).unwrap();
@@ -1249,6 +1271,13 @@ mod tests {
         assert_eq!(read(9), (None, 0));
         // Promoted to root before v39: preserves legacy investment classification.
         assert_eq!(read(10), (Some("investment".into()), 0));
+        // Rearranged before v39: `Gehalt` under `Umbuchungen` stays inheriting
+        // (`Neutral`), non-root `Sparen`/`Kredite` keep legacy root-only behaviour,
+        // and nested `Umbuchungen` stays `Neutral`.
+        assert_eq!(read(11), (None, 0));
+        assert_eq!(read(12), (None, 0));
+        assert_eq!(read(13), (None, 0));
+        assert_eq!(read(14), (Some("neutral".into()), 0));
         // Idempotent: re-running never overwrites an explicit role or an explicit
         // reset to inherit (`role = NULL, role_ms > 0`).
         conn.execute(
