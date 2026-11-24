@@ -524,15 +524,15 @@ mod tests {
     #[test]
     fn share_rights_become_their_own_position_valued_at_the_share_price() {
         let mut f = fixture();
-        f["depot"]["rights"] = json!({"quantity": 2085.0});
+        f["depot"]["rights"] = json!({"quantity": 200.0});
         let r = snapshot(&f.to_string()).unwrap();
         assert_eq!(r.holdings.len(), 2);
         let h = &r.holdings[1].holding;
         // one security (45.14 EUR): the rights are valued at its price
-        assert_eq!((h.isin.as_str(), h.quantity), ("", 2085.0));
-        assert_eq!((h.current_price_cents, h.value_cents), (4514, 9_411_690));
+        assert_eq!((h.isin.as_str(), h.quantity), ("", 200.0));
+        assert_eq!((h.current_price_cents, h.value_cents), (4514, 902_800));
         assert_eq!(h.name, "Test Aktie (noch nicht zugeteilt)");
-        assert_eq!(r.accounts[0].balance_cents, 451_400 + 9_411_690);
+        assert_eq!(r.accounts[0].balance_cents, 451_400 + 902_800);
         // several securities: no way to tell which one, so no value
         f["depot"]["items"] = json!([
             item("FR0000120271", 100.0, 45.14, 4514.0),

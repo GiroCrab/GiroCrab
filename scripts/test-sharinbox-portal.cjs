@@ -32,7 +32,7 @@ const rightsBlock = qty => `<div class="ml-3 mt-3"><canvas id="myChart-droitsAct
       class="text-muted">Menge</span><br/>
       ${qty}
     </div></div></div></div></div>`;
-const rights = rightsBlock('2.085');
+const rights = rightsBlock('200');
 const home = (...blocks) => '<html><body><h4>Wertpapiere</h4>' + blocks.join('') + rights + '</body></html>';
 const standard = home(block('FR0000000001', 'Test AG', '45,140 (EUR)', ['16.290', '735.330,60 EUR'], ['-', '-']));
 
@@ -63,7 +63,7 @@ test('collects the share, its price and value; nothing else crosses', async () =
   assert.match(data.asOf, /^\d{4}-\d{2}-\d{2}$/);
   assert.deepEqual(data.depot.items, [{isin:'FR0000000001', name:'Test AG', quantity:16290, price:45.14,
     priceDate:'2026-11-20', currency:'EUR', value:735330.6}]);
-  assert.deepEqual(data.depot.rights, {quantity: 2085});
+  assert.deepEqual(data.depot.rights, {quantity: 200});
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, '/SharinBox/connexion.do');
   assert.equal(calls[0].options.credentials, 'same-origin');
