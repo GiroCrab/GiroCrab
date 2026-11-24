@@ -676,8 +676,15 @@ fn write_booking(
             "UPDATE transactions SET amount_cents=?2 WHERE id=?1",
             params![id, m.manual_amount],
         )?;
-        // rules can match amounts: a booking without a manual category is checked again
+        // rules can match amounts: a rule-assigned category is evaluated again (it may no
+        // longer match); manual categories and split bookings stay as they are
         if m.cat.is_none() {
+            conn.execute(
+                "UPDATE transactions SET category_id = NULL, rule_id = NULL, category_source = 'none'
+                  WHERE id = ?1 AND category_source = 'rule'
+                    AND NOT EXISTS (SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
+                [id],
+            )?;
             cleared.insert(id);
         }
     }
