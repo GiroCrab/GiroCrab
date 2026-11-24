@@ -90,9 +90,10 @@ counterpart booking.
 - The iCloud merge ([`sync_merge/categories.rs`](../../girocrab-core/src/sync_merge/categories.rs))
   takes `role` and `role_ms` together: the newer change wins.
 - When the merge combines duplicate categories, each keeps its own role. Reading counts the
-  newest role of a category and of the duplicates combined into it (`role_winners`). Written
-  into the survivor, a role would stay where an earlier merge put it, and the result would
-  depend on the order in which devices sync.
+  newest of a category's role and the roles chosen on the duplicates combined into it
+  (`role_winners`); a role nobody chose stays with its duplicate. Written into the survivor, a
+  role would stay where an earlier merge put it, and the result would depend on the order in
+  which devices sync.
 - The migration and the importers set a role only where nobody chose one
   (`role IS NULL AND role_ms = 0`), and keep stamp `0`: what the core sets itself is no choice,
   so any user choice wins over it on sync.
