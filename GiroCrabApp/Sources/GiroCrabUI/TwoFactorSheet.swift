@@ -203,7 +203,7 @@ struct TwoFactorSheet: View {
                 }
 
                 SyncPromptButtons(cancel: model.skipCurrentSync, leading: active.canSkipOrder ? AnyView(
-                    Button("TAN auslassen") { consent = nil; model.skipOrder() }
+                    Button("TAN auslassen") { consent = nil; code = ""; model.skipOrder() }
                         .disabled(active.busy || active.polling)
                         .help("Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert.")
                 ) : nil) {
