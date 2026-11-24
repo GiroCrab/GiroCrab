@@ -1299,27 +1299,6 @@ mod tests {
             crate::importers::moneymoney_db::archive_unknown(&conn).unwrap(),
             vec![giro, adopted]
         );
-=======
-        assert_eq!(SCHEMA_VERSION, 39);
-    }
-
-    /// #1716: a vault that a #1143 build already moved to 38 (credit line) still gets
-    /// the fetch time of step 39.
-    #[test]
-    fn vault_at_38_from_the_credit_line_branch_gets_last_fetch() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate(&mut conn).unwrap();
-        conn.execute_batch(
-            "ALTER TABLE accounts DROP COLUMN last_fetch_unix; PRAGMA user_version = 38;",
-        )
-        .unwrap();
-        migrate(&mut conn).unwrap();
-        assert!(has_column(&conn, "main", "accounts", "last_fetch_unix").unwrap());
-        let v: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(v, 39);
->>>>>>> 59aee44e (fix(core): Abrufzeitpunkt je Konto speichern (#1716))
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
