@@ -196,6 +196,7 @@ impl Vault {
         )?;
         // document retrieval switch and catch-up days of this login
         crate::connectors::clear_documents_settings(db, connection_id)?;
+        crate::connectors::sharinbox::clear_rights_setting(db, connection_id)?;
         // its pending full fetch (#1043)
         crate::connectors::history::clear(db, connection_id)?;
         // its own Enable Banking application (#824)
