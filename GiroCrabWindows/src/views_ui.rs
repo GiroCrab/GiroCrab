@@ -780,6 +780,12 @@ pub fn on_lock(win: &MainWindow) {
     win.set_side_query(SharedString::new());
     win.set_link_open(false);
     win.set_rules_open(false);
+    // Documents view: forget the bank-login names of the filter and the fetch switch, too
+    // (`doc_connections::clear()` only empties the cached state behind them).
+    win.set_doc_connections(ModelRc::default());
+    win.set_doc_connection_index(0);
+    win.set_doc_fetch_shown(false);
+    win.set_doc_fetch_on(false);
     crate::tags_ui::on_lock(win);
     crate::groups_ui::on_lock(win);
     crate::assets_loans_ui::on_lock(win);
