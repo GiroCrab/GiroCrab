@@ -21,6 +21,8 @@ pub enum Auth {
     Secret,
     /// No secret up front (PSD2 aggregation): the bank page in the browser authorises.
     Browser,
+    /// No online access: the user picks an export file that the core imports (Finpension, #975).
+    FileImport,
     /// API username, password and signature (classic PayPal NVP API, #945). They live in the
     /// vault's settings, which the core reads itself; `ensure_api_signature` asks when one is missing.
     ApiSignature,
@@ -38,6 +40,7 @@ pub fn auth_for(kind: ConnectorKind) -> Auth {
         ConnectorKind::AmericanExpress
         | ConnectorKind::AmazonVisa
         | ConnectorKind::EnableBanking => Auth::Browser,
+        ConnectorKind::Finpension => Auth::FileImport,
         ConnectorKind::PayPal => Auth::ApiSignature,
         _ => Auth::Unsupported,
     }
@@ -135,6 +138,65 @@ pub trait Stepper {
 
 pub const CANCELLED: &str = "Abruf abgebrochen.";
 
+/// Shown instead of a core message that might quote the file.
+pub const INVALID_EXPORT: &str = "Die Datei ist kein gültiger Finpension-Export (CSV oder JSON).";
+
+/// Second sentence after "<Bank> hinzugefügt.": file-import banks are fed with an export file.
+pub fn added_hint(file_import: bool) -> &'static str {
+    if file_import {
+        "Mit „Jetzt abrufen“ wählen Sie die Exportdatei (CSV oder JSON) und importieren sie."
+    } else {
+        "Mit „Jetzt abrufen“ starten Sie den ersten Abruf."
+    }
+}
+
+/// Reads an export file. The message never names the path or quotes the content.
+pub fn read_export(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("Die Datei konnte nicht gelesen werden: {e}"))?;
+    if bytes.is_empty() {
+        return Err("Die Datei ist leer.".into());
+    }
+    Ok(bytes)
+}
+
+/// Core import error → user text. Keeps only the last `:`-separated part of the first line (the
+/// reason after the core's category prefixes, e.g. "Ungültige Eingabe: Finpension: …") and drops it
+/// entirely if it looks like file content (quotes, separators, JSON, no letters at all, e.g. a bare
+/// number) or is overlong.
+pub fn import_error_text(core: &str) -> String {
+    let head = core
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .rsplit(':')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if head.is_empty()
+        || head.chars().count() > 120
+        || head.contains(['"', '\'', ';', '{', '['])
+        || !head.chars().any(char::is_alphabetic)
+        || head.split_whitespace().any(looks_like_isin)
+    {
+        return INVALID_EXPORT.into();
+    }
+    format!("Finpension-Import: {head}")
+}
+
+/// Fallback guard: a word shaped like an ISIN (2 letters, 9 letters/digits, 1 check digit) is file
+/// content and never shown, whatever message the core builds.
+fn looks_like_isin(word: &str) -> bool {
+    let w = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    let b = w.as_bytes();
+    b.len() == 12
+        && b[..2].iter().all(u8::is_ascii_uppercase)
+        && b[2..11]
+            .iter()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        && b[11].is_ascii_digit()
+}
+
 /// Asks for the secret if needed, opens the session with it and drives it to the end.
 pub fn sync_connection<S: Stepper, U: Ui>(
     kind: ConnectorKind,
@@ -150,6 +212,11 @@ pub fn sync_connection<S: Stepper, U: Ui>(
         },
         // PayPal's API signature is read by the core from the settings (`ensure_api_signature`).
         Auth::Browser | Auth::ApiSignature => Zeroizing::new(String::new()),
+        Auth::FileImport => {
+            return Err(format!(
+                "{bank}: Dieser Zugang wird per Exportdatei importiert."
+            ));
+        }
         Auth::Unsupported => {
             return Err(format!(
                 "{bank}: Dieser Zugang wird von der Windows-App noch nicht unterstützt."
@@ -541,6 +608,7 @@ mod tests {
     fn connector_auth_modes() {
         assert_eq!(auth_for(ConnectorKind::FinTsGeneric), Auth::Secret);
         assert_eq!(auth_for(ConnectorKind::EnableBanking), Auth::Browser);
+        assert_eq!(auth_for(ConnectorKind::Finpension), Auth::FileImport);
         assert_eq!(auth_for(ConnectorKind::PayPal), Auth::ApiSignature);
     }
 
@@ -603,5 +671,103 @@ mod tests {
             "paypal.client_secret",
             "paypal.api_signature",
         ])));
+    }
+
+    #[test]
+    fn added_hint_points_file_import_to_the_export() {
+        assert!(added_hint(true).contains("Exportdatei"));
+        assert!(added_hint(false).contains("ersten Abruf"));
+    }
+
+    #[test]
+    fn missing_export_file_is_a_read_error_without_path() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-975-missing-{}.csv", std::process::id()));
+        let err = read_export(&path).unwrap_err();
+        assert!(
+            err.starts_with("Die Datei konnte nicht gelesen werden"),
+            "{err}"
+        );
+        assert!(!err.contains("girocrab-975"), "{err}");
+    }
+
+    #[test]
+    fn empty_export_file_is_rejected() {
+        let path =
+            std::env::temp_dir().join(format!("girocrab-975-empty-{}.json", std::process::id()));
+        std::fs::write(&path, b"").unwrap();
+        let result = read_export(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(result.unwrap_err(), "Die Datei ist leer.");
+    }
+
+    #[test]
+    fn core_errors_never_carry_file_content() {
+        assert_eq!(
+            import_error_text("Keine Finpension-Verbindung."),
+            "Finpension-Import: Keine Finpension-Verbindung."
+        );
+        assert_eq!(
+            import_error_text("Ungültiger Export: Zeile 2 \"4711;Kauf\""),
+            INVALID_EXPORT
+        );
+        assert_eq!(
+            import_error_text(
+                "Ungültige Eingabe: Finpension: Keine Positionen oder Buchungen erkannt."
+            ),
+            "Finpension-Import: Keine Positionen oder Buchungen erkannt."
+        );
+        // A bare value from the file after the last colon is never shown.
+        assert_eq!(
+            import_error_text("Ungültiger Export: Zeile 3: 4711"),
+            INVALID_EXPORT
+        );
+        assert_eq!(
+            import_error_text("2026-01-02;Kauf;\"Fonds\""),
+            INVALID_EXPORT
+        );
+        assert_eq!(import_error_text("{\"iban\"} kaputt"), INVALID_EXPORT);
+        assert_eq!(import_error_text(""), INVALID_EXPORT);
+    }
+
+    #[test]
+    fn import_errors_never_carry_an_isin() {
+        // The fixed core texts keep their reason.
+        assert_eq!(
+            import_error_text("Ungültige Eingabe: Finpension: missing name in a holding"),
+            "Finpension-Import: missing name in a holding"
+        );
+        assert_eq!(
+            import_error_text("Ungültige Eingabe: Finpension: negative figures in a holding"),
+            "Finpension-Import: negative figures in a holding"
+        );
+        // Fallback: even a message that quotes an ISIN is dropped.
+        for core in [
+            "Ungültige Eingabe: Finpension: missing name for DE0007164600",
+            "Ungültige Eingabe: Finpension: negative figures for US0378331005.",
+        ] {
+            assert_eq!(import_error_text(core), INVALID_EXPORT, "{core}");
+        }
+    }
+
+    #[test]
+    fn fixed_value_errors_are_shown_without_file_content() {
+        // The core's fixed reasons for bad values reach the user unchanged.
+        for reason in [
+            "unsupported currency",
+            "invalid number",
+            "invalid date",
+            "invalid ISIN in a holding",
+        ] {
+            assert_eq!(
+                import_error_text(&format!("Ungültige Eingabe: Finpension: {reason}")),
+                format!("Finpension-Import: {reason}")
+            );
+        }
+        // The old form with the raw value: nothing after the quote's first line may slip through
+        // as file content once a value carries a colon and a line break.
+        let old = "Ungültige Eingabe: Finpension: unsupported currency 'x:geheim\nrest'";
+        let shown = import_error_text(old);
+        assert!(!shown.contains("rest") && !shown.contains('\n'), "{shown}");
     }
 }

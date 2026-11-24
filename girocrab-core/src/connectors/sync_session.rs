@@ -1,8 +1,13 @@
-//! `SyncSession`: the two-phase login/fetch state machine exposed via FFI.
+//! `SyncSession`: the login/fetch state machine exposed via FFI. A connector
+//! can ask for a TAN or an app approval during `fetch` too (#1730,
+//! [ADR 0002](../../../docs/adr/0002-challenges-during-fetch.md)).
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 
 use crate::error::{CoreError, CoreResult};
 use crate::models::ConnectorKind;
@@ -11,10 +16,107 @@ use crate::vault::Vault;
 
 use super::*;
 
+/// Answer to a question a connector asked during `fetch` (#1730).
+#[derive(Debug)]
+pub enum PromptAnswer {
+    /// The code the user typed.
+    Code(SecretString),
+    /// Ask the bank again whether the app approval happened.
+    Poll,
+    /// The user left this order out: the sync goes on without it.
+    Skip,
+}
+
+type Question = (Phase, oneshot::Sender<PromptAnswer>);
+
+/// Set when the user cancels the sync (#1730). Every fetch gets it in
+/// [`ConnectContext::cancelled`], also an automatic one without a prompt: a
+/// connector checks it before each order to the bank.
+#[derive(Clone, Default)]
+pub struct CancelFlag(Arc<AtomicBool>);
+
+impl CancelFlag {
+    pub fn is_set(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Lets a connector ask the user during `fetch` (#1730). `SyncSession` puts it
+/// into [`ConnectContext::prompt`] for syncs the user started; automatic syncs
+/// (`begin_quiet_sync`) get none and must not ask.
+#[derive(Clone)]
+pub struct FetchPrompt {
+    questions: mpsc::UnboundedSender<Question>,
+    cancelled: CancelFlag,
+}
+
+impl FetchPrompt {
+    #[cfg(test)]
+    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<Question>) {
+        Self::cancelled_by(CancelFlag::default())
+    }
+
+    /// A prompt that asks nothing more once `cancelled` is set.
+    pub(crate) fn cancelled_by(cancelled: CancelFlag) -> (Self, mpsc::UnboundedReceiver<Question>) {
+        let (questions, rx) = mpsc::unbounded_channel();
+        (
+            FetchPrompt {
+                questions,
+                cancelled,
+            },
+            rx,
+        )
+    }
+
+    /// Shows `question` (`Phase::Challenge` or `Phase::Pending`) and waits for
+    /// the answer. `SessionClosed` once the user cancelled the sync.
+    pub async fn ask(&self, question: Phase) -> CoreResult<PromptAnswer> {
+        if self.cancelled.is_set() {
+            return Err(CoreError::SessionClosed);
+        }
+        let (tx, rx) = oneshot::channel();
+        self.questions
+            .send((question, tx))
+            .map_err(|_| CoreError::SessionClosed)?;
+        rx.await.map_err(|_| CoreError::SessionClosed)
+    }
+}
+
 /// The open bank dialog.
 struct Active {
     connector: Box<dyn BankConnector>,
     ctx: ConnectContext,
+}
+
+/// `fetch` and `finish`, owning the connector and its context.
+type FetchRun = Pin<Box<dyn Future<Output = CoreResult<FetchResult>> + Send>>;
+
+/// A fetch in progress. It runs only while a session call drives it, and
+/// stops at the connector's questions until the user answers (no task of its
+/// own: Windows drives the session with `block_on` on a one-thread runtime).
+struct Fetching {
+    run: FetchRun,
+    questions: mpsc::UnboundedReceiver<Question>,
+    /// Where the answer to the question shown goes.
+    open: Option<oneshot::Sender<PromptAnswer>>,
+    connection_id: i64,
+    only_account: Option<String>,
+}
+
+enum State {
+    /// Logging in: the connector answers challenges itself (`respond`).
+    Login(Box<Active>),
+    Fetching(Fetching),
+}
+
+/// How far a drive of the fetch got.
+enum Driven {
+    Asked(Question),
+    Done(Box<CoreResult<FetchResult>>),
 }
 
 /// One sync run for one bank connection. Created by `Vault::begin_sync`.
@@ -22,9 +124,18 @@ struct Active {
 pub struct SyncSession {
     vault: Arc<Vault>,
     kind: ConnectorKind,
+    /// The user started this sync and can answer questions during the fetch.
+    interactive: AtomicBool,
+    /// Set by `cancel()` before it waits for `state`: a step that holds the
+    /// state (a TAN on its way, the rest of the fetch) sees it, sends nothing
+    /// more to the bank and stores nothing.
+    cancelled: CancelFlag,
     /// `None` once the sync finished, failed or was cancelled, so every
     /// later step gets `SessionClosed`.
-    state: AsyncMutex<Option<Active>>,
+    state: AsyncMutex<Option<State>>,
+    /// The pending full fetch (#1043) this sync reaches back for: done once
+    /// its result is stored.
+    history: Option<String>,
 }
 
 impl SyncSession {
@@ -33,12 +144,32 @@ impl SyncSession {
         kind: ConnectorKind,
         connector: Box<dyn BankConnector>,
         ctx: ConnectContext,
+        history: Option<String>,
     ) -> Self {
         Self {
             vault,
             kind,
-            state: AsyncMutex::new(Some(Active { connector, ctx })),
+            interactive: AtomicBool::new(true),
+            cancelled: CancelFlag::default(),
+            state: AsyncMutex::new(Some(State::Login(Box::new(Active { connector, ctx })))),
+            history,
         }
+    }
+
+    /// Automatic sync: nobody answers, so the fetch asks no questions.
+    pub(super) fn set_quiet(&self) {
+        self.interactive.store(false, Ordering::SeqCst);
+    }
+
+    pub(super) fn is_cancelled(&self) -> bool {
+        self.cancelled.is_set()
+    }
+
+    /// Whether the fetch of this session may ask the user (tests of the
+    /// `Vault::begin_*` entry points).
+    #[cfg(test)]
+    pub(super) fn is_interactive(&self) -> bool {
+        self.interactive.load(Ordering::SeqCst)
     }
 
     /// Copy of the prepared login context (settings, PIN, connector state),
@@ -48,56 +179,152 @@ impl SyncSession {
             .state
             .try_lock()
             .map_err(|_| CoreError::SessionClosed)?;
-        Ok(st.as_ref().ok_or(CoreError::SessionClosed)?.ctx.clone())
+        match st.as_ref() {
+            Some(State::Login(a)) => Ok(a.ctx.clone()),
+            _ => Err(CoreError::SessionClosed),
+        }
     }
 
-    /// Runs one step on the open dialog and closes it when the sync ends.
-    async fn step(
+    /// Runs one login step and goes on to the fetch once the login is done.
+    async fn login_step(
         &self,
         call: impl AsyncFnOnce(&mut Active) -> CoreResult<Phase>,
     ) -> CoreResult<SyncStep> {
         let mut st = self.state.lock().await;
-        let active = st.as_mut().ok_or(CoreError::SessionClosed)?;
+        let Some(State::Login(active)) = st.as_mut() else {
+            return Err(CoreError::SessionClosed);
+        };
         let phase = call(active).await;
-        let step = self.advance(phase, active).await;
-        if !matches!(
-            step,
-            Ok(SyncStep::NeedsChallenge { .. } | SyncStep::StillWaiting { .. })
-        ) {
-            *st = None;
+        let close = |st: &mut Option<State>| match st.take() {
+            Some(State::Login(a)) => a,
+            _ => unreachable!("checked above"),
+        };
+        // cancelled while the bank answered: no fetch, no challenge
+        if self.is_cancelled() {
+            let mut a = close(&mut st);
+            a.connector.finish(&a.ctx).await;
+            return Err(CoreError::SessionClosed);
         }
-        step
-    }
-
-    async fn advance(&self, phase: CoreResult<Phase>, st: &mut Active) -> CoreResult<SyncStep> {
         match phase {
-            Err(e) => {
-                st.connector.finish(&st.ctx).await;
-                Err(e)
-            }
             Ok(Phase::Challenge(c)) => Ok(SyncStep::NeedsChallenge { challenge: c }),
             Ok(Phase::Pending(c)) => Ok(SyncStep::StillWaiting { challenge: c }),
-            Ok(Phase::ConfirmPayee(_)) => {
-                st.connector.finish(&st.ctx).await;
-                Err(CoreError::Protocol {
-                    message: "payee confirmation outside of a transfer".into(),
-                })
-            }
             Ok(Phase::Ready) => {
-                crate::depot_debug::log(&format!(
-                    "sync advance: Ready, calling fetch for {:?}",
-                    self.kind
-                ));
-                let fetched = st.connector.fetch(&st.ctx).await;
-                st.connector.finish(&st.ctx).await;
-                let mut data = fetched?;
-                if let Some(only) = &st.ctx.only_account {
-                    data.keep_only(only);
-                }
-                let summary = store_fetch(&self.vault, self.kind, st.ctx.connection_id, data)?;
-                Ok(SyncStep::Finished { summary })
+                let fetching = self.start_fetch(*close(&mut st));
+                *st = Some(State::Fetching(fetching));
+                self.drive(&mut st).await
+            }
+            Err(e) => {
+                let mut a = close(&mut st);
+                a.connector.finish(&a.ctx).await;
+                Err(e)
+            }
+            Ok(Phase::ConfirmPayee(_)) => {
+                let mut a = close(&mut st);
+                a.connector.finish(&a.ctx).await;
+                Err(CoreError::protocol(
+                    "payee confirmation outside of a transfer",
+                ))
             }
         }
+    }
+
+    fn start_fetch(&self, active: Active) -> Fetching {
+        let Active {
+            mut connector,
+            mut ctx,
+        } = active;
+        let (prompt, questions) = FetchPrompt::cancelled_by(self.cancelled.clone());
+        ctx.cancelled = self.cancelled.clone();
+        // a quiet fetch gets no prompt: its question channel stays empty and closed
+        if self.interactive.load(Ordering::SeqCst) {
+            ctx.prompt = Some(prompt);
+        }
+        let (connection_id, only_account) = (ctx.connection_id, ctx.only_account.clone());
+        let kind = self.kind;
+        let run: FetchRun = Box::pin(async move {
+            crate::depot_debug::log(&format!("sync advance: Ready, calling fetch for {kind:?}"));
+            let fetched = connector.fetch(&ctx).await;
+            connector.finish(&ctx).await;
+            fetched
+        });
+        Fetching {
+            run,
+            questions,
+            open: None,
+            connection_id,
+            only_account,
+        }
+    }
+
+    /// Drives the fetch until it asks the user or ends; stores its result
+    /// unless the sync was cancelled meanwhile.
+    async fn drive(&self, st: &mut Option<State>) -> CoreResult<SyncStep> {
+        loop {
+            let Some(State::Fetching(f)) = st.as_mut() else {
+                return Err(CoreError::SessionClosed);
+            };
+            let driven = tokio::select! {
+                biased;
+                done = &mut f.run => Driven::Done(Box::new(done)),
+                Some(q) = f.questions.recv() => Driven::Asked(q),
+            };
+            match driven {
+                // cancelled meanwhile: the question ends with `SessionClosed`
+                Driven::Asked(_) if self.is_cancelled() => {}
+                Driven::Asked((Phase::Challenge(c), reply)) => {
+                    f.open = Some(reply);
+                    return Ok(SyncStep::NeedsChallenge { challenge: c });
+                }
+                Driven::Asked((Phase::Pending(c), reply)) => {
+                    f.open = Some(reply);
+                    return Ok(SyncStep::StillWaiting { challenge: c });
+                }
+                // nothing the user can answer during a fetch
+                Driven::Asked((_, reply)) => {
+                    let _ = reply.send(PromptAnswer::Skip);
+                }
+                Driven::Done(fetched) => {
+                    let Some(State::Fetching(f)) = st.take() else {
+                        unreachable!("checked above")
+                    };
+                    // `finish` already ended the bank dialog
+                    if self.is_cancelled() {
+                        return Err(CoreError::SessionClosed);
+                    }
+                    let mut data = (*fetched)?;
+                    if let Some(only) = &f.only_account {
+                        data.keep_only(only);
+                    }
+                    let summary = store_fetch(&self.vault, self.kind, f.connection_id, data)?;
+                    // Done once stored, also with warnings (an account that failed, a list cut
+                    // at its page limit): kept, every sync would ask for the whole period again,
+                    // and for a TAN, without ever finishing. The warnings say what is missing;
+                    // `request_full_history` asks for the period again.
+                    if let Some(history) = &self.history {
+                        let db = self.vault.db()?;
+                        super::history::finish(&db, f.connection_id, history)?;
+                    }
+                    return Ok(SyncStep::Finished { summary });
+                }
+            }
+        }
+    }
+
+    /// Passes `answer` to the question shown and drives the fetch on. Without
+    /// an open question (a late poll) it just goes on driving.
+    async fn answer(&self, answer: PromptAnswer) -> CoreResult<SyncStep> {
+        let mut st = self.state.lock().await;
+        let Some(State::Fetching(f)) = st.as_mut() else {
+            return Err(CoreError::SessionClosed);
+        };
+        if let Some(open) = f.open.take() {
+            let _ = open.send(answer);
+        }
+        self.drive(&mut st).await
+    }
+
+    async fn fetching(&self) -> bool {
+        matches!(*self.state.lock().await, Some(State::Fetching(_)))
     }
 }
 
@@ -105,26 +332,66 @@ impl SyncSession {
 impl SyncSession {
     /// Phase 1: log in. Returns a challenge or finishes the sync.
     pub async fn start(&self) -> Result<SyncStep, CoreError> {
-        self.step(async |s| s.connector.begin(&s.ctx).await).await
+        self.login_step(async |s| s.connector.begin(&s.ctx).await)
+            .await
     }
 
-    /// Phase 2a: submit the code / redirect URL the user typed.
+    /// Phase 2a: submit the code / redirect URL the user typed, at login or
+    /// for an order during the fetch.
     pub async fn submit_code(&self, code: String) -> Result<SyncStep, CoreError> {
-        let code = ChallengeResponse::Code(SecretString::new(code));
-        self.step(async |s| s.connector.respond(&s.ctx, code).await)
+        let code = SecretString::new(code);
+        if self.fetching().await {
+            return self.answer(PromptAnswer::Code(code)).await;
+        }
+        let code = ChallengeResponse::Code(code);
+        self.login_step(async |s| s.connector.respond(&s.ctx, code).await)
             .await
     }
 
     /// Phase 2b: ask whether the decoupled push approval happened.
     pub async fn poll(&self) -> Result<SyncStep, CoreError> {
-        self.step(async |s| s.connector.respond(&s.ctx, ChallengeResponse::Poll).await)
+        if self.fetching().await {
+            return self.answer(PromptAnswer::Poll).await;
+        }
+        self.login_step(async |s| s.connector.respond(&s.ctx, ChallengeResponse::Poll).await)
             .await
     }
 
-    /// Cancels the sync and closes the bank dialog.
+    /// Leaves out the order a TAN was asked for during the fetch (#1730): it is
+    /// reported with the sync, the rest is fetched and stored. A login
+    /// challenge cannot be skipped (`InvalidInput`): cancel the sync instead.
+    pub async fn skip(&self) -> Result<SyncStep, CoreError> {
+        if !self.fetching().await {
+            return Err(CoreError::invalid(
+                "only a question during the fetch can be skipped",
+            ));
+        }
+        self.answer(PromptAnswer::Skip).await
+    }
+
+    /// Cancels the sync and closes the bank dialog. The flag is set before
+    /// waiting for a running step (a TAN on its way), so the fetch sends no
+    /// further order and stores nothing. An action that already passed its
+    /// last check of the flag still runs to its end: the one order about to
+    /// be sent, or the storing of a finished fetch (ADR 0002).
     pub async fn cancel(&self) {
-        if let Some(mut a) = self.state.lock().await.take() {
-            a.connector.finish(&a.ctx).await;
+        self.cancelled.set();
+        match self.state.lock().await.take() {
+            Some(State::Login(mut a)) => a.connector.finish(&a.ctx).await,
+            Some(State::Fetching(mut f)) => {
+                // the open question ends with `SessionClosed`
+                drop(f.open.take());
+                // let the fetch run out: its requests fail before sending, and
+                // `finish` ends the bank dialog
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = &mut f.run => break,
+                        Some(q) = f.questions.recv() => drop(q),
+                    }
+                }
+            }
+            None => {}
         }
     }
 

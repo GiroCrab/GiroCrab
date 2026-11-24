@@ -218,7 +218,7 @@ struct ViewCommands: Commands {
                 .disabled(!model.isUnlocked)
             Toggle("Letzten Abruf anzeigen", isOn: $showLastFetch)
                 .disabled(!model.isUnlocked)
-            // the header chart (#634): same switches as its title row
+            // the header chart (#634, #1760): its own switch, independent of „Auswertungen anzeigen“
             Toggle("Diagramm anzeigen", isOn: Binding(get: { !chartCollapsed }, set: { chartCollapsed = !$0 }))
                 .disabled(!model.isUnlocked)
             Picker("Diagramm", selection: $chartStyle) {

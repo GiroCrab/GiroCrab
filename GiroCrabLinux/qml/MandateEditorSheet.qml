@@ -37,7 +37,23 @@ Sheet {
                 FormSection {
                     title: qsTr("Zahlungspflichtiger")
                     Field { placeholder: qsTr("Name"); key: "name" }
-                    Field { placeholder: qsTr("IBAN"); key: "iban"; mono: true }
+                    FormRow {
+                        label: qsTr("IBAN")
+                        // .withBankLine: the bank under the field, the line kept while there is none (#1584)
+                        ColumnLayout {
+                            spacing: 4
+                            TextField {
+                                Layout.preferredWidth: 240; horizontalAlignment: TextInput.AlignRight
+                                placeholderText: qsTr("DE00 …")
+                                font.features: { "tnum": 1 }
+                                text: sheet.d ? sheet.d.iban : ""
+                                onTextEdited: sheet.set({ iban: text })
+                                Accessible.name: qsTr("IBAN")
+                                Sensitive {}
+                            }
+                            IBANBankLine { iban: sheet.d ? sheet.d.iban : ""; Layout.preferredWidth: 1 }
+                        }
+                    }
                     Field { placeholder: qsTr("BIC (optional)"); key: "bic"; mono: true }
                 }
                 FormSection {

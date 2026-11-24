@@ -4,7 +4,8 @@ import GiroCrabCore
 /// Look of the chart in the header (GitHub #203, #634): the line shows every day,
 /// bars show the average balance per month (or per day) and make trends and years comparable,
 /// the pie shows shares (a category's subcategories, an account's expenses by category).
-/// Whether the chart shows at all is a separate fold (`ViewLayout.headerChartCollapsedKey`).
+/// Whether the chart shows at all is governed by its own fold
+/// (`ViewLayout.headerChartCollapsedKey`), independent of the statistics switch (GitHub #1760).
 enum BalanceChartStyle: String, CaseIterable, Identifiable {
     case line
     case bars

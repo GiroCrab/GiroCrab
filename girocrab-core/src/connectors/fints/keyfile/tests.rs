@@ -182,6 +182,11 @@ fn vault_import_is_atomic_and_reserves_counters_before_sync() {
         )
         .unwrap();
     assert!(vault.is_rah10_connection(id).unwrap());
+    // a new login: its first sync the user starts is a full fetch (#1043)
+    assert_eq!(
+        vault.pending_full_history(id).unwrap(),
+        Some(crate::connectors::HistoryRange::Maximum)
+    );
     assert!(
         vault
             .add_rah10_connection(bytes, "invented-test-password".into(), "Demo".into())

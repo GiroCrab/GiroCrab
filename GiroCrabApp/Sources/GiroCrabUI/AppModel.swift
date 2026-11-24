@@ -210,7 +210,12 @@ public final class AppModel {
     /// title never stands over the old figures (#1396). Views read this; loads `sidebarSelection`.
     private(set) var shownSelection: SidebarItem? = .allAccounts {
         didSet {
-            mainColumn = MainColumn(shownSelection)
+            let column = MainColumn(shownSelection)
+            #if os(iOS)
+            // The detail sheet belongs to the list it was opened from (not a depot or Sachwerte view).
+            if !Self.keepsDetailSheet(from: mainColumn, to: column, presentation: presentation) { showBookingSheet = false }
+            #endif
+            mainColumn = column
             showsOverview = shownSelection == .allAccounts
             showsNewBookings = shownSelection == .newBookings
             // „Neue Umsätze“ orders the stream by account card (`visibleBookings`)
@@ -530,7 +535,9 @@ public final class AppModel {
     /// bookings: its row stays in place (shown as checked) until the user
     /// selects something else, instead of vanishing under the cursor.
     var lingeringBookingID: Booking.ID?
-    /// iPhone: set by a tap on a booking row, presents the detail sheet.
+    /// iOS: set by a tap on a row (booking, planned payment, mandate), presents the detail
+    /// sheet when the window has no room for the detail column; cleared when the column changes,
+    /// a depot or Sachwerte account is shown, or an editor opens from the sheet.
     var showBookingSheet = false
     var collapsedGroups: Set<Int64> = Set(AppDefaults.store.array(forKey: "sidebar.collapsedKindGroups") as? [Int64] ?? []) {
         didSet { AppDefaults.store.set(Array(collapsedGroups), forKey: "sidebar.collapsedKindGroups") }
@@ -1045,6 +1052,9 @@ public final class AppModel {
             reloadBookings()
             if let q = options.pickBooking, let b = bookings.first(where: { $0.merchantName.lowercased().contains(q) || $0.counterparty.lowercased().contains(q) }) {
                 selectedBookingID = b.id
+                // iPhone: the inspector is a sheet that otherwise only a tap opens; UI audits and
+                // simulator screenshots need it (docs/ui-audit.md). Ignored where it is a column.
+                showBookingSheet = true
                 if options.merchantList { focusMerchant(of: b) }
             }
             // Sachwerte (#87): --pick also selects an item by name
@@ -1647,8 +1657,30 @@ public final class AppModel {
         }
     }
 
-    private func performSyncOrAutoAdopt(vault v: Vault) async {
-        await CloudSyncManager.shared.sync(vault: v)
+    /// After a restore (#1090): waits for a running sync, then syncs the restored
+    /// vault (`CloudSyncManager.syncWhenIdle`). `onStart` runs once that sync has
+    /// started; false (and no `onStart`) when iCloud Sync is off, was switched
+    /// off or the vault was locked/released during the wait, or it did not run.
+    @discardableResult
+    func syncRestoredVault(onStart: @escaping @MainActor () -> Void) async -> Bool {
+        guard let v = ownVault, CloudSyncManager.shared.isEnabled else { return false }
+        return await performSyncOrAutoAdopt(vault: v, whenIdle: onStart)
+    }
+
+    @discardableResult
+    private func performSyncOrAutoAdopt(vault v: Vault, whenIdle onStart: (@MainActor () -> Void)? = nil) async -> Bool {
+        let ran: Bool
+        if let onStart {
+            guard ownVault === v else { return false }
+            // Checked right before the sync starts (no await in between), so a
+            // vault locked during the wait is never written (#1090).
+            ran = await CloudSyncManager.shared.syncWhenIdle(
+                vault: v, onStart: onStart, isCurrent: { [weak self] in self?.ownVault === v })
+            // locked or swapped meanwhile: don't restart auto sync or reload a released vault
+            guard ownVault === v else { return ran }
+        } else {
+            ran = await CloudSyncManager.shared.sync(vault: v)
+        }
         CloudSyncManager.shared.startAutoSync(vault: v) { [weak self] in self?.reloadAllInBackground() }
         if CloudSyncManager.shared.legacyFolderWritten {
             self.toast = String(localized: "Ein anderes Gerät nutzt noch eine ältere GiroCrab-Version und schreibt in den alten Ordner. Bitte alle Geräte aktualisieren.")
@@ -1662,6 +1694,7 @@ public final class AppModel {
         } else {
             self.reloadAll()
         }
+        return ran
     }
 
     func connectionsExist(_ v: Vault) -> Bool {
