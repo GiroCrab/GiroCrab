@@ -1,0 +1,299 @@
+//! Command palette (Ctrl+K): entries, filter, selection index and window wiring.
+//! Mac counterpart: `GiroCrabApp/Sources/GiroCrabUI/CommandPalette.swift`.
+
+use std::cell::RefCell;
+
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+
+use super::{MainWindow, VaultSlot, context, run_command};
+use crate::manage::{self, Command, Context};
+
+/// Like the Mac: at most 14 hits.
+const MAX_ROWS: usize = 14;
+
+/// Fixed commands with the `Ctrl+<key>` shortcut they run through `manage::route`.
+const COMMANDS: [(&str, char); 5] = [
+    ("Suchen", 'f'),
+    ("Konten abrufen", 'r'),
+    ("Datei importieren", 'i'),
+    ("Neue Überweisung", 'n'),
+    ("Tresor sperren", 'l'),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    /// Runs like `Ctrl+<key>`, with the same gates (busy, transfer accounts, lock).
+    Shortcut(char),
+    Account(i64),
+}
+
+#[derive(Debug, Clone)]
+struct Item {
+    title: String,
+    subtitle: String,
+    /// Masked in privacy mode; the search still runs on the plain title.
+    personal: bool,
+    action: Action,
+}
+
+fn items(accounts: Vec<(i64, String, String)>) -> Vec<Item> {
+    let commands = COMMANDS.iter().map(|&(title, key)| Item {
+        title: title.into(),
+        subtitle: format!("Befehl · Strg+{}", key.to_ascii_uppercase()),
+        personal: false,
+        action: Action::Shortcut(key),
+    });
+    let accounts = accounts.into_iter().map(|(id, name, bank)| Item {
+        title: name,
+        subtitle: format!("Konto · {bank}"),
+        personal: true,
+        action: Action::Account(id),
+    });
+    commands.chain(accounts).collect()
+}
+
+/// Indexes of the entries whose title or subtitle contains `query` (case-insensitive).
+fn filter(items: &[Item], query: &str) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| {
+            q.is_empty()
+                || it.title.to_lowercase().contains(&q)
+                || it.subtitle.to_lowercase().contains(&q)
+        })
+        .map(|(i, _)| i)
+        .take(MAX_ROWS)
+        .collect()
+}
+
+/// Moves the selection by `delta`, wrapping at both ends; 0 for an empty list.
+fn step(index: usize, delta: i32, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (index as i64 + i64::from(delta)).rem_euclid(len as i64) as usize
+}
+
+/// The command a palette entry runs: shortcuts go through `manage::route`.
+fn command(action: Action, ctx: &Context) -> Option<Command> {
+    match action {
+        Action::Shortcut(key) => manage::route(&key.to_string(), true, ctx),
+        Action::Account(_) => None,
+    }
+}
+
+#[derive(Default)]
+struct State {
+    items: Vec<Item>,
+    shown: Vec<usize>,
+    index: usize,
+}
+
+thread_local! {
+    static STATE: RefCell<State> = RefCell::default();
+}
+
+/// Account names in plain text. `try_lock`: while a sync holds the vault the palette offers
+/// the commands only instead of blocking the UI thread.
+fn accounts(vault: &VaultSlot) -> Vec<(i64, String, String)> {
+    let Ok(guard) = vault.try_lock() else {
+        return Vec::new();
+    };
+    let Some(v) = guard.as_ref() else {
+        return Vec::new();
+    };
+    v.list_accounts()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| (a.id, a.name, a.bank_name))
+        .collect()
+}
+
+fn show(win: &MainWindow, query: &str) {
+    let (mut titles, mut subtitles, mut personal) = (Vec::new(), Vec::new(), Vec::new());
+    STATE.with_borrow_mut(|s| {
+        s.shown = filter(&s.items, query);
+        s.index = 0;
+        for &i in &s.shown {
+            let it = &s.items[i];
+            titles.push(SharedString::from(it.title.as_str()));
+            subtitles.push(SharedString::from(it.subtitle.as_str()));
+            personal.push(it.personal);
+        }
+    });
+    win.set_cmd_titles(ModelRc::new(VecModel::from(titles)));
+    win.set_cmd_subtitles(ModelRc::new(VecModel::from(subtitles)));
+    win.set_cmd_personal(ModelRc::new(VecModel::from(personal)));
+    win.set_cmd_index(0);
+}
+
+/// Closes the palette and forgets entries and query (also on lock).
+fn close(win: &MainWindow) {
+    STATE.with_borrow_mut(|s| *s = State::default());
+    win.set_cmd_open(false);
+    win.set_cmd_query(SharedString::new());
+    show(win, "");
+    win.invoke_refocus();
+}
+
+pub(super) fn wire(win: &MainWindow, vault: VaultSlot) {
+    let weak = win.as_weak();
+    win.on_cmd_request(move || {
+        let Some(win) = weak.upgrade() else { return };
+        let all = items(accounts(&vault));
+        STATE.with_borrow_mut(|s| {
+            *s = State {
+                items: all,
+                ..State::default()
+            }
+        });
+        win.set_cmd_query(SharedString::new());
+        show(&win, "");
+        win.set_cmd_open(true);
+    });
+    let weak = win.as_weak();
+    win.on_cmd_search(move |query| {
+        if let Some(win) = weak.upgrade() {
+            show(&win, &query);
+        }
+    });
+    let weak = win.as_weak();
+    win.on_cmd_move(move |delta| {
+        let Some(win) = weak.upgrade() else { return };
+        let index = STATE.with_borrow_mut(|s| {
+            s.index = step(s.index, delta, s.shown.len());
+            s.index
+        });
+        win.set_cmd_index(index as i32);
+    });
+    let weak = win.as_weak();
+    win.on_cmd_run(move |row| {
+        let Some(win) = weak.upgrade() else { return };
+        // -1 = the row selected with the arrow keys
+        let action = STATE.with_borrow(|s| {
+            let pick = usize::try_from(row).unwrap_or(s.index);
+            s.shown.get(pick).map(|&i| s.items[i].action)
+        });
+        close(&win);
+        match action {
+            Some(Action::Account(id)) => win.invoke_select_account(id as i32),
+            Some(action) => {
+                if let Some(cmd) = command(action, &context(&win)) {
+                    run_command(&win, cmd);
+                }
+            }
+            None => {}
+        }
+    });
+    let weak = win.as_weak();
+    win.on_cmd_close(move || {
+        if let Some(win) = weak.upgrade() {
+            close(&win);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx() -> Context {
+        Context {
+            unlocked: true,
+            can_transfer: true,
+            ..Context::default()
+        }
+    }
+
+    fn sample() -> Vec<(i64, String, String)> {
+        vec![
+            (1, "Girokonto".into(), "Musterbank".into()),
+            (2, "Tagesgeld".into(), "Musterbank".into()),
+        ]
+    }
+
+    #[test]
+    fn palette_commands_map_to_their_routes() {
+        let c = ctx();
+        let expected = [
+            Command::FocusSearch,
+            Command::Refresh,
+            Command::Import,
+            Command::NewTransfer,
+            Command::Lock,
+        ];
+        for (&(_, key), want) in COMMANDS.iter().zip(expected) {
+            assert_eq!(command(Action::Shortcut(key), &c), Some(want));
+            let routed = manage::route(&key.to_string(), true, &c);
+            assert_eq!(command(Action::Shortcut(key), &c), routed);
+        }
+        assert_eq!(command(Action::Account(7), &c), None);
+    }
+
+    #[test]
+    fn palette_keeps_the_shortcut_gates() {
+        let busy = Context {
+            busy: true,
+            ..ctx()
+        };
+        assert_eq!(command(Action::Shortcut('r'), &busy), None);
+        assert_eq!(command(Action::Shortcut('l'), &busy), Some(Command::Lock));
+        let no_transfer = Context {
+            can_transfer: false,
+            ..ctx()
+        };
+        assert_eq!(command(Action::Shortcut('n'), &no_transfer), None);
+        let locked = Context {
+            unlocked: false,
+            ..ctx()
+        };
+        assert_eq!(command(Action::Shortcut('f'), &locked), None);
+    }
+
+    #[test]
+    fn ctrl_k_opens_the_palette_and_collides_with_nothing() {
+        let c = ctx();
+        assert_eq!(manage::route("k", true, &c), Some(Command::Palette));
+        assert_eq!(manage::route("k", false, &c), None);
+        for key in "abcdefghijlmnopqrstuvwxyz".chars() {
+            assert_ne!(
+                manage::route(&key.to_string(), true, &c),
+                Some(Command::Palette)
+            );
+        }
+        let mut keys: Vec<char> = COMMANDS.iter().map(|&(_, k)| k).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), COMMANDS.len());
+        assert!(!keys.contains(&'k'));
+    }
+
+    #[test]
+    fn selection_wraps_and_survives_an_empty_list() {
+        assert_eq!(step(0, 1, 3), 1);
+        assert_eq!(step(2, 1, 3), 0);
+        assert_eq!(step(0, -1, 3), 2);
+        assert_eq!(step(0, 1, 1), 0);
+        assert_eq!(step(0, 1, 0), 0);
+        assert_eq!(step(4, -1, 0), 0);
+    }
+
+    #[test]
+    fn search_runs_on_plain_names_and_caps_the_list() {
+        let all = items(sample());
+        let hits = filter(&all, "  GIRO ");
+        assert_eq!(hits.len(), 1);
+        assert!(all[hits[0]].personal);
+        assert_eq!(all[hits[0]].action, Action::Account(1));
+        assert!(filter(&all, "zzz").is_empty());
+        assert!(all[..COMMANDS.len()].iter().all(|it| !it.personal));
+        let many = items(
+            (0..30)
+                .map(|i| (i, format!("Konto {i}"), "Bank".into()))
+                .collect(),
+        );
+        assert_eq!(filter(&many, "").len(), MAX_ROWS);
+    }
+}

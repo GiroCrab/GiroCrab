@@ -108,6 +108,18 @@ fn close_modal(win: &MainWindow, m: Modal) {
     }
 }
 
+mod palette;
+
+/// What `route` needs to know about the window right now.
+fn context(win: &MainWindow) -> Context {
+    Context {
+        unlocked: win.get_unlocked(),
+        busy: win.get_busy(),
+        can_transfer: win.get_transfer_accounts().row_count() > 0,
+        modals: modals(win),
+    }
+}
+
 fn run_command(win: &MainWindow, cmd: Command) {
     match cmd {
         Command::FocusSearch => {
@@ -117,6 +129,7 @@ fn run_command(win: &MainWindow, cmd: Command) {
         Command::Refresh => win.invoke_sync(),
         Command::Import => win.invoke_import_file(),
         Command::NewTransfer => win.invoke_transfer_start(),
+        Command::Palette => win.invoke_cmd_request(),
         Command::CloseModal(m) => {
             close_modal(win, m);
             win.invoke_refocus();
@@ -179,19 +192,14 @@ pub fn wire(win: &MainWindow, vault: VaultSlot) {
 
     wire_accounts(win, &vault);
     wire_categories(win, &vault);
+    palette::wire(win, vault);
 
     let weak = win.as_weak();
     win.on_shortcut(move |text, ctrl| {
         let Some(win) = weak.upgrade() else {
             return false;
         };
-        let ctx = Context {
-            unlocked: win.get_unlocked(),
-            busy: win.get_busy(),
-            can_transfer: win.get_transfer_accounts().row_count() > 0,
-            modals: modals(&win),
-        };
-        match manage::route(&text, ctrl, &ctx) {
+        match manage::route(&text, ctrl, &context(&win)) {
             Some(cmd) => {
                 run_command(&win, cmd);
                 true
