@@ -13,7 +13,10 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .sharinbox, .schwaebischHall, .equatePlus].contains(c.connector) { return true }
+        // FNZ: direct login with the Zugangsnummer + PIN (PIN sheet, "PIN im
+        // Tresor speichern"). The browser window with the FNZsecure approval
+        // is the fallback, offered in the PIN sheet and on a missing PIN.
+        if !isDemo, [.advanzia, .amazonOrders, .quirion, .sharinbox, .schwaebischHall, .equatePlus].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         // the card's own application (#824) or the default one
         let app = connectionEnableBankingApp(c.id)

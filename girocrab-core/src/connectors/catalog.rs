@@ -292,13 +292,16 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
         ConnectorKind::Fnz => BankDescriptor {
             kind,
             name: "FNZ Bank".into(),
-            protocol: tr("Direkt-Login (Web-Session)").into(),
+            protocol: tr("Direkt-Login (Zugangsnummer + PIN)").into(),
             bank_code: "70013000".into(),
             sf_symbol: "building.columns".into(),
-            login_label: tr("Zugangsbezeichnung").into(),
-            secret_label: tr("(Anmeldung im Browser-Fenster)").into(),
+            login_label: tr("Zugangsnummer").into(),
+            secret_label: tr("PIN").into(),
             required_settings: vec![],
-            note: tr("FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Anmeldung im Browserfenster mit FNZsecure-Freigabe. Die PIN wird nicht gespeichert.").into(),
+            note: tr(
+                "FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Direkt-Login mit Zugangsnummer und PIN (bleibt im Tresor gespeichert), danach die Freigabe in der FNZsecure-App. Ohne gespeicherte Zugangsdaten öffnet sich das Browserfenster.",
+            )
+            .into(),
         },
         ConnectorKind::AmazonOrders => BankDescriptor {
             kind,
@@ -932,7 +935,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
             "enablebanking.country.amazonvisa",
         )),
         ConnectorKind::AmazonOrders => Box::new(crate::importers::amazon_orders::WebOnlyConnector),
-        ConnectorKind::Fnz => Box::new(fnz::WebOnlyConnector),
+        ConnectorKind::Fnz => Box::new(fnz::portal::PortalConnector::default()),
         ConnectorKind::Advanzia => Box::new(advanzia::WebOnlyConnector),
         ConnectorKind::Ibkr => Box::new(ibkr::IbkrConnector::new()),
         ConnectorKind::Quirion => Box::new(quirion::WebOnlyConnector),

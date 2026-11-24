@@ -417,7 +417,7 @@ fn depot_transactions(
     Ok(result)
 }
 
-fn snapshot(json: &str) -> CoreResult<FetchResult> {
+pub(super) fn snapshot(json: &str) -> CoreResult<FetchResult> {
     let root: Value = serde_json::from_str(json).map_err(|_| incomplete())?;
     if root["version"].as_u64() != Some(1) {
         return Err(incomplete());
