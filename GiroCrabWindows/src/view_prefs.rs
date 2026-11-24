@@ -300,4 +300,17 @@ mod tests {
         s.set_demo(true);
         assert_eq!(s.set_demo(false), normal_prefs());
     }
+
+    /// Normales Entsperren ruft `set_demo(false)` ohne vorherigen Demo-Modus auf
+    /// (Erfolgszweig von `open`): Die geladenen Werte bleiben, Speichern bleibt an.
+    #[test]
+    fn unlocking_own_vault_keeps_loaded_values_and_saving() {
+        let mut s = PrefsState {
+            demo: false,
+            normal: normal_prefs(),
+        };
+        assert_eq!(s.set_demo(false), normal_prefs());
+        assert!(s.changed(ViewPrefs::default()), "eigener Tresor speichert");
+        assert_eq!(s.normal, ViewPrefs::default());
+    }
 }

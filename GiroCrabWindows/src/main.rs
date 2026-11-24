@@ -2006,6 +2006,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 Ok(v) => {
                     *demo_active.lock().unwrap() = demo;
                     win.set_demo_active(demo);
+                    // Ansichts-Schalter erst nach erfolgreichem Öffnen umstellen: Schlägt der
+                    // Wechsel fehl, bleiben Modus, angezeigte Werte und Speichern wie vorher.
+                    view_prefs::set_demo(&win, demo);
                     if demo {
                         win.set_allowance_total("Einzelperson 1.000 € / Ehepaar 2.000 €".into());
                         win.set_allowance_allocated(800);
@@ -2039,26 +2042,18 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     {
         // "Demo-Modus" button: same as GIROCRAB_DEMO_SEED=1, but without touching the key store.
-        let (open, weak) = (open.clone(), win.as_weak());
+        let open = open.clone();
         win.on_demo(move || {
             vault_key::set_demo(true);
-            // Ansichts-Schalter: im Demo-Modus Standardwerte, kein Speichern.
-            if let Some(win) = weak.upgrade() {
-                view_prefs::set_demo(&win, true);
-            }
             open(true)
         });
     }
     {
         // DemoBanner button: demo data <-> own vault.
-        let (open, demo_active, weak) = (open.clone(), demo_active.clone(), win.as_weak());
+        let (open, demo_active) = (open.clone(), demo_active.clone());
         win.on_demo_switch(move || {
             let to_demo = !*demo_active.lock().unwrap();
             vault_key::set_demo(to_demo);
-            // Demo: Standardwerte ohne Speichern; zurück: die normalen Geräte-Schalter.
-            if let Some(win) = weak.upgrade() {
-                view_prefs::set_demo(&win, to_demo);
-            }
             open(to_demo)
         });
     }
