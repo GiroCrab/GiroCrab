@@ -93,7 +93,8 @@ Before, only the `builtin_role` of a booking's top-level category counted, plus 
 category on its way to the root was a transfer category. The update gives a category a role
 only where its `builtin_role` decided the classification this way:
 
-- Built-in categories at the top level start with the role their `builtin_role` stood for.
+- Built-in categories at the top level, or below a deleted category, start with the role
+  their `builtin_role` stood for.
 - `Umbuchungen` and imported transfer categories start as `Neutral` at any depth.
 - `Gehalt` starts as `Salary` wherever it is, except below a category that starts as
   `Investment`, `Loan` or `Neutral`.
@@ -147,6 +148,8 @@ role, and one without inherits from its new parent. The schema step `category_ro
   stays `Consumption`. Here driver 2 wins over driver 1.
 - Deliberate exceptions to driver 2:
   - The next database import turns categories hidden from charts there into `Neutral`.
+  - An import that writes into a built-in top-level category keeps its role. Before, taking
+    over the category's name also removed its classification.
   - Moving `ETF-Sparpläne` or `Aktien` to the top level after the update gives `Consumption`
     until the user sets a role; before, the keyword check made them investments.
 - `Income` and `Salary` are stored, inherited and synced but change nothing yet. A role editor
