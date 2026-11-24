@@ -335,10 +335,12 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
                         Loaded::Mandates(m) => u.mandates = m,
                         Loaded::Documents(d) => u.docs = d,
                     });
+                    crate::position_history_ui::ready();
                     render_view(&win);
                 }
                 Err(e) => {
                     clear_table(&win, "");
+                    crate::position_history_ui::ready();
                     crate::position_history_ui::close(&win);
                     win.set_view_status(e.into());
                 }

@@ -2,7 +2,7 @@
 //! positions tab opens `position_value_history` in the position's trading currency.
 //! Mac reference: `PositionHistorySheet.swift`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -24,6 +24,26 @@ thread_local! {
     static LOADED: RefCell<Option<(String, Vec<HistoryRow>)>> = const { RefCell::new(None) };
     /// The position the dialog was opened for: a refresh that changes it reloads the dialog.
     static SHOWN: RefCell<Option<PositionTarget>> = const { RefCell::new(None) };
+    /// A depot load is running: `render_view` from the cache must not enable the action again.
+    static PENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+fn set_pending(pending: bool) {
+    PENDING.with(|p| p.set(pending));
+}
+
+fn is_pending() -> bool {
+    PENDING.with(|p| p.get())
+}
+
+/// The history action is offered only for loaded positions and never while a reload is running.
+fn history_available(has_data: bool) -> bool {
+    has_data && !is_pending()
+}
+
+/// Whether the history dialog is open (modal handling of `manage_ui`).
+pub fn is_open(win: &MainWindow) -> bool {
+    win.global::<PositionHistory>().get_open()
 }
 
 /// Bumped on every open, close and lock: a late answer of an older request is dropped.
@@ -52,10 +72,13 @@ pub fn prepare(win: &MainWindow, data: Option<&DepotData>, date: DateFn, privacy
     if data.is_none() {
         reset(win, false);
     }
-    st.set_available(data.is_some());
+    st.set_available(history_available(data.is_some()));
     TARGETS.with(|t| *t.borrow_mut() = targets);
     let weak = win.as_weak();
     st.on_request(move |i| {
+        if is_pending() {
+            return;
+        }
         if let Some(win) = weak.upgrade() {
             open(&win, i, date, privacy);
         }
@@ -95,11 +118,22 @@ pub fn prepare(win: &MainWindow, data: Option<&DepotData>, date: DateFn, privacy
 /// dialog and the shown position stay, so `prepare(Some(..))` can refresh them afterwards
 /// (a sync of the same depot must not close the dialog).
 pub fn loading(win: &MainWindow) {
+    set_pending(true);
     win.global::<PositionHistory>().set_available(false);
+}
+
+/// The depot load finished (success or error): the next `prepare(Some(..))` may enable the action.
+pub fn ready() {
+    set_pending(false);
 }
 
 /// The scope changed (navigation) or the load failed: close the dialog and forget the position.
 pub fn close(win: &MainWindow) {
+    reset(win, false);
+}
+
+/// Escape on the open dialog: close it like the "Schließen" button.
+pub fn dismiss(win: &MainWindow) {
     reset(win, false);
 }
 
@@ -208,8 +242,45 @@ fn reset(win: &MainWindow, forget: bool) {
     st.set_status(SharedString::new());
     st.set_rows(ModelRc::default());
     if forget {
+        set_pending(false);
         TARGETS.with(|t| t.borrow_mut().clear());
         st.set_selected(-1);
         st.set_available(false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manage::{Modal, Modals};
+
+    #[test]
+    fn pending_load_keeps_history_action_off() {
+        set_pending(true);
+        assert!(!history_available(true));
+        set_pending(false);
+        assert!(history_available(true));
+        assert!(!history_available(false));
+    }
+
+    #[test]
+    fn history_is_the_lowest_modal() {
+        let only = Modals {
+            history: true,
+            ..Modals::default()
+        };
+        assert_eq!(only.top(), Some(Modal::History));
+        let with_tan = Modals {
+            history: true,
+            tan: true,
+            ..Modals::default()
+        };
+        assert_eq!(with_tan.top(), Some(Modal::Tan));
+        let with_about = Modals {
+            history: true,
+            about: true,
+            ..Modals::default()
+        };
+        assert_eq!(with_about.top(), Some(Modal::About));
     }
 }

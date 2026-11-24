@@ -816,8 +816,8 @@ export component MainWindow inherits Window {
         }
     }
 
+    // No `z`: the PIN/TAN prompt later in the tree must stay above the history (sync while open).
     if PositionHistory.open && root.unlocked: Dialog {
-        z: 100;
         dialog-width: 560px;
         Text { text: PositionHistory.title; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; }
         Text { text: PositionHistory.subtitle; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
@@ -837,6 +837,7 @@ export component MainWindow inherits Window {
                 clicked => {
                     PositionHistory.open = false;
                     PositionHistory.reset(false);
+                    root.refocus();
                 }
             }
         }
