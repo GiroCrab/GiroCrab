@@ -74,7 +74,11 @@ data class Tag(val id: String, val name: String, val colorHex: Long = 0xFF1976D2
 
 enum class RuleField { Counterparty, Purpose, Iban, Amount, Any }
 
-enum class MatchKind { Contains, Equals, StartsWith, Regex }
+/**
+ * Match kinds of a rule. [Keyword] is the core's pipe list ("REWE|EDEKA|ALDI"), [Expression] its
+ * own search language — the app shows both but only evaluates the kinds the demo path produces.
+ */
+enum class MatchKind { Contains, Equals, StartsWith, Regex, Keyword, Expression }
 
 data class Rule(
     val id: String,
@@ -108,6 +112,10 @@ data class Rule(
             MatchKind.StartsWith -> haystack.startsWith(pattern, ignoreCase = true)
             MatchKind.Regex -> runCatching { Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(haystack) }
                 .getOrDefault(false)
+            MatchKind.Keyword -> pattern.split('|').any { haystack.contains(it.trim(), ignoreCase = true) }
+            // The core evaluates this one; re-implementing its search language here would create a
+            // second truth about money. The demo path never produces it.
+            MatchKind.Expression -> false
         }
     }
 }

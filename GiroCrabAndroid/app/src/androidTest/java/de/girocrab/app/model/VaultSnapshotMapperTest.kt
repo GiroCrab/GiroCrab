@@ -11,6 +11,9 @@ import uniffi.girocrab_core.AssetItem as CoreAssetItem
 import uniffi.girocrab_core.AssetItemSetup as CoreAssetSetup
 import uniffi.girocrab_core.BookingPage as CoreBookingPage
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.MatchKind as CoreMatchKind
+import uniffi.girocrab_core.Rule as CoreRule
+import uniffi.girocrab_core.RuleField as CoreRuleField
 import uniffi.girocrab_core.SelectionFlow as CoreFlow
 import java.security.SecureRandom
 import org.junit.After
@@ -141,6 +144,7 @@ class VaultSnapshotMapperTest {
             page = emptyPage(),
             categories = emptyList(),
             tags = emptyList(),
+            rules = emptyList(),
             holdingsByAccount = mapOf(7L to listOf(row)),
             assets = emptyList(),
         )
@@ -184,6 +188,7 @@ class VaultSnapshotMapperTest {
             page = emptyPage(),
             categories = emptyList(),
             tags = emptyList(),
+            rules = emptyList(),
             holdingsByAccount = mapOf(7L to listOf(row)),
             assets = emptyList(),
         )
@@ -235,6 +240,7 @@ class VaultSnapshotMapperTest {
             page = emptyPage(),
             categories = emptyList(),
             tags = emptyList(),
+            rules = emptyList(),
             holdingsByAccount = emptyMap(),
             assets = listOf(item),
         )
@@ -256,6 +262,7 @@ class VaultSnapshotMapperTest {
             page = emptyPage(total = 5_000u),
             categories = emptyList(),
             tags = emptyList(),
+            rules = emptyList(),
             holdingsByAccount = emptyMap(),
             assets = emptyList(),
         )
@@ -316,5 +323,52 @@ class VaultSnapshotMapperTest {
         } finally {
             vault.close()
         }
+    }
+
+    private fun coreRule(
+        categoryId: Long = 12L,
+        field: CoreRuleField = CoreRuleField.CounterpartyIban,
+        matchKind: CoreMatchKind = CoreMatchKind.Keyword,
+    ) = CoreRule(
+        id = 4L,
+        name = "Lebensmittel",
+        categoryId = categoryId,
+        field = field,
+        matchKind = matchKind,
+        pattern = "REWE|EDEKA",
+        caseSensitive = false,
+        minAmountCents = 500L,
+        maxAmountCents = null,
+        accountIds = listOf(1L),
+        priority = 2,
+        enabled = true,
+        matchCount = 17u,
+        tagIds = listOf(3L, 9L),
+    )
+
+    @Test
+    fun ruleKeepsFieldKindPatternCategoryTagsAndRange() {
+        val rule = VaultSnapshotMapper.rule(coreRule())
+
+        assertEquals("4", rule.id)
+        assertEquals("counterparty IBAN is the app's Iban field", RuleField.Iban, rule.field)
+        assertEquals(MatchKind.Keyword, rule.matchKind)
+        assertEquals("REWE|EDEKA", rule.pattern)
+        assertEquals("12", rule.categoryId)
+        assertEquals(setOf("3", "9"), rule.tagIds)
+        assertEquals(500L, rule.minCents)
+        assertNull("no upper bound in the core, none in the app", rule.maxCents)
+        assertTrue(rule.enabled)
+    }
+
+    @Test
+    fun zeroCategoryMeansNoCategory() {
+        assertNull(VaultSnapshotMapper.rule(coreRule(categoryId = 0L)).categoryId)
+    }
+
+    @Test
+    fun bookingTextFallsBackToTheAnyField() {
+        val rule = VaultSnapshotMapper.rule(coreRule(field = CoreRuleField.BookingText))
+        assertEquals("the app has no separate booking-text column", RuleField.Any, rule.field)
     }
 }

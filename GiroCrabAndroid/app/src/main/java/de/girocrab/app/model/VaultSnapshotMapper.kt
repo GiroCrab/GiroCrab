@@ -15,6 +15,9 @@ import uniffi.girocrab_core.CategorySource as CoreCategorySource
 import uniffi.girocrab_core.ConnectorKind as CoreConnector
 import uniffi.girocrab_core.FlowKind as CoreFlowKind
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.MatchKind as CoreMatchKind
+import uniffi.girocrab_core.Rule as CoreRule
+import uniffi.girocrab_core.RuleField as CoreRuleField
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -70,6 +73,7 @@ object VaultSnapshotMapper {
         page: CorePage,
         categories: List<CoreCategory>,
         tags: List<CoreTag>,
+        rules: List<CoreRule>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
     ): VaultSnapshot = map(
@@ -79,6 +83,7 @@ object VaultSnapshotMapper {
         bookingsTotal = page.totalCount.toInt(),
         categories = categories,
         tags = tags,
+        rules = rules,
         holdingsByAccount = holdingsByAccount,
         assets = assets,
     )
@@ -90,6 +95,7 @@ object VaultSnapshotMapper {
         bookingsTotal: Int,
         categories: List<CoreCategory>,
         tags: List<CoreTag>,
+        rules: List<CoreRule>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
     ): VaultSnapshot {
@@ -102,6 +108,7 @@ object VaultSnapshotMapper {
             bookings = bookings.map(::booking),
             categories = categories.map(::category),
             tags = tags.map(::tag),
+            rules = rules.map(::rule),
             holdings = holdingsByAccount.flatMap { (accountId, rows) ->
                 val quote = quoteCurrencies[accountId] ?: "EUR"
                 rows.map { holding(accountId, it, quote) }
@@ -167,6 +174,33 @@ object VaultSnapshotMapper {
         colorHex = color(row.colorHex, 0xFF607D8B),
         icon = row.sfSymbol.ifBlank { "label" },
         monthlyBudgetCents = row.budgetCents,
+    )
+
+    /**
+     * Rule fields the app has no separate column for: [CoreRuleField.BookingText] lands on
+     * [RuleField.Any] because that is the text the rule is shown against.
+     */
+    fun rule(row: CoreRule): Rule = Rule(
+        id = row.id.toString(),
+        field = when (row.field) {
+            CoreRuleField.Any -> RuleField.Any
+            CoreRuleField.Counterparty -> RuleField.Counterparty
+            CoreRuleField.Purpose -> RuleField.Purpose
+            CoreRuleField.BookingText -> RuleField.Any
+            CoreRuleField.CounterpartyIban -> RuleField.Iban
+        },
+        matchKind = when (row.matchKind) {
+            CoreMatchKind.Keyword -> MatchKind.Keyword
+            CoreMatchKind.Regex -> MatchKind.Regex
+            CoreMatchKind.Expression -> MatchKind.Expression
+        },
+        pattern = row.pattern,
+        // 0 means "no category" in the core, not category 0.
+        categoryId = row.categoryId.takeIf { it != 0L }?.toString(),
+        tagIds = row.tagIds.map { it.toString() }.toSet(),
+        enabled = row.enabled,
+        minCents = row.minAmountCents,
+        maxCents = row.maxAmountCents,
     )
 
     private fun tag(row: CoreTag): Tag = Tag(
