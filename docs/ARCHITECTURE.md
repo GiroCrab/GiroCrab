@@ -126,7 +126,7 @@ parts have durable UUIDs; their display position is not an endpoint identity.
 `planning/split_ids.rs` implements migration 39; step 40 in `schema.rs` creates `refund_links`. `planning.rs` preserves kept
 UUIDs, and the split and twin merge paths retain them.
 
-`refunds.rs` resolves endpoints and allocates capacity in sync-identity order;
+`refunds.rs` resolves endpoints and allocates capacity in creation order (`created_ms`, then sync identity as tie-break);
 `refunds/store.rs` merges complete link rows after exact booking-id mapping,
 including import take-overs. Local edits and deletions keep original link keys
 and stamps. Split replacement inherits a referenced UUID only for an unambiguous

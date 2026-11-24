@@ -66,8 +66,8 @@ that deterministic choice with whichever device upgraded last.
 
 ### Schema cutover and recovery
 
-Opening an older vault runs the pending steps through 40 (39: split UUIDs, 40: `refund_links`) in the migration transaction. A build
-supporting only schema 38 cannot open the migrated vault or merge its snapshots;
+Opening an older vault runs the pending steps through 41 (39: split UUIDs, 40: `refund_links`, 41: date stamp of manual bookings) in the migration transaction. A build
+supporting only schema 38, 39 or 40 cannot open the migrated vault or merge its snapshots;
 the version guard refuses them before writing. Reinstalling the older executable
 does not undo the migration. There is no schema downgrade path.
 
@@ -189,7 +189,9 @@ UUID-v4 operation identity as its undo token (`unlink_id`). Restore succeeds
 only if the row is still deleted, its nonempty operation identity equals that
 token and it is not a moved marker. A restored row is active only while its
 endpoints pass the resolver (e.g. a whole-booking link stays inactive while that
-booking is split and becomes active again once it is unsplit). It retains the original creation
+booking is split and becomes active again once it is unsplit). Restoring a link whose
+endpoint is currently invalid returns an error and leaves the tombstone in place; the
+same undo can be retried after the booking is unsplit. It retains the original creation
 stamp and allocation priority; a newer peer tombstone cannot be revived by an
 older undo. Explicitly re-linking a tombstoned key instead gets a fresh creation
 stamp rather than reviving its old priority.

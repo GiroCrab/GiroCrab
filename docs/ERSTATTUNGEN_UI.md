@@ -132,7 +132,7 @@ Datenschutzmasken schützen Namen, Beträge und Kategorien getrennt, auch in der
 geöffneten Teileauswahl. Banktexte werden als einfacher Text angezeigt.
 Aufheben und tokenbasiertes Rückgängig ändern keine Benutzersplits.
 
-Im Demo-Tresor zeigen `--demo-sheet refund`, `refund-reverse`, `refund-before`
+Mit der Linux-Oberfläche (eigener Pull Request) zeigen im Demo-Tresor `--demo-sheet refund`, `refund-reverse`, `refund-before`
 und `refund-linked` fiktive Zuordnungen. `--privacy=all` prüft den Datenschutz.
 
 ### Windows
@@ -156,5 +156,5 @@ neu geladene Daten verwenden den aktuellen Datenschutzstatus.
 „Werte anzeigen“ beendet ihn wieder.
 
 `GIROCRAB_LANGUAGE=en` wählt englische Texte der Erstattungsansicht (Standard:
-Deutsch). Im Demo-Modus (`GIROCRAB_DEMO_SEED=1`) erzeugt
+Deutsch). Mit der Windows-Oberfläche (eigener Pull Request) erzeugt im Demo-Modus (`GIROCRAB_DEMO_SEED=1`)
 `GIROCRAB_REFUND_DEMO=split`, `reverse` oder `linked` reproduzierbare Ansichten.

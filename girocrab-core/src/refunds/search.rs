@@ -54,9 +54,10 @@ fn index<'a>(v: &Vault, db: &Connection, p: &'a Resolved) -> CoreResult<&'a Sear
 pub(super) fn reference_tokens(text: &str) -> HashSet<String> {
     text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')' | '+'))
         // plain numbers and real dates are no references; an impossible date-shaped value
-        // (31.04.2026) is
+        // (31.04.2026) is one
         .filter(|w| {
-            !is_date(w) && (date_shaped(w) || !w.chars().all(|c| c.is_ascii_digit() || c == '.'))
+            let bare = w.trim_matches(|c: char| !c.is_alphanumeric());
+            !is_date(w) && (date_shaped(w) || !bare.chars().all(|c| c.is_ascii_digit() || c == '.'))
         })
         .map(|w| {
             w.chars()
@@ -74,7 +75,9 @@ pub(super) fn reference_tokens(text: &str) -> HashSet<String> {
 /// valid or not.
 fn date_fields(word: &str) -> Option<(Option<i16>, Option<i16>, Option<i16>)> {
     let word = word.trim_matches(|c: char| !c.is_alphanumeric());
-    let fields: Vec<_> = word.split(['-', '/', '.']).collect();
+    // one separator throughout: `2026-04/17` is no date
+    let sep = word.chars().find(|c| matches!(c, '-' | '/' | '.'))?;
+    let fields: Vec<_> = word.split(sep).collect();
     let digits = |f: &str, n| f.len() == n && f.bytes().all(|b| b.is_ascii_digit());
     let num = |f: &str| f.parse::<i16>().ok();
     Some(match fields.as_slice() {
@@ -333,5 +336,8 @@ mod date_tests {
         assert!(reference_tokens("Ref 31.04.2026").contains("31042026"));
         assert!(reference_tokens("Ref 30.04.2026").is_empty());
         assert!(reference_tokens("Betrag 1.234.567").is_empty());
+        assert!(reference_tokens("Betrag 1234567.").is_empty());
+        assert!(!is_date("2026-04/17"));
+        assert!(reference_tokens("Ref 2026-04/17").contains("20260417"));
     }
 }
