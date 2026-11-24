@@ -21,6 +21,8 @@ mod nav;
 mod planning;
 mod policy;
 mod portfolio;
+mod print;
+mod print_ui;
 mod recurring_ui;
 mod recurring_view;
 mod settings_import;
@@ -1935,6 +1937,24 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 });
             });
+        });
+    }
+    {
+        let weak = win.as_weak();
+        win.on_print_request(move || {
+            let Some(win) = weak.upgrade() else { return };
+            if !win.get_unlocked() {
+                return; // gesperrt: nichts drucken
+            }
+            let (rows, account, from_date) = with_state(|st| {
+                let shown: Vec<&Row> = st.shown.iter().map(|&i| &st.rows[i]).collect();
+                (
+                    print_ui::rows_of(&shown),
+                    print_ui::account_label(&shown),
+                    st.filter.from_date.clone(),
+                )
+            });
+            print_ui::start(win.as_weak(), rows, account, from_date, privacy_on(&win));
         });
     }
     {
