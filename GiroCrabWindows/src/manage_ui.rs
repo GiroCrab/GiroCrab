@@ -84,6 +84,7 @@ fn modals(win: &MainWindow) -> Modals {
         rules: win.get_rules_open(),
         link: win.get_link_open(),
         about: win.get_about_open(),
+        history: crate::position_history_ui::is_open(win),
     }
 }
 
@@ -107,6 +108,7 @@ fn close_modal(win: &MainWindow, m: Modal) {
         Modal::Rules => crate::views_ui::close_rules(win),
         Modal::Link => win.set_link_open(false),
         Modal::About => win.set_about_open(false),
+        Modal::History => crate::position_history_ui::dismiss(win),
     }
 }
 
