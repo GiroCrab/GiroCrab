@@ -554,6 +554,28 @@ mod forward_tests {
         assert_eq!(winners(&merged_first)["x"], (Some("neutral".into()), 7));
     }
 
+    /// Two live same-named categories from two devices, one without a role and one with a
+    /// seeded role (stamp 0): the survivor keeps its own role in both sync directions; the
+    /// seeded role of the duplicate does not count.
+    #[test]
+    fn stamp_0_role_of_a_live_duplicate_does_not_reach_the_survivor() {
+        let device = |uuid: &str, role: Option<&str>| {
+            let c = Cat {
+                name: "Kaution".into(),
+                ..cat(uuid, None, role, 0)
+            };
+            BTreeMap::from([(c.uuid.clone(), c)])
+        };
+        for (x_role, y_role) in [(None, Some("investment")), (Some("investment"), None)] {
+            let a = device("x", x_role);
+            let b = device("y", y_role);
+            for merged in [merge_into(&a, &b), merge_into(&b, &a)] {
+                assert_eq!(merged["y"].merged_into.as_deref(), Some("x"));
+                assert_eq!(winners(&merged)["x"], (x_role.map(String::from), 0));
+            }
+        }
+    }
+
     /// Merges `other` into `local` as `merge_categories` does for a vault of the current
     /// schema: upsert by uuid (newest stamp per field), then [`settle`].
     fn merge_into(
