@@ -743,8 +743,7 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(linked.links.map(\.originalPart), [parts[1].uuid])
         XCTAssertEqual(linked.links.first?.allocatedCents, 5999)
-        XCTAssertEqual(after.incomeCents, before.incomeCents - 5999)
-        XCTAssertEqual(after.consumptionCents, before.consumptionCents - 5999)
+        XCTAssertEqual(after, before)
         let id = original
         let preserved = try await model.requireVaultOffMain { try $0.listTransactionSplits(transactionId: id) }
         XCTAssertEqual(preserved, parts)
