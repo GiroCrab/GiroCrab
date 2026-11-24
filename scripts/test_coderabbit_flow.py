@@ -75,6 +75,16 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(len(api.comments), 1)
         self.assertNotIn("All CodeRabbit review threads are resolved", api.comments[0])
 
+    def test_confirmed_resolution_refreshes_the_status_when_forbidden(self):
+        api = Api([thread("a", True), thread("b", False)], resolve_error="FORBIDDEN")
+        code, out = self.run_main(api, EVENT_NAME="issue_comment", COMMENT_AUTHOR="coderabbitai[bot]",
+                                  COMMENT_BODY="Comments resolved")
+        self.assertEqual(code, 0)
+        self.assertIn("0/2 thread(s) resolved", out)
+        self.assertEqual(len(api.comments), 1)
+        self.assertIn("Finding a", api.comments[0])
+        self.assertIn("Finding b", api.comments[0])
+
     def test_read_only_token_warns_about_the_status_comment(self):
         code, out = self.run_main(Api([thread("a", False)], comment_status=403))
         self.assertEqual(code, 0)

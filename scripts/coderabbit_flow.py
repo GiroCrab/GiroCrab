@@ -285,7 +285,7 @@ def main() -> int:
             auto_resolvable, open_items = classify_threads(threads)
             targets = auto_resolvable + open_items
             resolved, remaining = resolve_threads(targets)
-            if resolved > 0:
+            if targets:
                 upsert_sticky_comment(owner, repo, pr_nr, render_status_comment(remaining, resolved))
             print(f"Synced CodeRabbit resolution: {resolved}/{len(targets)} thread(s) resolved.")
             return 0
