@@ -1,0 +1,41 @@
+# CodeRabbit configuration for GiroCrab (applies to all PRs on GitHub)
+language: "en-US"
+early_access: false
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_approvals:
+    enabled: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+  path_instructions:
+    - path: "girocrab-core/**"
+      instructions: |
+        - Keep `girocrab-core` free of platform UI dependencies and preserve `serde` feature compatibility (`scripts/lint-serde-feature.sh`) and FFI exports (`scripts/lint-ffi-exports.sh`).
+        - Validate calendar dates against real month lengths including leap years and accept German multi-thousand-separator amounts (e.g. `1.234.567`).
+        - Ensure every new sync/import branch records both success and failure via `vault.log_sync`.
+    - path: "GiroCrabApp/**"
+      instructions: |
+        - Enforce privacy mode consistently: both visual redaction AND blocking copy/export actions when privacy mode is active or the vault is locked.
+        - Any Swift test file touching `UserDefaults` or `expandedCategories` must start with `// test: serial-defaults`.
+        - Keep localization catalogs (`xcstrings`) consistent across languages.
+    - path: "GiroCrabWindows/**"
+      instructions: |
+        - Ensure cross-platform compilation (`cargo clippy --all-targets -- -D warnings` on macOS, Linux, and Windows) without unguarded Win32-only APIs.
+        - Reset all dialog/editor state properties when locking the vault (`*vault = None`) and embed growing dialog forms in a `ScrollView`.
+        - Enforce privacy mode masking and action locks consistently.
+    - path: "GiroCrabLinux/**"
+      instructions: |
+        - Keep QML braces balanced and avoid duplicate property assignments within the same QML block.
+        - Keep translation keys in sync with `GiroCrabLinux/scripts/i18n-report.py`.
+    - path: ".github/workflows/**"
+      instructions: |
+        - For `pull_request_target` workflows, never check out or execute untrusted PR head code with write tokens; check out the trusted base commit instead.
+chat:
+  auto_reply: true
