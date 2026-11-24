@@ -111,6 +111,7 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
                             reset(&win);
                         }
                         // The account exists either way: refresh the lists, keep private mode.
+                        // The deferred refocus of `show` skips an open (newer) dialog.
                         refresh(&win, &current, Some(id));
                         // No account name: `sync-status` is not re-rendered when private mode
                         // is switched on later.
@@ -162,6 +163,13 @@ mod tests {
         dialog.bump();
         assert!(!dialog.is_current(started));
         assert!(dialog.is_current(dialog.current()));
+    }
+
+    #[test]
+    fn deferred_refocus_leaves_an_open_dialog_alone() {
+        // An older save's refresh must not take the focus from a reopened dialog.
+        assert!(!crate::manage_ui::may_refocus(true));
+        assert!(crate::manage_ui::may_refocus(false));
     }
 
     #[test]

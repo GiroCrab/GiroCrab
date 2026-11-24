@@ -1379,6 +1379,8 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     match render_header(win, vault, selected) {
         Ok(sel) => {
             refresh_transfer_sources(win, vault);
+            // Offline accounts are marked (and masked in private mode) in the sidebar (#679).
+            nav::set_offline_accounts(vault.list_offline_account_ids().unwrap_or_default());
             // Fill the sidebar and the account count now; the background refresh follows.
             views_ui::set_accounts_now(win, vault);
             views_ui::sync_target(sel);
