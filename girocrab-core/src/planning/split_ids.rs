@@ -45,24 +45,20 @@ fn backfill(conn: &Connection) -> CoreResult<()> {
             position INTEGER NOT NULL
          );",
     )?;
+    // The identity of a booking depends only on that booking: its sync key plus the account and
+    // connection it belongs to. Never on which other bookings this device holds, so every device
+    // derives the same UUIDs (CodeRabbit #1851: a plain and a switch booking can share a key).
     let mut identities = HashMap::new();
     for (_, booking, ..) in &rows {
         if let std::collections::hash_map::Entry::Vacant(entry) = identities.entry(*booking) {
-            entry.insert(crate::sync_merge::booking_key(conn, *booking)?);
-        }
-    }
-    let mut counts = HashMap::new();
-    for key in identities.values() {
-        *counts.entry(key.clone()).or_insert(0usize) += 1;
-    }
-    for (&booking, key) in &mut identities {
-        if counts[key.as_str()] > 1 {
+            let key = crate::sync_merge::booking_key(conn, *booking)?;
             let discriminator: (String, String, String, String) = conn.query_row(
                 "SELECT a.external_ref,IFNULL(c.connector,''),IFNULL(c.login_name,''),IFNULL(c.bank_code,'') FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN bank_connections c ON c.id=a.connection_id WHERE t.id=?1",
                 [booking], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
             )?;
-            *key = serde_json::to_string(&(key.as_str(), discriminator))
-                .expect("split booking identity");
+            entry.insert(
+                serde_json::to_string(&(key, discriminator)).expect("split booking identity"),
+            );
         }
     }
     let mut occurrences = HashMap::new();
@@ -191,6 +187,29 @@ mod tests {
             conn.prepare("SELECT a.external_ref,s.amount_cents,s.note,s.uuid FROM transaction_splits s JOIN transactions t ON t.id=s.transaction_id JOIN accounts a ON a.id=t.account_id ORDER BY a.external_ref,s.amount_cents,s.note,s.uuid").unwrap().query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?))).unwrap().collect::<Result<Vec<_>,_>>().unwrap()
         });
         assert_eq!(snapshots[0], snapshots[1]);
+    }
+
+    /// CodeRabbit (#1851): a device holding only the plain booking derives the same UUIDs as a
+    /// device holding the plain and the switch booking with the same sync key.
+    #[test]
+    fn backfill_identity_does_not_depend_on_other_local_bookings() {
+        let uuids = |with_switch: bool| {
+            let conn = legacy(false);
+            if with_switch {
+                conn.execute_batch("INSERT INTO accounts VALUES (2,NULL,'moneymoney-db:switch:account'); INSERT INTO transactions VALUES (2,2,'external');
+                    INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,note) SELECT 2,category_id,amount_cents,note FROM transaction_splits;").unwrap();
+            }
+            migrate(&conn).unwrap();
+            conn.prepare("SELECT uuid FROM transaction_splits WHERE transaction_id=1 ORDER BY uuid")
+                .unwrap()
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        let alone = uuids(false);
+        assert_eq!(alone.len(), 4);
+        assert_eq!(alone, uuids(true));
     }
 
     #[test]
