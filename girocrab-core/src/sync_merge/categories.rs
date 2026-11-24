@@ -236,12 +236,13 @@ pub(crate) struct RoleEntry<'a> {
     pub role_ms: i64,
 }
 
-/// The role that counts for each live category (#931): the newest of its own and those
-/// of the duplicates combined into it (`merged_into`, followed like the bookings,
-/// [`survivor`]), with the tie-break of [`take_newer`]. Resolved when reading, not
-/// written into the survivor on merge: a written role would stay where an earlier merge
-/// put it, and the result would depend on the order of syncs. Ordinary deletions count
-/// for nobody.
+/// The role that counts for each live category (#931): the newest of its own and the
+/// chosen ones (`role_ms > 0`) of the duplicates combined into it (`merged_into`, followed
+/// like the bookings, [`survivor`]), with the tie-break of [`take_newer`]. A role nobody
+/// chose (stamp 0, seeded by schema step 42 or an import) described the duplicate's own
+/// place and stays there. Resolved when reading, not written into the survivor on merge: a
+/// written role would stay where an earlier merge put it, and the result would depend on
+/// the order of syncs. Ordinary deletions count for nobody.
 pub(crate) fn role_winners<'a>(rows: &[RoleEntry<'a>]) -> HashMap<&'a str, (Option<&'a str>, i64)> {
     let by_uuid: HashMap<&str, &RoleEntry> = rows.iter().map(|r| (r.uuid, r)).collect();
     let mut out: HashMap<&'a str, (Option<&'a str>, i64)> = rows
@@ -249,7 +250,10 @@ pub(crate) fn role_winners<'a>(rows: &[RoleEntry<'a>]) -> HashMap<&'a str, (Opti
         .filter(|r| r.live)
         .map(|r| (r.uuid, (r.role, r.role_ms)))
         .collect();
-    for r in rows.iter().filter(|r| !r.live && r.merged_into.is_some()) {
+    for r in rows
+        .iter()
+        .filter(|r| !r.live && r.merged_into.is_some() && r.role_ms > 0)
+    {
         let Some(target) = survivor(r.uuid, |u| by_uuid.get(u).map(|e| (e.live, e.merged_into)))
         else {
             continue;
@@ -513,8 +517,8 @@ mod forward_tests {
     }
 
     /// Same-named duplicates with different roles nobody chose (stamp 0): the survivor
-    /// ends with the same role whether the duplicate arrives live and gets combined, or
-    /// already merged into it by another device.
+    /// keeps its own whether the duplicate arrives live and gets combined, or already
+    /// merged into it by another device. A chosen role of the duplicate counts.
     #[test]
     fn stamp_0_roles_of_duplicates_do_not_depend_on_sync_order() {
         let mut live_first = BTreeMap::new();
@@ -537,10 +541,11 @@ mod forward_tests {
             merged_first.insert(c.uuid.clone(), c);
         }
 
-        assert_eq!(winners(&live_first)["x"], (Some("neutral".into()), 0));
+        assert_eq!(winners(&live_first)["x"], (Some("investment".into()), 0));
         assert_eq!(winners(&merged_first), winners(&live_first));
-        // the stored role of the survivor stays its own
-        assert_eq!(live_first["x"].category_role.as_deref(), Some("investment"));
+
+        merged_first.get_mut("y").unwrap().role_ms = 7;
+        assert_eq!(winners(&merged_first)["x"], (Some("neutral".into()), 7));
     }
 
     /// Merges `other` into `local` as `merge_categories` does for a vault of the current

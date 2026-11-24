@@ -1330,6 +1330,60 @@ fn own_role_change_beats_role_of_merged_duplicate() {
     assert_eq!(find().effective_role, CategoryRole::Consumption);
 }
 
+/// Device A already combined a duplicate `Sparen & Investieren` into the one it moved under
+/// a custom folder; device B still has the duplicate live at the top level, where step 42
+/// gave it `investment` (stamp 0). After the sync the duplicate is merged and its seeded
+/// role stays its own: the survivor keeps `Consumption`, as in v41.
+#[test]
+fn seeded_role_of_a_duplicate_live_on_another_device_does_not_count() {
+    for reverse in [false, true] {
+        let a_dir = crate::test_support::TempDir::new("roles-seeded-dup-a");
+        let b_dir = crate::test_support::TempDir::new("roles-seeded-dup-b");
+        let a = vault(&a_dir);
+        let b = vault(&b_dir);
+        for (v, dup_live) in [(&a, false), (&b, true)] {
+            let db = v.db().unwrap();
+            db.execute_batch(
+                "INSERT INTO categories(id, parent_id, name, uuid, name_ms, parent_ms)
+                   VALUES (101, NULL, 'Eigener Ordner', 'u-folder', 1, 1);
+                 INSERT INTO categories(id, parent_id, name, uuid, builtin_role, name_ms, parent_ms)
+                   VALUES (102, 101, 'Sparen & Investieren', 'u-live', 'Sparen & Investieren', 1, 2);",
+            )
+            .unwrap();
+            if dup_live {
+                db.execute(
+                    "INSERT INTO categories(id, parent_id, name, uuid, builtin_role, role, role_ms, name_ms)
+                       VALUES (103, NULL, 'Sparen & Investieren', 'u-dup', 'Sparen & Investieren', 'investment', 0, 1)",
+                    [],
+                )
+                .unwrap();
+            } else {
+                db.execute(
+                    "INSERT INTO categories(id, parent_id, name, uuid, builtin_role, name_ms, deleted_ms, merged_into)
+                       VALUES (103, NULL, 'Sparen & Investieren', 'u-dup', 'Sparen & Investieren', 1, 3, 'u-live')",
+                    [],
+                )
+                .unwrap();
+            }
+        }
+        let (dst, src) = if reverse { (&b, &a_dir) } else { (&a, &b_dir) };
+        dst.merge_other_vault(src.join("v.db").to_string_lossy().into(), vec![7; 32])
+            .unwrap();
+        let cats = dst.list_categories(None, None).unwrap();
+        let live: Vec<_> = cats
+            .iter()
+            .filter(|c| c.name == "Sparen & Investieren")
+            .collect();
+        assert_eq!(live.len(), 1, "reverse={reverse}: {live:?}");
+        assert_eq!(live[0].role, None, "reverse={reverse}");
+        assert_eq!(
+            live[0].effective_role,
+            CategoryRole::Consumption,
+            "reverse={reverse}"
+        );
+    }
+}
+
 /// Clearing or editing a role stamps `role_ms` strictly above any stored ahead-of-clock
 /// peer timestamp so the local change wins the next iCloud merge.
 #[test]
