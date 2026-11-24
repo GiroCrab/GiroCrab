@@ -43,6 +43,9 @@ enum SidebarItem: Hashable {
 enum MainColumn: Equatable {
     case bookings, documents, planned, directDebits, wealth
 
+    /// The right column: Belege & Postbox has its own preview, Vermögen no booking list.
+    var hasInspector: Bool { self != .documents && self != .wealth }
+
     init(_ item: SidebarItem?) {
         switch item {
         case .documents?: self = .documents
