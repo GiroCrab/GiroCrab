@@ -47,13 +47,9 @@ AssetSectionCard {
     /// A click on a slice filters the list to its positions; the same slice again ends it.
     function choose(s) { filterRequested(DepotMetrics.sameKeys(filter, s.memberKeys) ? null : s.memberKeys) }
     function shareText(cents) { return total > 0 ? DepotMetrics.percent(cents / total * 100, false, 1) : "–" }
-    function detailText(s) {
-        const positions = s.count > 1 ? " · " + qsTr("%1 Positionen").arg(s.count) : ""
-        return s.label + " · " + Fmt.money(s.cents, currency) + " · " + shareText(s.cents) + positions
-    }
     /// The name as read aloud: masked like the drawn one (personal for an own item, else a label).
     function spokenLabel(s) { return AppModel.masking(s.label, s.personal ? AppModel.redactPersonal : AppModel.redactLabels) }
-    /// detailText as read aloud: name, amount and share masked like their drawn texts.
+    /// „Name · Wert · Anteil · n Positionen“ (tooltip and spoken name): name, amount and share masked like their drawn texts.
     function spokenDetail(s) {
         const positions = s.count > 1 ? " · " + qsTr("%1 Positionen").arg(s.count) : ""
         return spokenLabel(s) + " · " + AppModel.masking(Fmt.money(s.cents, currency), AppModel.redactAmounts)
@@ -78,6 +74,7 @@ AssetSectionCard {
                     model: [{ id: "ring", symbol: "chart.pie", title: qsTr("Kreis") }, { id: "bars", symbol: "chart.bar.xaxis", title: qsTr("Balken") },
                             { id: "tiles", symbol: "square.grid.2x2", title: qsTr("Kacheln") }]
                     Rectangle {
+                        id: segment
                         required property var modelData
                         width: 30; height: 18; radius: 5
                         color: card.display === modelData.id ? Theme.card : "transparent"
@@ -85,7 +82,15 @@ AssetSectionCard {
                         SFIcon { anchors.centerIn: parent; symbol: modelData.symbol; size: 12; color: Theme.text }
                         MouseArea { id: segArea; anchors.fill: parent; hoverEnabled: true; onClicked: card.setDisplay(modelData.id) }
                         ToolTip.visible: segArea.containsMouse; ToolTip.delay: 600; ToolTip.text: modelData.title
+                        // a segmented Picker on the Mac: Tab reaches each segment, Space / Return picks it
+                        activeFocusOnTab: true
+                        Keys.onSpacePressed: card.setDisplay(modelData.id)
+                        Keys.onReturnPressed: card.setDisplay(modelData.id)
+                        Keys.onEnterPressed: card.setDisplay(modelData.id)
+                        Rectangle { visible: segment.activeFocus; anchors.fill: parent; anchors.margins: -2
+                                    radius: 6; color: "transparent"; border.width: 2; border.color: Theme.accent }
                         Accessible.role: Accessible.RadioButton; Accessible.name: modelData.title; Accessible.checked: card.display === modelData.id
+                        Accessible.onPressAction: card.setDisplay(modelData.id)
                     }
                 }
             }
@@ -189,9 +194,10 @@ AssetSectionCard {
                 Layout.fillWidth: true
                 spacing: 10
                 opacity: card.selected === "" || card.selected === modelData.id ? 1 : 0.35
-                Text { text: barRow.modelData.label; Layout.preferredWidth: 150 * Theme.textScale; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                Text { text: barRow.modelData.label; textFormat: Text.PlainText; Layout.preferredWidth: 150 * Theme.textScale; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
                        font.pixelSize: Theme.caption; color: barRow.modelData.unclassified ? Theme.secondary : Theme.text
-                       Sensitive { labels: !barRow.modelData.personal } }
+                       Sensitive { labels: !barRow.modelData.personal }
+                       FocusFrame { target: barRow } }
                 Item {
                     Layout.fillWidth: true; implicitHeight: 12 * Theme.textScale
                     Rectangle { height: parent.height; radius: 3; color: barRow.modelData.color
@@ -204,7 +210,16 @@ AssetSectionCard {
                        font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.secondary; Sensitive { amounts: true } }
                 TapHandler { onTapped: card.choose(barRow.modelData) }
                 HoverHandler { id: barArea; cursorShape: Qt.PointingHandCursor }
-                ToolTip.visible: barArea.hovered; ToolTip.delay: 600; ToolTip.text: AppModel.masking(card.detailText(barRow.modelData), AppModel.redactAmounts)
+                ToolTip.visible: barArea.hovered; ToolTip.delay: 600; ToolTip.text: card.spokenDetail(barRow.modelData)
+                // a Button on the Mac: Tab reaches it, Space / Return filters
+                activeFocusOnTab: true
+                Keys.onSpacePressed: card.choose(barRow.modelData)
+                Keys.onReturnPressed: card.choose(barRow.modelData)
+                Keys.onEnterPressed: card.choose(barRow.modelData)
+                Accessible.role: Accessible.Button
+                Accessible.name: card.spokenDetail(barRow.modelData)
+                Accessible.checked: card.selected === barRow.modelData.id
+                Accessible.onPressAction: card.choose(barRow.modelData)
             }
         }
         Rectangle { visible: bars.ranking.rest !== null; Layout.fillWidth: true; implicitHeight: 1; color: Theme.border }
@@ -260,7 +275,7 @@ AssetSectionCard {
                     x: 8; y: 8
                     width: parent.width - 16
                     spacing: 1
-                    Text { visible: tile.both || tile.nameOnly; text: tile.s.label; width: parent.width; elide: Text.ElideRight
+                    Text { visible: tile.both || tile.nameOnly; text: tile.s.label; textFormat: Text.PlainText; width: parent.width; elide: Text.ElideRight
                            font.pixelSize: Theme.caption; font.weight: Font.Bold; color: tile.ink
                            Sensitive { labels: !tile.s.personal } }
                     Text { visible: tile.both; text: tile.amountLine; width: parent.width; elide: Text.ElideRight
@@ -274,8 +289,16 @@ AssetSectionCard {
                     onContainsMouseChanged: { if (containsMouse) treemap.hovered = tile.s.id; else if (treemap.hovered === tile.s.id) treemap.hovered = "" }
                     onClicked: card.choose(tile.s)
                 }
+                // Tab reaches the tile, Space / Return filters; the detail card follows the focus like the pointer
+                activeFocusOnTab: true
+                Keys.onSpacePressed: card.choose(tile.s)
+                Keys.onReturnPressed: card.choose(tile.s)
+                Keys.onEnterPressed: card.choose(tile.s)
+                onActiveFocusChanged: { if (activeFocus) treemap.hovered = tile.s.id; else if (treemap.hovered === tile.s.id) treemap.hovered = "" }
+                Rectangle { visible: tile.activeFocus; anchors.fill: parent; radius: tile.radius; color: "transparent"; border.width: 2; border.color: Theme.accent }
                 Accessible.role: Accessible.Button
                 Accessible.name: card.spokenDetail(s)
+                Accessible.onPressAction: card.choose(tile.s)
             }
         }
         // the detail card in the bottom right corner
@@ -289,7 +312,7 @@ AssetSectionCard {
                 x: 10; y: 10
                 width: parent.width - 20
                 spacing: 3
-                Text { text: treemap.focusSlice ? treemap.focusSlice.label : ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2
+                Text { text: treemap.focusSlice ? treemap.focusSlice.label : ""; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2
                        font.pixelSize: Theme.subheadline + 1; font.weight: Font.DemiBold; color: Theme.text
                        Sensitive { labels: !(treemap.focusSlice && treemap.focusSlice.personal) } }
                 Text { text: treemap.focusSlice ? Fmt.money(treemap.focusSlice.cents, card.currency) : ""; font.pixelSize: Theme.callout + 1; font.features: { "tnum": 1 }; color: Theme.text
@@ -311,6 +334,16 @@ AssetSectionCard {
     }
     ColumnLayout { id: footerSlot; Layout.fillWidth: true; spacing: 4 }
 
+    /// The focus ring of a row-like control. A layout would place a frame of its own as a cell, so it sits in the
+    /// row's first item and spans the whole `target` from there.
+    component FocusFrame: Rectangle {
+        required property Item target
+        visible: target.activeFocus
+        x: -parent.x - 3; y: -parent.y - 2
+        width: target.width + 6; height: target.height + 4
+        radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent
+    }
+
     /// Name, amount and share per slice; a long name wraps to a second line, complete in the tooltip.
     component Legend: ColumnLayout {
         id: legend
@@ -324,8 +357,9 @@ AssetSectionCard {
                 Layout.fillWidth: true
                 spacing: 8
                 opacity: card.selected === "" || card.selected === modelData.id ? 1 : 0.35
-                Rectangle { width: 9; height: 9; radius: 4.5; color: entry.modelData.color; Layout.alignment: Qt.AlignVCenter }
-                Text { text: entry.modelData.label; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                Rectangle { width: 9; height: 9; radius: 4.5; color: entry.modelData.color; Layout.alignment: Qt.AlignVCenter
+                            FocusFrame { target: entry } }
+                Text { text: entry.modelData.label; textFormat: Text.PlainText; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
                        font.pixelSize: Theme.caption; color: entry.modelData.unclassified ? Theme.secondary : Theme.text
                        Sensitive { labels: !entry.modelData.personal } }
                 Text { text: Fmt.money(entry.modelData.cents, card.currency); font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.secondary
@@ -334,11 +368,17 @@ AssetSectionCard {
                        font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.secondary; Sensitive { amounts: true } }
                 TapHandler { onTapped: card.choose(entry.modelData) }
                 HoverHandler { id: legendArea; cursorShape: Qt.PointingHandCursor }
-                ToolTip.visible: legendArea.hovered; ToolTip.delay: 600; ToolTip.text: AppModel.masking(card.detailText(entry.modelData), AppModel.redactAmounts)
+                ToolTip.visible: legendArea.hovered; ToolTip.delay: 600; ToolTip.text: card.spokenDetail(entry.modelData)
+                // a Button on the Mac: Tab reaches it, Space / Return filters
+                activeFocusOnTab: true
+                Keys.onSpacePressed: card.choose(entry.modelData)
+                Keys.onReturnPressed: card.choose(entry.modelData)
+                Keys.onEnterPressed: card.choose(entry.modelData)
                 Accessible.role: Accessible.Button
                 Accessible.name: card.spokenLabel(entry.modelData)
                 Accessible.checked: card.selected === entry.modelData.id
                 Accessible.description: qsTr("Positionen dieser Gruppe anzeigen oder Filter aufheben")
+                Accessible.onPressAction: card.choose(entry.modelData)
             }
         }
     }
