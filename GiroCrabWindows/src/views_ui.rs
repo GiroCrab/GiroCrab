@@ -309,6 +309,8 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
         return;
     }
     clear_table(win, "Wird geladen …");
+    // The old positions are gone: no history action until the new table is ready.
+    crate::position_history_ui::prepare(win, None, german_date, privacy_on);
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
     let generation = with_ui(|u| {
         u.generation += 1;

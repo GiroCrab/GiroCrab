@@ -373,10 +373,13 @@ pub fn sorted_positions(data: &DepotData) -> Vec<&(Holding, AssetClass)> {
 }
 
 /// What the position history dialog (#578) needs of one position, detached from the depot data.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PositionTarget {
     pub account_id: i64,
+    /// Identity of the row in the table (ISIN, else name); not Core's history key.
     pub key: String,
+    /// ISIN of the holding, empty when unknown (used to find Core's series).
+    pub isin: String,
     pub name: String,
     pub currency: String,
     pub quantity: f64,
@@ -392,6 +395,39 @@ fn same_security(h: &Holding, t: &SecurityTransaction) -> bool {
     }
 }
 
+/// A value series Core reports for a depot: (history key, name, currency, still held).
+pub type SeriesInfo = (String, String, String, bool);
+
+fn collapsed_lower(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Finds Core's series of a position: by ISIN, else by name (a held position wins over a sold
+/// one). Core's own key is used, so its `name:` / `cash` rule is not duplicated here.
+pub fn resolve_series<'a>(
+    series: &'a [SeriesInfo],
+    isin: &str,
+    name: &str,
+) -> Option<&'a SeriesInfo> {
+    let isin = isin.trim();
+    if !isin.is_empty()
+        && let Some(s) = series.iter().find(|s| s.0.eq_ignore_ascii_case(isin))
+    {
+        return Some(s);
+    }
+    let wanted = collapsed_lower(name);
+    if wanted.is_empty() {
+        return None;
+    }
+    series
+        .iter()
+        .filter(|s| collapsed_lower(&s.1) == wanted)
+        .max_by_key(|s| s.3)
+}
+
 pub fn position_targets(data: &DepotData) -> Vec<PositionTarget> {
     sorted_positions(data)
         .into_iter()
@@ -402,7 +438,9 @@ pub fn position_targets(data: &DepotData) -> Vec<PositionTarget> {
             } else {
                 h.isin.clone()
             },
+            isin: h.isin.clone(),
             name: h.name.clone(),
+            // Fallback label only: the history shows the currency of Core's series.
             currency: if h.currency.is_empty() {
                 data.account.currency.clone()
             } else {
@@ -498,6 +536,52 @@ mod position_history_tests {
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
+    }
+
+    fn series_of(key: &str, name: &str, currency: &str, held: bool) -> SeriesInfo {
+        (key.into(), name.into(), currency.into(), held)
+    }
+
+    #[test]
+    fn series_resolves_by_isin_then_by_name_with_series_currency() {
+        let series = vec![
+            series_of("DE1", "Welt-ETF", "EUR", true),
+            series_of("name:gold barren", "Gold  Barren", "EUR", false),
+            series_of("name:alt", "Alt", "EUR", false),
+            series_of("name:alt", "Alt", "USD", true),
+            series_of("cash", "Liquidität", "EUR", true),
+        ];
+        let by_isin = resolve_series(&series, "de1", "egal").unwrap();
+        assert_eq!(by_isin.0, "DE1");
+        let gold = resolve_series(&series, "", "gold barren").unwrap();
+        assert_eq!(gold.0, "name:gold barren");
+        assert_eq!(resolve_series(&series, "", "LIQUIDITÄT").unwrap().0, "cash");
+        // Held series wins; its currency is the one the amounts are in.
+        assert_eq!(resolve_series(&series, "", "Alt").unwrap().2, "USD");
+        assert!(resolve_series(&series, "", "Unbekannt").is_none());
+        assert!(resolve_series(&series, "", "  ").is_none());
+    }
+
+    #[test]
+    fn target_changes_show_up_in_equality() {
+        let mut h = Holding {
+            isin: "DE1".into(),
+            name: "ETF".into(),
+            quantity: 5.0,
+            value_cents: 100,
+            ..Default::default()
+        };
+        let mk = |h: &Holding| DepotData {
+            account: crate::nav::testing::account(1, "K", "Bank", AccountKind::Brokerage, 0),
+            holdings: vec![(h.clone(), AssetClass::Equity)],
+            transactions: vec![],
+        };
+        let a = position_targets(&mk(&h));
+        h.quantity = 7.0;
+        let b = position_targets(&mk(&h));
+        assert_eq!(a[0].key, b[0].key);
+        assert_eq!(a[0].isin, "DE1");
+        assert_ne!(a[0], b[0]);
     }
 
     #[test]
