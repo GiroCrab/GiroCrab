@@ -37,6 +37,8 @@ fn set_move_buttons(win: &MainWindow, order: &[(i64, Option<i64>)], selected: Op
     win.set_cat_can_down(can(1));
 }
 
+mod category_copy;
+
 thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
 }
@@ -343,6 +345,8 @@ fn wire_accounts(win: &MainWindow, vault: &VaultSlot) {
 }
 
 fn wire_categories(win: &MainWindow, vault: &VaultSlot) {
+    category_copy::wire(win, vault);
+
     let (weak, slot) = (win.as_weak(), vault.clone());
     win.on_categories_open(move || {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot)) else {
@@ -595,6 +599,52 @@ mod tests {
         v.delete_category(parent).unwrap();
         let cats = v.list_categories(None, None).unwrap();
         assert!(cats.iter().all(|c| c.id != parent && c.id != sub));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn category_duplicate_copies_tree_below_original() {
+        let (v, path) = demo_vault("dup");
+        let palette = girocrab_core::user_groups::account_color_palette();
+        let orig = v
+            .create_category(
+                "Testreise".into(),
+                None,
+                "airplane".into(),
+                palette[2].clone(),
+            )
+            .unwrap();
+        let sub = v
+            .create_category("Bahn".into(), Some(orig), "tram".into(), palette[3].clone())
+            .unwrap();
+        let taken = v
+            .create_category(
+                "Testreise Kopie".into(),
+                None,
+                String::new(),
+                palette[0].clone(),
+            )
+            .unwrap();
+        let copy = super::category_copy::duplicate_in(&v, orig).unwrap();
+        let cats = v.list_categories(None, None).unwrap();
+        let c = cats.iter().find(|c| c.id == copy).unwrap();
+        assert_eq!(c.name, "Testreise Kopie 2");
+        assert_eq!(c.sf_symbol, "airplane");
+        assert!(c.color_hex.eq_ignore_ascii_case(&palette[2]));
+        assert_eq!(c.parent_id, None);
+        assert_eq!(c.budget_cents, None);
+        let top: Vec<i64> = cats
+            .iter()
+            .filter(|c| c.parent_id.is_none())
+            .map(|c| c.id)
+            .collect();
+        let pos = |id| top.iter().position(|&i| i == id).unwrap();
+        assert_eq!(pos(copy), pos(orig) + 1);
+        assert!(pos(taken) > pos(copy));
+        let child = cats.iter().find(|c| c.parent_id == Some(copy)).unwrap();
+        assert_eq!(child.name, "Bahn");
+        assert_eq!(child.sf_symbol, "tram");
+        assert_ne!(child.id, sub);
         let _ = std::fs::remove_file(&path);
     }
 }
