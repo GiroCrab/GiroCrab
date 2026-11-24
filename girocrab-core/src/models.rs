@@ -1193,6 +1193,7 @@ pub struct CategoryBudgetStatus {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransactionSplit {
     pub id: i64,
+    pub uuid: String,
     pub transaction_id: i64,
     pub category_id: Option<i64>,
     pub amount_cents: i64,
@@ -1202,8 +1203,14 @@ pub struct TransactionSplit {
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransactionSplitInput {
+    /// Existing part to retain; `None` creates a new UUID. Exception: when the edit removes
+    /// exactly one part of this signed amount, that part is referenced by a refund link and
+    /// exactly one new part has the amount, the new part inherits the removed UUID (and so the
+    /// link); `None` cannot force a new identity then. Without that inheritance (e.g. one part
+    /// split into two) the removed part's identity, and a link to it, are gone.
+    pub uuid: Option<String>,
     pub category_id: Option<i64>,
-    /// Same sign as the parent booking; all parts must add up to it.
+    /// All parts must add up to the parent booking.
     pub amount_cents: i64,
     pub note: String,
 }
