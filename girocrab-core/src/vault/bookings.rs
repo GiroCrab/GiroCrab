@@ -68,7 +68,10 @@ fn is_imported_security_purchase_category(path: &str) -> bool {
     let parts: Vec<_> = path.split('›').map(|p| p.trim()).collect();
     parts.len() >= 2
         && parts.last().is_some_and(|p| {
-            matches!(p.to_lowercase().as_str(), "wertpapieranlage" | "etf-sparpläne")
+            matches!(
+                p.to_lowercase().as_str(),
+                "wertpapieranlage" | "etf-sparpläne"
+            )
         })
         && (parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Anlegen")
             || parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Investieren"))
@@ -2289,18 +2292,20 @@ mod own_transfer_tests {
     fn security_custom_merchant_and_fallback_logo_are_preserved() {
         use crate::merchants::{CustomSpec, MerchantSettings};
 
-        let (_dir, v, ids) = vault_with(&[
-            (
-                "Zorvexa GmbH",
-                -250_00,
-                "Unknown Fund 1 Stk",
-                Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage"),
-            ),
-        ]);
+        let (_dir, v, ids) = vault_with(&[(
+            "Zorvexa GmbH",
+            -250_00,
+            "Unknown Fund 1 Stk",
+            Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage"),
+        )]);
         let db = v.db().unwrap();
         let raw = || {
             db.query_row(
-                &format!("SELECT {} {} WHERE t.id = ?1", booking_columns("0"), BOOKING_FROM_SQL),
+                &format!(
+                    "SELECT {} {} WHERE t.id = ?1",
+                    booking_columns("0"),
+                    BOOKING_FROM_SQL
+                ),
                 [ids[0]],
                 booking_from_row,
             )
@@ -2322,7 +2327,9 @@ mod own_transfer_tests {
 
         let mut booking = raw();
         enrich(&mut booking, &finisher.merchants, false, "");
-        finisher.overrides.insert(booking.merchant.key.clone(), "example.org".into());
+        finisher
+            .overrides
+            .insert(booking.merchant.key.clone(), "example.org".into());
         finisher.finish(&mut booking, None);
         assert_eq!(booking.merchant.domain, "example.org");
         assert_eq!(booking.merchant.domain_source, "override");
