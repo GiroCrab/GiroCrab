@@ -24,8 +24,8 @@ lesend — und zeigt acht Compose-Oberflächen (sieben Screens plus Buchungsdeta
   Holdings und Sachwerte in die App-Modelle. Buchungen kommen als eine Seite à 1.000; eine längere
   Liste zeigt sichtbar „erste X von Y".
 - **Offen.** Schreibpfade (Stufe 2, #1430): Eigene Bearbeitungen im `Own`-Zustand liegen nur im
-  Snapshot und überleben keinen harten Lock. Dazu 3.2b (Regeln, Daueraufträge, Mandate, Kredite,
-  Ankündigungen), 3.3 Cursor-Paging, 3.4 Analysesummen und das Lesen des Snapshots außerhalb des
+  Snapshot und überleben keinen harten Lock. Dazu 3.2b (Regeln, Daueraufträge, Mandate, Kredite), die Ankündigungen aus der
+  signierten Policy-Datei, 3.3 Cursor-Paging, 3.4 Analysesummen und das Lesen des Snapshots außerhalb des
   Main-Threads.
 - **Alpha.** Debug- und Release-APK als CI-Artefakt, 58 instrumentierte Tests im Job
   `android-instrumented`. Das Alpha-Label fällt nach Stufe 2.
@@ -59,8 +59,9 @@ Tresordatei wird nie überschrieben.
 `VaultUnlocker.releaseSoftLock()` prüft den Schlüssel ohne zweites `open`, `VaultState` bleibt `Own`.
 
 **Datenabbildung.** `VaultSnapshot` hat zwölf Listen; gefüllt werden heute sieben: Gruppen, Konten,
-Buchungen, Kategorien, Tags, Holdings und Sachwerte. Die restlichen fünf (Regeln, Daueraufträge,
-Mandate, Kredite, Ankündigungen) gehören zu 3.2b. `bookingsTotal` kommt aus `page.totalCount`, die
+Buchungen, Kategorien, Tags, Holdings und Sachwerte. Die restlichen vier (Regeln, Daueraufträge,
+Mandate, Kredite) gehören zu 3.2b; Ankündigungen stammen nicht aus dem Tresor, sondern aus der
+signierten `policy/announcements.json` und werden im Own-Snapshot noch nicht geladen. `bookingsTotal` kommt aus `page.totalCount`, die
 Seite ist bewusst auf 1.000 begrenzt und ohne `wholeDays`, damit der Kern sie nicht über die Grenze
 hinaus verlängert. Holdings übernehmen die Währung ihres Kontos als Kurslabel, die Kostenbasis
 ergibt sich aus Wert minus Gewinn, gerundet wird auf Cent; Sachwerte tragen ihr Konto, damit das
@@ -86,8 +87,7 @@ harten Lock hinweg. Ergebnis: die Alpha-Kennzeichnung fällt.
 **Stufe 3 — Konten.** *Teil 1 erledigt (3.1 Datenabbildung, 3.2a Holdings und Sachwerte), Rest offen.*
 Bankzugänge über die bestehenden Konnektoren in `girocrab-core/src/connectors/` (FinTS, comdirect,
 Trade Republic, Enable Banking, PayPal, Portal-Importer), alles über denselben FFI-Rand — kein eigener
-Android-Code. Offen: 3.2b (Regeln, Daueraufträge, Mandate, Kredite, Ankündigungen samt
-Modellangleichung), 3.3 (Cursor-Paging über `listTransactions`), 3.4 (Analysesummen aus der
+Android-Code. Offen: 3.2b (Regeln, Daueraufträge, Mandate, Kredite samt Modellangleichung), 3.3 (Cursor-Paging über `listTransactions`), 3.4 (Analysesummen aus der
 Saldenhistorie des Kerns).
 
 **Stufe 4 — Rest.** Import/Export, Dokumente, Daueraufträge, Depot.
