@@ -819,6 +819,10 @@ impl DialogBridge {
     /// Order comparison (#949); queued after `show`, so it lands on the same dialog.
     fn show_comparison(&self, cmp: tan_comparison_ui::TanComparison) {
         let _ = self.win.upgrade_in_event_loop(move |w| {
+            // a queued event may land after the vault was locked: no amounts then
+            if !w.get_unlocked() {
+                return;
+            }
             w.set_tan_cmp_amount(cmp.amount.into());
             w.set_tan_cmp_prefix(cmp.prefix.into());
             w.set_tan_cmp_end(cmp.end_chars.into());
@@ -2147,6 +2151,9 @@ fn main() -> Result<(), slint::PlatformError> {
             with_state(|st| *st = State::default());
             win.set_unlocked(false);
             win.set_days(ModelRc::new(VecModel::from(Vec::<DayGroup>::new())));
+            // #949: the armed order comparison (amount, IBAN) must not outlive the vault either
+            tan_comparison_ui::disarm_all();
+            clear_tan_comparison(&win);
             // Selection summary: no amounts may outlive the vault.
             win.set_marked_count(0);
             win.set_selection_summary_visible(false);

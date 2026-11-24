@@ -70,44 +70,109 @@ impl Armed {
     }
 }
 
-/// Höchstens eine Überweisung läuft gleichzeitig (`busy`), daher genügt ein Platz.
-static ARMED: Mutex<Option<Armed>> = Mutex::new(None);
+/// Ein Platz je Überweisung, gekennzeichnet durch den Worker-Thread, der `run_transfer`
+/// ausführt (dort laufen auch alle Dialog-Rückfragen). Überlappende Überweisungen
+/// (Sperren, Entsperren, neue Überweisung) ersetzen oder löschen sich so nicht gegenseitig.
+static ARMED: Mutex<Vec<(std::thread::ThreadId, Armed)>> = Mutex::new(Vec::new());
 
-fn armed() -> MutexGuard<'static, Option<Armed>> {
+fn armed() -> MutexGuard<'static, Vec<(std::thread::ThreadId, Armed)>> {
     ARMED.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Entschärft den Abgleich beim Verlassen von `run_transfer`, auch bei Fehlern.
+/// Entfernt nur den Eintrag der eigenen Überweisung.
 #[must_use]
-pub struct ArmGuard(());
+pub struct ArmGuard(std::thread::ThreadId);
 
 impl Drop for ArmGuard {
     fn drop(&mut self) {
-        *armed() = None;
+        armed().retain(|(id, _)| *id != self.0);
     }
 }
 
-/// Schaltet den eingefrorenen Abgleich für die laufende Überweisung scharf. `gate` ist
-/// `TransferSession::awaits_order_approval`: wahr nur bei der TAN des Auftrags, nie beim Login.
+/// Schaltet den eingefrorenen Abgleich für die laufende Überweisung dieses Threads scharf.
+/// `gate` ist `TransferSession::awaits_order_approval`: wahr nur bei der TAN des Auftrags,
+/// nie beim Login.
 pub fn arm(
     comparison: Option<TanComparison>,
     gate: impl Fn() -> bool + Send + 'static,
 ) -> ArmGuard {
-    *armed() = comparison.map(|comparison| Armed {
-        comparison,
-        gate: Box::new(gate),
-    });
-    ArmGuard(())
+    let me = std::thread::current().id();
+    let mut slots = armed();
+    slots.retain(|(id, _)| *id != me);
+    if let Some(comparison) = comparison {
+        slots.push((
+            me,
+            Armed {
+                comparison,
+                gate: Box::new(gate),
+            },
+        ));
+    }
+    ArmGuard(me)
 }
 
-/// Vor jeder Challenge aufgerufen: `Some` nur während der Freigabe des Auftrags.
+/// Beim Sperren des Tresors: kein Betrag und keine IBAN-Reste dürfen den Tresor überleben.
+pub fn disarm_all() {
+    armed().clear();
+}
+
+/// Vor jeder Challenge aufgerufen: `Some` nur während der Freigabe des Auftrags
+/// der aufrufenden Überweisung.
 pub fn current() -> Option<TanComparison> {
-    armed().as_ref().and_then(Armed::visible)
+    let me = std::thread::current().id();
+    armed()
+        .iter()
+        .find(|(id, _)| *id == me)
+        .and_then(|(_, a)| a.visible())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comparison_is_scoped_to_its_own_transfer_thread() {
+        std::thread::spawn(|| {
+            let cmp = TanComparison::new("DE89 3704 0044 0532 0130 00", 1250_i64).unwrap();
+            let _guard = arm(Some(cmp), || true);
+            std::thread::spawn(|| {
+                assert!(
+                    current().is_none(),
+                    "fremde Überweisung sieht keinen Abgleich"
+                );
+                let other = arm(
+                    TanComparison::new("DE02 1203 0000 0000 2020 51", 100_i64),
+                    || true,
+                );
+                assert_eq!(current().unwrap().end_chars, "2051");
+                drop(other);
+                assert!(current().is_none());
+            })
+            .join()
+            .unwrap();
+            // das Ende der anderen Überweisung löscht diesen Abgleich nicht
+            assert_eq!(current().unwrap().end_chars, "3000");
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn closed_gate_hides_comparison_and_guard_disarms() {
+        std::thread::spawn(|| {
+            let cmp = TanComparison::new("DE89 3704 0044 0532 0130 00", 1250_i64);
+            let guard = arm(cmp.clone(), || false);
+            assert!(current().is_none());
+            drop(guard);
+            let guard = arm(cmp, || true);
+            assert!(current().is_some());
+            drop(guard);
+            assert!(current().is_none());
+        })
+        .join()
+        .unwrap();
+    }
 
     #[test]
     fn groups_prefix_and_keeps_last_four_chars() {

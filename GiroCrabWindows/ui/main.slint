@@ -2151,7 +2151,7 @@ export component MainWindow inherits Window {
                                 border-radius: 6px;
                                 width: cmp-end.preferred-width + 12px;
                                 horizontal-stretch: 0;
-                                cmp-end := Text { text: root.tan-cmp-end; color: Theme.text; font-size: 20px; font-weight: 800; }
+                                cmp-end := Text { text: root.privacy ? "••••" : root.tan-cmp-end; color: Theme.text; font-size: 20px; font-weight: 800; }
                             }
                         }
                         Text {
@@ -2159,7 +2159,7 @@ export component MainWindow inherits Window {
                             color: Theme.text; font-size: 12px; wrap: word-wrap;
                         }
                         if root.privacy: Text {
-                            text: "Privatmodus: Betrag und IBAN-Anfang sind ausgeblendet (Strg+Umschalt+P blendet sie ein).";
+                            text: "Privatmodus: Betrag und Empfänger-IBAN sind ausgeblendet (Strg+Umschalt+P blendet sie ein).";
                             color: Theme.muted; font-size: 11px; wrap: word-wrap;
                         }
                     }
