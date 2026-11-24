@@ -131,12 +131,38 @@ pub fn fold(s: &str) -> String {
     out
 }
 
-/// The folded query and, if different, its spelling with "ae"/"oe"/"ue" as plain vowels,
-/// so "mueller" finds "Müller". Only the query gets this, else "neu" would miss "Neue …".
+/// Upper bound of spellings tried per query, so many words with digraphs stay cheap.
+const MAX_FORMS: usize = 16;
+
+/// The folded query (always `[0]`) plus its spellings with "ae"/"oe"/"ue" as plain vowels,
+/// chosen per word: "mueller" finds "Müller" and "feuerwehr mueller" finds "Feuerwehr Müller"
+/// (the "ue" of "feuerwehr" stays as typed). Only the query gets this, else "neu" would miss
+/// "Neue …". An empty query gives `[""]`.
 fn query_forms(query: &str) -> Vec<String> {
-    let q = fold(&query.split_whitespace().collect::<Vec<_>>().join(" "));
-    let plain = q.replace("ae", "a").replace("oe", "o").replace("ue", "u");
-    if plain == q { vec![q] } else { vec![q, plain] }
+    let mut forms = vec![String::new()];
+    for word in query.split_whitespace().map(fold) {
+        let plain = word
+            .replace("ae", "a")
+            .replace("oe", "o")
+            .replace("ue", "u");
+        let mut next = Vec::with_capacity(forms.len() * 2);
+        for f in &forms {
+            let join = |w: &str| {
+                if f.is_empty() {
+                    w.to_string()
+                } else {
+                    format!("{f} {w}")
+                }
+            };
+            next.push(join(&word));
+            if plain != word {
+                next.push(join(&plain));
+            }
+        }
+        next.truncate(MAX_FORMS);
+        forms = next;
+    }
+    forms
 }
 
 /// Rank of a match, lower is better: 0 title prefix, 1 word prefix, 2 part of the title,
@@ -267,6 +293,22 @@ mod tests {
                 "query {q:?}"
             );
         }
+        // digraphs are resolved per word: "ue" in "feuerwehr" stays, "ue" in "mueller" folds
+        let accounts = [(9, "Feuerwehr Müller")];
+        for q in ["feuerwehr mueller", "feuerwehr müller", "feuerwehr muller"] {
+            let hits = search(q, &unlocked(&accounts, &[]));
+            assert_eq!(
+                hits[0].action,
+                Action::Show(Target::Account(9)),
+                "query {q:?}"
+            );
+        }
+        // the literal form stays first, an empty query stays empty
+        assert_eq!(query_forms("Feuerwehr Mueller")[0], "feuerwehr mueller");
+        assert_eq!(query_forms("feuerwehr mueller").len(), 4);
+        assert_eq!(query_forms("   "), vec![String::new()]);
+        // many digraph words stay capped
+        assert!(query_forms("ae ae ae ae ae ae").len() <= MAX_FORMS);
         let hits = search("vermoegen", &unlocked(&[], &[]));
         assert_eq!(hits[0].action, Action::Show(Target::Wealth));
         // the query alone gets the ae/oe/ue form: "neu" still finds "Neue Umsätze"
