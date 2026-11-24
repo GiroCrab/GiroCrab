@@ -14,12 +14,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import android.os.LocaleList
 import android.view.WindowManager
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import de.girocrab.app.model.Booking
 import de.girocrab.app.ui.screens.AccountsAndWealthScreen
 import de.girocrab.app.ui.screens.AccountsBadges
@@ -27,6 +29,7 @@ import de.girocrab.app.ui.screens.PortfolioAndAssetsScreen
 import de.girocrab.app.ui.screens.AddBankDialog
 import de.girocrab.app.ui.screens.AnalyticsScreen
 import de.girocrab.app.ui.screens.BookingDetailSheet
+import de.girocrab.app.ui.screens.ImportPasswordDialog
 import de.girocrab.app.ui.screens.BookingStreamScreen
 import de.girocrab.app.ui.screens.CategoryManagerDialog
 import de.girocrab.app.ui.screens.PaymentsScreen
@@ -34,6 +37,9 @@ import de.girocrab.app.ui.screens.RuleEditorDialog
 import de.girocrab.app.ui.screens.SettingsScreen
 import de.girocrab.app.ui.screens.TagManagerDialog
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -65,10 +71,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.girocrab.app.model.AppViewModel
 import de.girocrab.app.model.VaultState
+import de.girocrab.app.security.AndroidCipherPrompt
+import de.girocrab.app.security.ImportResult
+import de.girocrab.app.security.NativeVaultOpener
+import de.girocrab.app.security.OwnVault
+import de.girocrab.app.security.UnlockResult
+import de.girocrab.app.security.VaultKeyStore
+import de.girocrab.app.security.VaultImporter
+import de.girocrab.app.security.VaultUnlocker
 import de.girocrab.app.ui.screens.BiometricLockScreen
 import de.girocrab.app.ui.screens.DemoBanner
 import de.girocrab.app.ui.screens.EmptyVaultCard
@@ -123,8 +138,10 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    // Backup = the vault file copied as-is, so it stays encrypted. Assumes the core keeps it at filesDir/girocrab.vault.
-    private val vaultFile get() = File(filesDir, "girocrab.vault")
+    // Backup = the vault file copied as-is, so it stays encrypted. The path has to come from the
+    // opener: a hardcoded name pointed at a file that never exists (`vaults/girocrab.sqlcipher`),
+    // so "Sicherung erstellen" silently did nothing.
+    private val vaultFile get() = File(NativeVaultOpener().defaultVaultPath(filesDir))
 
     private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         if (uri != null && vaultFile.exists()) runCatching {
@@ -134,10 +151,22 @@ class MainActivity : FragmentActivity() {
 
     // Restore replaces the vault file, then locks so the next unlock re-reads it.
     private val restoreLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) runCatching {
-            contentResolver.openInputStream(uri)?.use { input -> vaultFile.outputStream().use { input.copyTo(it) } }
-            vm.lock()
-        }
+        if (uri == null) return@registerForActivityResult
+        // `outputStream()` truncates first: a provider that fails halfway would leave nothing at all.
+        // The copy therefore lands next to the vault and only replaces it once it is complete.
+        val target = vaultFile
+        val staged = File("${target.path}.incoming")
+        // Lock first: nothing should still show the data that is being replaced.
+        vm.lock()
+        runCatching {
+            staged.parentFile?.mkdirs()
+            contentResolver.openInputStream(uri)?.use { input -> staged.outputStream().use { input.copyTo(it) } }
+                ?: error("no stream")
+            require(staged.length() > 0L) { "backup is empty" }
+            // Replacing is not guaranteed to be atomic across the rename: be explicit about it.
+            if (target.exists() && !target.delete()) error("cannot replace vault")
+            if (!staged.renameTo(target)) error("cannot move backup into place")
+        }.onFailure { staged.delete() }
     }
 
     private fun applyLanguage(code: String) {
@@ -154,8 +183,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Re-lock the own vault when the app leaves the foreground (parity with iOS lock on background).
-        if (!isChangingConfigurations && vm.state.value.vaultState == VaultState.Own) vm.lock()
+        // #1428 (2.5): leaving the foreground locks the window, not the vault. The snapshot stays
+        // loaded, so coming back costs one prompt instead of a full re-read of the vault.
+        if (!isChangingConfigurations) vm.lockForBackground()
     }
 }
 
@@ -174,8 +204,79 @@ fun GiroCrabRoot(
     var tab by rememberSaveable { mutableStateOf(MainTab.Bookings) }
     var lockPreview by rememberSaveable { mutableStateOf(false) }
 
-    val locked = (state.vaultState == VaultState.Locked && !state.loading) || lockPreview
+    val locked =
+        (state.vaultState == VaultState.Locked && !state.loading) || state.backgroundLocked || lockPreview
     LaunchedEffect(state.privacyMode, locked) { setSecure(state.privacyMode) }
+
+    // The unlocker owns the Keystore cipher: without an authenticated prompt nothing is unwrapped.
+    val context = LocalContext.current
+    val unlocker = remember(context) {
+        (context as? FragmentActivity)?.let { activity ->
+            VaultUnlocker(
+                keyStore = VaultKeyStore(VaultKeyStore.defaultFile(activity.filesDir)),
+                opener = NativeVaultOpener(),
+                prompt = AndroidCipherPrompt(activity),
+                filesDir = activity.filesDir,
+            )
+        }
+    }
+    var unlockMessage by remember { mutableStateOf<String?>(null) }
+    // Only offered after a vault really opened: a labelled way out, not a silent demo fallback.
+    var demoEscape by remember { mutableStateOf(false) }
+
+    // Import path from #1428 (2.6): Android never creates a vault, so this is the only way in.
+    val importer = remember(context) {
+        (context as? FragmentActivity)?.let { activity ->
+            VaultImporter(
+                keyStore = VaultKeyStore(VaultKeyStore.defaultFile(activity.filesDir)),
+                opener = NativeVaultOpener(),
+                prompt = AndroidCipherPrompt(activity),
+                filesDir = activity.filesDir,
+            )
+        }
+    }
+    var pendingBackup by remember { mutableStateOf<File?>(null) }
+    // Counts selections: a slow copy must not replace the backup the user picked afterwards.
+    val backupGeneration = remember { java.util.concurrent.atomic.AtomicInteger(0) }
+    val scope = rememberCoroutineScope()
+    val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val mine = backupGeneration.incrementAndGet()
+        // A slow provider must not block the lock screen: copy off the main thread, publish on it.
+        scope.launch {
+            // One file per selection: a second choice must not truncate the file the dialog reads.
+            // A cache that cannot be written (full, permission gone) must not end the coroutine
+            // with an uncaught IOException — the lock screen has to say something instead.
+            val target = runCatching { File.createTempFile("import-", ".gcbackup", context.cacheDir) }
+                .getOrElse {
+                    unlockMessage = "Im Zwischenspeicher ließ sich keine Datei anlegen."
+                    return@launch
+                }
+            // Whatever ends this copy — success, a read error, or a cancellation on rotation —
+            // the staging file is dropped unless it was handed to the password dialog.
+            var published = false
+            try {
+                val copied = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            target.outputStream().use { output -> input.copyTo(output) }
+                        } ?: error("no stream")
+                    }.isSuccess
+                }
+                // Another selection was made while this one copied: its result wins, this one goes.
+                if (mine != backupGeneration.get()) return@launch
+                if (copied) {
+                    pendingBackup?.delete()
+                    pendingBackup = target
+                    published = true
+                } else {
+                    unlockMessage = "Die gewählte Datei ließ sich nicht lesen."
+                }
+            } finally {
+                if (!published) target.delete()
+            }
+        }
+    }
 
     if (state.loading && state.vaultState == VaultState.Locked) {
         Box(Modifier.fillMaxSize())
@@ -185,9 +286,78 @@ fun GiroCrabRoot(
     if (locked) {
         BiometricLockScreen(
             previewMode = lockPreview,
-            onUnlock = { vm.bootstrap() },
-            onBackToDemo = { lockPreview = false },
+            message = unlockMessage,
+            onUnlockRequest = {
+                val request = unlocker
+                when {
+                    request == null -> unlockMessage = "Entsperren ist auf diesem Gerät nicht verfügbar."
+                    // #1428 (2.5): the vault never closed, so this is one prompt and no second read.
+                    state.backgroundLocked -> {
+                        unlockMessage = null
+                        demoEscape = false
+                        request.releaseSoftLock { result ->
+                            if (result is UnlockResult.SoftReleased) {
+                                unlockMessage = null
+                                vm.clearBackgroundLock()
+                            } else {
+                                unlockMessage = describe(result)
+                            }
+                        }
+                    }
+                    else -> {
+                        unlockMessage = null
+                        demoEscape = false
+                        request.unlock { result ->
+                            // Reading the data is the mapper's job (#1429, 3.1); the handle is
+                            // closed as soon as the copy exists, so the ViewModel holds no handle.
+                            unlockMessage = if (result is UnlockResult.Opened) {
+                                adoptOwnSnapshot(vm, result.vault, "Tresor geöffnet, Inhalt aber nicht lesbar")
+                            } else {
+                                describe(result)
+                            }
+                            demoEscape = false
+                        }
+                    }
+                }
+            },
+            onBackToDemo = { if (lockPreview) lockPreview = false else vm.showDemo() },
+            demoEscape = demoEscape,
+            onImportRequest = if (lockPreview || state.backgroundLocked) null else {{
+                pickBackup.launch(arrayOf("*/*"))
+            }},
         )
+        pendingBackup?.let { file ->
+            ImportPasswordDialog(
+                fileName = file.name,
+                onSubmit = { password ->
+                    pendingBackup = null
+                    val request = importer
+                    if (request == null) {
+                        unlockMessage = "Import ist auf diesem Gerät nicht verfügbar."
+                    } else {
+                        unlockMessage = "Sicherung wird eingespielt …"
+                        request.import(file.path, password) { result ->
+                            try {
+                                unlockMessage = if (result is ImportResult.Imported) {
+                                    adoptOwnSnapshot(
+                                        vm, result.vault, "Sicherung eingespielt, Inhalt aber nicht lesbar",
+                                    )
+                                } else {
+                                    describeImport(result)
+                                }
+                            } finally {
+                                demoEscape = result is ImportResult.Imported
+                                file.delete()
+                            }
+                        }
+                    }
+                },
+                onDismiss = {
+                    pendingBackup?.delete()
+                    pendingBackup = null
+                },
+            )
+        }
         return
     }
 
@@ -407,4 +577,73 @@ private fun GiroCrabIntro(skip: Boolean) {
             }
         }
     }
+}
+
+/**
+ * Reads the vault into the snapshot the screens show (#1429, 3.1) and closes the handle in the same
+ * breath: the ViewModel keeps data, never a native handle. A failure after a successful open is
+ * reported as exactly that — the vault did open, only reading it back did not work.
+ */
+private fun adoptOwnSnapshot(vm: AppViewModel, vault: OwnVault, failure: String): String? = try {
+    val snapshot = try {
+        vault.snapshot()
+    } finally {
+        vault.close()
+    }
+    vm.adoptOwnVault(snapshot)
+    null
+} catch (e: Exception) {
+    "$failure (${e.javaClass.simpleName}: ${e.message})."
+}
+
+private fun describeImport(result: ImportResult): String = when (result) {
+    is ImportResult.Imported -> {
+        // Counting is only a proof that data arrived; the list itself follows with #1429.
+        val count = try {
+            result.vault.accountCount
+        } finally {
+            result.vault.close()
+        }
+        "Sicherung eingespielt: $count Konten."
+    }
+    ImportResult.RefusedByUser -> "Import abgebrochen — es wurde nichts geschrieben."
+    ImportResult.Unavailable -> "Import ist auf diesem Gerät nicht verfügbar."
+    is ImportResult.Failed -> result.message
+}
+
+private fun describe(result: UnlockResult): String? = when (result) {
+    is UnlockResult.Opened -> {
+        // `accountCount` throws when the handle is unusable; the handle is closed in `finally`
+        // and a failing read or close becomes a message instead of crashing the main thread.
+        var failure: Exception? = null
+        var count = 0
+        try {
+            count = result.vault.accountCount
+        } catch (e: Exception) {
+            failure = e
+        } finally {
+            try {
+                result.vault.close()
+            } catch (e: Exception) {
+                if (failure == null) failure = e
+            }
+        }
+        val problem = failure
+        if (problem != null) {
+            "Tresor geöffnet, Kontenzahl nicht lesbar (${problem.javaClass.simpleName}: ${problem.message})"
+        } else {
+            "Tresor geöffnet: $count Konten."
+        }
+    }
+    UnlockResult.NoVaultOnDevice ->
+        "Auf diesem Gerät liegt noch kein Tresor. Spiele eine Sicherung vom Desktop ein — dort über „Tresor sichern“ erzeugt."
+    UnlockResult.KeyInvalidated ->
+        "Der Geräteschlüssel ist ungültig: neue Biometrie oder zurückgesetzte Gerätesperre. " +
+            "Ohne ihn sind die Daten nicht lesbar — spiele eine Sicherung vom Desktop ein."
+    UnlockResult.VaultMissing ->
+        "Die Tresordatei fehlt auf diesem Gerät. Nur eine Sicherung vom Desktop bringt die Daten zurück."
+    // The soft lock is only a window: no message, the screen simply goes away.
+    UnlockResult.SoftReleased -> null
+    UnlockResult.Unavailable -> "Entsperren ist auf diesem Gerät nicht verfügbar."
+    is UnlockResult.Refused -> result.message ?: "Entsperren abgebrochen."
 }
