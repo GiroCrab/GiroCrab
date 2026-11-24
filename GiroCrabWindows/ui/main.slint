@@ -1167,6 +1167,7 @@ export component MainWindow inherits Window {
     in property <string> cat-status;
     in property <bool> cat-can-up: false;
     in property <bool> cat-can-down: false;
+    in property <bool> cat-busy: false;
     callback account-new();
     in-out property <bool> offline-open: false;
     in-out property <bool> offline-busy: false;
@@ -1187,6 +1188,7 @@ export component MainWindow inherits Window {
     callback category-save(string, int);
     callback category-delete();
     callback category-move(int);
+    callback category-duplicate();
     callback shortcut(string, bool) -> bool;
     in property <int> search-focus-tick: 0;
     public function refocus() { fs.focus(); }
@@ -2404,7 +2406,7 @@ export component MainWindow inherits Window {
         }
         Text { text: "Name"; font-size: 11px; color: Theme.muted; }
         LineEdit {
-            placeholder-text: "z. B. Haushaltskasse";
+            placeholder-text: "Bargeld";
             text <=> root.offline-name;
             input-type: root.offline-mask ? InputType.password : InputType.text;
             accepted => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
@@ -2436,9 +2438,9 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ---- category dialog: create / rename / recolour / delete
+    // ---- category dialog: create / rename / recolour / duplicate / delete
     if cat-open: Dialog {
-        dialog-width: 560px;
+        dialog-width: 640px;
         Text { text: "Kategorien"; font-size: 18px; font-weight: 700; color: Theme.text; }
         Rectangle {
             height: 220px;
@@ -2474,8 +2476,9 @@ export component MainWindow inherits Window {
         HorizontalLayout {
             spacing: 8px;
             Button { text: "Neu anlegen"; clicked => { root.category-add(root.cat-name, root.cat-color, root.cat-sub); } }
-            Button { text: "▲"; enabled: root.cat-can-up; clicked => { root.category-move(-1); } }
-            Button { text: "▼"; enabled: root.cat-can-down; clicked => { root.category-move(1); } }
+            Button { text: "Duplizieren"; enabled: root.cat-selected >= 0 && !root.cat-busy; clicked => { root.category-duplicate(); } }
+            Button { text: "▲"; enabled: root.cat-can-up && !root.cat-busy; clicked => { root.category-move(-1); } }
+            Button { text: "▼"; enabled: root.cat-can-down && !root.cat-busy; clicked => { root.category-move(1); } }
             Button { text: "Speichern"; enabled: root.cat-selected >= 0; clicked => { root.category-save(root.cat-name, root.cat-color); } }
             Button { text: root.cat-armed ? "Wirklich löschen?" : "Löschen"; enabled: root.cat-selected >= 0; clicked => { root.category-delete(); } }
             Rectangle { horizontal-stretch: 1; }

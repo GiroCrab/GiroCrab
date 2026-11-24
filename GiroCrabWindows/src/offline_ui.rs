@@ -105,6 +105,8 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
                 }
                 // Reopened meanwhile: the dialog now holds a new draft, leave it alone.
                 let ours = DIALOG.is_current(generation);
+                // Cancelled meanwhile: the account exists, but the view stays where it is.
+                let select = ours && win.get_offline_open();
                 match result {
                     Ok(id) => {
                         if ours {
@@ -112,11 +114,11 @@ pub fn wire(win: &MainWindow, vault: &VaultSlot) {
                         }
                         // The account exists either way: refresh the lists, keep private mode.
                         // The deferred refocus of `show` skips an open (newer) dialog.
-                        refresh(&win, &current, Some(id));
+                        refresh(&win, &current, select.then_some(id));
                         // No account name: `sync-status` is not re-rendered when private mode
                         // is switched on later.
                         win.set_sync_status("Offline-Konto angelegt.".into());
-                        if ours {
+                        if select {
                             win.invoke_refocus();
                         }
                     }

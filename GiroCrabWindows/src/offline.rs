@@ -26,11 +26,16 @@ pub fn normalize_currency(text: &str) -> Result<String, String> {
     }
 }
 
-/// Name required (the core would silently fall back to "Bargeld"), currency as ISO code,
-/// opening balance optional (empty = 0), a typo is an error rather than 0.
+/// Name optional (empty = "Bargeld", as the core does), at most 80 characters, currency as
+/// ISO code, opening balance optional (empty = 0), a typo is an error rather than 0.
 pub fn validate(name: &str, currency: &str, opening: &str) -> Result<OfflineForm, String> {
+    let name = if name.trim().is_empty() {
+        "Bargeld".to_string()
+    } else {
+        validate_name("das Konto", name)?
+    };
     Ok(OfflineForm {
-        name: validate_name("das Konto", name)?,
+        name,
         currency: normalize_currency(currency)?,
         opening_cents: optional_cents(opening, "Anfangssaldo")?.unwrap_or(0),
     })
@@ -41,9 +46,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_or_overlong_name_is_rejected() {
-        assert!(validate("", "EUR", "").unwrap_err().contains("Namen"));
-        assert!(validate("   ", "EUR", "").unwrap_err().contains("Namen"));
+    fn empty_name_falls_back_and_overlong_is_rejected() {
+        assert_eq!(validate("", "EUR", "").unwrap().name, "Bargeld");
+        assert_eq!(validate("   ", "EUR", "").unwrap().name, "Bargeld");
         assert!(
             validate(&"x".repeat(81), "EUR", "")
                 .unwrap_err()
