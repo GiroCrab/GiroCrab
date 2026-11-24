@@ -48,6 +48,72 @@ fn live_count(v: &Vault, id: i64) -> i64 {
         .unwrap()
 }
 
+/// CodeRabbit (#1855): a date-only edit on one device and a split edit on the other both
+/// survive the merge, in either order (the date travels with the text, not with the splits).
+#[test]
+fn date_only_edit_does_not_outrank_a_peer_split_edit() {
+    for date_first in [true, false] {
+        let a = vault("date-vs-split-a");
+        let b = vault("date-vs-split-b");
+        let account = a
+            .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let id = a
+            .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+            .unwrap();
+        b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        let bid: i64 = b
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE counterparty='Shop'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let part = |cents| TransactionSplitInput {
+            uuid: None,
+            category_id: None,
+            amount_cents: cents,
+            note: String::new(),
+        };
+        let date_edit = || {
+            a.save_manual_booking(account, Some(id), setup("2026-01-12", -1000, "Shop"))
+                .unwrap()
+        };
+        let split_edit = || {
+            b.set_transaction_splits(bid, vec![part(-400), part(-600)])
+                .unwrap()
+        };
+        if date_first {
+            date_edit();
+            split_edit();
+        } else {
+            split_edit();
+            date_edit();
+        }
+        a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+        b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        for (v, id) in [(&a, id), (&b, bid)] {
+            let date: String = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT booking_date FROM transactions WHERE id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(date, "2026-01-12", "date_first={date_first}");
+            assert_eq!(
+                v.list_transaction_splits(id).unwrap().len(),
+                2,
+                "date_first={date_first}"
+            );
+        }
+    }
+}
+
 #[test]
 fn round7_manual_dates_sync_with_amount_and_date_only_edits() {
     for amount in [-1000, -500] {
@@ -198,11 +264,14 @@ fn split_amount_edits_require_atomic_matching_replacements() {
     .unwrap();
     assert_eq!(balance(&v, account), -200);
     let after = v.list_transaction_splits(id).unwrap();
+    // each kept UUID keeps the amount it was saved with, in order
     assert_eq!(
-        after.iter().map(|p| &p.uuid).collect::<Vec<_>>(),
-        parts.iter().map(|p| &p.uuid).collect::<Vec<_>>()
+        after
+            .iter()
+            .map(|p| (&p.uuid, p.amount_cents))
+            .collect::<Vec<_>>(),
+        vec![(&parts[0].uuid, -80), (&parts[1].uuid, -120)]
     );
-    assert_eq!(after.iter().map(|p| p.amount_cents).sum::<i64>(), -200);
     v.save_manual_booking(account, Some(id), setup("2026-01-03", -200, "Same amount"))
         .unwrap();
     v.save_manual_booking_with_splits(

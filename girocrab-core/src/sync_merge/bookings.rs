@@ -70,18 +70,26 @@ impl BookingFields {
         );
         // clean text beats text with U+FFFD or mojibake (unstamped text after
         // the migration: one device may hold the healed copy), then by value
-        take_ranked(&mut self.text, &mut self.text_ms, &o.text, o.text_ms, |t| {
-            (
-                crate::text::is_clean(&t.0) && crate::text::is_clean(&t.1),
-                t.clone(),
-            )
-        });
-        let mut unit = (
-            self.manual_amount,
-            self.splits.clone(),
-            self.manual_dates.clone(),
+        // The date of a manual booking travels with its text (`text_ms`), not with the
+        // amount and splits: a date-only edit must not outrank a peer's split edit.
+        let mut text = (self.text.clone(), self.manual_dates.clone());
+        take_ranked(
+            &mut text,
+            &mut self.text_ms,
+            &(o.text.clone(), o.manual_dates.clone()),
+            o.text_ms,
+            |(t, dates)| {
+                (
+                    crate::text::is_clean(&t.0) && crate::text::is_clean(&t.1),
+                    t.clone(),
+                    dates.clone(),
+                )
+            },
         );
-        let other_unit = (o.manual_amount, o.splits.clone(), o.manual_dates.clone());
+        (self.text, self.manual_dates) = text;
+        // amount and parts of a manual booking stay one unit (`splits_ms`)
+        let mut unit = (self.manual_amount, self.splits.clone());
+        let other_unit = (o.manual_amount, o.splits.clone());
         if self.manual_amount.is_some() && o.manual_amount.is_some() {
             take_ranked(
                 &mut unit,
@@ -90,7 +98,7 @@ impl BookingFields {
                 o.splits_ms,
                 Clone::clone,
             );
-            (self.manual_amount, self.splits, self.manual_dates) = unit;
+            (self.manual_amount, self.splits) = unit;
         } else {
             take_ranked(
                 &mut self.splits,
@@ -449,7 +457,6 @@ pub(crate) fn merge_bookings(
                     m.splits = old.splits.clone();
                     m.splits_ms = old.splits_ms;
                     m.manual_amount = old.manual_amount;
-                    m.manual_dates = old.manual_dates.clone();
                 }
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
                 if m == old {
@@ -580,7 +587,9 @@ pub(crate) fn merge_bookings(
         losers.sort_unstable_by(|(a, ap), (b, bp)| (&keys[a], ap).cmp(&(&keys[b], bp)));
         for (id, position) in losers {
             let fields = local.get_mut(&id).unwrap();
-            let seed = format!("split-owner|{}|{position}", keys[&id]);
+            // seeded by the booking key and the part's own colliding UUID (not its position): the
+            // same inputs give the same replacement on every device, also after a reorder
+            let seed = format!("split-owner|{}|{}", keys[&id], fields.splits[position].0);
             fields.splits[position].0 = (0u64..)
                 .find_map(|attempt| {
                     let key = if attempt == 0 {

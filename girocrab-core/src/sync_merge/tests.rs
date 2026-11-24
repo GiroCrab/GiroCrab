@@ -2754,6 +2754,15 @@ fn incoming_splits_must_match_the_kept_bank_booking_amount() {
         .into_iter()
         .map(|p| (p.uuid, p.amount_cents))
         .collect();
+    // the first merge carried both parts over unchanged
+    assert_eq!(
+        before,
+        a.list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.uuid, p.amount_cents))
+            .collect::<Vec<_>>()
+    );
     let stamp = n(&b, "SELECT splits_ms FROM transactions LIMIT 1");
     setup.amount_cents = -1000;
     a.save_manual_booking_with_splits(

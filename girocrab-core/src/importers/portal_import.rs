@@ -1417,6 +1417,26 @@ pub(crate) fn merge_imported_split_parts(
             )
             .collect();
         crate::planning::store_splits(db, bank_id, &lines)?;
+        // Same import on two devices -> same part UUIDs (CodeRabbit #1853): derive each part's
+        // identity from the portal booking and the imported part it came from. A UUID already
+        // taken keeps the random one.
+        let bank_key = crate::sync_merge::booking_key(db, bank_id)?;
+        let stored: Vec<String> = db
+            .prepare_cached(
+                "SELECT uuid FROM transaction_splits WHERE transaction_id=?1 ORDER BY position,id",
+            )?
+            .query_map([bank_id], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        for (part, uuid) in parts.iter().zip(&stored) {
+            let source = crate::sync_merge::booking_key(db, part.0)?;
+            let identity = serde_json::to_vec(&("girocrab.import-part.v1", &bank_key, source))
+                .expect("import part identity");
+            let stable = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &identity).to_string();
+            db.execute(
+                "UPDATE OR IGNORE transaction_splits SET uuid=?2 WHERE transaction_id=?1 AND uuid=?3",
+                params![bank_id, stable, uuid],
+            )?;
+        }
         crate::planning::clear_split_category(db, bank_id)?;
         if !bank_checked && parts.iter().all(|p| p.4) {
             db.execute(
@@ -2322,6 +2342,50 @@ mod hold_tests {
         }
         b.push('}');
         b
+    }
+
+    /// CodeRabbit (#1853): merging the same imported parts on two devices gives the same part
+    /// UUIDs, so a refund link to a part survives the sync of the split vector.
+    #[test]
+    fn imported_split_parts_get_the_same_uuids_on_every_device() {
+        let uuids = || {
+            let (v, _, _dir) = vault();
+            let account = v
+                .create_offline_account(
+                    "Karte".into(),
+                    crate::models::AccountKind::Cash,
+                    "EUR".into(),
+                    0,
+                )
+                .unwrap();
+            let db = v.db().unwrap();
+            // the account key is synced, so it is the same on every device
+            db.execute(
+                "UPDATE accounts SET external_ref='offline-shared' WHERE id=?1",
+                [account],
+            )
+            .unwrap();
+            db.execute_batch(&format!(
+                "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, purpose) VALUES
+                   ({account}, 'id:REF1234567---1', '2026-01-02', -1000, ''),
+                   ({account}, 'mm-1', '2026-01-02', -400, 'EREF: REF1234567'),
+                   ({account}, 'mm-2', '2026-01-02', -600, 'EREF: REF1234567');"
+            ))
+            .unwrap();
+            assert_eq!(merge_imported_split_parts(&db, account).unwrap(), 1);
+            let mut uuids: Vec<String> = db
+                .prepare("SELECT uuid FROM transaction_splits ORDER BY amount_cents")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            uuids.sort();
+            uuids
+        };
+        let first = uuids();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first, uuids());
     }
 
     fn sync(v: &Arc<Vault>, conn: i64, body: &str) -> Result<SyncSummary, CoreError> {

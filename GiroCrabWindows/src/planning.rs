@@ -183,7 +183,11 @@ pub fn build_splits(
             note: d.note.trim().to_string(),
         });
     }
-    let sum: i64 = out.iter().map(|s| s.amount_cents).sum();
+    // checked like the core: an overflowing sum must not pass as equal
+    let sum = out
+        .iter()
+        .try_fold(0i64, |acc, s| acc.checked_add(s.amount_cents))
+        .ok_or_else(|| "Die Teilbeträge sind zu groß.".to_string())?;
     if sum != booking_cents {
         return Err(format!(
             "Die Teilbeträge ({}) ergeben nicht den Buchungsbetrag ({}).",

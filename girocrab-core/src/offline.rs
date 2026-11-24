@@ -403,9 +403,16 @@ impl Vault {
         if let Some(parts) = &splits {
             crate::planning::store_splits(&tx, id, parts)?;
         }
-        if amount_changed || date_changed {
+        // amount and parts sync as one unit; the date syncs with the text (sync_merge/bookings.rs)
+        if amount_changed {
             tx.execute(
                 "UPDATE transactions SET splits_ms=MAX(splits_ms+1,?2) WHERE id=?1",
+                params![id, now_ms()],
+            )?;
+        }
+        if date_changed {
+            tx.execute(
+                "UPDATE transactions SET text_ms=MAX(text_ms+1,?2) WHERE id=?1",
                 params![id, now_ms()],
             )?;
         }
