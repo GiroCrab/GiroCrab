@@ -14,7 +14,7 @@ struct InspectorView: View {
     private func updateLayout(_ change: (inout InspectorLayout) -> Void) {
         var next = layout
         change(&next)
-        withAnimation(.snappy(duration: 0.2)) { layoutValue = next.persistedValue }
+        withAnimation(Motion.animation(.snappy(duration: 0.2))) { layoutValue = next.persistedValue }
     }
 
     var body: some View {
@@ -113,6 +113,7 @@ private struct SelectedLoanCard: View {
 
 struct ReceiptCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     @State private var editing = false
     @State private var draftName = ""
@@ -136,7 +137,7 @@ struct ReceiptCard: View {
                     TextField("Gegenpartei", text: $draftName).textFieldStyle(.roundedBorder)
                     Text("Verwendungszweck").appFont(.caption).foregroundStyle(Theme.secondary)
                     TextEditor(text: $draftPurpose)
-                        .appFont(.callout).frame(height: 90)
+                        .appFont(.callout).frame(height: 90 * textScale)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.secondary.opacity(0.3)))
                     HStack {
                         Spacer()
@@ -148,7 +149,7 @@ struct ReceiptCard: View {
                         }.keyboardShortcut(.defaultAction)
                     }
                 }
-                .padding(14).frame(width: 340)
+                .padding(14).frame(width: 340 * textScale)
             }
             HStack(spacing: 12) {
                 MerchantSignet(merchant: booking.merchant, categorySymbol: booking.categorySymbol, size: 48)
@@ -181,7 +182,8 @@ struct ReceiptCard: View {
             }
             Text(Money.signed(booking.amountCents, currency: booking.currency))
                 .sensitive(.amounts)
-                .font(.system(.largeTitle, design: .rounded, weight: .semibold).monospacedDigit())
+                // follows the text size like the rest of the card (#343, UI-Audit INS-1)
+                .appFont(.largeTitle, weight: .semibold, design: .rounded, monospacedDigit: true)
                 .foregroundStyle(Money.ink(booking.amountCents))
             HStack(spacing: 6) {
                 Image(systemName: "calendar").foregroundStyle(Theme.tertiary)
@@ -266,6 +268,7 @@ struct ReceiptCard: View {
 /// Free-text user note (imported from MoneyMoney or typed here).
 struct NoteCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     var scrollToNote: (() -> Void)?
     @State private var draft = ""
@@ -290,10 +293,21 @@ struct NoteCard: View {
             TextEditor(text: $draft)
                 .id(editorID)
                 .appFont(.callout)
-                .frame(minHeight: 54, maxHeight: 120)
+                .frame(minHeight: 54 * textScale, maxHeight: 120 * textScale)
                 .sensitive()
                 .scrollContentBackground(.hidden)
                 .background(Theme.systemSurface)
+                // an empty editor read as a blank box; the label ties it to the heading for VoiceOver (UI-Audit INS-10)
+                .overlay(alignment: .topLeading) {
+                    if draft.isEmpty && !focused {
+                        Text("Notiz hinzufügen …")
+                            .appFont(.callout).foregroundStyle(Theme.tertiary)
+                            .padding(.leading, 5).padding(.top, 1)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .accessibilityLabel(Text("Notiz"))
                 .focused($focused)
                 .onChange(of: focused) { _, f in if !f { save() } }
                 // Esc: leave the note (saves via focus loss) and go back to the list
@@ -579,6 +593,8 @@ struct MerchantHistoryCard: View {
 /// "Regel für diesen Händler erstellen …".
 struct CategoryGridCard: View {
     @Environment(AppModel.self) private var model
+    /// Column minimums grow with the text, or larger text gets more, narrower tiles (UI-Audit INS-2).
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     /// Opened categories from the top level down; nil = the booking's branch.
     @State private var openPath: [Int64]?
@@ -619,7 +635,7 @@ struct CategoryGridCard: View {
                let category = model.categories.first(where: { $0.id == s.categoryId }) {
                 CategorySuggestionBox(booking: booking, suggestion: s, category: category)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], spacing: 6) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104 * textScale), spacing: 6)], spacing: 6) {
                 ForEach(model.categoryTree) { node in
                     CategoryChip(category: node.category, selected: node.id == path.first) {
                         pick(node, level: 0, in: path)
@@ -630,7 +646,7 @@ struct CategoryGridCard: View {
                 if let kids = model.categoryTree.node(id)?.children {
                     let selected = level + 1 < path.count ? path[level + 1] : booking.categoryId
                     Divider()
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], spacing: 6) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150 * textScale), spacing: 6)], spacing: 6) {
                         ForEach(kids) { kid in
                             CategoryChip(category: kid.category, selected: kid.id == selected, filled: true) {
                                 pick(kid, level: level + 1, in: path)

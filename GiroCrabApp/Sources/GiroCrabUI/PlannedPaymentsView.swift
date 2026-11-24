@@ -188,7 +188,12 @@ private struct PlannedRow: View {
             .padding(.vertical, 5)
             .background(model.selectedPlannedID == p.id ? Theme.selection : Color.clear)
             .contentShape(Rectangle())
-            .onTapGesture { model.selectedPlannedID = p.id }
+            .onTapGesture {
+                model.selectedPlannedID = p.id
+                #if os(iOS)
+                model.showBookingSheet = true
+                #endif
+            }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(model.selectedPlannedID == p.id ? [.isButton, .isSelected] : .isButton)
             .contextMenu { PlannedActions(payment: p) }

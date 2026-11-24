@@ -324,6 +324,16 @@ struct TransferKindPicker: View {
     let offersOwn: Bool
 
     var body: some View {
+        // Its own width when that fits; a narrow sheet (the closed iPhone Duo, whose camera
+        // takes part of the width) squeezes the segments instead of widening the whole sheet.
+        ViewThatFits(in: .horizontal) {
+            picker.fixedSize()
+            picker.padding(.horizontal, 20)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var picker: some View {
         Picker("Art", selection: Binding(
             get: { batch ? TransferKind.batch : (model.transferDraft.ownTransfer ? .own : .single) },
             set: { model.switchTransferKind(to: $0, fromBatch: batch) })
@@ -332,7 +342,6 @@ struct TransferKindPicker: View {
             if offersOwn { Text("Umbuchung").tag(TransferKind.own) }
             if model.canBatchTransfer { Text("Sammelüberweisung").tag(TransferKind.batch) }
         }
-        .pickerStyle(.segmented).labelsHidden().fixedSize()
-        .frame(maxWidth: .infinity)
+        .pickerStyle(.segmented).labelsHidden()
     }
 }
