@@ -310,6 +310,14 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
         return;
     }
     clear_table(win, "Wird geladen …");
+    // The chart must not show the curve of the previously selected depot while this one loads.
+    depot_chart::hide_unless_cached(
+        win,
+        match target {
+            Target::Account(id) => Some(id),
+            _ => None,
+        },
+    );
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
     let generation = with_ui(|u| {
         u.generation += 1;
@@ -340,6 +348,8 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
                 }
                 Err(e) => {
                     clear_table(&win, "");
+                    // No curve beside the error text; the cached series is kept.
+                    depot_chart::hide(&win);
                     win.set_view_status(e.into());
                 }
             }
@@ -755,6 +765,8 @@ pub fn on_lock(win: &MainWindow) {
     crate::mandates_ui::on_lock(win);
     crate::settings_import_ui::on_lock(win);
     clear_table(win, "");
+    // Drops the cached value series and empties the chart properties.
+    depot_chart::reset(win);
 }
 
 // ------------------------------------------------------------------------------ documents

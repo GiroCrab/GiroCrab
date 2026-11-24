@@ -168,9 +168,41 @@ pub fn reset(win: &MainWindow) {
     win.set_depot_chart_readout(SharedString::new());
 }
 
+/// Whether the chart on screen belongs to another depot than the selected one: the cached
+/// series is for `cached`, the view now shows `selected` (`None` = no single depot).
+fn is_foreign(cached: Option<i64>, selected: Option<i64>) -> bool {
+    selected.is_none() || cached != selected
+}
+
+/// Hides the chart while the selected depot loads if it still shows the curve of another one.
+/// The series stays cached, so the same depot is drawn again without a vault call.
+pub fn hide_unless_cached(win: &MainWindow, selected: Option<i64>) {
+    let cached = SERIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|(id, _)| *id);
+    if is_foreign(cached, selected) {
+        win.set_depot_chart_shown(false);
+    }
+}
+
+/// Hides the chart (a failed load) without forgetting the cached series.
+pub fn hide(win: &MainWindow) {
+    win.set_depot_chart_shown(false);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chart_of_another_depot_is_foreign_the_same_depot_is_kept() {
+        assert!(!is_foreign(Some(3), Some(3)));
+        assert!(is_foreign(Some(3), Some(4)));
+        assert!(is_foreign(None, Some(4)));
+        assert!(is_foreign(Some(3), None));
+    }
 
     fn pt(date: &str, value_cents: i64, covered: u32) -> Point {
         Point {
