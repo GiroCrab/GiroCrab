@@ -197,11 +197,11 @@ object DemoData {
         val sorted = bookings.sortedByDescending { it.bookingDate }
 
         val holdings = listOf(
-            Holding("h1", "a_tr", "iShares Core MSCI World", "IE00B4L5Y983", 42.35, 9_812, 360_000),
-            Holding("h2", "a_tr", "Vanguard FTSE All-World", "IE00BK5BQT80", 28.10, 12_054, 300_000),
-            Holding("h3", "a_tr", "Xtrackers MSCI Emerging Markets", "IE00BTJRMP35", 55.0, 5_430, 270_000),
-            Holding("h4", "a_tr", "Apple Inc.", "US0378331005", 12.0, 23_150, 24_000, wkn = "865985", currency = "USD", fxRateToEur = 0.92),
-            Holding("h5", "a_tr", "iShares MSCI World (USD)", "IE00B0M62Q58", 20.0, 11_240, 19_500, currency = "USD", fxRateToEur = 0.92),
+            Holding("h1", "a_tr", "iShares Core MSCI World", "IE00B4L5Y983", 42.35, 9_812, 360_000, nativePurchasePriceCents = 8_501),
+            Holding("h2", "a_tr", "Vanguard FTSE All-World", "IE00BK5BQT80", 28.10, 12_054, 300_000, nativePurchasePriceCents = 10_676),
+            Holding("h3", "a_tr", "Xtrackers MSCI Emerging Markets", "IE00BTJRMP35", 55.0, 5_430, 270_000, nativePurchasePriceCents = 4_909),
+            Holding("h4", "a_tr", "Apple Inc.", "US0378331005", 12.0, 23_150, 24_000, wkn = "865985", currency = "USD", nativePurchasePriceCents = 2_174, fxRateToEur = 0.92),
+            Holding("h5", "a_tr", "iShares MSCI World (USD)", "IE00B0M62Q58", 20.0, 11_240, 19_500, currency = "USD", nativePurchasePriceCents = 1_060, fxRateToEur = 0.92),
         )
         return VaultSnapshot(
             groups = groups,

@@ -76,6 +76,59 @@ final class AutoReviewTests: XCTestCase {
         XCTAssertFalse(isChecked(b))
     }
 
+    // MARK: view switches (#1808)
+
+    func testViewWithoutBookingListDropsSelectionAndPendingReview() throws {
+        model.autoReviewDelay = .fiveSeconds
+        let (a, _) = try uncheckedBookings()
+        model.selectedBookingID = a.id
+        XCTAssertNotNil(model.autoReviewTask)
+        model.sidebarSelection = .wealth
+        XCTAssertNil(model.selectedBookingID)
+        XCTAssertTrue(model.selectedBookingIDs.isEmpty)
+        XCTAssertNil(model.autoReviewTask, "the review of a booking nobody sees must not run")
+    }
+
+    func testSwitchKeepsWhatTheNewListShowsAndSelectsNothingUnasked() async throws {
+        model.sidebarSelection = .allAccounts
+        let a = try XCTUnwrap(model.visibleBookings.first)
+        let other = try XCTUnwrap(model.visibleBookings.first { $0.accountId != a.accountId })
+        model.setChecked(false, for: a)
+        model.autoReviewDelay = .immediately
+        model.selectedBookingID = a.id
+        let pendingReview = try XCTUnwrap(model.autoReviewTask)
+        // edited while selected: kept in the inspector although the list may no longer show it
+        model.stickyBooking = a
+        model.lingeringBookingID = a.id
+        // not in the list: no first row (it would be marked as checked), no kept row
+        model.sidebarSelection = .account(other.accountId)
+        await pendingReview.value
+        XCTAssertNil(model.selectedBookingID)
+        XCTAssertNil(model.selectedBooking)
+        XCTAssertFalse(model.bookings.contains { $0.id == a.id })
+        // the destination's first row is the one the old fallback would have marked
+        let first = try XCTUnwrap(model.bookings.first)
+        model.setChecked(false, for: first)
+        await model.autoReviewTask?.value
+        XCTAssertFalse(model.bookings.first { $0.id == first.id }?.checked ?? true)
+        model.sidebarSelection = .allAccounts
+        XCTAssertFalse(isChecked(a), "the review pending for the old selection did not mark it")
+        // partly in the list: the visible one stays
+        model.autoReviewDelay = .manual
+        model.selectedBookingIDs = [a.id, other.id]
+        model.selectedBookingID = a.id
+        model.sidebarSelection = .account(a.accountId)
+        XCTAssertEqual(model.selectedBookingID, a.id)
+        XCTAssertEqual(model.selectedBookingIDs, [a.id])
+    }
+
+    func testRefreshInTheSameViewStillFallsBackToTheFirstRow() {
+        model.sidebarSelection = .allAccounts
+        model.selectedBookingID = Int64.max
+        model.reloadBookings()
+        XCTAssertEqual(model.selectedBookingID, model.bookings.first?.id)
+    }
+
     func testChoiceIsStoredPerDevice() {
         model.autoReviewDelay = .fiveSeconds
         XCTAssertEqual(AppDefaults.store.string(forKey: AutoReviewDelay.defaultsKey), "5s")

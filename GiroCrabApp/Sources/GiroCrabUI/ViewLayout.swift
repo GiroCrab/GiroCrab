@@ -8,7 +8,8 @@ extension UserDefaults {
 }
 
 enum ViewLayout {
-    /// Charts and analysis cards above the booking list.
+    /// KPI row and cashflow card above the booking list. The header chart has
+    /// its own switch, budgets have theirs (GitHub #1760).
     static let statisticsKey = "showStatistics"
     /// Right-hand inspector column.
     static let inspectorKey = "showInspector"
@@ -25,6 +26,7 @@ enum ViewLayout {
     /// „Abgerufen vor …“ under the balance of a single account; off by default (#815).
     static let lastFetchKey = "showLastFetch"
     /// Header chart folded to its title row; balance, KPIs and filters stay (#634).
+    /// Independent of the statistics switch (GitHub #1760).
     static let headerChartCollapsedKey = "headerChartCollapsed"
     /// Flat sections of the main columns: tighter than the old cards, but with
     /// enough air for labels and controls. The card constants stay for the
@@ -46,14 +48,22 @@ enum ViewLayout {
     static let collapsedCardVerticalPadding: CGFloat = 4
     static func cardVerticalPadding(collapsed: Bool) -> CGFloat { collapsed ? collapsedCardVerticalPadding : cardPadding }
 
+    /// Visibility of the header's chart, its controls and the KPI row (GitHub #1760).
+    /// The chart follows only `headerChartCollapsedKey`; the KPIs follow
+    /// „Auswertungen anzeigen“. Folding the chart keeps its controls so it can
+    /// be shown again. A minimised header hides all three.
+    static func headerAnalysis(statistics: Bool, chartCollapsed: Bool, compact: Bool) -> (chart: Bool, controls: Bool, kpis: Bool) {
+        (!compact && !chartCollapsed, !compact, statistics && !compact)
+    }
+
     /// Budgets show until switched off (Ansicht › Budgets anzeigen).
     static func showsBudgets(_ defaults: UserDefaults = AppDefaults.store) -> Bool {
         defaults.object(forKey: budgetsKey) as? Bool ?? true
     }
 
     /// Which cards go above the list where analyses show (overview, or an
-    /// account with „Auswertungen“ opened): each follows its own switch, so
-    /// the budgets stay when the analyses are off.
+    /// account with „Auswertungen“ opened): cashflow follows the statistics
+    /// switch, budgets their own (GitHub #1760).
     static func cards(statistics: Bool, budgets: Bool) -> (cashflow: Bool, budgets: Bool, any: Bool) {
         (statistics, budgets, statistics || budgets)
     }

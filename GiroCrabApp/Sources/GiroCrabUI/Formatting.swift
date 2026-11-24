@@ -529,6 +529,7 @@ extension ConnectorKind {
         case .bhw: return "BHW Bausparkasse"
         case .finpension: return "Finpension"
         case .kontist: return "Kontist"
+        case .monefit: return "Monefit SmartSaver"
         }
     }
 
@@ -566,6 +567,7 @@ extension ConnectorKind {
         case .bhw: return "#C8102E"
         case .finpension: return "#00A68C"
         case .kontist: return "#2B2D73"
+        case .monefit: return "#1F4E79"
         }
     }
 
@@ -610,6 +612,7 @@ extension ConnectorKind {
         case .bhw: return "BHW"
         case .finpension: return "FP"
         case .kontist: return "KT"
+        case .monefit: return "MS"
         }
     }
 }

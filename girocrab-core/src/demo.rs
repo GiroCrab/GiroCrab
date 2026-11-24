@@ -3494,7 +3494,7 @@ mod tests {
         let days = s.iter().find(|e| e.key == "sync.days_back").unwrap();
         assert_eq!(days.group, "Allgemein");
         assert_eq!(days.group_title, "General");
-        assert_eq!(days.label, "Days on first sync");
+        assert_eq!(days.label, "Period of the first fetch");
         drop(v);
         let _ = std::fs::remove_file(&dir);
     }
