@@ -29,6 +29,8 @@ struct DocConnection {
 
 struct Shared {
     epoch: u64,
+    /// Counts the saved switch changes; a load that started before one must not overwrite it.
+    saves: u64,
     conns: Vec<DocConnection>,
     /// Connection the shown switch belongs to.
     toggle: Option<i64>,
@@ -36,6 +38,7 @@ struct Shared {
 
 static SHARED: Mutex<Shared> = Mutex::new(Shared {
     epoch: 0,
+    saves: 0,
     conns: Vec::new(),
     toggle: None,
 });
@@ -114,6 +117,8 @@ pub(crate) fn epoch() -> u64 {
 /// Worker side: reads the connections, their switch state and document ids. `epoch` is the value
 /// of [`epoch`] from before the load started; after a lock the result is dropped.
 pub(crate) fn refresh(vault: &Vault, epoch: u64) -> Result<(), String> {
+    // before the first read: a switch saved from here on is newer than this snapshot
+    let saves = lock().saves;
     let accounts = vault.list_accounts().map_err(|e| e.to_string())?;
     let mut conns = Vec::new();
     for c in vault.list_bank_connections().map_err(|e| e.to_string())? {
@@ -133,14 +138,23 @@ pub(crate) fn refresh(vault: &Vault, epoch: u64) -> Result<(), String> {
             name: c.display_name,
         });
     }
-    store(epoch, conns);
+    store(epoch, saves, conns);
     Ok(())
 }
 
-fn store(epoch: u64, conns: Vec<DocConnection>) -> bool {
+/// Publishes a load. After a lock (`epoch` changed) it is dropped; if a switch was saved
+/// since the load began (`saves` changed), the cached switch states win over the snapshot.
+fn store(epoch: u64, saves: u64, mut conns: Vec<DocConnection>) -> bool {
     let mut s = lock();
     let current = s.epoch == epoch;
     if current {
+        if s.saves != saves {
+            for c in conns.iter_mut() {
+                if let Some(old) = s.conns.iter().find(|o| o.id == c.id) {
+                    c.enabled = old.enabled;
+                }
+            }
+        }
         s.conns = conns;
     }
     current
@@ -159,7 +173,9 @@ pub(crate) fn toggle_target() -> Option<i64> {
 }
 
 pub(crate) fn set_enabled(id: i64, on: bool) {
-    if let Some(c) = lock().conns.iter_mut().find(|c| c.id == id) {
+    let mut s = lock();
+    s.saves = s.saves.wrapping_add(1);
+    if let Some(c) = s.conns.iter_mut().find(|c| c.id == id) {
         c.enabled = on;
     }
 }
@@ -222,8 +238,16 @@ mod tests {
         assert_eq!(v.toggle, None);
     }
 
+    /// The tests below change the shared state: one at a time.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn serial() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn clear_changes_the_epoch() {
+        let _g = serial();
         let before = epoch();
         clear();
         assert_ne!(epoch(), before);
@@ -231,26 +255,66 @@ mod tests {
 
     #[test]
     fn set_enabled_only_touches_the_given_connection() {
-        let epoch = epoch();
+        let _g = serial();
+        clear();
+        let saves = lock().saves;
         assert!(store(
-            epoch,
+            epoch(),
+            saves,
             vec![conn(1, true, true, &[]), conn(2, true, true, &[])]
         ));
         set_enabled(1, false);
         let s = lock();
-        // another test may have cleared in between: only check when our data is still there
-        if s.conns.len() == 2 {
-            assert!(!s.conns[0].enabled);
-            assert!(s.conns[1].enabled);
-        }
+        assert_eq!(s.conns.len(), 2);
+        assert!(!s.conns[0].enabled);
+        assert!(s.conns[1].enabled);
     }
 
     #[test]
     fn load_finishing_after_lock_is_dropped() {
-        let epoch = lock().epoch;
+        let _g = serial();
+        let (epoch, saves) = {
+            let s = lock();
+            (s.epoch, s.saves)
+        };
         clear();
-        assert!(!store(epoch, vec![conn(1, true, true, &[])]));
+        assert!(!store(epoch, saves, vec![conn(1, true, true, &[])]));
         assert!(lock().conns.is_empty());
         assert!(lock().toggle.is_none());
+    }
+
+    #[test]
+    fn load_started_before_a_save_keeps_the_saved_switch() {
+        let _g = serial();
+        clear();
+        let e = epoch();
+        let before = lock().saves;
+        assert!(store(e, before, vec![conn(1, true, true, &[])]));
+        // a load starts (reads `saves`), then the switch is saved, then the load publishes
+        let started = lock().saves;
+        set_enabled(1, false);
+        assert!(store(
+            e,
+            started,
+            vec![conn(1, true, true, &[]), conn(2, true, true, &[])]
+        ));
+        let s = lock();
+        assert_eq!(s.conns.len(), 2);
+        assert!(!s.conns[0].enabled);
+        assert!(s.conns[1].enabled);
+    }
+
+    #[test]
+    fn load_without_a_save_replaces_the_cache() {
+        let _g = serial();
+        clear();
+        let e = epoch();
+        let saves = lock().saves;
+        assert!(store(e, saves, vec![conn(1, true, true, &[])]));
+        set_enabled(1, false);
+        let saves = lock().saves;
+        // a load that began after the save reads the saved value from the database
+        assert!(store(e, saves, vec![conn(1, true, true, &[])]));
+        assert!(lock().conns[0].enabled);
     }
 }
