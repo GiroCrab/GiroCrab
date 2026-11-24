@@ -2,7 +2,7 @@
 
 **Status** · Proposed\
 **Date** · 2026-11-24\
-**Discussion** · TRACKING_ISSUE, [#1840](https://github.com/GiroCrab/GiroCrab/issues/1840), [#1869](https://github.com/GiroCrab/GiroCrab/issues/1869)
+**Discussion** · [#1870](https://github.com/GiroCrab/GiroCrab/issues/1870), [#1840](https://github.com/GiroCrab/GiroCrab/issues/1840), [#1869](https://github.com/GiroCrab/GiroCrab/issues/1869)
 
 ## Context
 
@@ -82,7 +82,7 @@ These rules apply to all synced data.
 
 - Merge changes are reviewed against these rules; a deliberate exception is documented at
   the code that makes it.
-- Existing code that breaks a rule is listed and fixed via TRACKING_ISSUE.
+- Existing code that breaks a rule is listed and fixed via [#1870](https://github.com/GiroCrab/GiroCrab/issues/1870).
 - Values the app writes to synced fields need an origin (rule 5).
 
 ## Confirmation
