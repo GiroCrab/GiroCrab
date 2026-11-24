@@ -1773,6 +1773,7 @@ impl Vault {
             state,
             since,
             since_by_account,
+            full_fetch: history.is_some(),
             documents,
             skipped_accounts: skipped.into_iter().collect(),
             only_account,

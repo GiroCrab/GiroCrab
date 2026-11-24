@@ -484,7 +484,7 @@ impl BankConnector for KontistConnector {
             Ok(transactions) => transactions,
             // the bank refused the start date (#1043): once more with 90 days
             Err(e) => {
-                let since = super::history::retry_since(since, e)?;
+                let since = super::history::retry_since(since, ctx.full_fetch, e)?;
                 let transactions = self.transactions(&account.external_ref, &since).await?;
                 out.warnings
                     .push(super::history::refused_warning(&account.external_ref));
