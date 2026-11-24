@@ -25,6 +25,8 @@ data class Account(
     val balanceCents: Long,
     val currency: String = "EUR",
     val hidden: Boolean = false,
+    /** The core's `inTotal`: false = the account is excluded from overall sums. */
+    val includeInTotal: Boolean = true,
     /** Account holder (#587). */
     val holder: String = "",
 )
@@ -143,18 +145,29 @@ data class Holding(
     /** Total purchase cost in EUR cents. */
     val costBasisCents: Long,
     val wkn: String = "",
-    /** Native holding currency (#625); [priceCents] is quoted in it. */
-    val currency: String = "EUR",
-    /** EUR per one unit of [currency]. */
+    /**
+     * Currency of [priceCents] and [costBasisCents]. The core reports holdings in the currency of
+     * their account, never in the position's own one (#625) — so a EUR amount must not be labelled
+     * with the share's native code.
+     */
+    val quoteCurrency: String = "EUR",
+    /** Native currency of the position; "" = same as [quoteCurrency]. */
+    val currency: String = "",
+    /** Price per unit in [currency]; null when the core has no native figure. */
+    val nativePriceCents: Long? = null,
+    /** Purchase price per unit in [currency]; null when the core has no native figure. */
+    val nativePurchasePriceCents: Long? = null,
+    /** Factor from the position's own currency to [quoteCurrency]. */
     val fxRateToEur: Double = 1.0,
 ) {
-    /** Current value in EUR cents. */
-    val valueCents get() = (quantity * priceCents * fxRateToEur).toLong()
+    /** Current value in cents of [quoteCurrency]. */
+    // Rounded, not truncated: a derived rate (see the mapper) lands on x.9999… often enough that
+    // truncating would lose a cent per position (#1429).
+    val valueCents get() = kotlin.math.round(quantity * priceCents * fxRateToEur).toLong()
     val gainCents get() = valueCents - costBasisCents
     val gainPct get() = if (costBasisCents > 0) gainCents * 100.0 / costBasisCents else 0.0
-    /** Average purchase price per unit in the native currency (cents). */
-    val purchasePriceNativeCents get() =
-        if (quantity > 0 && fxRateToEur > 0) (costBasisCents / quantity / fxRateToEur).toLong() else 0L
+    /** Currency to print the native figures in; the account currency when the core has none. */
+    val nativeCurrency get() = currency.ifEmpty { quoteCurrency }
 }
 
 data class ManualLoan(
@@ -167,12 +180,29 @@ data class ManualLoan(
     val startDate: LocalDate,
 )
 
+/**
+ * The currency most of the money sits in — the one the app adds up in.
+ *
+ * Account balances arrive in their own currencies and the vault carries no exchange rates for
+ * whole accounts, so a total across currencies would be a number without a unit. Everything that
+ * sums money uses this currency and reports the rest as not converted instead.
+ */
+fun VaultSnapshot.primaryCurrency(): String =
+    accounts
+        .groupBy { it.currency.ifBlank { "EUR" } }
+        .mapValues { (_, rows) -> rows.sumOf { kotlin.math.abs(it.balanceCents) } }
+        .maxByOrNull { it.value }
+        ?.key
+        ?: "EUR"
+
 data class TangibleAsset(
     val id: String,
     val name: String,
     val valueCents: Long,
     val acquiredDate: LocalDate,
     val note: String = "",
+    /** The account the asset sits in — its balance already contains the value. */
+    val accountId: String = "",
 )
 
 data class Announcement(
@@ -208,6 +238,8 @@ data class BookingFilter(
 /** Everything a vault (demo or own) provides. */
 data class VaultSnapshot(
     val groups: List<AccountGroup> = emptyList(),
+    /** How many bookings the core holds in total; more than [bookings] means a truncated page. */
+    val bookingsTotal: Int = 0,
     val accounts: List<Account> = emptyList(),
     val bookings: List<Booking> = emptyList(),
     val categories: List<Category> = emptyList(),
