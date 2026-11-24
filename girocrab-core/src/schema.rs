@@ -123,6 +123,11 @@ const STEPS: &[Step] = &[
 /// Step 39 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
 /// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
 /// explicit user choice on another device wins on sync. Idempotent.
+///
+/// Only where `builtin_role` decided the v38 classification (root's role, or any transfer
+/// ancestor), so rearranged trees keep their flows: roots, transfer categories at any depth,
+/// and `Gehalt` unless a live ancestor (as `Vault::category_roles` walks them) got
+/// `investment`, `loan` or `neutral` – `salary` there would stop the inheritance of that role.
 fn category_roles(conn: &Connection) -> CoreResult<()> {
     for (col, def) in [("role", "TEXT"), ("role_ms", "INTEGER NOT NULL DEFAULT 0")] {
         if !has_column(conn, "main", "categories", col)? {
@@ -142,18 +147,21 @@ fn category_roles(conn: &Connection) -> CoreResult<()> {
          UPDATE categories SET role = 'income'
           WHERE role IS NULL AND role_ms = 0 AND parent_id IS NULL
             AND builtin_role = 'Einnahmen';
-         WITH RECURSIVE transfer_tree(id, depth) AS (
-             SELECT id, 0 FROM categories WHERE builtin_role IN ('Umbuchungen', 'import:transfers')
+         WITH RECURSIVE ancestors(id, ancestor, depth) AS (
+             SELECT id, parent_id, 1 FROM categories WHERE builtin_role = 'Gehalt'
              UNION ALL
-             SELECT c.id, t.depth + 1
-               FROM categories c
-               JOIN transfer_tree t ON c.parent_id = t.id
-              WHERE t.depth < 32
+             SELECT a.id, p.parent_id, a.depth + 1
+               FROM ancestors a
+               JOIN categories p ON p.id = a.ancestor AND p.deleted_ms IS NULL
+              WHERE a.depth < 32
          )
          UPDATE categories SET role = 'salary'
           WHERE role IS NULL AND role_ms = 0
             AND builtin_role = 'Gehalt'
-            AND id NOT IN (SELECT id FROM transfer_tree);",
+            AND id NOT IN (
+                SELECT a.id FROM ancestors a
+                  JOIN categories p ON p.id = a.ancestor AND p.deleted_ms IS NULL
+                 WHERE p.role IN ('investment', 'loan', 'neutral'));",
     )?;
     Ok(())
 }
@@ -1248,7 +1256,14 @@ mod tests {
                (11, 4, 'Gehalt (unter Umbuchungen)', 'Gehalt'),
                (12, 9, 'Sparen (unter eigener Wurzel)', 'Sparen & Investieren'),
                (13, 9, 'Kredite (unter eigener Wurzel)', 'Kredite & Darlehen'),
-               (14, 9, 'Umbuchungen (verschachtelt)', 'Umbuchungen');",
+               (14, 9, 'Umbuchungen (verschachtelt)', 'Umbuchungen'),
+               (15, 1, 'Gehalt (unter Sparen)', 'Gehalt'),
+               (16, 3, 'Gehalt (unter Kredite)', 'Gehalt'),
+               (19, 9, 'Gehalt (unter eigener Wurzel)', 'Gehalt');
+             INSERT INTO categories(id, parent_id, name, builtin_role, deleted_ms) VALUES
+               (17, 4, 'Gelöschte Zwischenkategorie', NULL, 1);
+             INSERT INTO categories(id, parent_id, name, builtin_role) VALUES
+               (18, 17, 'Gehalt (unter gelöschter Zwischenkategorie)', 'Gehalt');",
         )
         .unwrap();
         migrate(&mut conn).unwrap();
@@ -1278,6 +1293,14 @@ mod tests {
         assert_eq!(read(12), (None, 0));
         assert_eq!(read(13), (None, 0));
         assert_eq!(read(14), (Some("neutral".into()), 0));
+        // `Gehalt` below an investment or loan root keeps inheriting that role, as v38
+        // classified it by the root.
+        assert_eq!(read(15), (None, 0));
+        assert_eq!(read(16), (None, 0));
+        // A deleted intermediate cuts the ancestry like in `Vault::category_roles`: the
+        // `Umbuchungen` above it neither counts for v38 nor for the role resolver.
+        assert_eq!(read(18), (Some("salary".into()), 0));
+        assert_eq!(read(19), (Some("salary".into()), 0));
         // Idempotent: re-running never overwrites an explicit role or an explicit
         // reset to inherit (`role = NULL, role_ms > 0`).
         conn.execute(

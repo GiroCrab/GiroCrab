@@ -235,28 +235,17 @@ fn combine_categories(state: &mut BTreeMap<String, Cat>) -> bool {
 
 /// Forwards newer explicit role edits stored on a `merged_into` tombstone to
 /// its live survivor (e.g. device B edited category Y's role before receiving
-/// device A's duplicate merge of Y into X). Ordinary deletions (`merged_into`
-/// is `None`) do not touch any live category.
+/// device A's duplicate merge of Y into X). The survivor is the one bookings
+/// move to ([`cat_survivor`]). Ordinary deletions (`merged_into` is `None`) do
+/// not touch any live category. Only the role is forwarded: it decides how the
+/// survivor's bookings are classified.
 fn forward_merged_roles(state: &mut BTreeMap<String, Cat>) {
     let updates: Vec<(String, Option<String>, i64)> = state
         .values()
+        .filter(|c| c.merged_into.is_some())
         .filter_map(|c| {
-            let mut target = c.merged_into.as_deref()?;
-            for _ in 0..32 {
-                let next = state.get(target)?;
-                if let Some(m) = next.merged_into.as_deref() {
-                    if m == target {
-                        return None;
-                    }
-                    target = m;
-                } else {
-                    return next
-                        .deleted_ms
-                        .is_none()
-                        .then(|| (target.to_string(), c.category_role.clone(), c.role_ms));
-                }
-            }
-            None
+            let target = cat_survivor(state, &c.uuid)?;
+            Some((target.to_string(), c.category_role.clone(), c.role_ms))
         })
         .collect();
     for (target, role, role_ms) in updates {
@@ -449,4 +438,62 @@ pub(crate) fn merge_categories(
             (o.id, ids[target])
         })
         .collect())
+}
+
+#[cfg(test)]
+mod forward_tests {
+    use super::*;
+
+    fn cat(uuid: &str, merged_into: Option<&str>, role: Option<&str>, role_ms: i64) -> Cat {
+        Cat {
+            builtin_role: None,
+            category_role: role.map(str::to_string),
+            id: 0,
+            uuid: uuid.into(),
+            name: uuid.into(),
+            parent: None,
+            symbol: String::new(),
+            color: String::new(),
+            budget: None,
+            order: 0,
+            name_ms: 0,
+            parent_ms: 0,
+            symbol_ms: 0,
+            color_ms: 0,
+            budget_ms: 0,
+            order_ms: 0,
+            role_ms,
+            deleted_ms: merged_into.map(|_| 1),
+            merged_into: merged_into.map(str::to_string),
+        }
+    }
+
+    /// A chain of duplicate merges longer than 32 links still forwards the role to the
+    /// survivor bookings move to (`cat_survivor`).
+    #[test]
+    fn role_follows_the_survivor_bookings_use_on_a_long_chain() {
+        let n = 40;
+        let mut state = BTreeMap::new();
+        for i in 0..n {
+            let (role, ms) = if i == 0 {
+                (Some("neutral"), 500)
+            } else {
+                (None, 0)
+            };
+            let next = format!("t{:02}", i + 1);
+            let c = cat(&format!("t{i:02}"), Some(&next), role, ms);
+            state.insert(c.uuid.clone(), c);
+        }
+        let live = cat(&format!("t{n:02}"), None, Some("consumption"), 100);
+        state.insert(live.uuid.clone(), live);
+        assert_eq!(
+            cat_survivor(&state, "t00"),
+            Some(format!("t{n:02}").as_str())
+        );
+
+        forward_merged_roles(&mut state);
+        let survivor = &state[&format!("t{n:02}")];
+        assert_eq!(survivor.category_role.as_deref(), Some("neutral"));
+        assert_eq!(survivor.role_ms, 500);
+    }
 }
