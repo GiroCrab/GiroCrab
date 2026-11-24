@@ -200,7 +200,13 @@ pub(super) fn wire(win: &MainWindow, vault: &VaultSlot) {
                         refresh_categories(&win, &v, Some(copy));
                         reload_all(&win, &v);
                     }
-                    Err(e) => win.set_cat_status(e.into()),
+                    Err(e) => {
+                        // Partial copy: earlier creates stay saved, so show them. The refresh may
+                        // set its own status, hence the original error is set last.
+                        refresh_categories(&win, &v, Some(id));
+                        reload_all(&win, &v);
+                        win.set_cat_status(e.into());
+                    }
                 }
             });
         });
@@ -334,5 +340,35 @@ mod tests {
         // A vanished category writes nothing.
         assert!(duplicate(&rec, &nodes, 42).is_err());
         assert_eq!(rec.calls.borrow().len(), 3);
+    }
+
+    struct FailsOnReorder(Recorder);
+
+    impl CategoryWriter for FailsOnReorder {
+        fn create(
+            &self,
+            name: String,
+            parent: Option<i64>,
+            sf_symbol: String,
+            color_hex: String,
+        ) -> Result<i64, String> {
+            self.0.create(name, parent, sf_symbol, color_hex)
+        }
+
+        fn reorder(&self, _parent: Option<i64>, _ids: Vec<i64>) -> Result<(), String> {
+            Err("Sortieren fehlgeschlagen".to_string())
+        }
+    }
+
+    #[test]
+    fn failed_reorder_reports_original_error_and_keeps_created_categories() {
+        let nodes = [node(1, None, "Essen"), node(2, Some(1), "Restaurant")];
+        let w = FailsOnReorder(Recorder::default());
+        assert_eq!(
+            duplicate(&w, &nodes, 1),
+            Err("Sortieren fehlgeschlagen".to_string())
+        );
+        // The creates are not rolled back: the UI has to refresh its list after the error.
+        assert_eq!(w.0.calls.borrow().len(), 2);
     }
 }
