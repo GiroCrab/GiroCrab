@@ -23,7 +23,7 @@ class BookingsPagingTest {
     @Test
     fun readsEveryPageUntilTheCoresCountIsCovered() {
         val offsets = mutableListOf<Int>()
-        val coverage = BookingsPaging.readAll(pageSize = 10) { offset ->
+        val coverage = BookingsPaging.readAll(pageSize = 10) { offset, _ ->
             offsets += offset
             when (offset) {
                 0 -> page(0, 10, 25)
@@ -39,7 +39,7 @@ class BookingsPagingTest {
 
     @Test
     fun stopsAtThePageCapAndSaysWhatIsMissing() {
-        val coverage = BookingsPaging.readAll(pageSize = 10, maxPages = 2) { offset ->
+        val coverage = BookingsPaging.readAll(pageSize = 10, maxPages = 2) { offset, _ ->
             page(offset, 10, 500)
         }
         assertEquals("two pages, no more", 20, coverage.rows.size)
@@ -50,7 +50,7 @@ class BookingsPagingTest {
     @Test
     fun anEmptyPageEndsTheReadEvenWhenTheCounterClaimsMore() {
         var calls = 0
-        val coverage = BookingsPaging.readAll(pageSize = 10) { offset ->
+        val coverage = BookingsPaging.readAll(pageSize = 10) { offset, _ ->
             calls++
             if (offset == 0) page(0, 10, 500) else BookingsPaging.Page(emptyList(), 500)
         }
@@ -62,7 +62,7 @@ class BookingsPagingTest {
     @Test
     fun oneHeadIsEnoughWhenTheCountMatchesTheRows() {
         var calls = 0
-        val coverage = BookingsPaging.readAll(pageSize = 10) { offset ->
+        val coverage = BookingsPaging.readAll(pageSize = 10) { offset, _ ->
             calls++
             page(offset, 3, 3)
         }
@@ -73,10 +73,20 @@ class BookingsPagingTest {
 
     @Test
     fun aCounterBelowTheRowsCannotProduceANegativeGap() {
-        val coverage = BookingsPaging.readAll(pageSize = 10) { offset ->
+        val coverage = BookingsPaging.readAll(pageSize = 10) { offset, _ ->
             page(offset, 5, 2)
         }
         assertEquals("what arrived is the lower bound", 5, coverage.totalCount)
         assertFalse(coverage.truncated)
+    }
+
+    @Test
+    fun passesThePageSizeToTheFetcher() {
+        val limits = mutableListOf<Int>()
+        BookingsPaging.readAll(pageSize = 7) { _, limit ->
+            limits += limit
+            page(0, 7, 7)
+        }
+        assertEquals("the caller's page size has to reach the query", listOf(7), limits)
     }
 }

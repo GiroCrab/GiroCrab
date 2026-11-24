@@ -41,7 +41,7 @@ object VaultSnapshotMapper {
      * Filter for one page: every account, every date, both directions, no day split.
      * [offset] is the row offset [BookingsPaging] asks for; see there for the `wholeDays` caveat.
      */
-    fun firstPageFilter(offset: Int = 0): CoreFilter = CoreFilter(
+    fun firstPageFilter(offset: Int = 0, limit: UInt = PAGE_SIZE): CoreFilter = CoreFilter(
         accountIds = emptyList(),
         categoryId = null,
         includeSubcategories = true,
@@ -49,7 +49,7 @@ object VaultSnapshotMapper {
         search = null,
         dateFrom = null,
         dateTo = null,
-        limit = PAGE_SIZE,
+        limit = limit,
         offset = offset.toUInt(),
         scope = BookingScope.ALL,
         merchantKey = null,

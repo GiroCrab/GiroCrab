@@ -39,7 +39,7 @@ object BookingsPaging {
     fun <T> readAll(
         pageSize: Int = PAGE_SIZE,
         maxPages: Int = MAX_PAGES,
-        fetch: (offset: Int) -> Page<T>,
+        fetch: (offset: Int, limit: Int) -> Page<T>,
     ): Coverage<T> {
         require(pageSize > 0) { "pageSize must be positive, was $pageSize" }
         require(maxPages > 0) { "maxPages must be positive, was $maxPages" }
@@ -47,7 +47,7 @@ object BookingsPaging {
         var total = 0
         var pages = 0
         while (pages < maxPages) {
-            val page = fetch(rows.size)
+            val page = fetch(rows.size, pageSize)
             total = page.totalCount
             if (page.rows.isEmpty()) break
             rows += page.rows

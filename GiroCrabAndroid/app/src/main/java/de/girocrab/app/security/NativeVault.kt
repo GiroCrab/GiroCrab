@@ -160,9 +160,11 @@ class NativeVaultOpener {
                 ?: throw IllegalStateException("listAccounts did not return a list")
             // Every page, not just the first: the analytics screen sums whatever arrived, so a
             // truncated page made its totals too small without saying so (#1429, 3.3).
-            val coverage = BookingsPaging.readAll<CoreBooking> { offset ->
-                val page = callWith("listTransactions", VaultSnapshotMapper.firstPageFilter(offset))
-                    as? CorePage
+            val coverage = BookingsPaging.readAll<CoreBooking> { offset, limit ->
+                val page = callWith(
+                    "listTransactions",
+                    VaultSnapshotMapper.firstPageFilter(offset, limit.toUInt()),
+                ) as? CorePage
                     ?: throw IllegalStateException("listTransactions did not return a page")
                 BookingsPaging.Page(page.transactions, page.totalCount.toInt())
             }
