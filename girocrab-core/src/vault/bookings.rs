@@ -100,6 +100,24 @@ fn security_display_name(purpose: &str) -> Option<&str> {
     Some(name)
 }
 
+/// Curated issuer domains for security names, never guessed from arbitrary text.
+fn security_issuer_logo(name: &str) -> Option<(&'static str, &'static str)> {
+    let name = name.to_lowercase();
+    [
+        ("vanguard ", "de.vanguard", "#96151D"),
+        ("wisdomtree ", "wisdomtree.eu", "#166534"),
+        ("vaneck ", "vaneck.com", "#003B71"),
+        ("ishares ", "ishares.com", "#1A1A1A"),
+        ("boerse stuttgart ", "boerse-stuttgart.de", "#005CA9"),
+        ("börse stuttgart ", "boerse-stuttgart.de", "#005CA9"),
+        ("xtrackers ", "dws.com", "#0B7FAB"),
+        ("amundi ", "amundi.de", "#0F2B5B"),
+        ("spdr ", "ssga.com", "#003B71"),
+    ]
+    .into_iter()
+    .find_map(|(prefix, domain, color)| name.starts_with(prefix).then_some((domain, color)))
+}
+
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
 /// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
 /// PayPal account (see `BookingFinisher`).
@@ -422,6 +440,18 @@ impl BookingFinisher {
         {
             t.merchant.name = name.to_owned();
             t.merchant_name = name.to_owned();
+            if !t.merchant.known && t.merchant.domain_source != "override" {
+                t.merchant.is_person = false;
+                t.merchant.sf_symbol = "chart.line.uptrend.xyaxis".into();
+                if let Some((domain, color)) = security_issuer_logo(name) {
+                    t.merchant.domain = domain.into();
+                    t.merchant.domain_candidates = vec![domain.into()];
+                    t.merchant.domain_source = "dictionary".into();
+                    t.merchant.color_hex = color.into();
+                    t.merchant_domain = Some(domain.into());
+                    t.merchant_hex_color = color.into();
+                }
+            }
         }
     }
 }
@@ -2668,6 +2698,20 @@ mod list_cache_tests {
         let after = v.list_transactions(BookingFilter::default()).unwrap();
         let b = after.transactions.iter().find(|b| b.id == target).unwrap();
         assert_eq!(b.category_id, Some(cat[3].id));
+    }
+
+    #[test]
+    fn security_issuer_logo_matches_known_prefixes() {
+        for (name, domain) in [
+            ("Vanguard FTSE Global All-Cap", "de.vanguard"),
+            ("WisdomTree Global High Dividend", "wisdomtree.eu"),
+            ("Boerse Stuttgart EUWAX Gold II", "boerse-stuttgart.de"),
+            ("VanEck Morningstar Developed Markets", "vaneck.com"),
+            ("iShares Edge MSCI World", "ishares.com"),
+        ] {
+            assert_eq!(super::security_issuer_logo(name).map(|v| v.0), Some(domain));
+        }
+        assert!(super::security_issuer_logo("Unknown Fund").is_none());
     }
 
     #[test]
