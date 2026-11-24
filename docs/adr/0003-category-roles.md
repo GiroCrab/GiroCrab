@@ -96,8 +96,10 @@ counterpart booking.
 ### Existing vaults keep their classification
 
 Before, only the `builtin_role` of a booking's top-level category counted, plus whether any
-category on its way to the root was a transfer category. The update gives a category a role
-only where its `builtin_role` decided the classification this way:
+category on its way to the root was a transfer category. The update gives a category
+`Investment`, `Loan` or `Neutral` only where its `builtin_role` decided the classification this
+way. `Income` and `Salary` change no classification yet; the update sets them as defaults for
+the later steps of #931:
 
 - Built-in categories at the top level, or below a deleted category, start with the role
   their `builtin_role` stood for.
