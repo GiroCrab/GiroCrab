@@ -602,13 +602,16 @@ impl Vault {
         category_id: i64,
         role: Option<CategoryRole>,
     ) -> Result<(), CoreError> {
-        let db = self.db()?;
+        let mut db = self.db()?;
+        // One write transaction: no merge on another connection can raise a duplicate's
+        // stamp between reading it and writing the role.
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         // Above the stamp that decides the role now, also one of a duplicate combined
         // into this category (`explicit_roles`), so the change wins locally and on sync.
-        let decided_ms = Self::explicit_roles(&db)?
+        let decided_ms = Self::explicit_roles(&tx)?
             .get(&category_id)
             .map_or(0, |e| e.1);
-        let n = db.execute(
+        let n = tx.execute(
             "UPDATE categories SET role = ?1, role_ms = MAX(?3, role_ms + 1) WHERE id = ?2 AND deleted_ms IS NULL",
             params![
                 role.map(CategoryRole::as_str),
@@ -621,6 +624,7 @@ impl Vault {
                 what: trf("Kategorie {0}", &[&category_id]),
             });
         }
+        tx.commit()?;
         Ok(())
     }
 
