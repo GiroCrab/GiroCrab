@@ -79,6 +79,8 @@ pub enum ConnectorKind {
     /// Hanseatic Bank credit cards, savings products and Postbox PDFs via the online banking's
     /// JSON API (approval in the bank's app).
     HanseaticBank,
+    /// Monefit SmartSaver savings account via the web app's JSON API (unofficial).
+    Monefit,
 }
 
 impl ConnectorKind {
@@ -116,6 +118,7 @@ impl ConnectorKind {
             ConnectorKind::Finpension => "finpension",
             ConnectorKind::Kontist => "kontist",
             ConnectorKind::HanseaticBank => "hanseatic",
+            ConnectorKind::Monefit => "monefit",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -182,6 +185,7 @@ impl ConnectorKind {
             ConnectorKind::Bhw,
             ConnectorKind::Finpension,
             ConnectorKind::Kontist,
+            ConnectorKind::Monefit,
         ]
     }
 }

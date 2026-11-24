@@ -202,6 +202,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "bitcoin btc bitcoin core knoten node wallet krypto crypto",
         ),
         (
+            ConnectorKind::Monefit,
+            "Monefit SmartSaver",
+            "monefit smartsaver creditstar sparkonto tagesgeld",
+        ),
+        (
             ConnectorKind::Uberspace,
             "Uberspace",
             "uberspace hosting asteroid webhosting",
