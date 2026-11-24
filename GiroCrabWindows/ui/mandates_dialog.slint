@@ -312,7 +312,7 @@ export component MandatesPanel inherits VerticalLayout {
                 rows: MandatesState.batch-rows; empty: "CSV-Datei mit Name, IBAN, Betrag und Zweck wählen";
                 toggle(i) => { MandatesState.batch-toggle(i); }
             }
-            Text { text: "Häkchen entfernen, um eine Zeile abzuwählen. Fehlerhafte Zeilen werden nicht gesendet."; color: root.muted; font-size: 11px; wrap: word-wrap; }
+            Text { text: "Häkchen entfernen, um eine Zeile abzuwählen. Fehlerhafte Zeilen sind nicht wählbar und zählen nicht zur Summe. Im Privatmodus ist die Prüfung gesperrt."; color: root.muted; font-size: 11px; wrap: word-wrap; }
             HorizontalLayout { alignment: end; Button { text: "CSV öffnen …"; enabled: !MandatesState.busy; clicked => { MandatesState.batch-import(); } } }
         }
     }

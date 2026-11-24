@@ -89,10 +89,10 @@ fn key(r: &BatchCsvRow) -> String {
     format!("{iban}|{}|{}", r.amount_cents, r.purpose.trim())
 }
 
-/// Markiert alle fehlerfreien Zeilen, deren IBAN, Betrag und Zweck mehrfach vorkommen.
+/// Markiert alle Zeilen (auch fehlerhafte), deren IBAN, Betrag und Zweck mehrfach vorkommen.
 pub fn duplicate_flags(rows: &[BatchCsvRow]) -> Vec<bool> {
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
-    for (i, r) in rows.iter().enumerate().filter(|(_, r)| r.errors.is_empty()) {
+    for (i, r) in rows.iter().enumerate() {
         groups.entry(key(r)).or_default().push(i);
     }
     let mut flags = vec![false; rows.len()];
@@ -100,6 +100,18 @@ pub fn duplicate_flags(rows: &[BatchCsvRow]) -> Vec<bool> {
         flags[*i] = true;
     }
     flags
+}
+
+/// Anzahl möglicher Doppelter wie in der Referenz: je Gruppe gleicher Zeilen alle
+/// Wiederholungen, die erste Zeile zählt nicht mit. Fehlerhafte Zeilen zählen mit.
+pub fn duplicate_count(rows: &[BatchCsvRow]) -> usize {
+    repeats(rows.iter().map(key))
+}
+
+/// Zählt Schlüssel, die schon einmal vorkamen (Gruppengröße − 1 je Gruppe).
+pub(super) fn repeats(keys: impl IntoIterator<Item = String>) -> usize {
+    let mut seen = std::collections::HashSet::new();
+    keys.into_iter().filter(|k| !seen.insert(k.clone())).count()
 }
 
 fn totals_text(t: &BTreeMap<String, i64>, fmt: Fmt) -> String {
@@ -124,10 +136,10 @@ pub fn summary(r: &Review, private: bool, fmt: Fmt) -> String {
         "{} Zeilen, {sel} ausgewählt (Summe {sum}), {bad} fehlerhaft.",
         r.imp.rows.len()
     );
-    let d = duplicate_flags(&r.imp.rows).iter().filter(|f| **f).count();
+    let d = duplicate_count(&r.imp.rows);
     if d > 0 {
         s.push_str(&format!(
-            " {d} Zeilen mit möglichen Doppelten (gleiche IBAN, Betrag und Zweck) – bitte prüfen."
+            " {d} mögliche Doppelte (gleiche IBAN, Betrag und Zweck) – bitte prüfen."
         ));
     }
     for p in &r.imp.problems {
@@ -186,7 +198,8 @@ mod tests {
     fn duplicates_need_same_iban_amount_and_purpose() {
         let r = review();
         assert_eq!(duplicate_flags(&r.imp.rows), [true, true, false, false]);
-        assert!(summary(&r, false, &fmt).contains("2 Zeilen mit möglichen Doppelten"));
+        assert_eq!(duplicate_count(&r.imp.rows), 1);
+        assert!(summary(&r, false, &fmt).contains("1 mögliche Doppelte"));
     }
 
     #[test]

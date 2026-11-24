@@ -957,12 +957,19 @@ fn wire_returns(win: &MainWindow) {
     });
 }
 
+/// Statustext, wenn Import oder Zeilenauswahl der Sammelüberweisung im Privatmodus gesperrt sind.
+const BATCH_PRIVACY_BLOCKED: &str =
+    "Im Privatmodus gesperrt – Privatmodus beenden, um die Sammelüberweisung zu prüfen.";
+
 fn wire_batch(win: &MainWindow) {
     let weak = win.as_weak();
     win.global::<MandatesState>().on_batch_import(move || {
         let Some(win) = weak.upgrade() else { return };
-        if blocked(&win) || privacy_on(&win) {
+        if blocked(&win) {
             return;
+        }
+        if privacy_on(&win) {
+            return set_status(&win, BATCH_PRIVACY_BLOCKED);
         }
         let epoch = lock_epoch();
         spawn(
@@ -988,12 +995,15 @@ fn wire_batch(win: &MainWindow) {
     let weak = win.as_weak();
     win.global::<MandatesState>().on_batch_toggle(move |i| {
         let Some(win) = weak.upgrade() else { return };
-        if blocked(&win) || privacy_on(&win) || i < 0 {
-            return;
+        if privacy_on(&win) {
+            set_status(&win, BATCH_PRIVACY_BLOCKED);
+        } else if !blocked(&win)
+            && let Ok(i) = usize::try_from(i)
+        {
+            batch_review::toggle(i);
         }
-        // Immer neu zeichnen: das CheckBox-Element einer nicht wählbaren Zeile
-        // hat sich beim Klick selbst umgeschaltet.
-        batch_review::toggle(i as usize);
+        // Immer neu zeichnen, auch wenn der Klick gesperrt war: das CheckBox-Element
+        // hat sich beim Klick selbst umgeschaltet und muss auf das Modell zurück.
         render_batch(&win);
     });
 }
@@ -1040,5 +1050,19 @@ mod tests {
         bump_lock_epoch();
         with_ui(|u| *u = Ui::default());
         assert_ne!(captured, lock_epoch());
+    }
+
+    #[test]
+    fn duplicates_count_only_repeats() {
+        let k = |s: &str| s.to_string();
+        assert_eq!(batch_review::repeats([k("a"), k("b")]), 0);
+        assert_eq!(batch_review::repeats([k("a"), k("a")]), 1);
+        assert_eq!(batch_review::repeats([k("a"), k("b"), k("a"), k("a")]), 2);
+        assert_eq!(batch_review::repeats([k("a"), k("b"), k("b"), k("a")]), 2);
+    }
+
+    #[test]
+    fn duplicates_empty_input() {
+        assert_eq!(batch_review::repeats(Vec::<String>::new()), 0);
     }
 }
