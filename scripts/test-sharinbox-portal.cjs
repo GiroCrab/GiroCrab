@@ -85,6 +85,10 @@ test('share rights: own entry with the number only; none listed or unreadable', 
   // the label without a number is unreadable too, not "0 rights"; a real 0 stays valid
   await assert.rejects(collect(rightsBlock('   ').replace(/^/, '<html>' + items.join('')) + '</html>'), /Aktienrechte/);
   assert.deepEqual(JSON.parse(await collect('<html>' + items.join('') + rightsBlock('0') + '</html>')).depot.rights, {quantity: 0});
+  // a panel without a number must not borrow one from a later panel
+  const borrowed = rightsBlock('7').replace(/<span\s+class="text-muted">Menge<\/span><br\/>\s*7/, '') +
+    '<div class="panelChartBorderBlue"><span class="text-muted">Menge</span><br/> 12 </div>';
+  await assert.rejects(collect('<html>' + items.join('') + borrowed + '</html>'), /Aktienrechte/);
 });
 
 test('available and blocked balances are added up; several securities are listed', async () => {

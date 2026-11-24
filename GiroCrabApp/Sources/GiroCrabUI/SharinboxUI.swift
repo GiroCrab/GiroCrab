@@ -63,7 +63,12 @@ enum SharinboxScripts {
       const parseRights = html => {
         const at = html.indexOf('id="myChart-droitsActions"');
         if (at < 0) return null;
-        const m = /panelChartBorderBordeaux[\s\S]*?<span\s+class="text-muted">[^<]*<\/span>\s*(?:<br\s*\/?>)?\s*([^<]*?)\s*<\/div>/.exec(html.slice(at));
+        // look only inside the rights panel: up to the next panel or chart, never into a later one
+        const rest = html.slice(at);
+        const from = rest.indexOf('panelChartBorderBordeaux');
+        const next = from < 0 ? -1 : rest.slice(from + 24).search(/panelChartBorder|<canvas/);
+        const panel = from < 0 ? '' : next < 0 ? rest.slice(from) : rest.slice(from, from + 24 + next);
+        const m = /panelChartBorderBordeaux[\s\S]*?<span\s+class="text-muted">[^<]*<\/span>\s*(?:<br\s*\/?>)?\s*([^<]*?)\s*<\/div>/.exec(panel);
         // an empty number must not read as 0 and remove an existing position
         if (!m || !m[1].trim()) fail('Aktienrechte nicht erkannt.');
         return {quantity: amount(m[1])};
