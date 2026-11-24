@@ -475,6 +475,7 @@ extension AppModel {
             } else {
                 activeChallenge?.challenge = c  // progress steps bring a new text
                 activeChallenge?.canSkipOrder = activeSession?.isFetching() ?? false
+                activeChallenge?.polling = false
                 activeChallenge?.waiting = true
                 activeChallenge?.busy = false
             }
@@ -560,6 +561,7 @@ extension AppModel {
                 return
             }
             guard let session = self.activeSession else { return }
+            if self.activeChallenge?.canSkipOrder == true { self.activeChallenge?.polling = true }
             do {
                 let step = try await session.poll()
                 guard self.activeSession === session else { return }  // skipped / cancelled meanwhile

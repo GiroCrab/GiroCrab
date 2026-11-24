@@ -204,7 +204,7 @@ struct TwoFactorSheet: View {
 
                 SyncPromptButtons(cancel: model.skipCurrentSync, leading: active.canSkipOrder ? AnyView(
                     Button("TAN auslassen") { model.skipOrder() }
-                        .disabled(active.busy)
+                        .disabled(active.busy || active.polling)
                         .help("Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert.")
                 ) : nil) {
                     if c.kind == .code || c.kind == .imageCode || (c.kind == .redirect && showManualRedirect) {

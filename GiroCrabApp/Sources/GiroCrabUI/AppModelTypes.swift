@@ -456,6 +456,9 @@ struct ActiveChallenge: Identifiable {
     /// The TAN is for one order of the fetch (balance, bookings …), not the login:
     /// "TAN auslassen" leaves that order out and the rest is stored (#1730).
     var canSkipOrder = false
+    /// A poll of this question is in flight (fetch only): core may move on to the next order,
+    /// so "TAN auslassen" would hit that one and not the one on screen (#1826 review).
+    var polling = false
     /// The TAN of a transfer order that was sent (not its login SCA, not a sync's challenge):
     /// only then does the sheet show the order comparison (#949).
     var orderApproval = false
