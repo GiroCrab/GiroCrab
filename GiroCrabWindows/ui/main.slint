@@ -790,7 +790,14 @@ export component MainWindow inherits Window {
     in property <[string]> category-names;
     in-out property <int> inspector-category: 0;
     in-out property <bool> inspector-checked: false;
-    in-out property <bool> cards-open: false;
+    // Menü „Ansicht“ (geräte-lokal, `src/view_prefs.rs`; Mac: ViewLayout.swift).
+    in-out property <bool> show-chart: true;
+    in-out property <bool> show-statistics: false;
+    in-out property <bool> compact-header: false;
+    callback view-prefs-changed();
+    // Abgeleitet für bestehende Leser; nicht mehr setzen.
+    in-out property <bool> cards-open: root.show-chart || root.show-statistics;
+    private property <int> budget-rows: root.compact-header ? 1 : 4;
     in-out property <string> note-text;
     in-out property <bool> transfer-open: false;
     in property <[string]> transfer-accounts;
@@ -1150,13 +1157,17 @@ export component MainWindow inherits Window {
                     MenuEntry { text: "Tresor sperren"; hint: "Strg+L"; clicked => { root.lock(); } }
                 }
                 MenuTitle {
-                    text: "Ansicht"; menu-height: 262px;
+                    text: "Ansicht"; menu-height: 366px;
                     MenuEntry { text: "Übersicht (Alle Konten)"; clicked => { root.side-click("all"); } }
                     MenuEntry { text: "Neue Buchungen"; clicked => { root.side-click("new"); } }
                     MenuEntry { text: "Geplante Zahlungen"; clicked => { root.side-click("planned"); } }
                     MenuEntry { text: "Vermögen"; clicked => { root.side-click("wealth"); } }
                     MenuEntry { text: "Lastschriften"; clicked => { root.side-click("mandates"); } }
                     MenuEntry { text: "Dokumente"; clicked => { root.side-click("docs"); } }
+                    MenuSep {}
+                    MenuEntry { text: (root.show-chart ? "✓ " : "") + "Diagramm anzeigen"; clicked => { root.show-chart = !root.show-chart; root.view-prefs-changed(); } }
+                    MenuEntry { text: (root.show-statistics ? "✓ " : "") + "Auswertungen anzeigen"; clicked => { root.show-statistics = !root.show-statistics; root.view-prefs-changed(); } }
+                    MenuEntry { text: (root.compact-header ? "✓ " : "") + "Kopfbereich minimieren"; clicked => { root.compact-header = !root.compact-header; root.view-prefs-changed(); } }
                     MenuSep {}
                     MenuEntry { text: root.privacy ? "Datenschutzmodus ausschalten" : "Datenschutzmodus einschalten"; hint: "Strg+Umschalt+P"; clicked => { root.privacy = !root.privacy; root.privacy-changed(); } }
                     MenuEntry { text: root.demo-active ? "Demo-Daten beenden" : "Demo-Daten ansehen"; clicked => { root.demo-switch(); } }
@@ -1447,7 +1458,7 @@ export component MainWindow inherits Window {
                     text: "Saldo";
                     checked <=> root.show-balance;
                 }
-                GhostButton { horizontal-stretch: 0; text: root.cards-open ? "Übersicht ausblenden ▴" : "Cashflow & Budgets ▾"; clicked => { root.cards-open = !root.cards-open; } }
+                GhostButton { horizontal-stretch: 0; text: root.show-statistics ? "Auswertungen ausblenden ▴" : "Auswertungen ▾"; clicked => { root.show-statistics = !root.show-statistics; root.view-prefs-changed(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: root.booking-count; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
             }
@@ -1484,15 +1495,15 @@ export component MainWindow inherits Window {
                     GhostButton { text: "Aufheben"; clicked => { root.batch-clear(); } }
                 }
             }
-            // dashboard cards above the bookings: cashflow chart and budgets
-            if root.view-mode == 0 && root.cards-open: CashflowCard {
-                height: 190px;
+            // Bereiche über der Buchungsliste (Menü „Ansicht“): Diagramm, Auswertungen, kompakter Kopf
+            if root.view-mode == 0 && root.show-chart: CashflowCard {
+                height: root.compact-header ? 120px : 190px;
                 bars: root.cashflow-bars;
                 ticks: root.cashflow-ticks;
                 period <=> root.cashflow-period;
                 changed => { root.cashflow-changed(); }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
+            if root.view-mode == 0 && root.show-statistics && !root.compact-header: Rectangle {
                 height: 112px + max(root.allowance-banks.length, 1) * 20px;
                 background: Theme.surface;
                 border-radius: 8px;
@@ -1511,7 +1522,7 @@ export component MainWindow inherits Window {
                     for b in root.allowance-banks: Text { text: b; font-size: 12px; color: Theme.text; overflow: elide; }
                 }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
+            if root.view-mode == 0 && root.show-statistics && !root.compact-header: Rectangle {
                 height: 84px;
                 background: Theme.surface;
                 border-radius: 8px;
@@ -1528,8 +1539,8 @@ export component MainWindow inherits Window {
                     }
                 }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
-                height: root.budget-lines.length == 0 ? 56px : 46px + min(root.budget-lines.length, 4) * 32px;
+            if root.view-mode == 0 && root.show-statistics: Rectangle {
+                height: root.budget-lines.length == 0 ? 56px : 46px + min(root.budget-lines.length, root.budget-rows) * 32px;
                 background: Theme.surface;
                 border-radius: 8px;
                 border-width: 1px;
@@ -1539,11 +1550,11 @@ export component MainWindow inherits Window {
                     spacing: 6px;
                     Text { text: root.budget-title; color: Theme.text; font-size: 14px; font-weight: 700; }
                     if root.budget-lines.length == 0: Text { text: "Keine Ausgaben in diesem Monat"; color: Theme.muted; font-size: 11px; }
-                    for l[i] in root.budget-lines: BudgetBar { l: l; visible: i < 4; height: i < 4 ? 30px : 0px; }
+                    for l[i] in root.budget-lines: BudgetBar { l: l; visible: i < root.budget-rows; height: i < root.budget-rows ? 30px : 0px; }
                 }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
-                height: 50px + (root.analytics-expense-cats.length + root.analytics-income-cats.length + root.analytics-tags.length) * 32px + (root.analytics-tags.length == 0 ? 20px : 0px) + 90px;
+            if root.view-mode == 0 && root.show-statistics: Rectangle {
+                height: root.compact-header ? 68px : 50px + (root.analytics-expense-cats.length + root.analytics-income-cats.length + root.analytics-tags.length) * 32px + (root.analytics-tags.length == 0 ? 20px : 0px) + 90px;
                 background: Theme.surface;
                 border-radius: 8px;
                 border-width: 1px;
@@ -1553,13 +1564,17 @@ export component MainWindow inherits Window {
                     spacing: 6px;
                     Text { text: "Analysen"; color: Theme.text; font-size: 14px; font-weight: 700; }
                     Text { text: root.analytics-summary; color: Theme.muted; font-size: 11px; overflow: elide; }
-                    Text { text: "Ausgaben nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
-                    for l in root.analytics-expense-cats: BudgetBar { l: l; height: 30px; }
-                    Text { text: "Einnahmen nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
-                    for l in root.analytics-income-cats: BudgetBar { l: l; height: 30px; }
-                    Text { text: "Auswertung nach Tags"; color: Theme.text; font-size: 12px; font-weight: 700; }
-                    if root.analytics-tags.length == 0: Text { text: "Keine getaggten Buchungen im Filter"; color: Theme.muted; font-size: 11px; }
-                    for l in root.analytics-tags: BudgetBar { l: l; height: 30px; }
+                    // Kopfbereich minimiert: nur Titel und Zusammenfassung.
+                    if !root.compact-header: VerticalLayout {
+                        spacing: 6px;
+                        Text { text: "Ausgaben nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                        for l in root.analytics-expense-cats: BudgetBar { l: l; height: 30px; }
+                        Text { text: "Einnahmen nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                        for l in root.analytics-income-cats: BudgetBar { l: l; height: 30px; }
+                        Text { text: "Auswertung nach Tags"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                        if root.analytics-tags.length == 0: Text { text: "Keine getaggten Buchungen im Filter"; color: Theme.muted; font-size: 11px; }
+                        for l in root.analytics-tags: BudgetBar { l: l; height: 30px; }
+                    }
                 }
             }
             if root.view-mode == 0: Rectangle {

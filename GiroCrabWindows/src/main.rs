@@ -51,6 +51,8 @@ use zeroize::Zeroizing;
 use daily::{Filter, Row, StatusFilter};
 use nav::Target;
 
+mod view_prefs;
+
 slint::include_modules!();
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1757,6 +1759,11 @@ fn main() -> Result<(), slint::PlatformError> {
     if demo_title {
         win.set_window_title("GiroCrab Windows Demo".into());
     }
+    // Menü „Ansicht“: geräte-lokale Schalter; Demo/Screenshot bleiben bei den Standardwerten.
+    view_prefs::install(
+        &win,
+        (!demo_title).then(|| view_prefs::prefs_path(&vault_path())),
+    );
     if let Some(path) = screenshot {
         let timer = slint::Timer::default();
         timer.start(
