@@ -77,13 +77,9 @@ fn a_refused_start_date_is_tried_again_with_90_days() {
         history::retry_since(&back(3650), bank("400")).unwrap(),
         back(90)
     );
-    // the bank's own code, or a GraphQL error with HTTP 200
+    // the bank's own non-numeric code
     assert_eq!(
         history::retry_since(&back(365), bank("Error")).unwrap(),
-        back(90)
-    );
-    assert_eq!(
-        history::retry_since(&back(365), bank("200")).unwrap(),
         back(90)
     );
     // within 90 days a shorter period would not help
@@ -91,8 +87,9 @@ fn a_refused_start_date_is_tried_again_with_90_days() {
         history::retry_since(&back(30), bank("400")),
         Err(CoreError::Bank { .. })
     ));
-    // not a refused request: the error stands
+    // not a refused request: the error stands (a bare 200 says nothing either)
     for err in [
+        bank("200"),
         bank("429"),
         bank("401"),
         bank("503"),

@@ -122,15 +122,16 @@ fn max_days(kind: ConnectorKind) -> i64 {
 /// Start date of a second try after the bank answered a request from `since`
 /// with `err`: 90 days back, when `since` reached further and the bank refused
 /// the request (its answer, not a failed login, a rate limit, a failure on its
-/// side or an incomplete list). Otherwise `err` again. The first fetch of a
-/// login must not fail on its period.
+/// side or an incomplete list). Otherwise `err` again. A bare 200 says nothing
+/// about the failure (a GraphQL error without a status of its own). The first
+/// fetch of a login must not fail on its period.
 pub(crate) fn retry_since(since: &str, err: CoreError) -> CoreResult<String> {
     let shorter = crate::dates::iso(crate::dates::today() - crate::dates::days(QUIET_MAX_DAYS));
     let refused = match &err {
-        // an HTTP status, or the bank's own code (a GraphQL error comes with 200)
-        CoreError::Bank { code, .. } => code
-            .parse::<u16>()
-            .map_or(true, |c| c < 500 && !matches!(c, 401 | 403 | 429)),
+        // a client error status, or the bank's own non-numeric code (VW `Status`)
+        CoreError::Bank { code, .. } => code.parse::<u16>().map_or(true, |c| {
+            (400..500).contains(&c) && !matches!(c, 401 | 403 | 429)
+        }),
         _ => false,
     };
     if refused && since < shorter.as_str() {

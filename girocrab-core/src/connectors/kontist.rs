@@ -166,7 +166,9 @@ impl KontistConnector {
         }
         if let Some(msg) = graphql_error(&v) {
             return Err(CoreError::Bank {
-                code: status.as_u16().to_string(),
+                code: graphql_error_status(&v)
+                    .unwrap_or(status.as_u16())
+                    .to_string(),
                 message: msg,
             });
         }
@@ -204,8 +206,11 @@ impl KontistConnector {
                     out.push(t);
                 }
             }
-            if conn["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
-                return Ok(out);
+            // no explicit end of the list (e.g. a null viewer): not complete
+            match conn["pageInfo"]["hasNextPage"].as_bool() {
+                Some(false) => return Ok(out),
+                Some(true) => {}
+                None => break,
             }
             let next = conn["pageInfo"]["endCursor"].as_str().map(str::to_string);
             if next.is_none() || next == after {
@@ -247,6 +252,21 @@ fn graphql_error(v: &Value) -> Option<String> {
             .unwrap_or("GraphQL error")
             .to_string(),
     )
+}
+
+/// HTTP-like status the first GraphQL error carries itself (a GraphQL error can
+/// come with HTTP 200, #1043): `status`, `extensions.status` or `extensions.code`
+/// when it is a number.
+fn graphql_error_status(v: &Value) -> Option<u16> {
+    let first = v["errors"].as_array()?.first()?;
+    [
+        &first["status"],
+        &first["extensions"]["status"],
+        &first["extensions"]["code"],
+    ]
+    .into_iter()
+    .find_map(|s| s.as_u64().or_else(|| s.as_str()?.parse().ok()))
+    .and_then(|s| u16::try_from(s).ok())
 }
 
 /// `2026-11-03T00:00:00.000Z` → `2026-11-03`.
@@ -536,5 +556,28 @@ mod tests {
         let v = json!({ "errors": [{ "message": "Not authorized" }], "data": null });
         assert_eq!(graphql_error(&v).as_deref(), Some("Not authorized"));
         assert_eq!(graphql_error(&json!({ "data": {} })), None);
+    }
+
+    #[test]
+    fn graphql_error_carries_its_own_status() {
+        let err = |e: Value| json!({ "errors": [e], "data": null });
+        assert_eq!(
+            graphql_error_status(&err(json!({ "status": 429 }))),
+            Some(429)
+        );
+        assert_eq!(
+            graphql_error_status(&err(json!({ "extensions": { "status": "503" } }))),
+            Some(503)
+        );
+        assert_eq!(
+            graphql_error_status(&err(json!({ "extensions": { "code": 400 } }))),
+            Some(400)
+        );
+        // a named code is no status
+        assert_eq!(
+            graphql_error_status(&err(json!({ "extensions": { "code": "FORBIDDEN" } }))),
+            None
+        );
+        assert_eq!(graphql_error_status(&json!({ "data": {} })), None);
     }
 }
