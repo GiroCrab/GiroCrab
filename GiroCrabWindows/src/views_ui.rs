@@ -293,6 +293,8 @@ pub fn select_target(win: &MainWindow, vault: &Arc<Vault>, target: Target) {
     });
     win.set_table_selected(-1);
     with_ui(|u| u.selected_doc = None);
+    // Navigation changes the scope: a position history of the old one must not stay open.
+    crate::position_history_ui::close(win);
     apply_view(win, vault);
 }
 
@@ -309,8 +311,9 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
         return;
     }
     clear_table(win, "Wird geladen …");
-    // The old positions are gone: no history action until the new table is ready.
-    crate::position_history_ui::prepare(win, None, german_date, privacy_on);
+    // The old positions are gone: no history action until the new table is ready. The open
+    // dialog stays, so a refresh of the same depot can reload it (`prepare(Some(..))`).
+    crate::position_history_ui::loading(win);
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
     let generation = with_ui(|u| {
         u.generation += 1;
@@ -336,6 +339,7 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
                 }
                 Err(e) => {
                     clear_table(&win, "");
+                    crate::position_history_ui::close(&win);
                     win.set_view_status(e.into());
                 }
             }

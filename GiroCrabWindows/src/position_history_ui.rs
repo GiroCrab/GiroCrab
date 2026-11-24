@@ -91,6 +91,18 @@ pub fn prepare(win: &MainWindow, data: Option<&DepotData>, date: DateFn, privacy
     }
 }
 
+/// A reload of the depot view started: no new history action until the table is ready. The open
+/// dialog and the shown position stay, so `prepare(Some(..))` can refresh them afterwards
+/// (a sync of the same depot must not close the dialog).
+pub fn loading(win: &MainWindow) {
+    win.global::<PositionHistory>().set_available(false);
+}
+
+/// The scope changed (navigation) or the load failed: close the dialog and forget the position.
+pub fn close(win: &MainWindow) {
+    reset(win, false);
+}
+
 /// Core's series of the position and its rows; the currency is the series' one.
 fn load_history(v: &Vault, target: &PositionTarget) -> Result<(String, Vec<HistoryRow>), String> {
     let series: Vec<portfolio::SeriesInfo> = v
