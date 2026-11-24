@@ -82,6 +82,9 @@ test('share rights: own entry with the number only; none listed or unreadable', 
   // a section whose number cannot be found must not look like "no rights"
   const broken = '<html>' + items.join('') + '<canvas id="myChart-droitsActions"></canvas></html>';
   await assert.rejects(collect(broken), /Aktienrechte/);
+  // the label without a number is unreadable too, not "0 rights"; a real 0 stays valid
+  await assert.rejects(collect(rightsBlock('   ').replace(/^/, '<html>' + items.join('')) + '</html>'), /Aktienrechte/);
+  assert.deepEqual(JSON.parse(await collect('<html>' + items.join('') + rightsBlock('0') + '</html>')).depot.rights, {quantity: 0});
 });
 
 test('available and blocked balances are added up; several securities are listed', async () => {

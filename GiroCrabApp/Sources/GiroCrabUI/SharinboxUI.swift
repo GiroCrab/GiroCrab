@@ -64,7 +64,8 @@ enum SharinboxScripts {
         const at = html.indexOf('id="myChart-droitsActions"');
         if (at < 0) return null;
         const m = /panelChartBorderBordeaux[\s\S]*?<span\s+class="text-muted">[^<]*<\/span>\s*(?:<br\s*\/?>)?\s*([^<]*?)\s*<\/div>/.exec(html.slice(at));
-        if (!m) fail('Aktienrechte nicht erkannt.');
+        // an empty number must not read as 0 and remove an existing position
+        if (!m || !m[1].trim()) fail('Aktienrechte nicht erkannt.');
         return {quantity: amount(m[1])};
       };
       const MARKERS = ['myChart-assets-', 'myChart-droitsActions'];
