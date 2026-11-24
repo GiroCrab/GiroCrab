@@ -282,12 +282,29 @@ fn consistent_terms(before: Vec<String>, after: Vec<String>) -> Option<Vec<Strin
     (a == b).then_some(before)
 }
 
+/// Reads the terms, then the log entries, then the terms again, and gives
+/// entries and terms only if the two term reads agree. A difference means a
+/// rename or an import happened in between (`Err`).
+fn read_consistent<T>(
+    mut read_terms: impl FnMut() -> Result<Vec<String>, String>,
+    read_entries: impl FnOnce() -> Result<T, String>,
+) -> Result<(T, Vec<String>), String> {
+    let terms_before = read_terms()?;
+    let entries = read_entries()?;
+    let terms_after = read_terms()?;
+    let terms = consistent_terms(terms_before, terms_after)
+        .ok_or_else(|| "terms changed while reading the log".to_string())?;
+    Ok((entries, terms))
+}
+
 /// Header and sanitized log lines. Reads the vault (up to 5000 payee names):
 /// call it on the worker thread, never on the UI thread. The terms are read
 /// before and after the log; if they differ (a rename or import in between) the
 /// log is left out: without matching names a log line could carry a payee or an
 /// old account name into the issue. Names an account had before an earlier
-/// rename are not known to the vault and cannot be covered here.
+/// rename are not known to the vault and cannot be covered here. Neither are
+/// a change and its reversal during the read (A to B to A) nor payees beyond
+/// the 5000 that are read.
 /// A locked vault (`None`) gives the header only.
 pub fn prepare(v: Option<&Vault>, view: Target, include_log: bool, demo: bool) -> Report {
     let catalog = girocrab_core::bank_catalog();
@@ -315,22 +332,19 @@ pub fn prepare(v: Option<&Vault>, view: Target, include_log: bool, demo: bool) -
     let mut log = Vec::new();
     let mut log_unavailable = false;
     if include_log && let Some(v) = v {
-        let loaded = (|| {
-            let filter = SyncLogFilter {
-                connection_id: None,
-                only_errors: false,
-                search: None,
-                limit: 50,
-            };
-            let names = v.counterparty_names(5000).map_err(|e| e.to_string())?;
-            let terms_before = known_terms(v, &names, &catalog)?;
-            let entries = v.list_sync_log(filter).map_err(|e| e.to_string())?;
-            let names_after = v.counterparty_names(5000).map_err(|e| e.to_string())?;
-            let terms_after = known_terms(v, &names_after, &catalog)?;
-            let terms = consistent_terms(terms_before, terms_after)
-                .ok_or_else(|| "terms changed while reading the log".to_string())?;
-            Ok::<_, String>((entries, terms))
-        })();
+        let filter = SyncLogFilter {
+            connection_id: None,
+            only_errors: false,
+            search: None,
+            limit: 50,
+        };
+        let loaded = read_consistent(
+            || {
+                let names = v.counterparty_names(5000).map_err(|e| e.to_string())?;
+                known_terms(v, &names, &catalog)
+            },
+            || v.list_sync_log(filter).map_err(|e| e.to_string()),
+        );
         match loaded {
             Ok((entries, terms)) => {
                 log = sanitized_log(&log_lines(&entries, &by_connection, &catalog), &terms)
@@ -462,5 +476,52 @@ mod tests {
             "Erika Muster".to_string(),
         ];
         assert_eq!(consistent_terms(before, extended), None);
+    }
+
+    #[test]
+    fn rename_between_the_reads_drops_the_log() {
+        let calls = std::cell::Cell::new(0);
+        let result = read_consistent(
+            || {
+                calls.set(calls.get() + 1);
+                Ok(vec![if calls.get() == 1 {
+                    "Alt GmbH".to_string()
+                } else {
+                    "Neu GmbH".to_string()
+                }])
+            },
+            || Ok(vec!["Zeile mit Alt GmbH".to_string()]),
+        );
+        assert_eq!(
+            result,
+            Err("terms changed while reading the log".to_string())
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn unchanged_terms_keep_the_log() {
+        let result = read_consistent(
+            || Ok(vec!["Alt GmbH".to_string()]),
+            || Ok(vec!["Zeile".to_string()]),
+        );
+        assert_eq!(
+            result,
+            Ok((vec!["Zeile".to_string()], vec!["Alt GmbH".to_string()]))
+        );
+    }
+
+    #[test]
+    fn log_read_error_is_passed_on_without_second_term_read() {
+        let calls = std::cell::Cell::new(0);
+        let result: Result<(Vec<String>, Vec<String>), String> = read_consistent(
+            || {
+                calls.set(calls.get() + 1);
+                Ok(vec!["Alt GmbH".to_string()])
+            },
+            || Err("kaputt".to_string()),
+        );
+        assert_eq!(result, Err("kaputt".to_string()));
+        assert_eq!(calls.get(), 1);
     }
 }
