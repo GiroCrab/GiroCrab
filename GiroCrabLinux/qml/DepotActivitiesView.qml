@@ -149,13 +149,13 @@ ColumnLayout {
                             Text { visible: row.t.settlement_date !== "" && row.t.settlement_date !== row.t.booking_date
                                    text: qsTr("Valuta %1").arg(Fmt.medium(row.t.settlement_date)); font.pixelSize: Theme.caption2; color: Theme.tertiary } }
                         ColumnLayout { spacing: 1; Layout.fillWidth: true; Layout.preferredWidth: 1
-                            Text { text: av.nameText(row.t); Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text
+                            Text { text: av.nameText(row.t); textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text
                                    Sensitive { labels: true } }
-                            Text { visible: av.idText(row.t) !== ""; text: av.idText(row.t); Layout.fillWidth: true; elide: Text.ElideRight
+                            Text { visible: av.idText(row.t) !== ""; text: av.idText(row.t); textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight
                                    font.pixelSize: Theme.callout; color: Theme.secondary; Sensitive {} } }
                         ColumnLayout { spacing: 1; Layout.preferredWidth: av.kindW; Layout.maximumWidth: av.kindW; Layout.minimumWidth: av.kindW
                             Text { text: DepotMetrics.kindTitle(row.t); font.pixelSize: Theme.callout; color: Theme.text }
-                            Text { visible: av.showsBankText(row.t); text: row.t.booking_text; Layout.fillWidth: true; elide: Text.ElideRight
+                            Text { visible: av.showsBankText(row.t); text: row.t.booking_text; textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight
                                    font.pixelSize: Theme.caption2; color: Theme.tertiary; Sensitive {} } }
                         Cell { text: av.quantityText(row.t); Layout.preferredWidth: av.qtyW; color: Theme.secondary }
                         Cell { text: av.valueText(row.t); Layout.preferredWidth: av.valueW; color: Theme.text }
@@ -170,7 +170,7 @@ ColumnLayout {
                         Layout.bottomMargin: row.open ? 0 : 5; Layout.minimumHeight: 44
                         spacing: 10
                         ColumnLayout { spacing: 2; Layout.fillWidth: true
-                            Text { text: av.nameText(row.t); Layout.fillWidth: true; elide: Text.ElideRight; wrapMode: row.open ? Text.WordWrap : Text.NoWrap
+                            Text { text: av.nameText(row.t); textFormat: Text.PlainText; Layout.fillWidth: true; elide: Text.ElideRight; wrapMode: row.open ? Text.WordWrap : Text.NoWrap
                                    maximumLineCount: row.open ? 3 : 1; font.pixelSize: Theme.body; font.weight: Font.DemiBold; color: Theme.text
                                    Sensitive { labels: true } }
                             Text { text: [Fmt.medium(row.t.booking_date), DepotMetrics.kindTitle(row.t)].join(" · "); Layout.fillWidth: true; elide: Text.ElideRight
@@ -206,8 +206,8 @@ ColumnLayout {
                         Line { visible: !av.isCostLine(row.t); title: qsTr("Bruttobetrag"); value: av.valueText(row.t) }
                         Line { visible: av.feeText(row.t) !== "–"; title: qsTr("Gebühren"); value: av.feeText(row.t) }
                         Line { visible: av.taxText(row.t) !== "–"; title: qsTr("Steuern"); value: av.taxText(row.t) }
-                        Line { visible: av.idText(row.t) !== ""; title: qsTr("ISIN / WKN"); value: av.idText(row.t) }
-                        Line { visible: av.showsBankText(row.t); title: qsTr("Bankhinweis"); value: row.t.booking_text }
+                        Line { visible: av.idText(row.t) !== ""; title: qsTr("ISIN / WKN"); value: av.idText(row.t); personal: true }
+                        Line { visible: av.showsBankText(row.t); title: qsTr("Bankhinweis"); value: row.t.booking_text; personal: true }
                     }
                     Rectangle { visible: row.index < av.shown.length - 1; Layout.fillWidth: true; Layout.leftMargin: 14; implicitHeight: 1
                                 color: Theme.withAlpha(Theme.border, 0.7) }
@@ -231,11 +231,13 @@ ColumnLayout {
         id: line
         property string title
         property string value
+        /// ISIN / WKN and the bank's text are personal like in the wide row, the rest are amounts.
+        property bool personal: false
         Layout.fillWidth: true
         Text { text: line.title; font.pixelSize: Theme.callout; color: Theme.secondary }
         Item { Layout.fillWidth: true; Layout.minimumWidth: 12 }
-        Text { text: line.value; font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.text; horizontalAlignment: Text.AlignRight
-               Layout.maximumWidth: 360 * Theme.textScale; wrapMode: Text.WordWrap; Sensitive { amounts: true } }
+        Text { text: line.value; textFormat: Text.PlainText; font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.text; horizontalAlignment: Text.AlignRight
+               Layout.maximumWidth: 360 * Theme.textScale; wrapMode: Text.WordWrap; Sensitive { amounts: !line.personal } }
     }
     /// „Zur zugehörigen Buchung des Verrechnungskontos“
     component Jump: Item {
