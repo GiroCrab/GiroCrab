@@ -136,8 +136,9 @@ const MAX_FORMS: usize = 16;
 
 /// The folded query (always `[0]`) plus its spellings with "ae"/"oe"/"ue" as plain vowels,
 /// chosen per word: "mueller" finds "Müller" and "feuerwehr mueller" finds "Feuerwehr Müller"
-/// (the "ue" of "feuerwehr" stays as typed). Only the query gets this, else "neu" would miss
-/// "Neue …". An empty query gives `[""]`.
+/// (each word is tried as typed and folded, so "feuerwehr" keeps its "ue" in one of the forms).
+/// Only the query gets this, else "neu" would miss "Neue …". An empty query gives `[""]`.
+/// Above `MAX_FORMS` the literal form (first) and the fully folded form (last) always stay.
 fn query_forms(query: &str) -> Vec<String> {
     let mut forms = vec![String::new()];
     for word in query.split_whitespace().map(fold) {
@@ -159,7 +160,13 @@ fn query_forms(query: &str) -> Vec<String> {
                 next.push(join(&plain));
             }
         }
-        next.truncate(MAX_FORMS);
+        if next.len() > MAX_FORMS {
+            // Keep the fully folded spelling (always last) when capping, not only the first ones.
+            if let Some(last) = next.pop() {
+                next.truncate(MAX_FORMS - 1);
+                next.push(last);
+            }
+        }
         forms = next;
     }
     forms
@@ -293,7 +300,7 @@ mod tests {
                 "query {q:?}"
             );
         }
-        // digraphs are resolved per word: "ue" in "feuerwehr" stays, "ue" in "mueller" folds
+        // digraphs are resolved per word: each word is tried as typed and with "ue" folded
         let accounts = [(9, "Feuerwehr Müller")];
         for q in ["feuerwehr mueller", "feuerwehr müller", "feuerwehr muller"] {
             let hits = search(q, &unlocked(&accounts, &[]));
@@ -307,8 +314,17 @@ mod tests {
         assert_eq!(query_forms("Feuerwehr Mueller")[0], "feuerwehr mueller");
         assert_eq!(query_forms("feuerwehr mueller").len(), 4);
         assert_eq!(query_forms("   "), vec![String::new()]);
-        // many digraph words stay capped
-        assert!(query_forms("ae ae ae ae ae ae").len() <= MAX_FORMS);
+        // many digraph words stay capped, but keep the literal and the fully folded spelling
+        let many = query_forms("ae ae ae ae ae ae");
+        assert!(many.len() <= MAX_FORMS);
+        assert_eq!(many[0], "ae ae ae ae ae ae");
+        assert_eq!(many.last().map(String::as_str), Some("a a a a a a"));
+        let accounts = [(11, "Kühe Bäume Höfe Mühle Füße")];
+        let hits = search(
+            "kuehe baeume hoefe muehle fuesse",
+            &unlocked(&accounts, &[]),
+        );
+        assert_eq!(hits[0].action, Action::Show(Target::Account(11)));
         let hits = search("vermoegen", &unlocked(&[], &[]));
         assert_eq!(hits[0].action, Action::Show(Target::Wealth));
         // the query alone gets the ae/oe/ue form: "neu" still finds "Neue Umsätze"
