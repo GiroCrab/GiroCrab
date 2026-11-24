@@ -56,8 +56,8 @@ They are decided there, not here.
 | `Neutral` | neither income nor expense | `Transfer` |
 
 The role is a signal in `classify_by_kind` that replaces the category names and `builtin_role`
-checks there. How it ranks against merchant, account-kind and text signals stays as it was;
-changing that is a later step of #931.
+checks there. How it ranks against merchant, account-kind and text signals stays as it was
+(`Neutral` always wins, see below); changing that is a later step of #931.
 
 ### Stored per category, inherited down the tree
 
@@ -70,7 +70,13 @@ changing that is a later step of #931.
 ### `Neutral` belongs to the category, transfers to the booking
 
 `Neutral` says that the bookings of a category do not enter the income and expense figures.
-It replaces the special case `"Umbuchungen"`: the built-in category, imported transfer
+Unlike the other roles it does not depend on the ranking of the signals: as the transfer
+categories did before, a `Neutral` category makes its bookings transfers even when a merchant
+or keyword points to an investment or a perk (`BookingFinisher::finish` in
+[`vault/bookings.rs`](../../girocrab-core/src/vault/bookings.rs)). Only a booking linked to a
+loan stays a loan payment.
+
+`Neutral` replaces the special case `"Umbuchungen"`: the built-in category, imported transfer
 categories (`import:transfers`) and imported categories hidden from charts
 (`showInDiagrams = 0`) become `Neutral`. Recognising that two bookings are one transfer
 between own accounts stays a property of the bookings, because only a booking has a
