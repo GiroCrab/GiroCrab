@@ -26,6 +26,23 @@ Rectangle {
     // InspectorSectionCard: one card per section, for the selected booking. In the edit mode
     // (`placeholderWhenEmpty`) a card that would not show for this booking stands in as a placeholder.
     property Component receiptCard: Component { ReceiptCard { booking: inspector.cardBooking } }
+    property Component refundCard: Component {
+        ColumnLayout {
+            readonly property bool sectionVisible: inspector.showsBookingCards && (inspector.editingLayout || refund.rows.length > 0 || refund.error !== "")
+            visible: sectionVisible
+            RefundLinksCard {
+                id: refund
+                Layout.fillWidth: true
+                visible: rows.length > 0 || error !== ""
+                booking: inspector.b
+            }
+            PlaceholderCard {
+                section: "refunds"
+                hint: qsTr("Keine Erstattungen")
+                visible: inspector.editingLayout && refund.rows.length === 0 && refund.error === ""
+            }
+        }
+    }
     property Component noteCard: Component { NoteCard { booking: inspector.cardBooking } }
     // TagsUI.swift › TagsCard (#228)
     property Component tagsCard: Component { Card { TagsSection { width: parent.width; bookings: inspector.cardBooking ? [inspector.cardBooking] : [] } } }
@@ -40,6 +57,7 @@ Rectangle {
     property Component mandateInspector: Component { MandateInspector {} }
     function cardComponent(section, placeholderWhenEmpty) {
         switch (section) {
+        case "refunds": return refundCard
         case "receipt": return receiptCard
         case "note": return noteCard
         case "tags": return tagsCard
@@ -148,7 +166,7 @@ Rectangle {
                 Loader {
                     required property string modelData
                     Layout.fillWidth: true
-                    visible: status === Loader.Ready
+                    visible: status === Loader.Ready && (modelData !== "refunds" || item.sectionVisible)
                     sourceComponent: inspector.cardComponent(modelData, false)
                 }
             }

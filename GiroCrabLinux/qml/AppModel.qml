@@ -55,12 +55,12 @@ QtObject {
     /// more with fresh arguments when it is back, so fast clicking queues nothing.
     /// The demo vault (small, launch options and screenshots expect its data at once)
     /// loads synchronously.
-    function loadOffMain(channel, request, apply, failed) {
+    function loadOffMain(channel, request, apply, failed, forceAsync) {
         if (!vaultLoaded) return
         const l = loads[channel] || (loads[channel] = { gen: 0, busy: false, again: false })
         l.gen++
         l.request = request; l.apply = apply; l.failed = failed || null
-        if (demoActive) {
+        if (demoActive && !forceAsync) {
             const req = loadRequest(request)
             if (!req) return
             let results
@@ -493,6 +493,12 @@ QtObject {
     /// A different vault is in front (or none): answers still on their way belong to the old one.
     function vaultSwitched() {
         vaultGeneration++
+        revealTimer.stop()
+        revealTimer.request++
+        cancelLoad("revealBooking")
+        refundBooking = null
+        refundEditing = false
+        UndoManager.busy = false
         dropPendingPage()   // a "load more" page of the previous vault must not land in this list
         vaultLoaded = true
         afterAccountsQueue = []
@@ -580,6 +586,7 @@ QtObject {
     /// Everything of the vault on screen. The accounts come first: `then` runs as soon as
     /// they are there (the main view can show), the rest fills in off the GUI thread.
     function reloadAll(then, failed) {
+        refundLinksRevision++
         reloadSettings()
         reloadAccounts(() => {
             if (then) then()
@@ -2623,6 +2630,7 @@ QtObject {
     /// Undoable via Bearbeiten › Rückgängig. `known` ({ cents, date }): the value stored now,
     /// passed by undo/redo because the account list reloads off the GUI thread.
     function setOpeningBalance(accountId, cents, date, known) {
+        if (refundEditing) throw new Error(qsTr("Eine Änderung wird gerade gespeichert. Bitte warten Sie."))
         const a = accountsByID[accountId] || null
         const old = known || (a ? { cents: a.opening_balance_cents, date: a.opening_balance_date } : null)
         core("set_account_opening_balance", { account_id: accountId, cents: cents, date: date })
@@ -3112,6 +3120,39 @@ QtObject {
     property var iconColorCategoryID: null
     /// The booking whose SplitSheet is open.
     property var splitBooking: null
+    property var refundBooking: null
+    property int refundLinksRevision: 0
+    property bool refundEditing: false
+
+    function changeRefundLink(pair, action, token) {
+        if (refundEditing || !isUnlocked || !vaultLoaded) return
+        const phase = UndoManager.phase, branch = UndoManager.branch, generation = vaultGeneration
+        const identity = run(() => core("refund_vault_identity"))
+        if (identity === undefined) return
+        const args = Object.assign({}, pair, { action: action, token: token === undefined ? null : token,
+            vault_identity: identity })
+        refundEditing = true
+        UndoManager.busy = true
+        const failed = message => {
+            if (generation !== vaultGeneration) return
+            refundEditing = false; UndoManager.busy = false
+            errorMessage = message
+            refundLinksRevision++
+        }
+        try { coreAsync("edit_refund", args, result => {
+            if (generation !== vaultGeneration) return
+            refundEditing = false; UndoManager.busy = false
+            if (!result.changed) return
+            const inverse = action === "unlink" ? "restore" : "unlink"
+            const undoToken = result.token
+            UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
+                if (vaultGeneration === generation) changeRefundLink(pair, inverse, undoToken)
+            }, phase, branch)
+            // documentation only (#714): sums stay, only the list markers change
+            refundLinksRevision++
+            reloadBookings()
+        }, failed) } catch (e) { failed(e.message) }
+    }
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
     readonly property var colorNames: ({
@@ -3245,6 +3286,7 @@ QtObject {
     /// Error text, or "" on success.
     function saveSplits(parts, booking) {
         try { core("set_transaction_splits", { transaction_id: booking.id, splits: parts }) } catch (e) { return e.message }
+        refundLinksRevision++
         reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning()
         return ""
     }
@@ -4161,27 +4203,48 @@ QtObject {
     }
     /// Selects a booking in the list, widening the filters if it is not loaded.
     function revealBooking(id) {
+        if (!isUnlocked) return
+        cancelLoad("revealBooking")
         if (!bookings.some(b => b.id === id)) {
             sidebarSelection = "all"; period = "all"; directionFilter = "All"; statusFilter = "all"; TagFilter.clear(); searchText = ""
+            scope = "All"
+            categoryAccountFilter = ({})
+            ListFilters.clearAmount()
+            MerchantFocus.sidebarChanged()
+            searchTimer.stop()
+        } else if (["documents", "wealth", "planned", "directDebits"].includes(sidebarSelection) || DepotState.presentation !== "bookings") {
+            sidebarSelection = "all"
         }
         revealTimer.bookingID = id
+        revealTimer.vault = vaultGeneration
+        revealTimer.request++
         revealTimer.restart()
     }
     property Timer revealTimer: Timer {
         property var bookingID: null
+        property int vault: 0
+        property int request: 0
         interval: 350
         onTriggered: {
-            // an older booking is not on the first page: load back to its day
-            const id = bookingID
-            if (!model.bookings.some(b => b.id === id)) {
-                const day = model.run(() => model.core("booking_date", { booking_id: id }))
-                if (day && model.page) {
-                    model.listLimit = Math.max(model.listLimit, model.page.total_count)
-                    model.reloadBookings(() => model.selectBooking(id, false, false))
-                    return
-                }
+            const id = bookingID, token = request, vgen = vault
+            const current = () => model.isUnlocked && model.vaultGeneration === vgen && request === token
+            const select = () => {
+                if (current() && model.bookings.some(b => b.id === id)) model.selectBooking(id, false, false)
             }
-            model.selectBooking(id, false, false)
+            if (!current()) return
+            if (model.selectionLoadRunning || model.isLoadPending("bookings")) { restart(); return }
+            if (model.bookings.some(b => b.id === id)) { select(); return }
+            const generation = model.listGeneration
+            model.loadOffMain("revealBooking", () => [["booking_date", { booking_id: id }]], r => {
+                if (!current() || generation !== model.listGeneration || !r[0]) return
+                const f = model.currentFilter()
+                if (f.date_from === null || f.date_from < r[0]) f.date_from = r[0]
+                model.loadOffMain("revealBooking", () => [["count_transactions", { filter: f }]], counts => {
+                    if (!current() || generation !== model.listGeneration) return
+                    model.listLimit = Math.max(model.listLimit, counts[0])
+                    model.reloadBookings(select)
+                }, undefined, true)
+            }, undefined, true)
         }
     }
 
@@ -4293,6 +4356,16 @@ QtObject {
     function presentDemoSheet(name) {
         const top = categories.find(c => c.depth === 0)
         switch (name) {
+        case "refund": case "refund-reverse": case "refund-before": case "refund-linked": {
+            const vaultIdentity = core("refund_vault_identity")
+            loadOffMain("refundDemo", () => [["seed_refund_demo", { vault_identity: vaultIdentity, date: new Date().toISOString().slice(0, 10), linked: name === "refund-linked" }]], r => {
+                reloadAll()
+                sidebarSelection = "account:" + r[0].account
+                reloadBookings()
+                if (name === "refund" || name === "refund-reverse") refundBooking = { id: name === "refund" ? r[0].refund : r[0].original }
+            }, undefined, true)
+            break
+        }
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.length ? connections[connections.length - 1] : null
