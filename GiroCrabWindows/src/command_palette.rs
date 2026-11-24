@@ -131,21 +131,24 @@ pub fn fold(s: &str) -> String {
     out
 }
 
+/// Already folded text with "ae"/"oe"/"ue" as plain vowels, so "mueller" and "müller" meet.
+fn plain_vowels(s: &str) -> String {
+    s.replace("ae", "a").replace("oe", "o").replace("ue", "u")
+}
+
 /// Upper bound of spellings tried per query, so many words with digraphs stay cheap.
 const MAX_FORMS: usize = 16;
 
 /// The folded query (always `[0]`) plus its spellings with "ae"/"oe"/"ue" as plain vowels,
 /// chosen per word: "mueller" finds "Müller" and "feuerwehr mueller" finds "Feuerwehr Müller"
 /// (each word is tried as typed and folded, so "feuerwehr" keeps its "ue" in one of the forms).
-/// Only the query gets this, else "neu" would miss "Neue …". An empty query gives `[""]`.
+/// Titles are matched both as folded and as `plain_vowels` (see `search`), so "neu" still finds
+/// "Neue …" and "müller" finds a stored "Mueller". An empty query gives `[""]`.
 /// Above `MAX_FORMS` the literal form (first) and the fully folded form (last) always stay.
 fn query_forms(query: &str) -> Vec<String> {
     let mut forms = vec![String::new()];
     for word in query.split_whitespace().map(fold) {
-        let plain = word
-            .replace("ae", "a")
-            .replace("oe", "o")
-            .replace("ue", "u");
+        let plain = plain_vowels(&word);
         let mut next = Vec::with_capacity(forms.len() * 2);
         for f in &forms {
             let join = |w: &str| {
@@ -200,8 +203,14 @@ pub fn search(query: &str, ctx: &Context) -> Vec<Hit> {
         let r = if forms[0].is_empty() {
             Some(0)
         } else {
+            // The title literally and with plain vowels: names stored as "Mueller" match "Müller".
             let (t, g) = (fold(title), fold(hit.group.label()));
-            forms.iter().filter_map(|q| rank(&t, &g, q)).min()
+            let tp = plain_vowels(&t);
+            forms
+                .iter()
+                .flat_map(|q| [rank(&t, &g, q), rank(&tp, &g, q)])
+                .flatten()
+                .min()
         };
         if let Some(r) = r {
             ranked.push((r, hit));
@@ -327,9 +336,36 @@ mod tests {
         assert_eq!(hits[0].action, Action::Show(Target::Account(11)));
         let hits = search("vermoegen", &unlocked(&[], &[]));
         assert_eq!(hits[0].action, Action::Show(Target::Wealth));
-        // the query alone gets the ae/oe/ue form: "neu" still finds "Neue Umsätze"
+        // the literal title stays matched too: "neu" still finds "Neue Umsätze"
         let hits = search("neu", &unlocked(&[], &[]));
         assert_eq!(hits[0].action, Action::Show(Target::NewBookings));
+    }
+
+    #[test]
+    fn umlaut_query_finds_names_stored_with_digraphs() {
+        let accounts = [(12, "Mueller"), (13, "Feuerwehr Mueller")];
+        let tags = ["Kuehlschrank"];
+        let ctx = unlocked(&accounts, &tags);
+        for q in ["Müller", "muller", "mueller"] {
+            let hits = search(q, &ctx);
+            assert_eq!(
+                hits[0].action,
+                Action::Show(Target::Account(12)),
+                "query {q:?}"
+            );
+            assert!(hits.iter().all(|h| h.title.is_none()), "names never kept");
+        }
+        for q in ["feuerwehr müller", "feuerwehr mueller", "feuerwehr muller"] {
+            let hits = search(q, &ctx);
+            assert_eq!(
+                hits[0].action,
+                Action::Show(Target::Account(13)),
+                "query {q:?}"
+            );
+        }
+        let hits = search("Kühlschrank", &ctx);
+        assert_eq!(hits[0].action, Action::FilterTag("Kuehlschrank".into()));
+        assert_eq!(hits[0].title, None);
     }
 
     #[test]
