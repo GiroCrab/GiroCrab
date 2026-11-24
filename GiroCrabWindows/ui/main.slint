@@ -6,8 +6,10 @@ import { GroupsState, GroupsPanel } from "groups_dialog.slint";
 import { AssetsState, AssetsLoansPanel } from "assets_loans_dialog.slint";
 import { MandatesState, MdRow, MandatesPanel } from "mandates_dialog.slint";
 import { SettingsImportState, SiRow, SettingsImportPanel } from "settings_import_dialog.slint";
+import { AmountFilterButton, AmountFilterRow } from "amount_filter.slint";
 export { GroupsState }
 export { SettingsImportState, SiRow }
+export { UpdateState } from "updates.slint";
 export { AssetsState }
 export { MandatesState, MdRow }
 export { RecLine }
@@ -323,14 +325,76 @@ component ShareBarLine inherits HorizontalLayout {
     Text { text: s.value; color: Theme.text; font-size: 12px; font-weight: 600; width: 110px; horizontal-alignment: right; vertical-alignment: center; }
 }
 
+export struct PositionHistoryRow {
+    date: string,
+    value: string,
+    quantity: string,
+    share: float,
+    traded: bool,
+}
+
+// Kursverlauf einer Depotposition (#578), Mac-Vorbild PositionHistorySheet.swift.
+export global PositionHistory {
+    in-out property <bool> available;
+    in-out property <int> selected: -1;
+    in-out property <bool> open;
+    in-out property <string> title;
+    in-out property <string> subtitle;
+    in-out property <string> status;
+    in-out property <[PositionHistoryRow]> rows;
+    callback request(int);
+    callback reset(bool);
+}
+
+component PositionHistoryHeader inherits Rectangle {
+    height: 28px;
+    background: Theme.text.with-alpha(0.04);
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 10px;
+        Text { text: "Datum"; color: Theme.muted; font-size: 11px; font-weight: 700; width: 84px; vertical-alignment: center; }
+        Text { text: "Verlauf"; color: Theme.muted; font-size: 11px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
+        Text { text: "Wert"; color: Theme.muted; font-size: 11px; font-weight: 700; width: 130px; horizontal-alignment: right; vertical-alignment: center; }
+        Text { text: "Stück"; color: Theme.muted; font-size: 11px; font-weight: 700; width: 120px; horizontal-alignment: right; vertical-alignment: center; }
+    }
+}
+
+component PositionHistoryLine inherits Rectangle {
+    in property <PositionHistoryRow> data;
+    height: 30px;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 10px;
+        Text { text: data.date; color: Theme.muted; font-size: 12px; width: 84px; vertical-alignment: center; }
+        Rectangle {
+            horizontal-stretch: 1;
+            Rectangle {
+                height: 8px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: Theme.text.with-alpha(0.1);
+                Rectangle { x: 0px; width: parent.width * data.share; border-radius: 4px; background: Theme.text.with-alpha(0.4); }
+            }
+        }
+        Text { text: data.value; color: Theme.text; font-size: 12px; font-weight: 600; width: 130px; horizontal-alignment: right; vertical-alignment: center; overflow: elide; }
+        Text { text: data.quantity; color: data.traded ? Theme.text : Theme.muted; font-size: 12px; width: 120px; horizontal-alignment: right; vertical-alignment: center; overflow: elide; }
+    }
+}
+
 component TableLine inherits Rectangle {
     in property <TableRow> data;
     in property <bool> active;
     in property <bool> clickable: false;
     callback clicked();
+    callback double-clicked();
     height: 34px;
     background: active ? Theme.selected : ta.has-hover && clickable ? Theme.text.with-alpha(0.04) : transparent;
-    ta := TouchArea { clicked => { root.clicked(); } }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+        double-clicked => { root.double-clicked(); }
+    }
     HorizontalLayout {
         padding-left: 14px;
         padding-right: 14px;
@@ -740,6 +804,45 @@ export component MainWindow inherits Window {
     in property <bool> unlocked: false;
     in property <bool> first-run: false;
     in property <string> message;
+
+    // Locking or unlocking drops the position history dialog and its selection (#578).
+    ChangeTrigger {
+        tick: root.unlocked ? 1 : 0;
+        fire => {
+            PositionHistory.open = false;
+            PositionHistory.available = false;
+            PositionHistory.selected = -1;
+            PositionHistory.rows = [];
+            PositionHistory.reset(true);
+        }
+    }
+
+    // No `z`: the PIN/TAN prompt later in the tree must stay above the history (sync while open).
+    if PositionHistory.open && root.unlocked: Dialog {
+        dialog-width: 560px;
+        Text { text: PositionHistory.title; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; }
+        Text { text: PositionHistory.subtitle; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+        if PositionHistory.status != "": Text { text: PositionHistory.status; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+        if PositionHistory.rows.length > 0: VerticalLayout {
+            PositionHistoryHeader { }
+            ListView {
+                min-height: 160px;
+                preferred-height: 320px;
+                for r in PositionHistory.rows: PositionHistoryLine { data: r; }
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            Button {
+                text: "Schließen";
+                clicked => {
+                    PositionHistory.open = false;
+                    PositionHistory.reset(false);
+                    root.refocus();
+                }
+            }
+        }
+    }
     in property <string> sync-status;
     in property <string> total;
     in property <bool> busy: false;
@@ -800,6 +903,8 @@ export component MainWindow inherits Window {
     in property <bool> tr-recipient-blocked: false;
     in property <string> tr-locked-name;
     in property <string> tr-locked-iban;
+    in property <string> tr-bank;
+    callback transfer-iban-edited(string);
     in property <string> tr-recipient-hint;
     callback transfer-account-changed(int);
     in-out property <string> transfer-status;
@@ -848,6 +953,8 @@ export component MainWindow inherits Window {
     in property <string> table-empty;
     in-out property <int> table-selected: -1;
     callback view-changed();
+    // Depot view: writes the active tab as CSV (depot_export_ui.rs).
+    callback depot-export-csv();
     callback table-select(int);
     in property <[string]> doc-accounts;
     in-out property <int> doc-account-index: 0;
@@ -1083,6 +1190,16 @@ export component MainWindow inherits Window {
     callback select-account(int);
     callback sync();
     callback search-changed();
+    in property <string> amount-filter-title: "Betrag";
+    in property <bool> amount-filter-active;
+    in property <bool> amount-filter-masked;
+    in property <string> amount-filter-error;
+    in-out property <bool> amount-filter-open;
+    in-out property <string> amount-from;
+    in-out property <string> amount-to;
+    in-out property <int> amount-direction;
+    callback amount-filter-apply(string, string, int);
+    callback amount-filter-reset();
     callback bank-search(string);
     callback bank-add(int, string);
     callback tan-submit(string);
@@ -1096,6 +1213,11 @@ export component MainWindow inherits Window {
     in property <image> tan-image;
     in property <bool> tan-has-image: false;
     in-out property <string> tan-text;
+    // order comparison (#949): only for the TAN of a single transfer, frozen at submit
+    in property <bool> tan-cmp-visible: false;
+    in property <string> tan-cmp-amount;
+    in property <string> tan-cmp-prefix;
+    in property <string> tan-cmp-end;
 
     // Slint has no clipboard API of its own: a zero-size TextInput pastes it, the text is cleared again.
     function paste-transfer() {
@@ -1433,6 +1555,20 @@ export component MainWindow inherits Window {
                     current-index <=> root.tag-index;
                     selected => { root.search-changed(); }
                 }
+                AmountFilterButton {
+                    title: root.amount-filter-title;
+                    active: root.amount-filter-active;
+                    open <=> root.amount-filter-open;
+                    reset => { root.amount-filter-reset(); }
+                }
+            }
+            if root.view-mode == 0 && root.amount-filter-open: AmountFilterRow {
+                masked: root.amount-filter-masked;
+                error: root.amount-filter-error;
+                from-text <=> root.amount-from;
+                to-text <=> root.amount-to;
+                direction-index <=> root.amount-direction;
+                apply(f, t, d) => { root.amount-filter-apply(f, t, d); }
             }
             if root.view-mode == 0: HorizontalLayout {
                 spacing: 6px;
@@ -1712,6 +1848,7 @@ export component MainWindow inherits Window {
                     SegButton { text: "Positionen"; checked: root.depot-tab == 0; clicked => { root.depot-tab = 0; root.view-changed(); } }
                     SegButton { text: "Aktivitäten"; checked: root.depot-tab == 1; clicked => { root.depot-tab = 1; root.view-changed(); } }
                     Rectangle { horizontal-stretch: 4; }
+                    GhostButton { text: "Als CSV exportieren …"; enabled: !root.busy; clicked => { root.depot-export-csv(); } }
                 }
                 if root.view-mode == 5: HorizontalLayout {
                     spacing: 8px;
@@ -1731,6 +1868,13 @@ export component MainWindow inherits Window {
                     Rectangle { horizontal-stretch: 1; }
                 }
                 if root.view-status != "": Text { text: root.view-status; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                if PositionHistory.available && PositionHistory.selected >= 0: HorizontalLayout {
+                    alignment: end;
+                    GhostButton {
+                        text: "Verlauf anzeigen …";
+                        clicked => { PositionHistory.request(PositionHistory.selected); }
+                    }
+                }
                 Rectangle {
                     vertical-stretch: 1;
                     background: Theme.surface;
@@ -1746,9 +1890,16 @@ export component MainWindow inherits Window {
                             ListView {
                                 for r[i] in root.table-rows: TableLine {
                                     data: r;
-                                    clickable: root.view-mode == 5;
-                                    active: root.view-mode == 5 && root.table-selected == i;
-                                    clicked => { if (root.view-mode == 5) { root.table-select(i); } }
+                                    clickable: root.view-mode == 5 || PositionHistory.available;
+                                    active: (root.view-mode == 5 && root.table-selected == i) || (PositionHistory.available && PositionHistory.selected == i);
+                                    clicked => {
+                                        if (root.view-mode == 5) {
+                                            root.table-select(i);
+                                        } else if (PositionHistory.available) {
+                                            PositionHistory.selected = i;
+                                        }
+                                    }
+                                    double-clicked => { if (PositionHistory.available) { PositionHistory.request(i); } }
                                 }
                             }
                         }
@@ -2023,12 +2174,13 @@ export component MainWindow inherits Window {
                     selected(value) => { root.transfer-account-changed(self.current-index); }
                 }
                 if !root.tr-recipient-locked : tr-name := LineEdit { text <=> root.transfer-pre-name; edited => { root.girocode-open = false; } placeholder-text: "Empfänger (Name)"; }
-                if !root.tr-recipient-locked : tr-iban := LineEdit { text <=> root.transfer-pre-iban; edited => { root.girocode-open = false; } placeholder-text: "IBAN des Empfängers"; }
+                if !root.tr-recipient-locked : tr-iban := LineEdit { text <=> root.transfer-pre-iban; edited => { root.girocode-open = false; root.transfer-iban-edited(self.text); } placeholder-text: "IBAN des Empfängers"; }
                 if root.tr-recipient-locked : VerticalLayout {
                     spacing: 4px;
                     if root.tr-locked-name != "" : Text { text: root.tr-locked-name; color: Theme.text; font-size: 13px; }
                     if root.tr-locked-iban != "" : Text { text: root.tr-locked-iban; color: Theme.text; font-size: 13px; }
                 }
+                Text { text: root.tr-bank; color: Theme.muted; font-size: 11px; min-height: 14px; overflow: elide; }
                 if root.tr-recipient-hint != "" : Text {
                     text: root.tr-recipient-hint;
                     color: Theme.muted; font-size: 11px; wrap: word-wrap;
@@ -2100,41 +2252,100 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ---- PIN / TAN dialog (overlay); the input is cleared as soon as it is handed over
+    // ---- PIN / TAN dialog (overlay); the input is cleared as soon as it is handed over.
+    // Height is capped to the window: title, message, image and comparison scroll,
+    // the input and the buttons stay fixed at the bottom (reachable at the 600px minimum height).
     if tan-open: Rectangle {
         background: #000000aa;
         TouchArea { }
         Rectangle {
             width: min(460px, parent.width - 32px);
-            height: tan-col.preferred-height + 4px;
+            // 2 × 18px padding + 10px spacing + 4px, like `Dialog`
+            height: min(tan-body.preferred-height + tan-foot.preferred-height + 50px, parent.height - 32px);
             background: Theme.surface;
             border-radius: 14px;
             border-width: 1px;
             border-color: Theme.border;
-            tan-col := VerticalLayout {
+            VerticalLayout {
                 padding: 18px;
                 spacing: 10px;
-                Text { text: root.tan-title; font-size: 18px; font-weight: 700; color: Theme.text; wrap: word-wrap; }
-                Text { text: root.tan-message; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
-                if root.tan-has-image: Image { source: root.tan-image; height: 200px; image-fit: contain; }
-                if root.tan-mode == "push": Text {
-                    text: "Warte auf Freigabe in der Bank-App …";
-                    color: Theme.text; font-size: 13px; horizontal-alignment: center;
+                tan-flick := Flickable {
+                    vertical-stretch: 1;
+                    viewport-width: self.width;
+                    viewport-height: tan-body.preferred-height;
+                    tan-body := VerticalLayout {
+                        width: tan-flick.width;
+                        height: self.preferred-height;
+                        spacing: 10px;
+                        Text { text: root.tan-title; font-size: 18px; font-weight: 700; color: Theme.text; wrap: word-wrap; }
+                        Text { text: root.tan-message; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                        if root.tan-has-image: Image { source: root.tan-image; height: 200px; image-fit: contain; }
+                        if root.tan-cmp-visible && root.unlocked: Rectangle {
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 6px;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Betrag"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
+                                    Text {
+                                        text: root.privacy ? "•••,•• €" : root.tan-cmp-amount;
+                                        color: Theme.text; font-size: 18px; font-weight: 700;
+                                        horizontal-alignment: right; horizontal-stretch: 1;
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Empfänger-IBAN"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
+                                    Text {
+                                        text: root.privacy ? "•••• •••• ••••" : root.tan-cmp-prefix;
+                                        color: Theme.muted; font-size: 12px; overflow: elide;
+                                        horizontal-alignment: right; vertical-alignment: center; horizontal-stretch: 1;
+                                    }
+                                    Rectangle {
+                                        background: Theme.border;
+                                        border-radius: 6px;
+                                        width: cmp-end.preferred-width + 12px;
+                                        horizontal-stretch: 0;
+                                        cmp-end := Text { text: root.privacy ? "••••" : root.tan-cmp-end; color: Theme.text; font-size: 20px; font-weight: 800; }
+                                    }
+                                }
+                                Text {
+                                    text: "Bitte gleichen Sie Betrag und die letzten 4 Zeichen der Empfänger-IBAN vor der Freigabe auf Ihrem TAN-Gerät / Smartphone ab.";
+                                    color: Theme.text; font-size: 12px; wrap: word-wrap;
+                                }
+                                if root.privacy: Text {
+                                    text: "Privatmodus: Betrag und Empfänger-IBAN sind ausgeblendet (Strg+Umschalt+P blendet sie ein).";
+                                    color: Theme.muted; font-size: 11px; wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
                 }
-                if root.tan-mode != "push" && root.tan-mode != "confirm": LineEdit {
-                    text <=> root.tan-text;
-                    input-type: root.tan-mode == "pin" ? InputType.password : InputType.text;
-                    placeholder-text: root.tan-mode == "pin" ? "PIN" : root.tan-mode == "redirect" ? "Adresse oder Code aus dem Browser einfügen" : "TAN";
-                    accepted(t) => { root.tan-submit(t); root.tan-text = ""; }
-                }
-                HorizontalLayout {
-                    alignment: end;
-                    spacing: 8px;
-                    Button { text: "Abbrechen"; clicked => { root.tan-text = ""; root.tan-cancel(); } }
-                    if root.tan-mode != "push": Button {
-                        text: root.tan-mode == "confirm" ? "Trotzdem senden" : "Weiter";
-                        primary: true;
-                        clicked => { root.tan-submit(root.tan-text); root.tan-text = ""; }
+                tan-foot := VerticalLayout {
+                    vertical-stretch: 0;
+                    spacing: 10px;
+                    if root.tan-mode == "push": Text {
+                        text: "Warte auf Freigabe in der Bank-App …";
+                        color: Theme.text; font-size: 13px; horizontal-alignment: center;
+                    }
+                    if root.tan-mode != "push" && root.tan-mode != "confirm": LineEdit {
+                        text <=> root.tan-text;
+                        input-type: root.tan-mode == "pin" ? InputType.password : InputType.text;
+                        placeholder-text: root.tan-mode == "pin" ? "PIN" : root.tan-mode == "redirect" ? "Adresse oder Code aus dem Browser einfügen" : "TAN";
+                        accepted(t) => { root.tan-submit(t); root.tan-text = ""; }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        Button { text: "Abbrechen"; clicked => { root.tan-text = ""; root.tan-cancel(); } }
+                        if root.tan-mode != "push": Button {
+                            text: root.tan-mode == "confirm" ? "Trotzdem senden" : "Weiter";
+                            primary: true;
+                            clicked => { root.tan-submit(root.tan-text); root.tan-text = ""; }
+                        }
                     }
                 }
             }
