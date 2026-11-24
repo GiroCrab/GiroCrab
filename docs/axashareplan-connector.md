@@ -42,8 +42,10 @@ the cent rounding of the price). A failed check imports nothing.
 
 ## Limits
 
-- Only funds of type `mutual-fund` are read (what the plan shows for PEEG). Other instrument
-  types (for example directly held shares after a transfer) are not imported.
+- Only the plan type **PEEG** (funds of type `mutual-fund`) is recognized and imported; this is
+  what the connector was built and tested with. Other plan types or instrument types (for
+  example directly held shares after a transfer) are not imported. They can be requested with
+  an issue and, with sample data, be added.
 - More than 499 positions are rejected rather than cut off.
 - The embedded browser is needed on every fetch (SMS code); there is no background sync.
 - The portal is not documented and can change without notice (the interface path carries its
