@@ -123,6 +123,15 @@ fn old_postings_keep_their_ids_edits_splits_and_documents_without_duplicates() {
     let db = v.db().unwrap();
     let edits: (String, i64, i64, i64) = db.query_row("SELECT note,checked,(SELECT count(*) FROM transaction_splits WHERE transaction_id=t.id),(SELECT count(*) FROM booking_documents WHERE booking_id=t.id) FROM transactions t WHERE id=?1",[row],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
     assert_eq!(edits, ("invented note".into(), 1, 1, 1));
+    // the part keeps its identity through both imports (refund links address it by UUID)
+    let part: String = db
+        .query_row(
+            "SELECT uuid FROM transaction_splits WHERE transaction_id=?1",
+            [row],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(part, "part-1");
     // Simulate a subsequent archived-version import: its exact ID is still present.
     assert_eq!(db.execute("INSERT OR IGNORE INTO transactions(account_id,external_id,booking_date,amount_cents) VALUES (?1,?2,'2026-11-12',-2098)",params![account,compatibility::legacy_id(false,"new")]).unwrap(),0);
 }

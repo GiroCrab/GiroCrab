@@ -551,7 +551,7 @@ pub(crate) fn store_splits(
     }
     let referenced = conn
         .prepare_cached(
-            "SELECT s.uuid,s.amount_cents,EXISTS(SELECT 1 FROM refund_links l WHERE l.deleted_ms IS NULL AND ((l.refund_id=s.transaction_id AND l.refund_part=s.uuid) OR (l.original_id=s.transaction_id AND l.original_part=s.uuid))) FROM transaction_splits s WHERE s.transaction_id=?1",
+            "SELECT s.uuid,s.amount_cents,EXISTS(SELECT 1 FROM refund_links l WHERE (l.deleted_ms IS NULL OR (NOT l.moved AND l.unlink_id != '')) AND ((l.refund_id=s.transaction_id AND l.refund_part=s.uuid) OR (l.original_id=s.transaction_id AND l.original_part=s.uuid))) FROM transaction_splits s WHERE s.transaction_id=?1",
         )?
         .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, bool>(2)?)))?
         .collect::<Result<Vec<_>, _>>()?;

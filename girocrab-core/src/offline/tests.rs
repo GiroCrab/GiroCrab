@@ -49,10 +49,12 @@ fn live_count(v: &Vault, id: i64) -> i64 {
 }
 
 /// CodeRabbit (#1855): a date-only edit on one device and a split edit on the other both
-/// survive the merge, in either order (the date travels with the text, not with the splits).
+/// survive the merge, in either edit and receive order (the date has its own stamp, `date_ms`).
 #[test]
 fn date_only_edit_does_not_outrank_a_peer_split_edit() {
-    for date_first in [true, false] {
+    for (date_first, a_receives_first) in
+        [(true, true), (false, true), (true, false), (false, false)]
+    {
         let a = vault("date-vs-split-a");
         let b = vault("date-vs-split-b");
         let account = a
@@ -105,8 +107,13 @@ fn date_only_edit_does_not_outrank_a_peer_split_edit() {
             split_edit();
             date_edit();
         }
-        a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
-        b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        if a_receives_first {
+            a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+            b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        } else {
+            b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+            a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+        }
         for (v, id) in [(&a, id), (&b, bid)] {
             let date: String = v
                 .db()

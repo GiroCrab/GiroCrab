@@ -451,11 +451,15 @@ pub(crate) fn merge_bookings(
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
-                if !m.splits.is_empty()
+                // checked against the amount this booking keeps; a 0-€ booking exists only
+                // through its parts, so an empty vector does not apply to it
+                let kept_amount = m.manual_amount.unwrap_or(local_amounts[&id]);
+                if (!m.splits.is_empty()
                     && m.splits
                         .iter()
                         .try_fold(0i128, |sum, p| sum.checked_add(i128::from(p.2)))
-                        != Some(i128::from(m.manual_amount.unwrap_or(local_amounts[&id])))
+                        != Some(i128::from(kept_amount)))
+                    || (m.splits.is_empty() && !old.splits.is_empty() && kept_amount == 0)
                 {
                     m.splits = old.splits.clone();
                     m.splits_ms = old.splits_ms;
@@ -529,7 +533,9 @@ pub(crate) fn merge_bookings(
                 let id = conn.last_insert_rowid();
                 id_map.insert(o.id, id);
                 local_amounts.insert(id, o.amount_cents);
-                pending_splits.insert(id, f.splits.clone());
+                if !f.splits.is_empty() {
+                    pending_splits.insert(id, f.splits.clone());
+                }
                 if !f.tags.is_empty() {
                     tag_ids.write(conn, id, &f.tags)?;
                 }
@@ -542,11 +548,16 @@ pub(crate) fn merge_bookings(
         }
     }
 
-    let live: HashSet<i64> = conn.prepare("SELECT t.id FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.deleted_ms IS NULL AND a.deleted_ms IS NULL")?
-        .query_map([],|r|r.get(0))?.collect::<Result<_,_>>()?;
+    // no vector changed: the stored UUIDs are unique already (unique index)
+    let live: HashSet<i64> = if pending_splits.is_empty() {
+        HashSet::new()
+    } else {
+        conn.prepare("SELECT t.id FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.deleted_ms IS NULL AND a.deleted_ms IS NULL")?
+            .query_map([],|r|r.get(0))?.collect::<Result<_,_>>()?
+    };
     let mut owners: HashMap<String, Vec<(i64, usize)>> = HashMap::new();
     let mut keys = HashMap::new();
-    for (&id, fields) in &local {
+    for (&id, fields) in local.iter().filter(|_| !pending_splits.is_empty()) {
         for (position, line) in fields.splits.iter().enumerate() {
             owners
                 .entry(line.0.clone())
@@ -677,16 +688,20 @@ fn write_booking(
             params![id, m.manual_amount],
         )?;
         // rules can match amounts: a rule-assigned category is evaluated again (it may no
-        // longer match); manual categories and split bookings stay as they are
-        if m.cat.is_none() {
+        // longer match); manual categories and split bookings (by the winning vector, the
+        // stored parts are rewritten later) stay as they are
+        if m.cat.is_none() && m.splits.is_empty() {
             conn.execute(
                 "UPDATE transactions SET category_id = NULL, rule_id = NULL, category_source = 'none'
-                  WHERE id = ?1 AND category_source = 'rule'
-                    AND NOT EXISTS (SELECT 1 FROM transaction_splits WHERE transaction_id = ?1)",
+                  WHERE id = ?1 AND category_source = 'rule'",
                 [id],
             )?;
             cleared.insert(id);
         }
+    }
+    // parts removed: the booking carries its own category again, the rules may fill it
+    if m.splits.is_empty() && !old.splits.is_empty() && m.cat.is_none() {
+        cleared.insert(id);
     }
     if m.cat != old.cat {
         if m.cat.is_some() {
