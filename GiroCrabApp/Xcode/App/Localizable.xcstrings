@@ -11771,19 +11771,19 @@
         }
       }
     },
-    "Die Verknüpfung lässt Buchungen und Kontostände unverändert. Auswertungen berücksichtigen die Erstattung." : {
+    "Die Verknüpfung dient nur der Dokumentation. Buchungen, Kontostände und Auswertungen bleiben unverändert." : {
       "extractionState" : "manual",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Verknüpfung lässt Buchungen und Kontostände unverändert. Auswertungen berücksichtigen die Erstattung."
+            "value" : "Die Verknüpfung dient nur der Dokumentation. Buchungen, Kontostände und Auswertungen bleiben unverändert."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The link leaves transactions and account balances unchanged. Reports take the refund into account."
+            "value" : "The link is for reference only. Transactions, account balances and reports stay unchanged."
           }
         }
       }

@@ -251,7 +251,7 @@ struct RefundPickerSheet: View {
                 Text(paysBack ? String(localized: "Wählen Sie die ursprünglichen Buchungen, auch mehrere Teilerstattungen.")
                      : String(localized: "Wählen Sie die Erstattungen, die diese Buchung zurückzahlen."))
                     .appFont(.callout).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-                Text("Die Verknüpfung lässt Buchungen und Kontostände unverändert. Auswertungen berücksichtigen die Erstattung.")
+                Text("Die Verknüpfung dient nur der Dokumentation. Buchungen, Kontostände und Auswertungen bleiben unverändert.")
                     .appFont(.caption).foregroundStyle(Theme.secondary)
                 if !parts.isEmpty {
                     Picker("Teil der Buchung", selection: $ownPart) {
