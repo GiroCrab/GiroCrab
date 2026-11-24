@@ -158,7 +158,7 @@ Systemschrift (SF Pro), gesetzt über `.appFont`, damit sie der Schriftgröße f
 
 - macOS: `NavigationSplitView` mit Seitenleiste, Buchungsliste (nach Tagen gruppiert) und Inspektor.
   Der Inspektor ist eine Folge flacher Abschnitte mit Trennlinien; Reihenfolge und Sichtbarkeit sind einstellbar.
-- iOS: Navigationsstapel; auf dem iPhone öffnet sich der Inspektor als Sheet (`.medium`, `.large`).
+- iOS: Navigationsstapel. Auf dem iPhone öffnet sich der Inspektor als Sheet (`.medium`, `.large`), bei Bedienungshilfen-Schriftgrößen in voller Höhe (`.large`).
 - Abstände der Hauptspalten: `ViewLayout.sectionInset` (12 pt) seitlich, `sectionPadding` (8 pt) oben und
   unten, `sectionSpacing` (4 pt) zwischen Elementen; `cardGap` (4 pt) zwischen den Blöcken der Buchungsliste.
   Konto-Ansichten: `assetBlockSpacing` (14 pt), Karten dort 16 pt Innenabstand.

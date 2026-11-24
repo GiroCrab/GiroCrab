@@ -37,6 +37,8 @@ fn set_move_buttons(win: &MainWindow, order: &[(i64, Option<i64>)], selected: Op
     win.set_cat_can_down(can(1));
 }
 
+mod category_copy;
+
 thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
 }
@@ -345,6 +347,8 @@ fn wire_accounts(win: &MainWindow, vault: &VaultSlot) {
 }
 
 fn wire_categories(win: &MainWindow, vault: &VaultSlot) {
+    category_copy::wire(win, vault);
+
     let (weak, slot) = (win.as_weak(), vault.clone());
     win.on_categories_open(move || {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot)) else {
@@ -467,12 +471,14 @@ fn wire_categories(win: &MainWindow, vault: &VaultSlot) {
             return;
         };
         win.set_cat_armed(false);
+        win.set_cat_busy(true);
         win.set_cat_status("Wird gespeichert …".into());
         let (weak, slot) = (win.as_weak(), slot.clone());
         std::thread::spawn(move || {
             let result = v.reorder_categories(parent, ids).map_err(|e| e.to_string());
             let _ = weak.upgrade_in_event_loop(move |win| {
                 with_ui(|u| u.moving = false);
+                win.set_cat_busy(false);
                 // Locked or swapped meanwhile: the dialog no longer shows this vault.
                 let Some(v) = vault_of(&slot).filter(|cur| Arc::ptr_eq(cur, &v)) else {
                     return;
@@ -597,6 +603,54 @@ mod tests {
         v.delete_category(parent).unwrap();
         let cats = v.list_categories(None, None).unwrap();
         assert!(cats.iter().all(|c| c.id != parent && c.id != sub));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn category_duplicate_copies_tree_at_end_of_siblings() {
+        let (v, path) = demo_vault("dup");
+        let palette = girocrab_core::user_groups::account_color_palette();
+        let orig = v
+            .create_category(
+                "Testreise".into(),
+                None,
+                "airplane".into(),
+                palette[2].clone(),
+            )
+            .unwrap();
+        let sub = v
+            .create_category("Bahn".into(), Some(orig), "tram".into(), palette[3].clone())
+            .unwrap();
+        let later = v
+            .create_category(
+                "Testreise Später".into(),
+                None,
+                String::new(),
+                palette[0].clone(),
+            )
+            .unwrap();
+        let copy = super::category_copy::duplicate_in(&v, orig).unwrap();
+        let cats = v.list_categories(None, None).unwrap();
+        let c = cats.iter().find(|c| c.id == copy).unwrap();
+        // Same as macOS: always „<Name> Kopie“ (the core's unique name index rejects a clash).
+        assert_eq!(c.name, "Testreise Kopie");
+        assert_eq!(c.sf_symbol, "airplane");
+        assert!(c.color_hex.eq_ignore_ascii_case(&palette[2]));
+        assert_eq!(c.parent_id, None);
+        assert_eq!(c.budget_cents, None);
+        let top: Vec<i64> = cats
+            .iter()
+            .filter(|c| c.parent_id.is_none())
+            .map(|c| c.id)
+            .collect();
+        let pos = |id| top.iter().position(|&i| i == id).unwrap();
+        // No reorder: the copy is appended after every existing top-level category.
+        assert_eq!(pos(copy), top.len() - 1);
+        assert!(pos(later) > pos(orig));
+        let child = cats.iter().find(|c| c.parent_id == Some(copy)).unwrap();
+        assert_eq!(child.name, "Bahn");
+        assert_eq!(child.sf_symbol, "tram");
+        assert_ne!(child.id, sub);
         let _ = std::fs::remove_file(&path);
     }
 }
