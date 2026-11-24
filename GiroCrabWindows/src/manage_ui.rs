@@ -469,12 +469,14 @@ fn wire_categories(win: &MainWindow, vault: &VaultSlot) {
             return;
         };
         win.set_cat_armed(false);
+        win.set_cat_busy(true);
         win.set_cat_status("Wird gespeichert …".into());
         let (weak, slot) = (win.as_weak(), slot.clone());
         std::thread::spawn(move || {
             let result = v.reorder_categories(parent, ids).map_err(|e| e.to_string());
             let _ = weak.upgrade_in_event_loop(move |win| {
                 with_ui(|u| u.moving = false);
+                win.set_cat_busy(false);
                 // Locked or swapped meanwhile: the dialog no longer shows this vault.
                 let Some(v) = vault_of(&slot).filter(|cur| Arc::ptr_eq(cur, &v)) else {
                     return;

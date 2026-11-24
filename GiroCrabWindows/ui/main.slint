@@ -1060,6 +1060,7 @@ export component MainWindow inherits Window {
     in property <string> cat-status;
     in property <bool> cat-can-up: false;
     in property <bool> cat-can-down: false;
+    in property <bool> cat-busy: false;
     callback account-new();
     callback account-edit();
     callback account-save(string, int);
@@ -2211,9 +2212,9 @@ export component MainWindow inherits Window {
         HorizontalLayout {
             spacing: 8px;
             Button { text: "Neu anlegen"; clicked => { root.category-add(root.cat-name, root.cat-color, root.cat-sub); } }
-            Button { text: "Duplizieren"; enabled: root.cat-selected >= 0; clicked => { root.category-duplicate(); } }
-            Button { text: "▲"; enabled: root.cat-can-up; clicked => { root.category-move(-1); } }
-            Button { text: "▼"; enabled: root.cat-can-down; clicked => { root.category-move(1); } }
+            Button { text: "Duplizieren"; enabled: root.cat-selected >= 0 && !root.cat-busy; clicked => { root.category-duplicate(); } }
+            Button { text: "▲"; enabled: root.cat-can-up && !root.cat-busy; clicked => { root.category-move(-1); } }
+            Button { text: "▼"; enabled: root.cat-can-down && !root.cat-busy; clicked => { root.category-move(1); } }
             Button { text: "Speichern"; enabled: root.cat-selected >= 0; clicked => { root.category-save(root.cat-name, root.cat-color); } }
             Button { text: root.cat-armed ? "Wirklich löschen?" : "Löschen"; enabled: root.cat-selected >= 0; clicked => { root.category-delete(); } }
             Rectangle { horizontal-stretch: 1; }

@@ -184,12 +184,14 @@ pub(super) fn wire(win: &MainWindow, vault: &VaultSlot) {
             return;
         };
         win.set_cat_armed(false);
+        win.set_cat_busy(true);
         win.set_cat_status("Wird dupliziert …".into());
         let (weak, slot) = (win.as_weak(), slot.clone());
         std::thread::spawn(move || {
             let result = duplicate_in(&v, id);
             let _ = weak.upgrade_in_event_loop(move |win| {
                 with_ui(|u| u.moving = false);
+                win.set_cat_busy(false);
                 // Locked or swapped meanwhile: the dialog no longer shows this vault.
                 let Some(v) = vault_of(&slot).filter(|cur| Arc::ptr_eq(cur, &v)) else {
                     return;
