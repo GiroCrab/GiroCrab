@@ -16,6 +16,7 @@ extension AppModel {
             recurringHidden = snapshot.ignored
             recurringMonth = snapshot.month
         }
+        loadSubscriptionData()
     }
 
     /// The recurring series a booking belongs to, if any.
@@ -28,8 +29,10 @@ extension AppModel {
 
     func markRecurring(_ b: Booking, _ interval: RecurrenceInterval, customDates: [String] = []) {
         guard let vault else { return }
+        let before = recurringSeries(for: b)
         runCore { try vault.markBookingRecurring(bookingId: b.id, interval: interval, customDates: customDates) }
         refreshRecurring()
+        if let before { carrySubscription(from: before) }
     }
 
     /// Changes the interval of a whole series (row context menu in the recurring list);
@@ -38,6 +41,7 @@ extension AppModel {
         guard let vault, s.interval != interval else { return }
         runCore { try vault.markBookingRecurring(bookingId: s.lastBookingId, interval: interval, customDates: []) }
         refreshRecurring()
+        carrySubscription(from: s)
     }
 
     /// "Nicht wiederkehrend" for a detected or marked series.
@@ -57,8 +61,17 @@ extension AppModel {
     }
 
     /// Selects a booking in the list, widening the period if it is outside of it.
-    func revealBooking(_ id: Int64) {
-        if booking(withID: id) == nil {
+    /// With `account` the booking is shown in that account with every filter cleared (from the
+    /// subscription list, whose column is not a booking list); without, only when it is not visible yet.
+    func revealBooking(_ id: Int64, inAccount account: Int64? = nil) {
+        if let account {
+            sidebarSelection = .account(account)
+            period = .all
+            directionFilter = .all
+            statusFilter = .all
+            tagFilter = BookingTagFilter()
+            searchText = ""
+        } else if booking(withID: id) == nil {
             sidebarSelection = .allAccounts
             period = .all
             directionFilter = .all

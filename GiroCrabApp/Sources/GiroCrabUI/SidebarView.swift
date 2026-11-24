@@ -101,6 +101,15 @@ struct SidebarView: View {
             .badge(model.mandateCount)
             .tag(SidebarItem.directDebits)
             .listRowInsets(Self.rowInsets)
+            // „Abos“ (#1787): marked recurring expenses
+            HStack(spacing: DisclosureChevron.gap) {
+                SidebarLeadingSlot()
+                Image(systemName: "repeat.circle").foregroundStyle(Theme.secondary).frame(width: 20)
+                Text("Abos & Verträge").fontWeight(.medium).appDefaultFont()
+                Spacer()
+            }
+            .tag(SidebarItem.subscriptions)
+            .listRowInsets(Self.rowInsets)
             }
             SidebarCaption("Dokumente", open: !documentsCollapsed, toggle: toggler($documentsCollapsed))
             if !documentsCollapsed {

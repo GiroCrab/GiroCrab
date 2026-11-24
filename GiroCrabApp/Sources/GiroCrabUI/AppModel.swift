@@ -357,6 +357,11 @@ public final class AppModel {
     /// Recurring bookings of the current month: booked vs. still due.
     var recurringMonth: RecurringMonthOverview?
     var showRecurringSheet = false
+    /// Subscriptions (GitHub #1787): the marked series with their contract fields, and the manual entries.
+    var subscriptionData = SubscriptionData()
+    /// Bookings of the marked series by `seriesKey` (newest first), for the icon and the booking list.
+    var subscriptionBookings: [String: [Booking]] = [:]
+    @ObservationIgnored var subscriptionReloadTask: Task<Void, Never>?
     var showAddBank = false
     /// Series hidden with "Nicht wiederkehrend" (can be shown again).
     var recurringHidden: [IgnoredRecurring] = []
@@ -609,6 +614,8 @@ public final class AppModel {
     /// Counts the sidebar badge reads: an older read that finishes late must not overwrite a newer one.
     @ObservationIgnored var sidebarCountsGeneration = 0
     var selectedPlannedID: String?
+    /// The subscription shown in the inspector (GitHub #1787), `SubscriptionItem.id`.
+    var selectedSubscriptionID: String?
     /// „Lastschriften“ (#143): mandates of the creditor account shown.
     var mandates: [Mandate] = []
     var mandateAccountID: Int64?
@@ -1032,6 +1039,7 @@ public final class AppModel {
             case "geplant", "planned": sidebarSelection = .planned
             case "neu", "new": sidebarSelection = .newBookings
             case "lastschriften", "debits": sidebarSelection = .directDebits
+            case "abos", "subscriptions": sidebarSelection = .subscriptions
             case "vermoegen", "vermögen", "wealth": sidebarSelection = .wealth
             case "vermoegen-cash": sidebarSelection = .wealth; wealthScope = .cash
             case "vermoegen-wertpapiere": sidebarSelection = .wealth; wealthScope = .securities

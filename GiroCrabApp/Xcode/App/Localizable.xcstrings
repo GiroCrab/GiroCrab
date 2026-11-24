@@ -102,6 +102,28 @@
         }
       }
     },
+    "%@ / Jahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ / year"
+          }
+        }
+      }
+    },
+    "%@ / Monat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ / month"
+          }
+        }
+      }
+    },
     "%@ Buchungen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -353,6 +375,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ · next on %@"
+          }
+        }
+      }
+    },
+    "%@ · zuletzt am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · last on %@"
           }
         }
       }
@@ -1529,6 +1562,17 @@
         }
       }
     },
+    "%lld erkannte Serien" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld detected series"
+          }
+        }
+      }
+    },
     "%lld exportieren …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2474,6 +2518,17 @@
         }
       }
     },
+    "(%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(%lld)"
+          }
+        }
+      }
+    },
     "(verknüpft)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2996,6 +3051,61 @@
         }
       }
     },
+    "Abo hinzufügen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add subscription"
+          }
+        }
+      }
+    },
+    "Abo hinzufügen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add subscription …"
+          }
+        }
+      }
+    },
+    "Abo löschen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete subscription …"
+          }
+        }
+      }
+    },
+    "Abo von Hand anlegen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create subscription by hand"
+          }
+        }
+      }
+    },
+    "Abo „%@“ löschen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete subscription “%@”?"
+          }
+        }
+      }
+    },
     "Abonnement (Spar-Abo) – wiederkehrende Abbuchung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3003,6 +3113,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Subscription (Subscribe & Save) – recurring charge"
+          }
+        }
+      }
+    },
+    "Abos & Verträge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Subscriptions & Contracts"
           }
         }
       }
@@ -3504,6 +3625,17 @@
         }
       }
     },
+    "Aktiv / Inaktiv" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Active / inactive"
+          }
+        }
+      }
+    },
     "Aktiv, noch kein Konto geteilt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3511,6 +3643,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Active, no account shared yet"
+          }
+        }
+      }
+    },
+    "Aktive Abos: %lld · beendete nicht eingerechnet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Active subscriptions: %lld · ended ones not included"
           }
         }
       }
@@ -3709,6 +3852,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "All"
+          }
+        }
+      }
+    },
+    "Alle %lld Buchungen anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show all %lld bookings"
           }
         }
       }
@@ -4131,6 +4285,17 @@
         }
       }
     },
+    "Alle Turnusse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All rhythms"
+          }
+        }
+      }
+    },
     "Alle Typen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4358,6 +4523,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Everyday & Spending"
+          }
+        }
+      }
+    },
+    "Als Abo markieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark as subscription"
           }
         }
       }
@@ -5782,6 +5958,17 @@
         }
       }
     },
+    "Aus dem Datum und dem Turnus berechnet GiroCrab die nächste Zahlung. Eine Notiz trägst du danach in der rechten Spalte ein." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab works out the next payment from the date and the rhythm. A note can be added in the right-hand column afterwards."
+          }
+        }
+      }
+    },
     "Aus dem Einstandskurs berechnet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5999,6 +6186,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Expenses per day"
+          }
+        }
+      }
+    },
+    "Ausgaben und Einnahmen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expenses and income"
           }
         }
       }
@@ -6997,6 +7195,28 @@
         }
       }
     },
+    "Beendet am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ended on %@"
+          }
+        }
+      }
+    },
+    "Beendete ausblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide ended"
+          }
+        }
+      }
+    },
     "Befehl, Konto, Kategorie oder Händler …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7960,6 +8180,28 @@
         }
       }
     },
+    "Betrag pro Jahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount per year"
+          }
+        }
+      }
+    },
+    "Betrag pro Zahlung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount per payment"
+          }
+        }
+      }
+    },
     "Betrag: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8022,6 +8264,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Amounts"
+          }
+        }
+      }
+    },
+    "Beträge anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show amounts"
+          }
+        }
+      }
+    },
+    "Beträge im eigenen Turnus oder umgerechnet anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show amounts in their own rhythm or converted"
           }
         }
       }
@@ -8877,6 +9141,17 @@
         }
       }
     },
+    "Buchungen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bookings (%lld)"
+          }
+        }
+      }
+    },
     "Buchungen als CSV exportieren …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8917,6 +9192,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Filter transactions"
+          }
+        }
+      }
+    },
+    "Buchungen im Konto anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show bookings in account"
           }
         }
       }
@@ -12650,6 +12936,17 @@
         }
       }
     },
+    "Du kannst ein Abo von Hand anlegen oder eine Buchung in der Detailansicht als wiederkehrend markieren." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can create a subscription by hand or mark a booking as recurring in its detail view."
+          }
+        }
+      }
+    },
     "Du wählst gleich einen Ordner für die Dateien." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13343,6 +13640,17 @@
         }
       }
     },
+    "Eine Zahlung am" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A payment on"
+          }
+        }
+      }
+    },
     "Eine ausgewählte Buchung gilt nach dieser Zeit als geprüft – wie eine gelesene E-Mail. Bei Mehrfachauswahl nie." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13959,6 +14267,28 @@
         }
       }
     },
+    "Ende %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ends %@"
+          }
+        }
+      }
+    },
+    "Endet am" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ends on"
+          }
+        }
+      }
+    },
     "Endgültig löschen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14131,6 +14461,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Result"
+          }
+        }
+      }
+    },
+    "Erkannte Buchungen durchsuchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search detected bookings"
           }
         }
       }
@@ -14905,6 +15246,28 @@
         }
       }
     },
+    "Filter" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter"
+          }
+        }
+      }
+    },
+    "Filter (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter (%lld)"
+          }
+        }
+      }
+    },
     "Filter zurücksetzen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15314,6 +15677,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Hairdresser"
+          }
+        }
+      }
+    },
+    "Frist in 30 Tagen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deadline within 30 days"
           }
         }
       }
@@ -15798,6 +16172,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Goes into “%@”"
+          }
+        }
+      }
+    },
+    "Gekündigt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled"
+          }
+        }
+      }
+    },
+    "Gekündigt am" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled on"
+          }
+        }
+      }
+    },
+    "Gekündigt · läuft bis %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled · runs until %@"
           }
         }
       }
@@ -17043,6 +17450,17 @@
         }
       }
     },
+    "Gruppieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Group"
+          }
+        }
+      }
+    },
     "Gruppierung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17205,6 +17623,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Valid for about %u more min."
+          }
+        }
+      }
+    },
+    "Halbjahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "half-year"
           }
         }
       }
@@ -18249,6 +18678,17 @@
         }
       }
     },
+    "In der Buchungsliste anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show in the booking list"
+          }
+        }
+      }
+    },
     "In der Hilfe suchen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18388,6 +18828,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Custom Schedule"
+          }
+        }
+      }
+    },
+    "Information" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Information"
           }
         }
       }
@@ -19228,6 +19679,39 @@
         }
       }
     },
+    "Kein Abo ausgewählt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No subscription selected"
+          }
+        }
+      }
+    },
+    "Kein Abo mehr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No longer a subscription"
+          }
+        }
+      }
+    },
+    "Kein Abo passt zu Suche und Filtern." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No subscription matches the search and filters."
+          }
+        }
+      }
+    },
     "Kein Abruf" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19404,6 +19888,17 @@
         }
       }
     },
+    "Kein erkannter Eintrag passt zur Suche." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No detected entry matches the search."
+          }
+        }
+      }
+    },
     "Kein gültiges Datum: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19466,6 +19961,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "None (Top Level)"
+          }
+        }
+      }
+    },
+    "Keine Abos" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No subscriptions"
           }
         }
       }
@@ -19609,6 +20115,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No bookings selected."
+          }
+        }
+      }
+    },
+    "Keine Buchungen gefunden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No bookings found."
           }
         }
       }
@@ -20060,6 +20577,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Matching Documents"
+          }
+        }
+      }
+    },
+    "Keine weiteren Serien erkannt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No more series detected"
           }
         }
       }
@@ -21335,6 +21863,17 @@
         }
       }
     },
+    "Kosten pro Jahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cost per year"
+          }
+        }
+      }
+    },
     "Kosten: eigene Gebühren- und Steuerzeilen sowie Aktivitäten mit Gebühren oder Steuern" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21529,6 +22068,61 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Purchases"
+          }
+        }
+      }
+    },
+    "Kündigen bis %@ · Ende %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel by %@ · ends %@"
+          }
+        }
+      }
+    },
+    "Kündigen bis %@ · noch %lld Tage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel by %1$@ · %2$lld days left"
+          }
+        }
+      }
+    },
+    "Kündigen nur noch heute · Ende %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last day to cancel · ends %@"
+          }
+        }
+      }
+    },
+    "Kündigungsfrist" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notice period"
+          }
+        }
+      }
+    },
+    "Kündigungsfrist am %@ verstrichen · Ende %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notice deadline %1$@ passed · ends %2$@"
           }
         }
       }
@@ -21760,6 +22354,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Last check"
+          }
+        }
+      }
+    },
+    "Letzte Zahlung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Last payment"
           }
         }
       }
@@ -22057,6 +22662,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Keeps this window open so you can open earlier billing periods in the portal."
+          }
+        }
+      }
+    },
+    "Läuft bis %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Runs until %@"
           }
         }
       }
@@ -23095,6 +23711,17 @@
         }
       }
     },
+    "Nach Art, Turnus und Status filtern" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter by type, rhythm and status"
+          }
+        }
+      }
+    },
     "Nach Bank" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23113,6 +23740,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Filter by amount"
+          }
+        }
+      }
+    },
+    "Nach Fristende gekündigt (Frist %@) · Vertrag läuft bis %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled after the deadline (%@) · contract runs until %@"
           }
         }
       }
@@ -23205,6 +23843,17 @@
         }
       }
     },
+    "Nach Status filtern" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter by status"
+          }
+        }
+      }
+    },
     "Nach Tags filtern" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23216,6 +23865,17 @@
         }
       }
     },
+    "Nach Turnus" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By rhythm"
+          }
+        }
+      }
+    },
     "Nach Updates suchen …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23223,6 +23883,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Check for Updates…"
+          }
+        }
+      }
+    },
+    "Nach Vertragsende noch gebucht am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still booked after contract end on %@"
           }
         }
       }
@@ -24361,6 +25032,17 @@
         }
       }
     },
+    "Nicht gruppieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No grouping"
+          }
+        }
+      }
+    },
     "Nicht in der Gesamtsumme" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24500,6 +25182,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "None of this ships with this version. Register your own FinTS product and your own API applications; the values are only kept in your encrypted vault."
+          }
+        }
+      }
+    },
+    "Nichts gefunden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing found"
           }
         }
       }
@@ -25345,6 +26038,17 @@
         }
       }
     },
+    "Nächste Zahlung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next payment"
+          }
+        }
+      }
+    },
     "Nächster Schritt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25836,6 +26540,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose Folder …"
+          }
+        }
+      }
+    },
+    "Original" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original"
+          }
+        }
+      }
+    },
+    "Original (eigener Turnus)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original (own rhythm)"
           }
         }
       }
@@ -26693,6 +27419,17 @@
         }
       }
     },
+    "Preis erhöht: %@ → %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Price increase: %1$@ → %2$@"
+          }
+        }
+      }
+    },
     "Priorität %d" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26770,6 +27507,28 @@
         }
       }
     },
+    "Pro Halbjahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per half year"
+          }
+        }
+      }
+    },
+    "Pro Jahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per year"
+          }
+        }
+      }
+    },
     "Pro Konto eine Datei" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26781,6 +27540,28 @@
         }
       }
     },
+    "Pro Monat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per month"
+          }
+        }
+      }
+    },
+    "Pro Quartal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Per quarter"
+          }
+        }
+      }
+    },
     "Pro gewähltem Konto entsteht eine eigene Datei." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -26788,6 +27569,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "A separate file is created for each selected account."
+          }
+        }
+      }
+    },
+    "Probezeit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trial period"
+          }
+        }
+      }
+    },
+    "Probezeit bis %@ · danach %@ / %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trial until %1$@ · then %2$@ / %3$@"
           }
         }
       }
@@ -27129,6 +27932,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reactivate"
+          }
+        }
+      }
+    },
+    "Rechtzeitig gekündigt (Frist %@)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled in time (deadline %@)"
           }
         }
       }
@@ -29011,6 +29825,17 @@
         }
       }
     },
+    "Sortieren und gruppieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sort and group"
+          }
+        }
+      }
+    },
     "Sortierung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29865,6 +30690,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search:"
+          }
+        }
+      }
+    },
+    "Suchen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search"
           }
         }
       }
@@ -31200,6 +32036,17 @@
         }
       }
     },
+    "Turnus" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rhythm"
+          }
+        }
+      }
+    },
     "Turnus ändern" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32097,6 +32944,17 @@
         }
       }
     },
+    "Verlängerung um" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Renews by"
+          }
+        }
+      }
+    },
     "Vermögen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32225,6 +33083,61 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Contract"
+          }
+        }
+      }
+    },
+    "Vertrag (optional)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contract (optional)"
+          }
+        }
+      }
+    },
+    "Vertrag abgelaufen am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contract expired on %@"
+          }
+        }
+      }
+    },
+    "Vertrag endet heute" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contract ends today"
+          }
+        }
+      }
+    },
+    "Vertrag ist gekündigt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contract is cancelled"
+          }
+        }
+      }
+    },
+    "Vertragsende" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contract end"
           }
         }
       }
@@ -32412,6 +33325,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "From %1$@ on %2$@ to %3$@ on %4$@. Low %5$@ on %6$@, high %7$@ on %8$@."
+          }
+        }
+      }
+    },
+    "Von Hand anlegen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create by hand …"
           }
         }
       }
@@ -33626,6 +34550,17 @@
         }
       }
     },
+    "Wiederkehrende Ausgaben und Einnahmen, die du als Abo oder Vertrag markiert hast, und selbst angelegte Einträge. Die Beträge stehen im eigenen Turnus oder umgerechnet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recurring expenses and income you marked as a subscription or contract, and entries you created yourself. Amounts are shown in their own rhythm or converted."
+          }
+        }
+      }
+    },
     "Wiederkehrende Buchung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33846,6 +34781,17 @@
         }
       }
     },
+    "Wähle ein Abo, um Vertragsdaten und Buchungen zu sehen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a subscription to see its contract data and bookings."
+          }
+        }
+      }
+    },
     "Wähle ein Mandat, um Details zu sehen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33853,6 +34799,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Select a mandate to see its details."
+          }
+        }
+      }
+    },
+    "Wähle erkannte wiederkehrende Buchungen aus oder lege ein Abo von Hand an. Mehrere Verträge beim selben Anbieter erscheinen als eigene Einträge, sofern die Beträge verschieden sind." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pick detected recurring bookings or create a subscription by hand. Several contracts with the same provider appear as separate entries as long as their amounts differ."
           }
         }
       }
@@ -35287,6 +36244,17 @@
         }
       }
     },
+    "nächste am %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "next on %@"
+          }
+        }
+      }
+    },
     "optional" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36681,6 +37649,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "€"
+          }
+        }
+      }
+    },
+    "€ / Halbjahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "€ / half year"
+          }
+        }
+      }
+    },
+    "€ / Jahr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "€ / year"
+          }
+        }
+      }
+    },
+    "€ / Monat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "€ / month"
+          }
+        }
+      }
+    },
+    "€ / Quartal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "€ / quarter"
           }
         }
       }

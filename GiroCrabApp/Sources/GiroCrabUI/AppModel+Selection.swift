@@ -306,7 +306,7 @@ extension AppModel {
     /// Shows every booking of the booking's merchant in the current period: all
     /// accounts, no category, status, direction, tag, scope or search filter. The
     /// merchant key covers differing counterparty spellings of one merchant.
-    func focusMerchant(of booking: Booking) {
+    func focusMerchant(of booking: Booking, inAccount account: Int64? = nil, allPeriods: Bool = false) {
         let key = booking.merchant.key
         guard !key.isEmpty else { return }
         // A second merchant from within a merchant list still returns to the original view.
@@ -322,7 +322,8 @@ extension AppModel {
         searchTask?.cancel()
         merchantFocus = MerchantFocus(key: key, name: booking.merchantName)
         merchantFocusReturn = back
-        applyMerchantFocusSelection(.allAccounts)
+        if allPeriods { period = .all }
+        applyMerchantFocusSelection(account.map { .account($0) } ?? .allAccounts)
         #if os(iOS)
         showBookingSheet = false
         #endif

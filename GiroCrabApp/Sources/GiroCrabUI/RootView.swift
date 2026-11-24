@@ -500,6 +500,7 @@ struct MainSplitView: View {
             case .documents: DocumentsView()
             case .planned: PlannedPaymentsView()
             case .directDebits: DirectDebitsView()
+            case .subscriptions: SubscriptionsView()
             case .wealth: WealthView()
             case .bookings: AccountColumn()
             }
