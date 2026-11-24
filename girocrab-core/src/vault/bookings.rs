@@ -67,8 +67,18 @@ fn category_match_sql(cat_match: &str) -> String {
 fn is_imported_security_purchase_category(path: &str) -> bool {
     let parts: Vec<_> = path.split('›').map(|p| p.trim()).collect();
     parts.len() >= 2
-        && parts.last().is_some_and(|p| p.eq_ignore_ascii_case("Wertpapieranlage"))
-        && parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Anlegen")
+        && parts.last().is_some_and(|p| {
+            p.eq_ignore_ascii_case("Wertpapieranlage") || p.eq_ignore_ascii_case("ETF-Sparpläne")
+        })
+        && (parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Anlegen")
+            || parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Investieren"))
+}
+
+/// Explicit custom category for security sale proceeds.
+fn is_security_sale_category(path: &str) -> bool {
+    path.rsplit('›')
+        .next()
+        .is_some_and(|p| p.trim().to_lowercase() == "wertpapierverkäufe")
 }
 
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
@@ -332,12 +342,6 @@ impl BookingFinisher {
         // GiroCrab category role. Recognise the specific security-purchase category
         // rather than treating every custom savings category as an investment.
         // This runs on reads, so previously imported bookings are covered too.
-        if t.amount_cents < 0
-            && t.flow == FlowKind::Consumption
-            && is_imported_security_purchase_category(&t.category_path)
-        {
-            t.flow = FlowKind::Investment;
-        }
         t.is_salary = crate::salary::is_salary(t, &self.salary_ibans);
         // A salary stays income although its booking text names a transfer
         // (comdirect: "Übertrag / Überweisung"); a transfer category still wins.
@@ -355,6 +359,16 @@ impl BookingFinisher {
             } else {
                 FlowKind::Consumption
             };
+        }
+        if !transfer_category
+            && ((t.amount_cents < 0
+                && t.flow == FlowKind::Consumption
+                && is_imported_security_purchase_category(&t.category_path))
+                || (t.amount_cents > 0
+                    && t.flow == FlowKind::Income
+                    && is_security_sale_category(&t.category_path)))
+        {
+            t.flow = FlowKind::Investment;
         }
         if is_own_transfer(t, &self.own_ibans, transfer_category)
             || (self.pair_transfers.contains(&t.id)
@@ -2182,6 +2196,26 @@ mod own_transfer_tests {
         assert_eq!(page.consumption_cents, -115_00);
     }
 
+
+    #[test]
+    fn imported_security_sales_reduce_net_investment() {
+        let (_dir, v, ids) = vault_with(&[
+            ("Unbekanntes Wertpapier", -250_00, "Kauf", Some("Ausgaben/Sparen & Investieren/ETF-Sparpläne")),
+            ("Unbekanntes Wertpapier", 100_00, "Verkauf", Some("Einnahmen/Sparen & Investieren/Wertpapierverkäufe")),
+            ("Depot", 20_00, "Dividende", Some("Einnahmen/Dividenden")),
+            ("Bank", 5_00, "Zinsen", Some("Einnahmen/Zinsen")),
+        ]);
+        assert_eq!(flow_of(&v, ids[0]), FlowKind::Investment);
+        assert_eq!(flow_of(&v, ids[1]), FlowKind::Investment);
+        assert_eq!(flow_of(&v, ids[2]), FlowKind::Income);
+        assert_eq!(flow_of(&v, ids[3]), FlowKind::Income);
+        let page = v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!(page.investment_cents, -150_00);
+        assert_eq!(page.income_cents, 25_00);
+        assert_eq!(page.consumption_cents, 0);
+        assert_eq!(page.flow.invested_cents, 150_00);
+        assert_eq!(v.selection_flow(vec![], None, None).unwrap().invested_cents, 150_00);
+    }
 
     #[test]
     fn uncategorised_booking_between_own_accounts_is_a_transfer() {
