@@ -325,6 +325,8 @@ extension AppModel {
                 if let id = self.lingeringRowOutsideFilterID, next.transactions.contains(where: { $0.id == id }) {
                     self.bookings.removeAll { $0.id == id }
                     self.lingeringRowOutsideFilter = false
+                    // the row is a regular one now: a later selection change must not remove it
+                    self.lingeringBookingID = nil
                 }
                 Perf.interval("publishBookings") {
                     self.listBalances.merge(next)
@@ -599,6 +601,8 @@ extension AppModel {
             let p = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
             Perf.interval("publishBookings") { publish(p, filter: filter) }
         }
+        // a failed reload ends a ⌘A waiting for it (#1696); on success `publish` has taken it
+        selectAllAfterReload = false
         reloadSelectionKPIs()
         reloadCategoryHistory()
         // Every edit, sync and import ends up here: cached merchant histories may be

@@ -1843,6 +1843,9 @@ public final class AppModel {
         dashboardTask?.cancel()
         endSelectionLoad()
         dropPendingPage()
+        // a ⌘A waiting at lock time must not run on the first list after unlocking (#1696)
+        selectAllAfterReload = false
+        shownListFilter = nil
         merchantStatsTask?.cancel()
         merchantStatsCache = [:]
         categorySuggestionTask?.cancel()
