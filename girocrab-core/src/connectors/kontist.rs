@@ -486,8 +486,10 @@ impl BankConnector for KontistConnector {
             Err(e) => {
                 let since = super::history::retry_since(since, ctx.full_fetch, e)?;
                 let transactions = self.transactions(&account.external_ref, &since).await?;
-                out.warnings
-                    .push(super::history::refused_warning(&account.external_ref));
+                out.warnings.push(super::history::refused_warning(
+                    &account.external_ref,
+                    &since,
+                ));
                 transactions
             }
         };

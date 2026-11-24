@@ -335,7 +335,7 @@ impl Portal for HttpPortal {
                         let from = super::history::retry_since(from, ctx.full_fetch, e)?;
                         let flow = self.cash_flow(number, &from, today).await?;
                         out.warnings
-                            .push(super::history::refused_warning(account_ref));
+                            .push(super::history::refused_warning(account_ref, &from));
                         flow
                     }
                 };

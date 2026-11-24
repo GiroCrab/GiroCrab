@@ -112,8 +112,10 @@ fn a_refused_start_date_is_tried_again_with_90_days() {
         history::retry_since(&back(3650), false, bank("400")),
         Err(CoreError::Bank { .. })
     ));
-    let w = history::refused_warning("DE00ACC");
-    assert!(w.starts_with("DE00ACC: ") && w.contains("90"), "{w}");
+    // names the date from which on bookings were fetched, so a gap is visible
+    let w = history::refused_warning("DE00ACC", "2026-08-24");
+    assert!(w.starts_with("DE00ACC: "), "{w}");
+    assert!(w.contains("24.08.2026") && w.contains("fehlen"), "{w}");
 }
 
 #[test]
