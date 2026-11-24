@@ -166,7 +166,7 @@ Die 23 Aufgaben standen mit Belegkriterium in vier übernehmbaren Blöcken; Stan
 
 - **Stufe 1a — native Schicht** (5 Aufgaben): erledigt. → Issue #1427
 - **Stufe 1b — Tresor und Schlüssel** (6 Aufgaben): erledigt. → Issue #1428
-- **Stufe 1c — Datenabbildung** (5 Aufgaben): erledigt bis auf 3.3 und 3.4. → Issue #1429
+- **Stufe 1c — Datenabbildung** (5 Aufgaben): erledigt bis auf 3.2b, 3.3 und 3.4. → Issue #1429
 - **Stufe 2 — Schreibpfade** (4 Aufgaben): offen. → Issue #1430
 - **Abschluss Stufe 1/2:** `SECURITY.md` nennt Android jetzt mit Schlüsselablage und Import; der
   Alpha-Hinweis im README fällt nach Stufe 2; diese Seite wird bei Abschluss von Stufe 2 erneut auf den
@@ -181,7 +181,7 @@ grep -rho '#\[uniffi::export\]' girocrab-core/src | wc -l
 # Native Schicht: Skript vorhanden, CI baut drei ABIs und prüft sie in der APK
 ls GiroCrabAndroid/scripts/build-rust-android.sh
 GiroCrabAndroid/scripts/build-rust-android.sh --check      # ohne NDK: erwarteter Fehlschlag
-unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -c 'lib/.*/libgirocrab_core.so'   # 3
+unzip -l GiroCrabAndroid/app/build/outputs/apk/debug/app-debug.apk | grep -c 'lib/.*/libgirocrab_core.so'   # 3
 
 # CI-Gate gegen APKs ohne native Bibliothek
 grep -n 'test "\$count" -eq 3' .github/workflows/android.yml
