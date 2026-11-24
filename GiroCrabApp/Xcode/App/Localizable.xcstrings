@@ -10746,6 +10746,17 @@
         }
       }
     },
+    "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › Sicherheit)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The iCloud vault uses a different key. Enable iCloud Keychain or paste the vault key from your other device (Settings › Security)."
+          }
+        }
+      }
+    },
     "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › iCloud Sync)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16297,13 +16308,13 @@
         }
       }
     },
-    "GiroCrab kann den Sync-Ordner „%@“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter iCloud Sync neu aus." : {
+    "GiroCrab kann den Sync-Ordner „%@“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter Sicherheit neu aus." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "GiroCrab can't read the sync folder “%@”. Choose the folder again in Settings › iCloud Sync."
+            "value" : "GiroCrab can't read the sync folder “%@”. Choose the folder again in Settings › Security."
           }
         }
       }
@@ -24774,6 +24785,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not checked yet"
+          }
+        }
+      }
+    },
+    "Noch nichts in iCloud gespeichert: Der Tresor wird erst synchronisiert, sobald er ein Konto enthält." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing saved to iCloud yet: the vault is only synced once it contains an account."
           }
         }
       }
