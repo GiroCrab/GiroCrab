@@ -13,7 +13,7 @@ not that the app is free of vulnerabilities.*
 |---|---|
 | vor jedem Push (nach `git config core.hooksPath .githooks`) | `scripts/verify-fast.sh --lint-only`: alle `scripts/lint-*.sh`, Formatierung, Lizenzhinweise, Suche nach einer FinTS-Produkt-ID |
 | jeder Pull Request | [`ci.yml`](../.github/workflows/ci.yml): die Lint-Schritte immer; Clippy, Tests und die Builds der Plattformen nur, wenn die Änderung sie betreffen kann (Job `changes`) |
-| wöchentlich | `ci.yml`, Job `audit`: neue Meldungen der RustSec-Datenbank |
+| jeder Pull Request, jeder Push auf `main` und wöchentlich | `ci.yml`, Job `audit`: bekannte Meldungen der RustSec-Datenbank; der wöchentliche Lauf findet neue auch ohne Änderung im Repo |
 | geplant alle 6 Stunden | [`release-integrity.yml`](../.github/workflows/release-integrity.yml): `appcast.xml` mit den Disk-Images seiner Einträge und `banking-policy.json` mit Signatur. Nicht enthalten: Windows-, Linux- und Android-Pakete sowie die Mitteilungen. GitHub kann geplante Läufe verspäten oder auslassen |
 
 Für `main` sind die Checks `rust`, `swift` und `audit` vorgeschrieben (Stand 24.11.2026, nicht für Admins). Ein übersprungener Job zählt
@@ -70,8 +70,10 @@ scripts/verify-release-integrity.sh --state build/integrity-state.json
 
 Mit `--state` vergleicht das Skript mit früheren Läufen und meldet eine Sicherheitssperre mit kleinerer `sequence` sowie einen
 verschwundenen Update-Feed. Das gelingt nur, wenn beides schon einmal gefunden und gespeichert wurde, und Schreibfehler meldet
-es nicht. Prüfe deshalb nach jedem Lauf, ob in der Datei `policySequence` mit der ausgegebenen Nummer und `appcastSeen` als
-`true` steht, und bewahre sie auf (`build/` wird beim Aufräumen leicht gelöscht).
+es nicht. Prüfe deshalb nach jedem Lauf zweierlei: Die Ausgabe enthält `ok: appcast.xml signature` und
+`ok: banking-policy.json sequence …` (ohne gültigen öffentlichen Schlüssel überspringt das Skript die jeweilige Prüfung nur mit
+einem Hinweis). In der Datei steht `policySequence` mit der ausgegebenen Nummer und `appcastSeen` als `true`. Bewahre die Datei
+auf (`build/` wird beim Aufräumen leicht gelöscht).
 
 Das heruntergeladene Disk-Image auf dem Mac:
 
