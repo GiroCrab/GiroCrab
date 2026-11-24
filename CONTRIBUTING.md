@@ -205,7 +205,7 @@ fehlende Angabe mit ⚠️.
 - [ ] **Text size:** text styles use `.appFont(...)` (`scripts/lint-fonts.sh`); check visually with `--screenshot <png> --text-size larger` next to `--text-size standard`.
 - [ ] **Linux / serde:** every `uniffi::Record` / `uniffi::Enum` carries the `serde` `cfg_attr`. `scripts/lint-serde-feature.sh` passes and `cargo check -q -p girocrab-core --features serde` builds.
 - [ ] **iOS:** with `#if os(macOS)` or other platform-specific APIs, the iOS target still builds (`xcodebuild -quiet`, iOS scheme).
-- [ ] **Schema:** a new table or column is a new entry at the end of `STEPS` in `girocrab-core/src/schema.rs`, plus the fixture (`cargo run -q -p girocrab-core --example make_fixture_vault`). Check what `vault/merge.rs` (iCloud merge) does with it. Never edit an existing step.
+- [ ] **Schema:** a new table or column is a new entry at the end of `STEPS` in `girocrab-core/src/schema.rs`, plus the fixture (`cargo run -q -p girocrab-core --example make_fixture_vault`). Describe the step in the module comment of `schema.rs` and in the table of `docs/ARCHITECTURE.md` (checked by `scripts/lint-schema-docs.sh`). Check what `vault/merge.rs` (iCloud merge) does with it. Never edit an existing step.
 - [ ] **Strings:** `scripts/xcstrings.py check` passes.
 - [ ] **Swift tests and `UserDefaults`:** tests that use `UserDefaults.standard` carry `// test: serial-defaults` (run serially after the parallel phase, `scripts/swift-test-split.sh`); own suites always with `\(UUID().uuidString)` (`scripts/lint-test-defaults.sh`).
 - [ ] **Before pushing:** `cargo fmt --all`, `cargo clippy -q --workspace --all-targets -- -D warnings`, `scripts/lint-appmodel-internals.sh`.
