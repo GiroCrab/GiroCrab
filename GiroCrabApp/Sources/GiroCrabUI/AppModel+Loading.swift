@@ -255,6 +255,7 @@ extension AppModel {
 
     /// Every full reload calls this first: a page still on its way belongs to the old list.
     func dropPendingPage() {
+        refundRevision &+= 1
         listGeneration += 1
         loadMoreTask?.cancel()
         loadMoreTask = nil

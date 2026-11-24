@@ -11771,6 +11771,23 @@
         }
       }
     },
+    "Die Verknüpfung lässt Buchungen und Kontostände unverändert. Auswertungen berücksichtigen die Erstattung." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Verknüpfung lässt Buchungen und Kontostände unverändert. Auswertungen berücksichtigen die Erstattung."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The link leaves transactions and account balances unchanged. Reports take the refund into account."
+          }
+        }
+      }
+    },
     "Die Vormerkung konnte nicht verworfen werden. Buchungen mit Belegen oder Aufteilungen bleiben geschützt." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11899,6 +11916,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Export the entire document collection, regardless of the filters"
+          }
+        }
+      }
+    },
+    "Die gewählte Teilbuchung ist nicht mehr verfügbar." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die gewählte Teilbuchung ist nicht mehr verfügbar."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected split is no longer available."
           }
         }
       }
@@ -12163,6 +12197,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This Month"
+          }
+        }
+      }
+    },
+    "Dieser Teil ist vollständig zugeordnet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Teil ist vollständig zugeordnet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This part is fully allocated."
           }
         }
       }
@@ -13475,6 +13525,22 @@
         }
       }
     },
+    "Einkäufe" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einkäufe"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purchases"
+          }
+        }
+      }
+    },
     "Einmalig" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14307,6 +14373,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Refund for: %@"
+          }
+        }
+      }
+    },
+    "Erstattung zuordnen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erstattung zuordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link refund"
+          }
+        }
+      }
+    },
+    "Erstattung zuordnen …" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erstattung zuordnen …"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link refund…"
+          }
+        }
+      }
+    },
+    "Erstattungen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erstattungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunds"
           }
         }
       }
@@ -16614,6 +16728,22 @@
         }
       }
     },
+    "Gleiche Referenz" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gleiche Referenz"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shared reference"
+          }
+        }
+      }
+    },
     "Gleiche Schreibweise wie bei Regeln: Wörter, „Phrasen“, name:, purpose:, AND, OR, NOT. Einzelne Buchungen ordnen Sie im Kontextmenü zu oder heben die Zuordnung dort auf." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16621,6 +16751,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Same syntax as rules: words, \"phrases\", name:, purpose:, AND, OR, NOT. Assign or remove single transactions in their context menu."
+          }
+        }
+      }
+    },
+    "Gleicher Betrag" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gleicher Betrag"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same amount"
+          }
+        }
+      }
+    },
+    "Gleicher Händler" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gleicher Händler"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Same merchant"
           }
         }
       }
@@ -20042,6 +20204,22 @@
         }
       }
     },
+    "Keine passenden Buchungen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine passenden Buchungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching bookings"
+          }
+        }
+      }
+    },
     "Keine passenden Buchungen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22776,6 +22954,22 @@
         }
       }
     },
+    "Mit einer Erstattung verknüpft" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit einer Erstattung verknüpft"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked to a refund"
+          }
+        }
+      }
+    },
     "Mit „%@“ zusammenführen?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23367,6 +23561,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search name or IBAN"
+          }
+        }
+      }
+    },
+    "Name oder Verwendungszweck suchen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name oder Verwendungszweck suchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search name or purpose"
           }
         }
       }
@@ -23983,6 +24193,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New Standing Order"
+          }
+        }
+      }
+    },
+    "Neuer Einkauf" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neuer Einkauf"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New purchase"
           }
         }
       }
@@ -24833,6 +25059,23 @@
         }
       }
     },
+    "Noch offen: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch offen: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still open: %@"
+          }
+        }
+      }
+    },
     "Noch offen: %@ Ausgaben, %@ Einnahmen · bereits gebucht: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24840,6 +25083,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Still due: %@ expenses, %@ income · already booked: %@"
+          }
+        }
+      }
+    },
+    "Noch offen: %@. Sie können weitere Buchungen zuordnen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch offen: %@. Sie können weitere Buchungen zuordnen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still open: %@. You can link more bookings."
           }
         }
       }
@@ -25572,6 +25832,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No Account"
+          }
+        }
+      }
+    },
+    "Ohne Namen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Namen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unnamed"
           }
         }
       }
@@ -26990,6 +27267,23 @@
         }
       }
     },
+    "Prüfen Sie die Schreibweise oder versuchen Sie eine andere Suche." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfen Sie die Schreibweise oder versuchen Sie eine andere Suche."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check the spelling or try a different search."
+          }
+        }
+      }
+    },
     "Prüfsumme korrekt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27674,6 +27968,22 @@
         }
       }
     },
+    "Rückgabe" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rückgabe"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return"
+          }
+        }
+      }
+    },
     "Rückgängig" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27703,6 +28013,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Returned collection – please check"
+          }
+        }
+      }
+    },
+    "Rückzahlung" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rückzahlung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Repayment"
           }
         }
       }
@@ -29913,6 +30239,23 @@
         }
       }
     },
+    "Suchergebnisse" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suchergebnisse"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search results"
+          }
+        }
+      }
+    },
     "Suchregel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30727,6 +31070,22 @@
         }
       }
     },
+    "Teil der Buchung" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Teil der Buchung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Booking part"
+          }
+        }
+      }
+    },
     "Teil hinzufügen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30734,6 +31093,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Add part"
+          }
+        }
+      }
+    },
+    "Teilerstattung" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Teilerstattung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Partial refund"
           }
         }
       }
@@ -31794,6 +32169,56 @@
         }
       }
     },
+    "Ursprüngliche Buchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ursprüngliche Buchung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original booking"
+          }
+        }
+      }
+    },
+    "Ursprüngliche Buchung zuordnen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ursprüngliche Buchung zuordnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link original booking"
+          }
+        }
+      }
+    },
+    "Ursprüngliche Buchungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ursprüngliche Buchungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Original bookings"
+          }
+        }
+      }
+    },
     "Ursprünglicher Kreditbetrag" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32071,6 +32496,105 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sold positions (%lld)"
+          }
+        }
+      }
+    },
+    "Verknüpfte Buchung anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfte Buchung anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show linked transaction"
+          }
+        }
+      }
+    },
+    "Verknüpfte Erstattung" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfte Erstattung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked refund"
+          }
+        }
+      }
+    },
+    "Verknüpfte Erstattungen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfte Erstattungen (%lld)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked refunds (%lld)"
+          }
+        }
+      }
+    },
+    "Verknüpfte ursprüngliche Buchungen (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfte ursprüngliche Buchungen (%lld)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Linked original bookings (%lld)"
+          }
+        }
+      }
+    },
+    "Verknüpfung aufgehoben" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfung aufgehoben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link removed"
+          }
+        }
+      }
+    },
+    "Verknüpfung aufheben" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verknüpfung aufheben"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlink"
           }
         }
       }
@@ -32878,6 +33402,22 @@
         }
       }
     },
+    "Vorschläge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschläge"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suggestions"
+          }
+        }
+      }
+    },
     "WKN" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33098,6 +33638,22 @@
         }
       }
     },
+    "Weitere Buchungen" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weitere Buchungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other bookings"
+          }
+        }
+      }
+    },
     "Weitere Buchungen laden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33138,6 +33694,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "More options"
+          }
+        }
+      }
+    },
+    "Weitere Teilerstattung" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weitere Teilerstattung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another partial refund"
           }
         }
       }
@@ -33890,6 +34462,38 @@
         }
       }
     },
+    "Wählen Sie die Erstattungen, die diese Buchung zurückzahlen." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie die Erstattungen, die diese Buchung zurückzahlen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the refunds that pay back this booking."
+          }
+        }
+      }
+    },
+    "Wählen Sie die ursprünglichen Buchungen, auch mehrere Teilerstattungen." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie die ursprünglichen Buchungen, auch mehrere Teilerstattungen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose the original bookings, including multiple partial refunds."
+          }
+        }
+      }
+    },
     "Wählen Sie eine Buchung, um Beleg, Händler-Historie und Kategorie zu sehen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -34401,6 +35005,73 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Create Access Key"
+          }
+        }
+      }
+    },
+    "Zugeordnet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugeordnet"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocated"
+          }
+        }
+      }
+    },
+    "Zugeordnet %@ von %@ · noch offen %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugeordnet %@ von %@ · noch offen %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocated %1$@ of %2$@ · still open %3$@"
+          }
+        }
+      }
+    },
+    "Zugeordnet: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugeordnet: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocated: %@"
+          }
+        }
+      }
+    },
+    "Zugeordnet: %@ von %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugeordnet: %@ von %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allocated: %1$@ of %2$@"
           }
         }
       }

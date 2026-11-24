@@ -609,6 +609,7 @@ struct DayCardRow: View {
         Button("Notiz bearbeiten …", systemImage: "note.text") { model.editNote(for: b) }
         TagsMenu(model: model, booking: b)
         Button("Umsatz aufteilen (Splitbuchung) …", systemImage: "arrow.triangle.branch") { model.splitBooking = b }
+        RefundLinkMenu(model: model, booking: b)
         LoanAssignMenu(model: model, booking: b, hidesWhenUnavailable: true)
         OfflineBookingMenu(model: model, booking: b)
         Divider()
@@ -843,6 +844,7 @@ struct BookingRow: View {
                             .help("Wiederkehrende Buchung")
                             .accessibilityLabel("Wiederkehrend")
                     }
+                    RefundLinkMarker(booking: booking)
                     if isSingleLine && showsCategoryChip {
                         // Keep the name and amount first. Show the category only
                         // when its complete label fits; the purpose yields first.
