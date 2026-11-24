@@ -245,9 +245,11 @@ AssetSectionCard {
         Layout.fillWidth: true
         implicitHeight: Math.min(210 * Theme.textScale, Math.max(150 * Theme.textScale, width * 0.6))
         property string hovered: ""
+        /// the tile with keyboard focus, apart from the pointer: leaving another tile must not hide its detail card
+        property string focused: ""
         readonly property var rects: DepotMetrics.treemap(card.tileSlices.map(s => s.cents), width, height, card.tileSlices.length > 4 ? 2.4 : 0)
         readonly property real charWidth: 6.6 * Theme.textScale
-        readonly property var focusSlice: { const id = hovered !== "" ? hovered : card.selected; return card.tileSlices.find(s => s.id === id) || null }
+        readonly property var focusSlice: { const id = hovered !== "" ? hovered : focused !== "" ? focused : card.selected; return card.tileSlices.find(s => s.id === id) || null }
         Repeater {
             model: card.tileSlices.length
             Rectangle {
@@ -294,7 +296,7 @@ AssetSectionCard {
                 Keys.onSpacePressed: card.choose(tile.s)
                 Keys.onReturnPressed: card.choose(tile.s)
                 Keys.onEnterPressed: card.choose(tile.s)
-                onActiveFocusChanged: { if (activeFocus) treemap.hovered = tile.s.id; else if (treemap.hovered === tile.s.id) treemap.hovered = "" }
+                onActiveFocusChanged: { if (activeFocus) treemap.focused = tile.s.id; else if (treemap.focused === tile.s.id) treemap.focused = "" }
                 Rectangle { visible: tile.activeFocus; anchors.fill: parent; radius: tile.radius; color: "transparent"; border.width: 2; border.color: Theme.accent }
                 Accessible.role: Accessible.Button
                 Accessible.name: card.spokenDetail(s)
