@@ -68,11 +68,10 @@ Update-Feed und Sicherheitssperre, nur mit öffentlichen Schlüsseln aus dem Rep
 scripts/verify-release-integrity.sh --state build/integrity-state.json
 ```
 
-Der erste Lauf, der eine gültige Sicherheitssperre findet, legt deren `sequence` als Vergleichswert in der Datei ab. Erst spätere
-Läufe mit derselben Datei melden eine kleinere `sequence` sowie einen verschwundenen Update-Feed oder eine ganz verschwundene
-Sicherheitssperre. Ohne Vergleichswert fällt das nicht auf: Eine ältere, gültig signierte Sicherheitssperre besteht dann die
-Prüfung. Das Skript meldet nicht, wenn es die Datei nicht schreiben konnte. Prüfe deshalb nach dem ersten Lauf, ob darin
-`policySequence` mit der ausgegebenen Nummer steht, und bewahre die Datei auf (`build/` wird beim Aufräumen leicht gelöscht).
+Mit `--state` vergleicht das Skript mit früheren Läufen und meldet eine Sicherheitssperre mit kleinerer `sequence` sowie einen
+verschwundenen Update-Feed. Das gelingt nur, wenn beides schon einmal gefunden und gespeichert wurde, und Schreibfehler meldet
+es nicht. Prüfe deshalb nach jedem Lauf, ob in der Datei `policySequence` mit der ausgegebenen Nummer und `appcastSeen` als
+`true` steht, und bewahre sie auf (`build/` wird beim Aufräumen leicht gelöscht).
 
 Das heruntergeladene Disk-Image auf dem Mac:
 
