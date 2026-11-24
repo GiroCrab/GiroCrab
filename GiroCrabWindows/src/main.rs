@@ -7,6 +7,7 @@ mod announcements;
 mod assets_loans;
 mod assets_loans_ui;
 mod cockpit;
+mod command_palette;
 mod daily;
 mod girocode;
 mod groups;
