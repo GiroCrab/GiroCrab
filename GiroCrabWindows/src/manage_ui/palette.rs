@@ -2,6 +2,7 @@
 //! Mac counterpart: `GiroCrabApp/Sources/GiroCrabUI/CommandPalette.swift`.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -95,20 +96,18 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::default();
 }
 
-/// Account names in plain text. `try_lock`: while a sync holds the vault the palette offers
-/// the commands only instead of blocking the UI thread.
-fn accounts(vault: &VaultSlot) -> Vec<(i64, String, String)> {
-    let Ok(guard) = vault.try_lock() else {
-        return Vec::new();
-    };
-    let Some(v) = guard.as_ref() else {
-        return Vec::new();
-    };
-    v.list_accounts()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|a| (a.id, a.name, a.bank_name))
-        .collect()
+/// Counts palette sessions: an account list that arrives after the palette was closed or
+/// reopened (or the vault locked) is dropped.
+static SESSION: AtomicU64 = AtomicU64::new(0);
+
+/// Adds the account entries loaded on a worker to the open palette, if it is still the
+/// session that asked for them. Keeps the typed query.
+fn apply_accounts(win: &MainWindow, session: u64, list: Vec<(i64, String, String)>) {
+    if SESSION.load(Ordering::SeqCst) != session || !win.get_cmd_open() {
+        return;
+    }
+    STATE.with_borrow_mut(|s| s.items = items(list));
+    show(win, &win.get_cmd_query());
 }
 
 fn show(win: &MainWindow, query: &str) {
@@ -131,6 +130,7 @@ fn show(win: &MainWindow, query: &str) {
 
 /// Closes the palette and forgets entries and query (also on lock).
 fn close(win: &MainWindow) {
+    SESSION.fetch_add(1, Ordering::SeqCst);
     STATE.with_borrow_mut(|s| *s = State::default());
     win.set_cmd_open(false);
     win.set_cmd_query(SharedString::new());
@@ -142,16 +142,31 @@ pub(super) fn wire(win: &MainWindow, vault: VaultSlot) {
     let weak = win.as_weak();
     win.on_cmd_request(move || {
         let Some(win) = weak.upgrade() else { return };
-        let all = items(accounts(&vault));
+        let session = SESSION.fetch_add(1, Ordering::SeqCst) + 1;
+        // Commands are available at once; the accounts follow from a worker, because
+        // `list_accounts` waits on the vault connection, which a running sync holds.
         STATE.with_borrow_mut(|s| {
             *s = State {
-                items: all,
+                items: items(Vec::new()),
                 ..State::default()
             }
         });
         win.set_cmd_query(SharedString::new());
         show(&win, "");
         win.set_cmd_open(true);
+        // `try_lock` only on the slot: never blocks the UI thread.
+        let handle = vault.try_lock().ok().and_then(|g| g.as_ref().cloned());
+        let Some(handle) = handle else { return };
+        let weak = weak.clone();
+        std::thread::spawn(move || {
+            let list: Vec<(i64, String, String)> = handle
+                .list_accounts()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| (a.id, a.name, a.bank_name))
+                .collect();
+            let _ = weak.upgrade_in_event_loop(move |win| apply_accounts(&win, session, list));
+        });
     });
     let weak = win.as_weak();
     win.on_cmd_search(move |query| {
@@ -295,5 +310,17 @@ mod tests {
                 .collect(),
         );
         assert_eq!(filter(&many, "").len(), MAX_ROWS);
+    }
+
+    #[test]
+    fn palette_offers_all_commands_while_accounts_are_pending() {
+        let pending = items(Vec::new());
+        assert_eq!(pending.len(), COMMANDS.len());
+        assert!(pending.iter().all(|it| !it.personal));
+        assert_eq!(filter(&pending, "").len(), COMMANDS.len());
+        // the late account list replaces the entries and keeps the commands in front
+        let full = items(sample());
+        assert_eq!(full.len(), COMMANDS.len() + 2);
+        assert_eq!(full[COMMANDS.len()].action, Action::Account(1));
     }
 }

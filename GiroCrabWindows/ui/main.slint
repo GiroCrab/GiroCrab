@@ -1120,6 +1120,11 @@ export component MainWindow inherits Window {
     }
     clip := TextInput { x: 0px; y: 0px; width: 0px; height: 0px; visible: false; single-line: false; }
 
+    // A PIN/TAN prompt (the sync worker waits for the answer) takes priority over the palette.
+    changed tan-open => {
+        if (root.tan-open && root.cmd-open) { root.cmd-close(); }
+    }
+
     if root.unlocked && root.cmd-open: Rectangle {
         z: 10;
         x: 0px; y: 0px; width: root.width; height: root.height;
@@ -1142,6 +1147,7 @@ export component MainWindow inherits Window {
                 FocusScope {
                     height: 34px;
                     capture-key-pressed(event) => {
+                        if (event.text == Key.Tab || event.text == Key.Backtab) { return accept; }
                         if (event.text == Key.Escape) { root.cmd-close(); return accept; }
                         if (event.text == Key.UpArrow) { root.cmd-move(-1); return accept; }
                         if (event.text == Key.DownArrow) { root.cmd-move(1); return accept; }
@@ -1184,6 +1190,10 @@ export component MainWindow inherits Window {
 
     fs := FocusScope {
     capture-key-pressed(event) => {
+        if (root.cmd-open) {
+            if (event.text == Key.Escape) { root.cmd-close(); return accept; }
+            return reject;
+        }
         if (root.transfer-open && event.modifiers.control && event.modifiers.shift && (event.text == "V" || event.text == "v" || event.text == "\u{16}")) { root.paste-transfer(); return accept; }
         if (root.unlocked && event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p" || event.text == "\u{10}")) { root.privacy = !root.privacy; root.privacy-changed(); return accept; }
         if (root.unlocked && event.modifiers.control && (event.text == "," || event.text == ";")) { SettingsImportState.request(); return accept; }
@@ -2178,6 +2188,7 @@ export component MainWindow inherits Window {
 
     // ---- PIN / TAN dialog (overlay); the input is cleared as soon as it is handed over
     if tan-open: Rectangle {
+        z: 20;
         background: #000000aa;
         TouchArea { }
         Rectangle {
