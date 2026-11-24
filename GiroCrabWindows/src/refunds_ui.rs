@@ -768,6 +768,8 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
                                 u.edit_succeeded(&action, undo);
                             }
                         });
+                        // the new undo (or its removal) shows at once, not only after the reload
+                        win.set_rf_can_undo(with_ui(|u| u.undo.is_some()));
                         crate::reload(&win, v.clone());
                     }
                     refresh(&win, v);
