@@ -59,6 +59,20 @@ struct Position {
     value: i64,
 }
 
+/// Share rights (claims to shares that are allotted later): the portal shows only their number.
+/// `None` = the page lists none.
+fn rights(depot: &Value) -> CoreResult<Option<f64>> {
+    let rights = &depot["rights"];
+    if rights.is_null() {
+        return Ok(None);
+    }
+    let quantity = number(rights, "quantity")?;
+    if quantity < 0.0 {
+        return Err(invalid());
+    }
+    Ok((quantity > 0.0).then_some(quantity))
+}
+
 /// ISO 6166: two capital letters, nine capital letters or digits, one check digit (Luhn over the
 /// letters written as 10..35).
 fn valid_isin(isin: &str) -> bool {
@@ -152,7 +166,34 @@ fn holding(p: &Position) -> Holding {
     }
 }
 
+#[cfg(test)]
 fn snapshot(json: &str) -> CoreResult<FetchResult> {
+    snapshot_with(json, true)
+}
+
+/// Vault setting key: fetch the share rights of this connection (`0` = off; absent = on).
+fn rights_key(connection_id: i64) -> String {
+    format!("sharinbox.rights.{connection_id}")
+}
+
+/// Forgets the share-rights switch of a deleted connection.
+pub(crate) fn clear_rights_setting(
+    db: &rusqlite::Connection,
+    connection_id: i64,
+) -> CoreResult<()> {
+    db.execute(
+        "DELETE FROM settings WHERE key = ?1",
+        [rights_key(connection_id)],
+    )?;
+    Ok(())
+}
+
+fn rights_on(db: &rusqlite::Connection, connection_id: i64) -> CoreResult<bool> {
+    Ok(Vault::setting_inner(db, &rights_key(connection_id))?.as_deref() != Some("0"))
+}
+
+/// `rights_on` false: the share rights of the page are left out (switch of the connection).
+fn snapshot_with(json: &str, rights_on: bool) -> CoreResult<FetchResult> {
     let root: Value = serde_json::from_str(json).map_err(|_| invalid())?;
     if root["version"].as_u64() != Some(1) {
         return Err(invalid());
@@ -160,7 +201,15 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
     let as_of = date(&root, "asOf")?;
     let depot = &root["depot"];
     let positions = positions(depot)?;
-    let total: i64 = positions.iter().map(|p| p.value).sum();
+    let rights = if rights_on { rights(depot)? } else { None };
+    // The portal gives rights no price. With exactly one security on the page they are valued at
+    // its price (one right = one share); with several the right cannot be assigned, so no value.
+    let right_price = match positions.as_slice() {
+        [only] => only.price,
+        _ => 0.0,
+    };
+    let right_value = rights.map_or(0, |q| cents_of(q * right_price));
+    let total: i64 = positions.iter().map(|p| p.value).sum::<i64>() + right_value;
     let mut result = FetchResult {
         bank_name: Some("Sharinbox".into()),
         ..Default::default()
@@ -184,6 +233,25 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
             holding: holding(p),
         });
     }
+    if let Some(quantity) = rights {
+        // own position without ISIN: the note is part of the name
+        result.holdings.push(RemoteHolding {
+            classification: Default::default(),
+            direct_crypto: false,
+            account_ref: ACCOUNT_REF.into(),
+            holding: Holding {
+                name: match positions.as_slice() {
+                    // "AXA (noch nicht zugeteilt)": the rights belong to the one security
+                    [only] => format!("{} ({})", only.name, tr("noch nicht zugeteilt")),
+                    _ => tr("Aktienrechte (noch nicht zugeteilt)").into(),
+                },
+                quantity,
+                current_price_cents: cents_of(right_price),
+                value_cents: right_value,
+                ..Default::default()
+            },
+        });
+    }
     // an empty list clears positions that were sold since the last fetch
     result.holdings_fetched.push(ACCOUNT_REF.into());
     Ok(result)
@@ -200,14 +268,64 @@ impl Vault {
             return Err(invalid());
         }
         crate::banking_gate::check_connector("sharinbox")?;
+        // read before `store_fetch`: it takes the database lock itself
+        let with_rights = rights_on(&*self.db()?, connection_id)?;
         let summary = super::store_fetch(
             &self,
             ConnectorKind::Sharinbox,
             connection_id,
-            snapshot(&snapshot_json)?,
+            snapshot_with(&snapshot_json, with_rights)?,
         )?;
         let _ = self.checkpoint();
         Ok(summary)
+    }
+}
+
+#[uniffi::export]
+impl Vault {
+    /// Whether fetches of this Sharinbox connection read the share rights (default: yes).
+    pub fn sharinbox_rights_enabled(&self, connection_id: i64) -> CoreResult<bool> {
+        self.check_sharinbox(connection_id)?;
+        rights_on(&*self.db()?, connection_id)
+    }
+
+    /// Switches the share rights of a connection on or off. Off: the position of the rights is
+    /// removed at once and the account total drops by its value. On: the next fetch adds it.
+    pub fn set_sharinbox_rights(&self, connection_id: i64, enabled: bool) -> CoreResult<()> {
+        self.check_sharinbox(connection_id)?;
+        let mut db = self.db()?;
+        let tx = db.transaction()?;
+        if enabled {
+            tx.execute(
+                "DELETE FROM settings WHERE key = ?1",
+                [rights_key(connection_id)],
+            )?;
+        } else {
+            tx.execute(
+                "INSERT INTO settings(key, value) VALUES (?1, '0')
+                 ON CONFLICT(key) DO UPDATE SET value = '0'",
+                [rights_key(connection_id)],
+            )?;
+            // The portal's securities all carry a valid ISIN; only the rights have none.
+            let sql_account =
+                "SELECT id FROM accounts WHERE connection_id = ?1 AND external_ref = ?2";
+            let removed: i64 = tx.query_row(
+                &format!("SELECT COALESCE(SUM(value_cents), 0) FROM holdings WHERE isin = '' AND account_id IN ({sql_account})"),
+                params![connection_id, ACCOUNT_REF],
+                |r| r.get(0),
+            )?;
+            tx.execute(
+                &format!("DELETE FROM holdings WHERE isin = '' AND account_id IN ({sql_account})"),
+                params![connection_id, ACCOUNT_REF],
+            )?;
+            tx.execute(
+                "UPDATE accounts SET balance_cents = balance_cents - ?3
+                 WHERE connection_id = ?1 AND external_ref = ?2",
+                params![connection_id, ACCOUNT_REF, removed],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 }
 
@@ -401,6 +519,88 @@ mod tests {
         assert_eq!((h.current_price_cents, h.value_cents), (4514, 451_400));
         assert_eq!(h.purchase_price_cents, 0);
         assert_eq!(r.holdings_fetched, vec![ACCOUNT_REF.to_string()]);
+    }
+
+    #[test]
+    fn share_rights_become_their_own_position_valued_at_the_share_price() {
+        let mut f = fixture();
+        f["depot"]["rights"] = json!({"quantity": 200.0});
+        let r = snapshot(&f.to_string()).unwrap();
+        assert_eq!(r.holdings.len(), 2);
+        let h = &r.holdings[1].holding;
+        // one security (45.14 EUR): the rights are valued at its price
+        assert_eq!((h.isin.as_str(), h.quantity), ("", 200.0));
+        assert_eq!((h.current_price_cents, h.value_cents), (4514, 902_800));
+        assert_eq!(h.name, "Test Aktie (noch nicht zugeteilt)");
+        assert_eq!(r.accounts[0].balance_cents, 451_400 + 902_800);
+        // several securities: no way to tell which one, so no value
+        f["depot"]["items"] = json!([
+            item("FR0000120271", 100.0, 45.14, 4514.0),
+            item("FR0000120628", 10.0, 30.0, 300.0)
+        ]);
+        let r = snapshot(&f.to_string()).unwrap();
+        assert_eq!(r.holdings[2].holding.value_cents, 0);
+        assert_eq!(
+            r.holdings[2].holding.name,
+            "Aktienrechte (noch nicht zugeteilt)"
+        );
+        assert_eq!(r.accounts[0].balance_cents, 451_400 + 30_000);
+        f["depot"]["items"] = json!([item("FR0000120271", 100.0, 45.14, 4514.0)]);
+        // zero rights, no entry, negative or missing quantity
+        f["depot"]["rights"] = json!({"quantity": 0.0});
+        assert_eq!(snapshot(&f.to_string()).unwrap().holdings.len(), 1);
+        f["depot"]["rights"] = json!({"quantity": -1.0});
+        assert!(snapshot(&f.to_string()).is_err());
+        f["depot"]["rights"] = json!({});
+        assert!(snapshot(&f.to_string()).is_err());
+        // rights alone are a valid depot, without a price they have no value
+        f["depot"] = json!({"items": [], "rights": {"quantity": 5.0}});
+        let r = snapshot(&f.to_string()).unwrap();
+        assert_eq!((r.holdings.len(), r.accounts[0].balance_cents), (1, 0));
+    }
+
+    #[test]
+    fn the_switch_leaves_the_rights_out_and_removes_the_position() {
+        let (_dir, vault, connection) = vault_with_depot("Sharinbox");
+        let mut f = fixture();
+        f["depot"]["rights"] = json!({"quantity": 10.0});
+        let holdings = |v: &Arc<Vault>| {
+            let db = v.db().unwrap();
+            let n: i64 = db
+                .query_row("SELECT COUNT(*) FROM holdings", [], |r| r.get(0))
+                .unwrap();
+            let bal: i64 = db
+                .query_row(
+                    "SELECT balance_cents FROM accounts WHERE external_ref = ?1",
+                    [ACCOUNT_REF],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (n, bal)
+        };
+        assert!(vault.sharinbox_rights_enabled(connection).unwrap());
+        vault
+            .clone()
+            .import_sharinbox_snapshot(connection, f.to_string())
+            .unwrap();
+        assert_eq!(holdings(&vault), (2, 451_400 + 45_140));
+        // off: the position goes at once, the total drops by its value
+        vault.set_sharinbox_rights(connection, false).unwrap();
+        assert!(!vault.sharinbox_rights_enabled(connection).unwrap());
+        assert_eq!(holdings(&vault), (1, 451_400));
+        // a fetch with the switch off does not bring it back
+        vault
+            .clone()
+            .import_sharinbox_snapshot(connection, f.to_string())
+            .unwrap();
+        assert_eq!(holdings(&vault), (1, 451_400));
+        // on again: the next fetch adds it
+        vault.set_sharinbox_rights(connection, true).unwrap();
+        vault
+            .clone()
+            .import_sharinbox_snapshot(connection, f.to_string())
+            .unwrap();
+        assert_eq!(holdings(&vault), (2, 451_400 + 45_140));
     }
 
     #[test]

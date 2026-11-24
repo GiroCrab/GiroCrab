@@ -157,6 +157,9 @@ struct ConnectionEditSheet: View {
     /// "Dokumente abrufen" is off: nothing that fetches documents runs (Postbox included).
     private var documentsBlocked: Bool { documentsSupported && !documentsFetch }
     @State private var initialDocumentsFetch = true
+    /// Sharinbox: "Nicht zugeteilte Aktienrechte abrufen".
+    @State private var rightsFetch = true
+    @State private var initialRightsFetch = true
     @State private var syncSchedule = 0
     @State private var initialSyncSchedule = 0
     /// The values as loaded: "Speichern" is only available once something differs.
@@ -332,6 +335,10 @@ struct ConnectionEditSheet: View {
                     if documentsSupported {
                         Toggle("Dokumente abrufen", isOn: $documentsFetch)
                             .help("Belege, Kontoauszüge und Postbox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach.")
+                    }
+                    if connection.connector == .sharinbox {
+                        Toggle("Nicht zugeteilte Aktienrechte abrufen", isOn: $rightsFetch)
+                            .help("Aktienrechte, die erst später zugeteilt werden, erscheinen als eigene Position im Depot. Aus: die Position wird entfernt und nicht mehr abgerufen.")
                     }
                 } header: { Text("Zugang").appSectionHeader() }
                 if connection.connector == .advanzia {
@@ -728,6 +735,7 @@ struct ConnectionEditSheet: View {
         if values != initialValues { return true }
         if isFinTs, tanMedium.trimmingCharacters(in: .whitespaces) != initialTanMedium { return true }
         if documentsSupported, documentsFetch != initialDocumentsFetch { return true }
+        if connection.connector == .sharinbox, rightsFetch != initialRightsFetch { return true }
         if syncSchedule != initialSyncSchedule { return true }
         // Amex portal login (user name, password, save switch) and Advanzia (password, release method)
         // are not in `values`.
@@ -794,6 +802,10 @@ struct ConnectionEditSheet: View {
         documentsSupported = model.documentsFetchSupported(connection.id)
         documentsFetch = model.documentsFetchEnabled(connection.id)
         initialDocumentsFetch = documentsFetch
+        if connection.connector == .sharinbox {
+            rightsFetch = model.sharinboxRightsEnabled(connection.id)
+            initialRightsFetch = rightsFetch
+        }
         syncSchedule = model.syncSchedule(connection.id)
         initialSyncSchedule = syncSchedule
         if isFinTs { tanMedium = model.revealSetting(tanMediumKey) }
@@ -844,6 +856,10 @@ struct ConnectionEditSheet: View {
         if documentsSupported, documentsFetch != initialDocumentsFetch {
             model.setDocumentsFetch(connection.id, documentsFetch)
             initialDocumentsFetch = documentsFetch
+        }
+        if connection.connector == .sharinbox, rightsFetch != initialRightsFetch {
+            model.setSharinboxRights(connection.id, rightsFetch)
+            initialRightsFetch = rightsFetch
         }
         let l = isTR ? normalizePhoneNumber(input: login) : login.trimmingCharacters(in: .whitespaces)
         model.updateConnection(connection.id, name: name, login: l)
