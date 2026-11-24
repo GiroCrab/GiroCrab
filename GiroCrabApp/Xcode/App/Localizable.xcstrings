@@ -8657,13 +8657,13 @@
         }
       }
     },
-    "Blendet Saldoverlauf, Cashflow und Budgets über der Buchungsliste aus. Auch im Menü Ansicht umschaltbar." : {
+    "Blendet die Kennzahlen (Konsumausgaben, Investiert, Einnahmen, Fixkosten offen) und die Cashflow-Karte über der Buchungsliste aus. Das Diagramm hat mit „Diagramm anzeigen“ einen eigenen Schalter. Budgets bleiben unabhängig und haben ebenfalls einen eigenen Schalter. Auch im Menü Ansicht umschaltbar." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hides the balance history, cash flow and budgets above the booking list. Also available in the View menu."
+            "value" : "Hides the KPIs (Consumption, Invested, Income, Open Fixed Costs) and the cash flow card above the booking list. The header chart has its own \"Show Chart\" switch. Budgets are independent and have their own switch too. Also available in the View menu."
           }
         }
       }
@@ -22314,6 +22314,17 @@
         }
       }
     },
+    "Maximum" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximum"
+          }
+        }
+      }
+    },
     "Medikamente" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24895,6 +24906,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Edit note …"
+          }
+        }
+      }
+    },
+    "Notiz hinzufügen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a note …"
           }
         }
       }
@@ -30892,6 +30914,17 @@
         }
       }
     },
+    "Tresor aus der Sicherung wiederhergestellt. Der Stand wird mit Ihren anderen Geräten abgeglichen; das Ergebnis sehen Sie unter Einstellungen › iCloud Sync." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vault restored from the backup. It will be synchronized with your other devices; see Settings › iCloud Sync for the result."
+          }
+        }
+      }
+    },
     "Tresor entsperren" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33505,13 +33538,13 @@
         }
       }
     },
-    "Wie weit GiroCrab beim ersten Abruf eines neuen Kontos zurückgeht. Viele Banken liefern nur 90 Tage oder verlangen für mehr eine TAN. Bereits abgerufene Konten betrifft das nicht." : {
+    "Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "How far back GiroCrab goes on the first fetch of a new account. Many banks only provide 90 days or require a TAN for more. Accounts already fetched are not affected."
+            "value" : "How far back GiroCrab goes on the first fetch of a new connection. “Maximum” goes back as far as the bank and the connection allow. Many banks require a TAN for more than 90 days. Existing connections keep fetching from their newest transaction."
           }
         }
       }

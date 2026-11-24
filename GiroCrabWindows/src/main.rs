@@ -28,6 +28,7 @@ mod settings_import_ui;
 mod sync_flow;
 mod tags_ui;
 mod transfer_flow;
+mod updates;
 mod vault_key;
 mod views_ui;
 
@@ -545,6 +546,17 @@ fn render_bookings(win: &MainWindow) {
     });
     win.set_days(ModelRc::new(VecModel::from(days)));
     win.set_marked_count(with_state(|st| st.marked.len()) as i32);
+    // Sums of the ticked bookings from the cached rows (#878): no new `list_transactions`.
+    let summary = with_state(|st| {
+        daily::selection_summary(st.rows.iter().filter(|r| st.marked.contains(&r.id)))
+    });
+    let texts = daily::selection_texts(&summary, privacy, money);
+    win.set_selection_summary_visible(summary.count >= 2);
+    win.set_selection_count_text(texts.count.into());
+    win.set_selection_income(texts.income.into());
+    win.set_selection_expense(texts.expense.into());
+    win.set_selection_balance(texts.balance.into());
+    win.set_selection_extra(texts.extra.into());
     match inspector {
         Some((i, row, logo, recurring)) => {
             // The note box keeps unsaved typing while the same booking stays selected.
@@ -1349,6 +1361,7 @@ fn transfer_rule_at(index: i32) -> transfer_flow::RecipientRule {
 /// mode; the real values stay in `State` and are enforced again on submit.
 fn apply_transfer_rule(win: &MainWindow, index: i32) {
     use transfer_flow::RecipientRule;
+    wire_transfer_bank(win);
     let rule = transfer_rule_at(index);
     let privacy = privacy_on(win);
     let (locked, name, iban, hint) = match &rule {
@@ -1366,11 +1379,32 @@ fn apply_transfer_rule(win: &MainWindow, index: i32) {
             transfer_flow::SAVINGS_NO_REFERENCE,
         ),
     };
+    let bank = match &rule {
+        RecipientRule::Fixed(r) => daily::iban_bank_line(&r.iban, privacy),
+        // The IBAN field keeps its text across prefill, privacy toggle and sender switch, so
+        // the line is derived from it again instead of being cleared.
+        RecipientRule::Free => daily::iban_bank_line(win.get_transfer_pre_iban().as_str(), privacy),
+        RecipientRule::Unavailable => String::new(),
+    };
     win.set_tr_recipient_locked(locked);
     win.set_tr_recipient_blocked(rule == RecipientRule::Unavailable);
     win.set_tr_locked_name(name.into());
     win.set_tr_locked_iban(iban.into());
+    win.set_tr_bank(bank.into());
     win.set_tr_recipient_hint(hint.into());
+}
+
+/// Bank line under the recipient IBAN of the transfer dialog (#1563). Re-registering replaces the
+/// handler, so calling this on every open is harmless. The line is derived from the current IBAN text only
+/// and masked in privacy mode; no state is kept.
+fn wire_transfer_bank(win: &MainWindow) {
+    let weak = win.as_weak();
+    win.on_transfer_iban_edited(move |iban| {
+        if let Some(win) = weak.upgrade() {
+            let line = daily::iban_bank_line(iban.as_str(), privacy_on(&win));
+            win.set_tr_bank(line.into());
+        }
+    });
 }
 
 /// Result line of an import run.
@@ -2103,6 +2137,14 @@ fn main() -> Result<(), slint::PlatformError> {
             with_state(|st| *st = State::default());
             win.set_unlocked(false);
             win.set_days(ModelRc::new(VecModel::from(Vec::<DayGroup>::new())));
+            // Selection summary: no amounts may outlive the vault.
+            win.set_marked_count(0);
+            win.set_selection_summary_visible(false);
+            win.set_selection_count_text("".into());
+            win.set_selection_income("".into());
+            win.set_selection_expense("".into());
+            win.set_selection_balance("".into());
+            win.set_selection_extra("".into());
             win.set_accounts(ModelRc::new(VecModel::from(Vec::<AccountRow>::new())));
             win.set_has_inspector(false);
             views_ui::on_lock(&win);
@@ -2268,6 +2310,10 @@ fn main() -> Result<(), slint::PlatformError> {
             match girocode::paste_into(&current, clipboard.as_str()) {
                 Ok(f) => {
                     set_transfer_fields(&win, &f);
+                    // `transfer-iban-edited` fires for user edits only, so refresh the bank line here.
+                    if !win.get_tr_recipient_locked() {
+                        win.set_tr_bank(daily::iban_bank_line(&f.iban, privacy_on(&win)).into());
+                    }
                     win.set_transfer_status(SharedString::new());
                     win.set_girocode_open(false);
                 }
@@ -2590,6 +2636,11 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
         let weak = win.as_weak();
         win.on_batch_export(move || {
             let Some(win) = weak.upgrade() else { return };
+            // Privacy mode or a locked vault: nothing leaves the app.
+            if privacy_on(&win) {
+                win.set_sync_status("Export im Privatmodus nicht möglich".into());
+                return;
+            }
             let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
             let csv = with_state(|st| {
                 let mut out = String::from("Datum;Gegenpartei;Verwendungszweck;Kategorie;Betrag\n");
@@ -2621,8 +2672,12 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
             }
         });
     }
+    depot_export_ui::wire(win, vault.clone());
     wire_export_statements(win, vault);
 }
+
+/// Depot view: "Als CSV exportieren …" (handler and tests in its own module).
+mod depot_export_ui;
 
 /// "Umsätze exportieren" card: format 0 = PDF, 1 = CSV, 2 = CAMT.053; range 0 = month, 1 = year, 2 = all.
 fn wire_export_statements(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
