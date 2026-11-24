@@ -1,6 +1,7 @@
 //! Slint wiring for account / category management, About and the keyboard shortcuts.
 //! The decisions live in `manage.rs` (unit-tested); this file only moves values between the
-//! window and the vault. The core calls are single SQL statements, so they run on the UI thread.
+//! window and the vault. The core calls are single SQL statements, so they run on the UI thread;
+//! only the category reorder (a transaction over all siblings) runs on a worker thread.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -10,7 +11,7 @@ use girocrab_core::{Category, Vault};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::manage::{self, Command, Context, DeleteGate, Modal, Modals};
-use crate::{CategoryRow, MainWindow, VERSION, hex_color, show};
+use crate::{CategoryRow, MainWindow, VERSION, hex_color, nav, show};
 
 type VaultSlot = Arc<Mutex<Option<Arc<Vault>>>>;
 
@@ -20,6 +21,20 @@ struct Ui {
     categories: Vec<Category>,
     account_gate: DeleteGate,
     category_gate: DeleteGate,
+    /// A reorder is being written; further ▲/▼ clicks are ignored until it is back.
+    moving: bool,
+}
+
+/// `(id, parent_id)` in tree order, the input of `nav::move_category`.
+fn sibling_order(cats: &[Category]) -> Vec<(i64, Option<i64>)> {
+    cats.iter().map(|c| (c.id, c.parent_id)).collect()
+}
+
+/// Enables ▲/▼ only when the selected category has a sibling in that direction.
+fn set_move_buttons(win: &MainWindow, order: &[(i64, Option<i64>)], selected: Option<i64>) {
+    let can = |delta| selected.is_some_and(|id| nav::move_category(order, id, delta).is_some());
+    win.set_cat_can_up(can(-1));
+    win.set_cat_can_down(can(1));
 }
 
 thread_local! {
@@ -68,6 +83,7 @@ fn modals(win: &MainWindow) -> Modals {
         rules: win.get_rules_open(),
         link: win.get_link_open(),
         about: win.get_about_open(),
+        history: crate::position_history_ui::is_open(win),
     }
 }
 
@@ -90,6 +106,7 @@ fn close_modal(win: &MainWindow, m: Modal) {
         Modal::Rules => crate::views_ui::close_rules(win),
         Modal::Link => win.set_link_open(false),
         Modal::About => win.set_about_open(false),
+        Modal::History => crate::position_history_ui::dismiss(win),
     }
 }
 
@@ -141,6 +158,7 @@ fn render_categories(win: &MainWindow, cats: Vec<Category>, select: Option<i64>)
         }
     }
     win.set_cat_armed(false);
+    set_move_buttons(win, &sibling_order(&cats), index.map(|i| cats[i].id));
     with_ui(|u| {
         u.categories = cats;
         u.category_gate.reset();
@@ -354,6 +372,8 @@ fn wire_categories(win: &MainWindow, vault: &VaultSlot) {
         win.set_cat_color(manage::palette_index(&palette, &cat.color_hex).map_or(-1, |i| i as i32));
         win.set_cat_armed(false);
         win.set_cat_status(SharedString::new());
+        let order = with_ui(|u| sibling_order(&u.categories));
+        set_move_buttons(&win, &order, Some(cat.id));
     });
 
     let (weak, slot) = (win.as_weak(), vault.clone());
@@ -423,6 +443,50 @@ fn wire_categories(win: &MainWindow, vault: &VaultSlot) {
             }
             Err(e) => win.set_cat_status(e.to_string().into()),
         }
+    });
+
+    let (weak, slot) = (win.as_weak(), vault.clone());
+    win.on_category_move(move |delta| {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot)) else {
+            return;
+        };
+        let plan = with_ui(|u| {
+            if u.moving {
+                return None;
+            }
+            let id = usize::try_from(win.get_cat_selected())
+                .ok()
+                .and_then(|i| u.categories.get(i))?
+                .id;
+            let (parent, ids) = nav::move_category(&sibling_order(&u.categories), id, delta)?;
+            u.moving = true;
+            u.category_gate.reset();
+            Some((id, parent, ids))
+        });
+        let Some((id, parent, ids)) = plan else {
+            return;
+        };
+        win.set_cat_armed(false);
+        win.set_cat_status("Wird gespeichert …".into());
+        let (weak, slot) = (win.as_weak(), slot.clone());
+        std::thread::spawn(move || {
+            let result = v.reorder_categories(parent, ids).map_err(|e| e.to_string());
+            let _ = weak.upgrade_in_event_loop(move |win| {
+                with_ui(|u| u.moving = false);
+                // Locked or swapped meanwhile: the dialog no longer shows this vault.
+                let Some(v) = vault_of(&slot).filter(|cur| Arc::ptr_eq(cur, &v)) else {
+                    return;
+                };
+                match result {
+                    Ok(()) => {
+                        win.set_cat_status(SharedString::new());
+                        refresh_categories(&win, &v, Some(id));
+                        reload_all(&win, &v);
+                    }
+                    Err(e) => win.set_cat_status(e.into()),
+                }
+            });
+        });
     });
 
     let (weak, slot) = (win.as_weak(), vault.clone());
