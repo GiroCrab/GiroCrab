@@ -25,7 +25,6 @@ jobs:
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && (
         contains(github.event.comment.user.login, 'coderabbit') ||
         startsWith(github.event.comment.body, '/cr-resolve') ||
-        startsWith(github.event.comment.body, '/cr-autofix') ||
         startsWith(github.event.comment.body, '/cr-review')
       ))
     runs-on: ubuntu-latest
@@ -48,74 +47,3 @@ jobs:
           AUTHOR_ASSOC: ${{ github.event.comment.author_association }}
         run: python3 scripts/coderabbit_flow.py
 
-  autofix:
-    if: >-
-      (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'coderabbit-autofix' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/cr-autofix') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-    steps:
-      - name: Export open CodeRabbit findings
-        id: export
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-        run: |
-          git init -q
-          git remote add origin https://github.com/${{ github.repository }}.git
-          git fetch -q --depth=1 origin main
-          git checkout -q FETCH_HEAD -- scripts/coderabbit_flow.py
-          python3 scripts/coderabbit_flow.py --export-prompt /tmp/coderabbit_autofix.json
-
-      - name: Notify if Anthropic secret is not configured
-        if: steps.export.outputs.has_open == 'true' && steps.export.outputs.same_repo == 'true' && env.HAS_ANTHROPIC == 'false'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-        run: |
-          python3 scripts/coderabbit_flow.py --comment-missing-secret
-
-      - name: Checkout PR head (same-repo PRs only)
-        if: steps.export.outputs.has_open == 'true' && steps.export.outputs.same_repo == 'true' && env.HAS_ANTHROPIC == 'true'
-        env:
-          HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.export.outputs.head_ref }}
-          fetch-depth: 0
-
-      - name: Apply CodeRabbit fixes with Claude Code
-        if: steps.export.outputs.has_open == 'true' && steps.export.outputs.same_repo == 'true' && env.HAS_ANTHROPIC == 'true'
-        env:
-          HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-        uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: ${{ steps.export.outputs.prompt }}
-          claude_args: "--max-turns 20 --allowedTools Read,Edit,Write,Grep,Glob"
-
-      - name: Verify lints, push fix commit, and resolve threads
-        if: steps.export.outputs.has_open == 'true' && steps.export.outputs.same_repo == 'true' && env.HAS_ANTHROPIC == 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          HEAD_REF: ${{ steps.export.outputs.head_ref }}
-          HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-        run: |
-          if [ -f scripts/lint-brand-names.sh ]; then bash scripts/lint-brand-names.sh; fi
-          if [ -f scripts/lint-no-obfuscation.sh ]; then bash scripts/lint-no-obfuscation.sh; fi
-          if [ -n "$(git status --porcelain)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "fix: address CodeRabbit review comments"
-            git push origin "HEAD:refs/heads/${HEAD_REF}"
-            python3 scripts/coderabbit_flow.py --resolve-all
-          fi

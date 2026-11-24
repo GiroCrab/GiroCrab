@@ -185,7 +185,7 @@ def render_status_comment(open_items: list[dict], auto_resolved_count: int) -> s
         "",
         "</details>",
         "",
-        "Commands: `/cr-review` (request review) · `/cr-resolve` (resolve all CodeRabbit threads) · `/cr-autofix` (run automated fix on same-repo PRs)",
+        "Commands: `/cr-review` (request review) · `/cr-resolve` (resolve all CodeRabbit threads)",
     ])
     return "\n".join(rows)
 
