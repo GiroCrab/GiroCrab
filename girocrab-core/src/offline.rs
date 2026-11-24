@@ -327,7 +327,11 @@ impl Vault {
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
         let unchanged_zero_split = if let Some(id) = booking_id {
-            tx.query_row("SELECT amount_cents=0 AND EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=?1) FROM transactions WHERE id=?1", [id], |r| r.get::<_,bool>(0)).optional()?.unwrap_or(false) && setup.amount_cents == 0
+            tx.query_row("SELECT amount_cents=0 AND EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=?1) FROM transactions WHERE id=?1", [id], |r| r.get::<_,bool>(0)).optional()?.unwrap_or(false)
+                && setup.amount_cents == 0
+                // the exception holds only while the booking keeps its parts: an empty
+                // replacement would leave a zero booking without splits (CodeRabbit #1851)
+                && splits.as_ref().is_none_or(|parts| !parts.is_empty())
         } else {
             false
         };

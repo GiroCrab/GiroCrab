@@ -106,6 +106,19 @@ fn round7_zero_split_metadata_save_is_allowed_but_new_zero_is_not() {
     v.save_manual_booking(account, Some(id), setup("2026-01-01", 0, "Updated"))
         .unwrap();
     assert_eq!(v.list_transaction_splits(id).unwrap().len(), 2);
+    // CodeRabbit (#1851): an empty replacement would leave a zero booking without parts
+    assert!(
+        v.save_manual_booking_with_splits(
+            account,
+            Some(id),
+            setup("2026-01-01", 0, "Updated"),
+            Some(Vec::new())
+        )
+        .is_err()
+    );
+    assert_eq!(v.list_transaction_splits(id).unwrap().len(), 2);
+    v.save_manual_booking(account, Some(id), setup("2026-01-01", 0, "Again"))
+        .unwrap();
 }
 
 #[test]
