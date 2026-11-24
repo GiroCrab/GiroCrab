@@ -14,7 +14,9 @@ Zugangsdaten mitschicken.
 
 GiroCrab ist eine lokale Anwendung: Ein Rust-Kern (`girocrab-core`) hält alle Daten, die Oberflächen
 (SwiftUI, Qt, Slint, …) zeigen sie an. Es gibt kein GiroCrab-Konto und keinen GiroCrab-Server, der Finanzdaten sieht.
-Dieses Dokument beschreibt den Stand des Branches `main`; ein externes Audit gab es bisher nicht.
+Dieses Dokument beschreibt den Stand des Branches `main`; ein externes Audit gab es bisher nicht. Wie die Zusagen geprüft
+werden, steht im [Verification Plan](docs/verification-plan.md), der Vorschlag für ein Audit im
+[Audit-Scope](docs/audit-scope.md).
 
 | Bereich | Maßnahme |
 |---|---|
@@ -41,13 +43,17 @@ Dieses Dokument beschreibt den Stand des Branches `main`; ein externes Audit gab
 - **Weitere Schlüsselbund-Einträge (Apple):** das gespeicherte Passwort des Advanzia-Portals und der Stand der
   Sicherheitssperre, beide nur auf diesem Gerät.
 - **Sicherungen mit Passwort:** SQLCipher leitet den Schlüssel per PBKDF2 aus dem Passwort ab (mindestens 8 Zeichen). Die
-  Sicherung ist nur so stark wie das Passwort.
+  Sicherung ist nur so stark wie das Passwort. Beim Wiederherstellen werden gespeicherte PINs und FinTS-Adressen aus der
+  Sicherung nicht übernommen.
 - **Abgleich über iCloud Drive oder einen Ordner (Opt-in):** Die Kopien sind mit dem Tresorschlüssel verschlüsselt und
   enthalten den ganzen Tresor, also auch gespeicherte PINs.
-  Beim Wiederherstellen einer Sicherung werden gespeicherte PINs und FinTS-Adressen nicht übernommen.
 - **3DES:** nur zum Lesen externer FinTS-Schlüsseldateien (Profil RDH-10), nie für den Tresor
   ([#1796](https://github.com/GiroCrab/GiroCrab/issues/1796)).
-- **Android:** Der Alpha-Build öffnet noch keinen eigenen Tresor.
+- **Android:** Der Tresorschlüssel wird mit einem AES-GCM-Schlüssel aus dem `AndroidKeyStore` umhüllt
+  (`setUserAuthenticationRequired(true)`, `setInvalidatedByBiometricEnrollment(true)`) und über
+  `BiometricPrompt` mit `CryptoObject` freigegeben. Die App legt keinen eigenen Tresor an: Sie spielt eine
+  passwortgeschützte Desktop-Sicherung ein, erzeugt dabei einen eigenen Schlüssel und lässt den Kern den
+  Inhalt ersetzen; gespeicherte PINs und FinTS-Adressen übernimmt sie dabei nicht.
 
 ### Netzwerk
 
@@ -140,7 +146,9 @@ security advisory) in `GiroCrab/GiroCrab`. Do not include real financial data, I
 
 GiroCrab is a local application: a Rust core (`girocrab-core`) holds all data; the UIs (SwiftUI, Qt, Slint, …) display
 it. There is no GiroCrab account and no GiroCrab server that sees financial data. This document describes the state of
-the `main` branch; there has been no external audit so far.
+the `main` branch; there has been no external audit so far. The [verification plan](docs/verification-plan.md) shows how
+the promises are checked, the [audit scope](docs/audit-scope.md) is a proposal for an audit (both German with an English
+summary).
 
 | Area | Measure |
 |---|---|
@@ -167,13 +175,16 @@ the `main` branch; there has been no external audit so far.
 - **Other keychain items (Apple):** the stored password of the Advanzia portal and the state of the security lock, both on
   this device only.
 - **Password backups:** SQLCipher derives the key from the password with PBKDF2 (at least 8 characters). A backup is only
-  as strong as its password.
+  as strong as its password. Restoring one does not take over its stored PINs and FinTS addresses.
 - **Sync through iCloud Drive or a folder (opt-in):** the copies are encrypted with the vault key and contain the whole
   vault, including stored PINs.
-  Restoring a backup does not take over stored PINs and FinTS addresses.
 - **3DES:** only for reading external FinTS key files (profile RDH-10), never for the vault
   ([#1796](https://github.com/GiroCrab/GiroCrab/issues/1796)).
-- **Android:** the alpha build does not open a vault of its own yet.
+- **Android:** the vault key is wrapped with an AES-GCM key from the `AndroidKeyStore`
+  (`setUserAuthenticationRequired(true)`, `setInvalidatedByBiometricEnrollment(true)`) and released through
+  `BiometricPrompt` with a `CryptoObject`. The app does not create a vault of its own: it imports a
+  password-protected desktop backup, creates its own key in the process and lets the core replace the
+  contents; stored PINs and FinTS addresses are not taken over.
 
 ### Network
 

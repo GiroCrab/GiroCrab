@@ -60,7 +60,12 @@
 //! - 38: repair (#998): accounts the MoneyMoney import archived because their last refresh there
 //!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]), marked
 //!   in `accounts.archive_unknown` until an import or the user settles their state.
-//! - 39: last single-account fetch (#1716): `accounts.last_fetch_unix` (NULL =
+//! - 39: stable split-part identities (#714): `transaction_splits.uuid` (UUIDv5 backfill from
+//!   booking identity and content) and `position`.
+//! - 40: refund links (#714): `refund_links` between bookings or their split parts.
+//! - 41: `transactions.date_ms` (#714): edit stamp of the date of a manual booking, so a date
+//!   edit syncs on its own (neither with the text nor with amount and splits).
+//! - 42: last single-account fetch (#1716): `accounts.last_fetch_unix` (NULL =
 //!   none; the login's `last_sync_unix` still counts for every account).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
@@ -116,8 +121,47 @@ const STEPS: &[Step] = &[
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Hook(account_kind_groups),                           // 37 (#1003)
     Step::Hook(unarchive_cancelled_refreshes),                 // 38: repair (#998)
-    Step::Hook(account_last_fetch),                            // 39 (#1716)
+    Step::Hook(crate::planning::stable_split_ids),             // 39 (#714)
+    Step::Sql(REFUND_LINKS),                                   // 40 (#714)
+    Step::Hook(manual_date_stamp),                             // 41 (#714)
+    Step::Hook(account_last_fetch),                            // 42 (#1716)
 ];
+
+/// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
+/// Idempotent (repair paths run steps again).
+fn manual_date_stamp(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "transactions", "date_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE transactions ADD COLUMN date_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
+/// Step 40 (#714): refund links between bookings or their split parts (`crate::refunds`).
+const REFUND_LINKS: &str = "CREATE TABLE IF NOT EXISTS refund_links (
+            id INTEGER PRIMARY KEY,
+            refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+            refund_part TEXT NOT NULL DEFAULT '',
+            original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+            original_part TEXT NOT NULL DEFAULT '',
+            refund_cents INTEGER NOT NULL,
+            original_cents INTEGER NOT NULL,
+            created_ms INTEGER NOT NULL,
+            changed_ms INTEGER NOT NULL,
+            deleted_ms INTEGER,
+            moved INTEGER NOT NULL DEFAULT 0,
+            moved_from_refund_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+            moved_from_refund_part TEXT,
+            moved_from_original_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+            moved_from_original_part TEXT,
+            moved_from_key TEXT NOT NULL DEFAULT '',
+            unlink_id TEXT NOT NULL DEFAULT '',
+            UNIQUE(refund_id, refund_part, original_id, original_part)
+         );
+         CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id, deleted_ms);
+         CREATE INDEX IF NOT EXISTS refund_links_moved_refund ON refund_links(moved_from_refund_id);
+         CREATE INDEX IF NOT EXISTS refund_links_moved_original ON refund_links(moved_from_original_id);";
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
 /// this device's account id and never merged) to `accounts.note` with its edit stamp `note_ms`,
@@ -964,7 +1008,7 @@ fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
-/// Step 39 (#1716): when an account was last fetched on its own ("<Konto>
+/// Step 42 (#1716): when an account was last fetched on its own ("<Konto>
 /// abrufen"). The login's `last_sync_unix` stays as it is then, so the other
 /// accounts do not count as fresh; the account shows the later of the two.
 fn account_last_fetch(conn: &Connection) -> CoreResult<()> {
@@ -1196,16 +1240,16 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 39);
+        assert_eq!(SCHEMA_VERSION, 42);
     }
 
-    /// #1716: a vault at version 38 still gets the fetch time of step 39.
+    /// #1716: a vault at version 41 gets the fetch time of step 42.
     #[test]
-    fn vault_at_38_gets_last_fetch() {
+    fn vault_at_41_gets_last_fetch() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
         conn.execute_batch(
-            "ALTER TABLE accounts DROP COLUMN last_fetch_unix; PRAGMA user_version = 38;",
+            "ALTER TABLE accounts DROP COLUMN last_fetch_unix; PRAGMA user_version = 41;",
         )
         .unwrap();
         migrate(&mut conn).unwrap();
@@ -1213,7 +1257,7 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 39);
+        assert_eq!(v, 42);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for

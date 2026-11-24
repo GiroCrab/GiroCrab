@@ -40,6 +40,11 @@ export global SettingsImportState {
     callback pick-amazon();
     callback run-amazon();
     // ---- Export
+    // 0 = Dieser Monat, 1 = Dieses Jahr, 2 = Alles, 3 = Eigener Zeitraum, 4 = Aktuelle Auswahl
+    in-out property <int> export-period: 2;
+    // non-empty = invalid range: shown below the period row, disables both export buttons
+    in property <string> period-hint;
+    callback period-changed();
     in-out property <string> date-from;
     in-out property <string> date-to;
     in-out property <bool> col-category: true;
@@ -222,14 +227,18 @@ export component SettingsImportPanel inherits VerticalLayout {
             spacing: 8px;
             Caption { text: "Konto"; ink: root.muted; }
             ComboBox { horizontal-stretch: 1; model: SettingsImportState.acc-names; current-index <=> SettingsImportState.acc; }
+            Caption { text: "Zeitraum"; ink: root.muted; }
+            ComboBox { horizontal-stretch: 1; model: ["Dieser Monat", "Dieses Jahr", "Alles", "Eigener Zeitraum", "Aktuelle Auswahl"]; current-index <=> SettingsImportState.export-period; selected(v) => { SettingsImportState.period-changed(); } }
         }
-        HorizontalLayout {
+        if SettingsImportState.export-period == 3: HorizontalLayout {
             spacing: 8px;
             Caption { text: "Von (JJJJ-MM-TT)"; ink: root.muted; }
-            LineEdit { horizontal-stretch: 1; text <=> SettingsImportState.date-from; placeholder-text: "leer = ab dem ersten Umsatz"; }
+            LineEdit { horizontal-stretch: 1; text <=> SettingsImportState.date-from; placeholder-text: "leer = ab dem ersten Umsatz"; edited(t) => { SettingsImportState.period-changed(); } }
             Caption { text: "Bis"; ink: root.muted; min-width: 40px; }
-            LineEdit { horizontal-stretch: 1; text <=> SettingsImportState.date-to; placeholder-text: "leer = bis heute"; }
+            LineEdit { horizontal-stretch: 1; text <=> SettingsImportState.date-to; placeholder-text: "leer = bis heute"; edited(t) => { SettingsImportState.period-changed(); } }
         }
+        if SettingsImportState.export-period == 4: Info { text: "Exportiert den Zeitraum, der in der Umsatzliste eingestellt ist (bis heute)."; ink: root.muted; }
+        if SettingsImportState.period-hint != "": Info { text: SettingsImportState.period-hint; ink: root.muted; }
         Text { text: "CSV (Excel)"; color: root.ink; font-size: 13px; font-weight: 600; }
         HorizontalLayout {
             spacing: 12px;
@@ -246,7 +255,7 @@ export component SettingsImportPanel inherits VerticalLayout {
         HorizontalLayout {
             spacing: 12px;
             Rectangle { horizontal-stretch: 1; }
-            Button { text: "CSV speichern …"; primary: true; enabled: !SettingsImportState.busy; clicked => { SettingsImportState.export-csv(); } }
+            Button { text: "CSV speichern …"; primary: true; enabled: !SettingsImportState.busy && SettingsImportState.period-hint == ""; clicked => { SettingsImportState.export-csv(); } }
         }
         if SettingsImportState.per-account: Info { text: "Pro Konto eine Datei: Alle Konten werden exportiert, die Konto-Auswahl gilt nur für CAMT.053."; ink: root.muted; }
         Text { text: "CAMT.053 (Kontoauszug)"; color: root.ink; font-size: 13px; font-weight: 600; }
@@ -254,7 +263,7 @@ export component SettingsImportPanel inherits VerticalLayout {
             spacing: 8px;
             Caption { text: "Version"; ink: root.muted; }
             ComboBox { horizontal-stretch: 1; model: SettingsImportState.camt-versions; current-index <=> SettingsImportState.camt-version; }
-            Button { text: "CAMT speichern …"; primary: true; enabled: !SettingsImportState.busy; clicked => { SettingsImportState.export-camt(); } }
+            Button { text: "CAMT speichern …"; primary: true; enabled: !SettingsImportState.busy && SettingsImportState.period-hint == ""; clicked => { SettingsImportState.export-camt(); } }
         }
     }
 
