@@ -89,6 +89,10 @@ counterpart booking.
   "inherit", `role_ms = 0` a role nobody chose.
 - The iCloud merge ([`sync_merge/categories.rs`](../../girocrab-core/src/sync_merge/categories.rs))
   takes `role` and `role_ms` together: the newer change wins.
+- When the merge combines duplicate categories, each keeps its own role. Reading counts the
+  newest role of a category and of the duplicates combined into it (`role_winners`). Written
+  into the survivor, a role would stay where an earlier merge put it, and the result would
+  depend on the order in which devices sync.
 - The migration and the importers set a role only where nobody chose one
   (`role IS NULL AND role_ms = 0`), and keep stamp `0`: what the core sets itself is no choice,
   so any user choice wins over it on sync.
@@ -169,6 +173,9 @@ role, and one without inherits from its new parent. The schema step `category_ro
 
 - `category_roles_backfill_from_builtin_role` in [`schema.rs`](../../girocrab-core/src/schema.rs)
   and the fixture vault of the new step (`cargo test -p girocrab-core --test schema_fixtures`).
+- `roles_do_not_depend_on_merge_order_on_random_states` in
+  [`sync_merge/categories.rs`](../../girocrab-core/src/sync_merge/categories.rs): three devices
+  change one tree on their own and sync in both orders.
 - [`role_tests.rs`](../../girocrab-core/src/vault/categories/role_tests.rs):
   inheritance, sync merge (including a role edited on a category another device combined
   into a duplicate), moved built-ins, rearranged trees of the previous schema version, and
