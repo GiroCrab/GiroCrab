@@ -81,6 +81,25 @@ fn is_security_sale_category(path: &str) -> bool {
         .is_some_and(|p| p.trim().to_lowercase() == "wertpapierverkäufe")
 }
 
+/// Extract a security name from a broker purpose ending in a quantity and Stk.
+fn security_display_name(purpose: &str) -> Option<&str> {
+    let purpose = purpose.trim();
+    let (prefix, unit) = purpose.rsplit_once(char::is_whitespace)?;
+    if !unit.eq_ignore_ascii_case("Stk") && !unit.eq_ignore_ascii_case("Stk.") {
+        return None;
+    }
+    let (name, quantity) = prefix.trim_end().rsplit_once(char::is_whitespace)?;
+    let name = name.trim();
+    if name.is_empty()
+        || !name.chars().any(char::is_alphabetic)
+        || !quantity.chars().any(|c| c.is_ascii_digit())
+        || !quantity.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+    {
+        return None;
+    }
+    Some(name)
+}
+
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
 /// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
 /// PayPal account (see `BookingFinisher`).
@@ -393,6 +412,16 @@ impl BookingFinisher {
                 Some(v) if !v.contains(loan) => FlowKind::Transfer,
                 _ => FlowKind::Loan,
             };
+        }
+        if t.flow == FlowKind::Investment
+            && self.merchants.enabled()
+            && ((t.amount_cents < 0
+                && is_imported_security_purchase_category(&t.category_path))
+                || (t.amount_cents > 0 && is_security_sale_category(&t.category_path)))
+            && let Some(name) = security_display_name(&t.purpose)
+        {
+            t.merchant.name = name.to_owned();
+            t.merchant_name = name.to_owned();
         }
     }
 }
@@ -2639,6 +2668,21 @@ mod list_cache_tests {
         let after = v.list_transactions(BookingFilter::default()).unwrap();
         let b = after.transactions.iter().find(|b| b.id == target).unwrap();
         assert_eq!(b.category_id, Some(cat[3].id));
+    }
+
+    #[test]
+    fn security_display_name_preserves_full_fund_name() {
+        for (purpose, expected) in [
+            ("Vanguard FTSE All-World High Dividend Yield (Dist) 0.931214 Stk", Some("Vanguard FTSE All-World High Dividend Yield (Dist)")),
+            ("WisdomTree Global High Dividend (Dist) 3.289473 Stk", Some("WisdomTree Global High Dividend (Dist)")),
+            ("Boerse Stuttgart EUWAX Gold II 0.919278 Stk", Some("Boerse Stuttgart EUWAX Gold II")),
+            ("VanEck Morningstar Developed Markets Dividend Leaders (Dist) 1.36215 Stk", Some("VanEck Morningstar Developed Markets Dividend Leaders (Dist)")),
+            ("ETF 1,25 Stk.", Some("ETF")),
+            ("Kauf ohne Stückzahl", None),
+            ("ETF abc Stk", None),
+        ] {
+            assert_eq!(super::security_display_name(purpose), expected);
+        }
     }
 
     #[test]
