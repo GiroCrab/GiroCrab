@@ -2112,83 +2112,100 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ---- PIN / TAN dialog (overlay); the input is cleared as soon as it is handed over
+    // ---- PIN / TAN dialog (overlay); the input is cleared as soon as it is handed over.
+    // Height is capped to the window: title, message, image and comparison scroll,
+    // the input and the buttons stay fixed at the bottom (reachable at the 600px minimum height).
     if tan-open: Rectangle {
         background: #000000aa;
         TouchArea { }
         Rectangle {
             width: min(460px, parent.width - 32px);
-            height: tan-col.preferred-height + 4px;
+            // 2 × 18px padding + 10px spacing + 4px, like `Dialog`
+            height: min(tan-body.preferred-height + tan-foot.preferred-height + 50px, parent.height - 32px);
             background: Theme.surface;
             border-radius: 14px;
             border-width: 1px;
             border-color: Theme.border;
-            tan-col := VerticalLayout {
+            VerticalLayout {
                 padding: 18px;
                 spacing: 10px;
-                Text { text: root.tan-title; font-size: 18px; font-weight: 700; color: Theme.text; wrap: word-wrap; }
-                Text { text: root.tan-message; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
-                if root.tan-has-image: Image { source: root.tan-image; height: 200px; image-fit: contain; }
-                if root.tan-cmp-visible && root.unlocked: Rectangle {
-                    border-radius: 10px;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    VerticalLayout {
-                        padding: 12px;
-                        spacing: 6px;
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text { text: "Betrag"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
-                            Text {
-                                text: root.privacy ? "•••,•• €" : root.tan-cmp-amount;
-                                color: Theme.text; font-size: 18px; font-weight: 700;
-                                horizontal-alignment: right; horizontal-stretch: 1;
+                tan-flick := Flickable {
+                    vertical-stretch: 1;
+                    viewport-width: self.width;
+                    viewport-height: tan-body.preferred-height;
+                    tan-body := VerticalLayout {
+                        width: tan-flick.width;
+                        height: self.preferred-height;
+                        spacing: 10px;
+                        Text { text: root.tan-title; font-size: 18px; font-weight: 700; color: Theme.text; wrap: word-wrap; }
+                        Text { text: root.tan-message; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+                        if root.tan-has-image: Image { source: root.tan-image; height: 200px; image-fit: contain; }
+                        if root.tan-cmp-visible && root.unlocked: Rectangle {
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 6px;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Betrag"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
+                                    Text {
+                                        text: root.privacy ? "•••,•• €" : root.tan-cmp-amount;
+                                        color: Theme.text; font-size: 18px; font-weight: 700;
+                                        horizontal-alignment: right; horizontal-stretch: 1;
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "Empfänger-IBAN"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
+                                    Text {
+                                        text: root.privacy ? "•••• •••• ••••" : root.tan-cmp-prefix;
+                                        color: Theme.muted; font-size: 12px; overflow: elide;
+                                        horizontal-alignment: right; vertical-alignment: center; horizontal-stretch: 1;
+                                    }
+                                    Rectangle {
+                                        background: Theme.border;
+                                        border-radius: 6px;
+                                        width: cmp-end.preferred-width + 12px;
+                                        horizontal-stretch: 0;
+                                        cmp-end := Text { text: root.privacy ? "••••" : root.tan-cmp-end; color: Theme.text; font-size: 20px; font-weight: 800; }
+                                    }
+                                }
+                                Text {
+                                    text: "Bitte gleichen Sie Betrag und die letzten 4 Zeichen der Empfänger-IBAN vor der Freigabe auf Ihrem TAN-Gerät / Smartphone ab.";
+                                    color: Theme.text; font-size: 12px; wrap: word-wrap;
+                                }
+                                if root.privacy: Text {
+                                    text: "Privatmodus: Betrag und Empfänger-IBAN sind ausgeblendet (Strg+Umschalt+P blendet sie ein).";
+                                    color: Theme.muted; font-size: 11px; wrap: word-wrap;
+                                }
                             }
-                        }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text { text: "Empfänger-IBAN"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 0; }
-                            Text {
-                                text: root.privacy ? "•••• •••• ••••" : root.tan-cmp-prefix;
-                                color: Theme.muted; font-size: 12px; overflow: elide;
-                                horizontal-alignment: right; vertical-alignment: center; horizontal-stretch: 1;
-                            }
-                            Rectangle {
-                                background: Theme.border;
-                                border-radius: 6px;
-                                width: cmp-end.preferred-width + 12px;
-                                horizontal-stretch: 0;
-                                cmp-end := Text { text: root.privacy ? "••••" : root.tan-cmp-end; color: Theme.text; font-size: 20px; font-weight: 800; }
-                            }
-                        }
-                        Text {
-                            text: "Bitte gleichen Sie Betrag und die letzten 4 Zeichen der Empfänger-IBAN vor der Freigabe auf Ihrem TAN-Gerät / Smartphone ab.";
-                            color: Theme.text; font-size: 12px; wrap: word-wrap;
-                        }
-                        if root.privacy: Text {
-                            text: "Privatmodus: Betrag und Empfänger-IBAN sind ausgeblendet (Strg+Umschalt+P blendet sie ein).";
-                            color: Theme.muted; font-size: 11px; wrap: word-wrap;
                         }
                     }
                 }
-                if root.tan-mode == "push": Text {
-                    text: "Warte auf Freigabe in der Bank-App …";
-                    color: Theme.text; font-size: 13px; horizontal-alignment: center;
-                }
-                if root.tan-mode != "push" && root.tan-mode != "confirm": LineEdit {
-                    text <=> root.tan-text;
-                    input-type: root.tan-mode == "pin" ? InputType.password : InputType.text;
-                    placeholder-text: root.tan-mode == "pin" ? "PIN" : root.tan-mode == "redirect" ? "Adresse oder Code aus dem Browser einfügen" : "TAN";
-                    accepted(t) => { root.tan-submit(t); root.tan-text = ""; }
-                }
-                HorizontalLayout {
-                    alignment: end;
-                    spacing: 8px;
-                    Button { text: "Abbrechen"; clicked => { root.tan-text = ""; root.tan-cancel(); } }
-                    if root.tan-mode != "push": Button {
-                        text: root.tan-mode == "confirm" ? "Trotzdem senden" : "Weiter";
-                        primary: true;
-                        clicked => { root.tan-submit(root.tan-text); root.tan-text = ""; }
+                tan-foot := VerticalLayout {
+                    vertical-stretch: 0;
+                    spacing: 10px;
+                    if root.tan-mode == "push": Text {
+                        text: "Warte auf Freigabe in der Bank-App …";
+                        color: Theme.text; font-size: 13px; horizontal-alignment: center;
+                    }
+                    if root.tan-mode != "push" && root.tan-mode != "confirm": LineEdit {
+                        text <=> root.tan-text;
+                        input-type: root.tan-mode == "pin" ? InputType.password : InputType.text;
+                        placeholder-text: root.tan-mode == "pin" ? "PIN" : root.tan-mode == "redirect" ? "Adresse oder Code aus dem Browser einfügen" : "TAN";
+                        accepted(t) => { root.tan-submit(t); root.tan-text = ""; }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        Button { text: "Abbrechen"; clicked => { root.tan-text = ""; root.tan-cancel(); } }
+                        if root.tan-mode != "push": Button {
+                            text: root.tan-mode == "confirm" ? "Trotzdem senden" : "Weiter";
+                            primary: true;
+                            clicked => { root.tan-submit(root.tan-text); root.tan-text = ""; }
+                        }
                     }
                 }
             }

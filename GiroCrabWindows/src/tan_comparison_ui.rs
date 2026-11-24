@@ -189,7 +189,16 @@ mod tests {
         assert_eq!(c.end_chars, "001S");
         assert_eq!(c.amount, "0,05 €");
         assert_eq!(TanComparison::new("AB1", 0_i64), None);
+        assert_eq!(TanComparison::new(" A B 1 ", 0_i64), None);
         assert_eq!(TanComparison::new("  ", 100_i64), None);
+    }
+
+    #[test]
+    fn exactly_four_chars_gives_empty_prefix_and_full_end() {
+        let c = TanComparison::new("ab 12", 100_000_i64).unwrap();
+        assert_eq!(c.prefix, "");
+        assert_eq!(c.end_chars, "AB12");
+        assert_eq!(c.amount, "1.000,00 €");
     }
 
     #[test]
