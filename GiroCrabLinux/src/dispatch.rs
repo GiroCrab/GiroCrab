@@ -798,8 +798,9 @@ fn call(method: &str, a: &Value) -> R {
                     "Bitte zuerst Ihren eigenen Tresor öffnen, dann die Sicherung wiederherstellen.",
                 ));
             };
-            own.restore_backup(local_path(arg(a, "backup_path")?), arg(a, "password")?)
-                .map_err(|e| e.to_string())?;
+            let restored =
+                own.restore_backup(local_path(arg(a, "backup_path")?), arg(a, "password")?);
+            // also after a failure: the restore may have replaced data before it failed
             if refund_target
                 .as_ref()
                 .and_then(|(_, v)| v.upgrade())
@@ -807,6 +808,7 @@ fn call(method: &str, a: &Value) -> R {
             {
                 *refund_target = None;
             }
+            restored.map_err(|e| e.to_string())?;
             remove_quicklook_files();
             ok(())
         }
