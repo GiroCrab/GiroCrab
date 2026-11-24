@@ -565,6 +565,8 @@ extension AppModel {
             do {
                 let step = try await session.poll()
                 guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
+                // a TAN or skip answered meanwhile owns the sheet: this poll's result is out of date
+                guard self.activeChallenge?.busy != true else { return }
                 self.handle(step, connection: connection)
             } catch {
                 guard self.activeSession === session else { return }
