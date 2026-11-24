@@ -79,21 +79,29 @@ pub fn sum_by_currency<'a>(
     m
 }
 
-fn key(r: &BatchCsvRow) -> String {
+/// Vergleichsschlüssel einer Zeile; `None`, wenn IBAN oder Betrag leer sind
+/// (solche Zeilen können keine Doppelten sein).
+fn key(r: &BatchCsvRow) -> Option<String> {
+    if r.iban.trim().is_empty() || r.amount_text.trim().is_empty() {
+        return None;
+    }
     let iban: String = r
         .iban
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect::<String>()
         .to_uppercase();
-    format!("{iban}|{}|{}", r.amount_cents, r.purpose.trim())
+    Some(format!("{iban}|{}|{}", r.amount_cents, r.purpose.trim()))
 }
 
 /// Markiert alle Zeilen (auch fehlerhafte), deren IBAN, Betrag und Zweck mehrfach vorkommen.
+/// Zeilen mit leerer IBAN oder leerem Betrag werden ausgelassen.
 pub fn duplicate_flags(rows: &[BatchCsvRow]) -> Vec<bool> {
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, r) in rows.iter().enumerate() {
-        groups.entry(key(r)).or_default().push(i);
+        if let Some(k) = key(r) {
+            groups.entry(k).or_default().push(i);
+        }
     }
     let mut flags = vec![false; rows.len()];
     for i in groups.values().filter(|g| g.len() > 1).flatten() {
@@ -103,9 +111,10 @@ pub fn duplicate_flags(rows: &[BatchCsvRow]) -> Vec<bool> {
 }
 
 /// Anzahl möglicher Doppelter wie in der Referenz: je Gruppe gleicher Zeilen alle
-/// Wiederholungen, die erste Zeile zählt nicht mit. Fehlerhafte Zeilen zählen mit.
+/// Wiederholungen, die erste Zeile zählt nicht mit. Fehlerhafte Zeilen zählen mit,
+/// Zeilen mit leerer IBAN oder leerem Betrag nicht.
 pub fn duplicate_count(rows: &[BatchCsvRow]) -> usize {
-    repeats(rows.iter().map(key))
+    repeats(rows.iter().filter_map(key))
 }
 
 /// Zählt Schlüssel, die schon einmal vorkamen (Gruppengröße − 1 je Gruppe).
