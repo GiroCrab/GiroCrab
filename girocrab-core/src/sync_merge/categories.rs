@@ -237,12 +237,13 @@ fn combine_categories(state: &mut BTreeMap<String, Cat>) -> bool {
 /// its live survivor (e.g. device B edited category Y's role before receiving
 /// device A's duplicate merge of Y into X). The survivor is the one bookings
 /// move to ([`cat_survivor`]). Ordinary deletions (`merged_into` is `None`) do
-/// not touch any live category. Only the role is forwarded: it decides how the
-/// survivor's bookings are classified.
+/// not touch any live category, and neither does a role nobody chose (stamp 0,
+/// seeded by schema step 42 or an import): it described the tombstone's own place.
+/// Only the role is forwarded: it decides how the survivor's bookings are classified.
 fn forward_merged_roles(state: &mut BTreeMap<String, Cat>) {
     let updates: Vec<(String, Option<String>, i64)> = state
         .values()
-        .filter(|c| c.merged_into.is_some())
+        .filter(|c| c.merged_into.is_some() && c.role_ms > 0)
         .filter_map(|c| {
             let target = cat_survivor(state, &c.uuid)?;
             Some((target.to_string(), c.category_role.clone(), c.role_ms))
@@ -495,5 +496,20 @@ mod forward_tests {
         let survivor = &state[&format!("t{n:02}")];
         assert_eq!(survivor.category_role.as_deref(), Some("neutral"));
         assert_eq!(survivor.role_ms, 500);
+    }
+
+    /// A role nobody chose (stamp 0) on a merged duplicate stays there: the survivor keeps
+    /// inheriting, so its bookings keep their classification.
+    #[test]
+    fn seeded_role_on_a_merged_duplicate_is_not_forwarded() {
+        let mut state = BTreeMap::new();
+        let dup = cat("dup", Some("live"), Some("investment"), 0);
+        let live = cat("live", None, None, 0);
+        state.insert(dup.uuid.clone(), dup);
+        state.insert(live.uuid.clone(), live);
+
+        forward_merged_roles(&mut state);
+        assert_eq!(state["live"].category_role, None);
+        assert_eq!(state["live"].role_ms, 0);
     }
 }

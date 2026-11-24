@@ -1,7 +1,7 @@
 import SwiftUI
 import GiroCrabCore
 
-/// Column 3: permanent context & receipt inspector.
+/// Column 3: permanent context & receipt inspector. See `docs/INSPEKTOR_UI.md`.
 struct InspectorView: View {
     @Environment(AppModel.self) private var model
     /// Order and hidden cards (#448), see `InspectorLayout`.
@@ -121,56 +121,25 @@ struct ReceiptCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Spacer()
-                Button {
-                    draftName = booking.counterparty
-                    draftPurpose = booking.purpose
-                    editing = true
-                } label: { Label("Text bearbeiten …", systemImage: "pencil") }
-                    .buttonStyle(.borderless).controlSize(.small).appFont(.caption)
-                    .help("Gegenpartei und Verwendungszweck korrigieren")
-            }
-            .capturablePopover(isPresented: $editing) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Gegenpartei").appFont(.caption).foregroundStyle(Theme.secondary)
-                    TextField("Gegenpartei", text: $draftName).textFieldStyle(.roundedBorder)
-                    Text("Verwendungszweck").appFont(.caption).foregroundStyle(Theme.secondary)
-                    TextEditor(text: $draftPurpose)
-                        .appFont(.callout).frame(height: 90 * textScale)
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.secondary.opacity(0.3)))
-                    HStack {
-                        Spacer()
-                        Button("Abbrechen") { editing = false }
-                            .keyboardShortcut(.cancelAction)
-                        Button("Speichern") {
-                            model.updateText(counterparty: draftName, purpose: draftPurpose, for: booking)
-                            editing = false
-                        }.keyboardShortcut(.defaultAction)
-                    }
-                }
-                .padding(14).frame(width: 340 * textScale)
-            }
             HStack(spacing: 12) {
                 MerchantSignet(merchant: booking.merchant, categorySymbol: booking.categorySymbol, size: 48)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(booking.merchant.name)
-                        .sensitive()
-                        .appFont(.title3, weight: .semibold)
-                        .foregroundStyle(Theme.text)
-                        .textSelection(.enabled)
+                    HStack(spacing: 6) {
+                        Text(booking.merchant.name)
+                            .sensitive()
+                            .appFont(.title3, weight: .semibold)
+                            .foregroundStyle(Theme.text)
+                            .textSelection(.enabled)
+                        Spacer(minLength: 0)
+                        editTextButton
+                    }
                     Text("\(booking.accountName) · \(booking.paymentMethod)")
                         .sensitive()
                         .appFont(.caption).foregroundStyle(Theme.secondary)
-                    if let counter = model.counterAccount(for: booking) {
-                        Text("⇄ \(counter.name) (\(formatIBAN(booking.counterpartyIban)))")
+                    if !booking.counterpartyIban.isEmpty {
+                        counterpartyIBAN
                             .sensitive()
                             .appFont(.caption).foregroundStyle(Theme.secondary)
-                            .textSelection(.enabled)
-                    } else if !booking.counterpartyIban.isEmpty {
-                        Text(formatIBAN(booking.counterpartyIban))
-                            .sensitive()
-                            .appFont(.caption, design: .monospaced).foregroundStyle(Theme.secondary)
                             .textSelection(.enabled)
                     }
                     // with the recognition off no logo shows, so there is no domain to set (#1373)
@@ -178,7 +147,6 @@ struct ReceiptCard: View {
                         MerchantDomainRow(merchant: booking.merchant)
                     }
                 }
-                Spacer()
             }
             Text(Money.signed(booking.amountCents, currency: booking.currency))
                 .sensitive(.amounts)
@@ -263,6 +231,52 @@ struct ReceiptCard: View {
                 .appFont(.caption)
         }
         .flatSection()
+    }
+
+    private var counterpartyIBAN: Text {
+        let iban = Text(formatIBAN(booking.counterpartyIban)).monospaced()
+        if let counter = model.counterAccount(for: booking) {
+            return Text("⇄ \(counter.name) (\(iban))")
+        }
+        return iban
+    }
+
+    private var editTextButton: some View {
+        Button {
+            draftName = booking.counterparty
+            draftPurpose = booking.purpose
+            editing = true
+        } label: {
+            Label("Text bearbeiten …", systemImage: "pencil")
+                .labelStyle(.iconOnly)
+                #if os(iOS)
+                .frame(minWidth: 44, minHeight: 44)
+                #endif
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .appFont(.body)
+        .help("Gegenpartei und Verwendungszweck korrigieren")
+        .capturablePopover(isPresented: $editing) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Gegenpartei").appFont(.caption).foregroundStyle(Theme.secondary)
+                TextField("Gegenpartei", text: $draftName).textFieldStyle(.roundedBorder)
+                Text("Verwendungszweck").appFont(.caption).foregroundStyle(Theme.secondary)
+                TextEditor(text: $draftPurpose)
+                    .appFont(.callout).frame(height: 90 * textScale)
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.secondary.opacity(0.3)))
+                HStack {
+                    Spacer()
+                    Button("Abbrechen") { editing = false }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Speichern") {
+                        model.updateText(counterparty: draftName, purpose: draftPurpose, for: booking)
+                        editing = false
+                    }.keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(14).frame(width: 340 * textScale)
+        }
     }
 }
 
@@ -638,7 +652,7 @@ struct CategoryGridCard: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104 * textScale), spacing: 6)], spacing: 6) {
                 ForEach(model.categoryTree) { node in
-                    CategoryChip(category: node.category, selected: node.id == path.first) {
+                    CategoryChip(category: node.category, selected: node.id == path.first, usesSystemSurface: true) {
                         pick(node, level: 0, in: path)
                     }
                 }
@@ -649,7 +663,7 @@ struct CategoryGridCard: View {
                     Divider()
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 150 * textScale), spacing: 6)], spacing: 6) {
                         ForEach(kids) { kid in
-                            CategoryChip(category: kid.category, selected: kid.id == selected, filled: true) {
+                            CategoryChip(category: kid.category, selected: kid.id == selected, usesSystemSurface: true) {
                                 pick(kid, level: level + 1, in: path)
                             }
                         }
@@ -704,7 +718,7 @@ struct CategorySuggestionBox: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.canvas))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.systemSurface))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
@@ -753,12 +767,14 @@ struct CategorySuggestionBox: View {
 struct CategoryChip: View {
     let category: GiroCrabCore.Category
     var selected: Bool
-    var filled = false
+    var usesSystemSurface = false
     /// Label override (e.g. the path below the top-level category); default: the name.
     var title: String?
     let action: () -> Void
 
     var body: some View {
+        let fill = usesSystemSurface ? Theme.systemSurface : Theme.card
+        let border = usesSystemSurface ? Theme.systemSeparator : Theme.border
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: category.sfSymbol).appFont(.subheadline)
@@ -772,8 +788,8 @@ struct CategoryChip: View {
             // coloured text on an accent fill is unreadable with light accents (yellow).
             .foregroundStyle(Theme.text)
             .fontWeight(selected ? .semibold : nil)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(selected ? Theme.selection : (filled ? Theme.canvas : Theme.card)))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 1.5 : 1))
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(selected ? Theme.selection : fill))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(selected ? Theme.accent : border, lineWidth: selected ? 1.5 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -517,7 +517,7 @@ fn role_inheritance_matches_list_and_booking_at_depth_32() {
 }
 
 /// Behavior-preservation regression test (#931 step 1a): on both a freshly
-/// seeded demo vault and an upgraded v38 fixture vault, `categories.role`
+/// seeded demo vault and an upgraded v41 fixture vault, `categories.role`
 /// produces the exact same category classification, per-booking `FlowKind`,
 /// `BookingPage` / `SelectionFlow` KPIs, and monthly cashflow as the legacy
 /// `builtin_role`-based logic.
@@ -525,7 +525,7 @@ fn role_inheritance_matches_list_and_booking_at_depth_32() {
 fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
     use crate::merchants::{FlowKind, MerchantKind, normalise};
 
-    /// v38 `is_investment_category_path`, applied to the top-level `builtin_role`.
+    /// v41 `is_investment_category_path`, applied to the top-level `builtin_role`.
     fn is_inv_path(path: &str) -> bool {
         let p = path.to_lowercase();
         [
@@ -627,7 +627,7 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
             let mut top_role = String::new();
             let mut is_transfer = false;
             let mut cur = Some(id);
-            // v38's bound (`category_flows`): 32 categories
+            // v41's bound (`category_flows`): 32 categories
             for _ in 0..32 {
                 let Some((parent, role)) = cur.and_then(|c| rows.get(&c)) else {
                     break;
@@ -652,7 +652,7 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
         );
         for (id, (top_role, is_transfer)) in &legacy_cats {
             let role = new_roles[id];
-            // The one category effect v38 applied: a transfer ancestor beats the top-level
+            // The one category effect v41 applied: a transfer ancestor beats the top-level
             // role (`BookingFinisher::finish`), investment beats loan (`classify_by_kind`).
             let legacy = if *is_transfer {
                 Some(CategoryRole::Neutral)
@@ -813,25 +813,25 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
         }
     }
 
-    // 1. Fresh demo vault (seeded directly at v39)
+    // 1. Fresh demo vault (seeded directly at v42)
     let demo_dir = crate::test_support::TempDir::new("roles-regression-demo");
     let demo_vault = vault(&demo_dir);
     demo_vault.seed_demo_data().unwrap();
     verify_vault("fresh-demo", &demo_vault);
 
-    // 2. Real v38 fixture vault migrated to v39
-    let mig_dir = crate::test_support::TempDir::new("roles-regression-v38");
+    // 2. Real v41 fixture vault migrated to v42
+    let mig_dir = crate::test_support::TempDir::new("roles-regression-v41");
     let src =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v38.girocrab");
-    let dst = mig_dir.join("vault-v38-copy.girocrab");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v41.girocrab");
+    let dst = mig_dir.join("vault-v41-copy.girocrab");
     std::fs::copy(&src, &dst).unwrap();
     let migrated = Vault::open(dst.to_string_lossy().into(), vec![0x47; 32]).unwrap();
-    verify_vault("migrated-v38", &migrated);
+    verify_vault("migrated-v41", &migrated);
 
     // 3. Control: a transfer category below `Sparen & Investieren` (top level) with a booking.
-    // v38 made it a transfer although the top-level role is an investment one.
-    let nested_dir = crate::test_support::TempDir::new("roles-regression-v38-nested");
-    let dst = nested_dir.join("vault-v38-nested.girocrab");
+    // v41 made it a transfer although the top-level role is an investment one.
+    let nested_dir = crate::test_support::TempDir::new("roles-regression-v41-nested");
+    let dst = nested_dir.join("vault-v41-nested.girocrab");
     std::fs::copy(&src, &dst).unwrap();
     {
         let conn = rusqlite::Connection::open(&dst).unwrap();
@@ -863,7 +863,7 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
         .unwrap()
         .effective_role;
     assert_eq!(nested_role, CategoryRole::Neutral);
-    verify_vault("migrated-v38-nested-transfer", &nested);
+    verify_vault("migrated-v41-nested-transfer", &nested);
 }
 
 /// Intentional #931 role-inheritance semantics when reorganizing built-in
@@ -873,8 +873,8 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
 /// 2. Promoting an inheriting child (`ETF-Sparpläne`, `role = None`) to the
 ///    root follows pure tree inheritance (`Consumption`) without a hidden
 ///    name-based heuristic, until the user sets an explicit role.
-/// 3. Existing v38 vaults where `ETF-Sparpläne` was *already* promoted to the
-///    root before upgrading keep `Investment` via schema step 39's backfill.
+/// 3. Existing v41 vaults where `ETF-Sparpläne` was *already* promoted to the
+///    root before upgrading keep `Investment` via schema step 42's backfill.
 #[test]
 fn moved_builtin_category_follows_tree_role_inheritance() {
     use crate::merchants::FlowKind;
@@ -952,15 +952,15 @@ fn moved_builtin_category_follows_tree_role_inheritance() {
         .unwrap();
     assert_eq!(flow_of(&v, booking_id), FlowKind::Investment);
 
-    // 3. Pre-v39 vault where `ETF-Sparpläne` was already promoted to root:
-    //    migrating v38 -> v39 backfills `role = 'investment'`, keeping `Investment`.
-    let mig_dir = crate::test_support::TempDir::new("roles-v38-promoted-etf");
+    // 3. Pre-v42 vault where `ETF-Sparpläne` was already promoted to root:
+    //    migrating v41 -> v42 backfills `role = 'investment'`, keeping `Investment`.
+    let mig_dir = crate::test_support::TempDir::new("roles-v41-promoted-etf");
     let src =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v38.girocrab");
-    let dst = mig_dir.join("vault-v38-promoted.girocrab");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v41.girocrab");
+    let dst = mig_dir.join("vault-v41-promoted.girocrab");
     std::fs::copy(&src, &dst).unwrap();
     {
-        // Mutate the v38 copy before opening (so before step 39 runs).
+        // Mutate the v41 copy before opening (so before step 42 runs).
         let conn = rusqlite::Connection::open(&dst).unwrap();
         let hex_key = "47".repeat(32);
         conn.pragma_update(None, "key", format!("x'{hex_key}'"))
@@ -1002,21 +1002,21 @@ fn moved_builtin_category_follows_tree_role_inheritance() {
     assert_eq!(flow_of(&upgraded, tx_id), FlowKind::Investment);
 }
 
-/// Rearranged v38 trees preserve legacy classification on upgrade to v39:
+/// Rearranged v41 trees preserve legacy classification on upgrade to v42:
 /// - `Gehalt` moved under `Umbuchungen` keeps `Transfer` for bookings assigned
-///   to it (matching v38's "a transfer category still wins" rule in
+///   to it (matching v41's "a transfer category still wins" rule in
 ///   `BookingFinisher::finish`); later explicit `set_category_role` still
 ///   overrides via nearest-role inheritance.
-/// - `Sparen & Investieren` already moved under a custom root in v38 stays
+/// - `Sparen & Investieren` already moved under a custom root in v41 stays
 ///   `Consumption` on upgrade (matching legacy root-only `top_role`).
 #[test]
-fn v38_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
+fn v41_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
     use crate::merchants::FlowKind;
 
-    let mig_dir = crate::test_support::TempDir::new("roles-v38-rearranged");
+    let mig_dir = crate::test_support::TempDir::new("roles-v41-rearranged");
     let src =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v38.girocrab");
-    let dst = mig_dir.join("vault-v38-rearranged.girocrab");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v41.girocrab");
+    let dst = mig_dir.join("vault-v41-rearranged.girocrab");
     std::fs::copy(&src, &dst).unwrap();
     {
         let conn = rusqlite::Connection::open(&dst).unwrap();
@@ -1085,7 +1085,7 @@ fn v38_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
             .flow
     };
 
-    // In v38, a transfer ancestor always wins in `BookingFinisher::finish`
+    // In v41, a transfer ancestor always wins in `BookingFinisher::finish`
     // (`is_own_transfer(..., transfer_category)`): both plain and salary-flagged
     // bookings in `Umbuchungen › Gehalt` stay `Transfer`.
     v.set_transaction_category(plain_debit, Some(gehalt.id))
@@ -1101,23 +1101,23 @@ fn v38_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
     assert_eq!(flow_of(plain_debit), FlowKind::Consumption);
     assert_eq!(flow_of(salary_tx), FlowKind::Income);
 
-    // `Sparen & Investieren` already under custom root in v38 stays `Consumption`.
+    // `Sparen & Investieren` already under custom root in v41 stays `Consumption`.
     v.set_transaction_category(plain_debit, Some(sparen.id))
         .unwrap();
     assert_eq!(flow_of(plain_debit), FlowKind::Consumption);
 }
 
 /// `Gehalt` two levels below `Umbuchungen` (through a live folder) gets no role of its own on
-/// the upgrade and inherits `Neutral`, so its bookings stay `Transfer` as in v38. A deleted
+/// the upgrade and inherits `Neutral`, so its bookings stay `Transfer` as in v41. A deleted
 /// folder in between cuts the ancestry instead (`category_roles_backfill_from_builtin_role`).
 #[test]
-fn v38_gehalt_below_live_folder_under_transfers_inherits_neutral() {
+fn v41_gehalt_below_live_folder_under_transfers_inherits_neutral() {
     use crate::merchants::FlowKind;
 
-    let mig_dir = crate::test_support::TempDir::new("roles-v38-gehalt-folder");
+    let mig_dir = crate::test_support::TempDir::new("roles-v41-gehalt-folder");
     let src =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v38.girocrab");
-    let dst = mig_dir.join("vault-v38-gehalt-folder.girocrab");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault-v41.girocrab");
+    let dst = mig_dir.join("vault-v41-gehalt-folder.girocrab");
     std::fs::copy(&src, &dst).unwrap();
     {
         let conn = rusqlite::Connection::open(&dst).unwrap();
@@ -1216,6 +1216,8 @@ fn merged_duplicate_tombstone_forwards_newer_role_to_survivor() {
 
     // Device B still has Y live and gives Y a newer role (`Neutral` @ 500), plus
     // an ordinary deleted category `uuid-del` with an even newer role (`Loan` @ 900).
+    // It has the name and parent of the live `Sonstiges`, so a merge that matched by name
+    // would show up there.
     let bx = b
         .create_category("Kaution".into(), None, "tag".into(), "".into())
         .unwrap();
@@ -1223,7 +1225,7 @@ fn merged_duplicate_tombstone_forwards_newer_role_to_survivor() {
         .create_category("Kaution Alt".into(), None, "tag".into(), "".into())
         .unwrap();
     let b_del = b
-        .create_category("Gelöscht".into(), None, "tag".into(), "".into())
+        .create_category("Sonstiges".into(), None, "tag".into(), "".into())
         .unwrap();
     {
         let db = b.db().unwrap();

@@ -2292,3 +2292,44 @@ async fn without_a_prompt_a_tan_during_the_fetch_still_fails_the_request() {
     assert!(e.contains("HKSAL"), "{e}");
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
+
+/// A bank reply carrying `prefix` with `data` as binary element (FinTS `@len@`).
+fn reply_with_binary(prefix: &str, data: &str) -> &'static str {
+    Box::leak(
+        format!(
+            "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'{prefix}@{}@{data}'",
+            data.len()
+        )
+        .into_boxed_str(),
+    )
+}
+
+#[tokio::test]
+async fn the_closing_balance_of_the_bookings_is_the_balance_with_its_date() {
+    // #1828: an account without HKSAL (or one whose HKSAL the bank wants a TAN for)
+    // takes the booked closing balance (:62F:) of its bookings, dated as the statement says
+    let mt940 = ":20:STARTUMSE\r\n:25:52090000/0012345678\r\n:28C:00000/001\r\n:60F:C250101EUR1000,00\r\n\
+        :61:2501020102DR23,45NDDTNONREF\r\n:86:105?00FOLGELASTSCHRIFT?20Einkauf REWE?32REWE Markt GmbH\r\n\
+        :62F:C250103EUR3476,55\r\n";
+    let (url, seen) = mock_bank(vec![reply_with_binary("HIKAZ:3:7:3+", mt940)]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKKAZ": [7]}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    c.upd = vec![upd_acc(
+        "0532013000",
+        "",
+        IBAN_A,
+        "Verrechnungskonto",
+        &["HKKAZ"],
+    )];
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert!(
+        seen.lock().unwrap().iter().flatten().any(|i| i == "HKKAZ"),
+        "{:?}",
+        seen.lock().unwrap()
+    );
+    assert_eq!(r.accounts.len(), 1);
+    assert_eq!(r.accounts[0].balance_cents, 347_655);
+    assert_eq!(r.accounts[0].balance_date, "2025-01-03");
+    assert!(r.balances_unknown.is_empty(), "{:?}", r.balances_unknown);
+}

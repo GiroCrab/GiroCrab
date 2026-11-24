@@ -744,9 +744,16 @@ fn write_splits(
         if preserve_notes && !s.note.trim().is_empty() {
             st.notes += 1;
         }
-        lines.push((cat, s.amount_cents, split_note(s, preserve_notes)));
+        lines.push(crate::models::TransactionSplitInput {
+            uuid: None,
+            category_id: cat,
+            amount_cents: s.amount_cents,
+            note: split_note(s, preserve_notes),
+        });
     }
-    crate::planning::store_splits(conn, id, &lines)
+    crate::planning::store_splits(conn, id, &lines)?;
+    // the same import on two devices gives the same part UUIDs (CodeRabbit #1853)
+    crate::planning::derive_split_uuids(conn, id)
 }
 
 fn split_note(s: &MmSplit, own_note: bool) -> String {

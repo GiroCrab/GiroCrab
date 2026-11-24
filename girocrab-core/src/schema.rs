@@ -60,12 +60,18 @@
 //! - 38: repair (#998): accounts the MoneyMoney import archived because their last refresh there
 //!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]), marked
 //!   in `accounts.archive_unknown` until an import or the user settles their state.
-//! - 39: explicit category financial roles (#931): `categories.role` (NULL = inherit from
+//! - 39: stable split-part identities (#714): `transaction_splits.uuid` (UUIDv5 backfill from
+//!   booking identity and content) and `position`.
+//! - 40: refund links (#714): `refund_links` between bookings or their split parts.
+//! - 41: `transactions.date_ms` (#714): edit stamp of the date of a manual booking, so a date
+//!   edit syncs on its own (neither with the text nor with amount and splits).
+//! - 42: explicit category financial roles (#931): `categories.role` (NULL = inherit from
 //!   parent, root default `consumption`) and its sync stamp `categories.role_ms`, seeded
 //!   from `categories.builtin_role` with stamp 0 so user edits win on sync
 //!   ([`category_roles`]): `investment`, `loan` and `neutral` only where `builtin_role`
 //!   decided the classification before; `income` and `salary` as defaults that change no
-//!   classification yet.
+//!   classification yet. Exception: categories 32 or more levels deep, where the old walk
+//!   stopped after 32 categories.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -120,20 +126,28 @@ const STEPS: &[Step] = &[
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Hook(account_kind_groups),                           // 37 (#1003)
     Step::Hook(unarchive_cancelled_refreshes),                 // 38: repair (#998)
-    Step::Hook(category_roles),                                // 39 (#931)
+    Step::Hook(crate::planning::stable_split_ids),             // 39 (#714)
+    Step::Sql(REFUND_LINKS),                                   // 40 (#714)
+    Step::Hook(manual_date_stamp),                             // 41 (#714)
+    Step::Hook(category_roles),                                // 42 (#931)
 ];
 
-/// Step 39 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
+/// Step 42 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
 /// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
 /// explicit user choice on another device wins on sync. Idempotent.
 ///
-/// Two purposes. `investment`, `loan` and `neutral` only where `builtin_role` decided the v38
+/// Two purposes. `investment`, `loan` and `neutral` only where `builtin_role` decided the v41
 /// classification (root's role, or any transfer ancestor), so rearranged trees keep their
-/// flows: roots (also below a deleted parent, where the v38 walk stopped) and transfer
+/// flows: roots (also below a deleted parent, where the v41 walk stopped) and transfer
 /// categories at any depth. `income` (root `Einnahmen`) and `salary` (`Gehalt`) are defaults
 /// for later steps of #931 and change no classification yet; `Gehalt` gets `salary` unless a
 /// live ancestor (as `Vault::category_roles` walks them) got `investment`, `loan` or
 /// `neutral`, because `salary` there would stop the inheritance of that role.
+///
+/// Deliberate exception: v41 looked at 32 categories from a booking's category upwards,
+/// `Vault::category_roles` at 33. A category 32 or more levels deep can therefore resolve
+/// differently than before (e.g. `Neutral` from an `Umbuchungen` root exactly 32 levels up);
+/// the step does not reproduce that bound. Such trees do not occur in practice.
 fn category_roles(conn: &Connection) -> CoreResult<()> {
     for (col, def) in [("role", "TEXT"), ("role_ms", "INTEGER NOT NULL DEFAULT 0")] {
         if !has_column(conn, "main", "categories", col)? {
@@ -174,6 +188,42 @@ fn category_roles(conn: &Connection) -> CoreResult<()> {
     )?;
     Ok(())
 }
+
+/// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
+/// Idempotent (repair paths run steps again).
+fn manual_date_stamp(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "transactions", "date_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE transactions ADD COLUMN date_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
+/// Step 40 (#714): refund links between bookings or their split parts (`crate::refunds`).
+const REFUND_LINKS: &str = "CREATE TABLE IF NOT EXISTS refund_links (
+            id INTEGER PRIMARY KEY,
+            refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+            refund_part TEXT NOT NULL DEFAULT '',
+            original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+            original_part TEXT NOT NULL DEFAULT '',
+            refund_cents INTEGER NOT NULL,
+            original_cents INTEGER NOT NULL,
+            created_ms INTEGER NOT NULL,
+            changed_ms INTEGER NOT NULL,
+            deleted_ms INTEGER,
+            moved INTEGER NOT NULL DEFAULT 0,
+            moved_from_refund_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+            moved_from_refund_part TEXT,
+            moved_from_original_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+            moved_from_original_part TEXT,
+            moved_from_key TEXT NOT NULL DEFAULT '',
+            unlink_id TEXT NOT NULL DEFAULT '',
+            UNIQUE(refund_id, refund_part, original_id, original_part)
+         );
+         CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id, deleted_ms);
+         CREATE INDEX IF NOT EXISTS refund_links_moved_refund ON refund_links(moved_from_refund_id);
+         CREATE INDEX IF NOT EXISTS refund_links_moved_original ON refund_links(moved_from_original_id);";
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
 /// this device's account id and never merged) to `accounts.note` with its edit stamp `note_ms`,
@@ -1242,14 +1292,14 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 39);
+        assert_eq!(SCHEMA_VERSION, 42);
     }
 
-    /// #931: step 39 adds `categories.role` and `categories.role_ms` and seeds built-in
+    /// #931: step 42 adds `categories.role` and `categories.role_ms` and seeds built-in
     /// categories from `builtin_role` with stamp 0, leaving custom categories `NULL`.
     #[test]
     fn category_roles_backfill_from_builtin_role() {
-        let mut conn = schema_at(38);
+        let mut conn = schema_at(41);
         conn.execute_batch(
             "INSERT INTO categories(id, parent_id, name, builtin_role) VALUES
                (1, NULL, 'Sparen & Investieren', 'Sparen & Investieren'),
@@ -1296,28 +1346,28 @@ mod tests {
         assert_eq!(read(7), (Some("salary".into()), 0));
         assert_eq!(read(8), (None, 0));
         assert_eq!(read(9), (None, 0));
-        // Promoted to root before v39: preserves legacy investment classification.
+        // Promoted to root before v42: preserves legacy investment classification.
         assert_eq!(read(10), (Some("investment".into()), 0));
-        // Rearranged before v39: `Gehalt` under `Umbuchungen` stays inheriting
+        // Rearranged before v42: `Gehalt` under `Umbuchungen` stays inheriting
         // (`Neutral`), non-root `Sparen`/`Kredite` keep legacy root-only behaviour,
         // and nested `Umbuchungen` stays `Neutral`.
         assert_eq!(read(11), (None, 0));
         assert_eq!(read(12), (None, 0));
         assert_eq!(read(13), (None, 0));
         assert_eq!(read(14), (Some("neutral".into()), 0));
-        // `Gehalt` below an investment or loan root keeps inheriting that role, as v38
+        // `Gehalt` below an investment or loan root keeps inheriting that role, as v41
         // classified it by the root.
         assert_eq!(read(15), (None, 0));
         assert_eq!(read(16), (None, 0));
         // A deleted intermediate cuts the ancestry like in `Vault::category_roles`: the
-        // `Umbuchungen` above it neither counts for v38 nor for the role resolver.
+        // `Umbuchungen` above it neither counts for v41 nor for the role resolver.
         assert_eq!(read(18), (Some("salary".into()), 0));
         assert_eq!(read(19), (Some("salary".into()), 0));
         // The same depth through a live intermediate keeps the ancestry: no own role,
         // `Gehalt` inherits `Neutral` from `Umbuchungen` (role_tests.rs checks the flow).
         assert_eq!(read(20), (None, 0));
         assert_eq!(read(21), (None, 0));
-        // Without a live parent a category was its own top level in v38: `Kredite` there
+        // Without a live parent a category was its own top level in v41: `Kredite` there
         // was a loan (case 13 is the control under a live custom root).
         assert_eq!(read(22), (Some("loan".into()), 0));
         // Idempotent: re-running never overwrites an explicit role or an explicit
@@ -1536,14 +1586,39 @@ mod tests {
         assert_eq!(n, 0);
     }
 
-    /// Step 39 (#931) keeps the v38 classification of every category, checked on random
-    /// v38 trees: built-ins (every starter name and `import:transfers`) at random places,
-    /// custom categories and deleted ones, also between live ones. The v38 side is a copy of the
+    /// The deliberate exception of step 42 (#931): the old walk looked at 32 categories and
+    /// never reached an `Umbuchungen` root 32 levels up; the role resolver does, so the
+    /// deepest category resolves to `Neutral`. One level less, both agree.
+    #[test]
+    fn category_roles_depth_32_below_transfers_is_neutral() {
+        let conn = schema_at(SCHEMA_VERSION as usize);
+        conn.execute_batch(
+            "DELETE FROM categories;
+             INSERT INTO categories(id, parent_id, name, builtin_role)
+             VALUES (1, NULL, 'Umbuchungen', 'Umbuchungen');",
+        )
+        .unwrap();
+        for id in 2..=33_i64 {
+            conn.execute(
+                "INSERT INTO categories(id, parent_id, name) VALUES (?1, ?2, 'Ebene')",
+                [id, id - 1],
+            )
+            .unwrap();
+        }
+        category_roles(&conn).unwrap();
+        let roles = crate::vault::Vault::category_roles(&conn).unwrap();
+        assert_eq!(roles[&32], crate::models::CategoryRole::Neutral);
+        assert_eq!(roles[&33], crate::models::CategoryRole::Neutral);
+    }
+
+    /// Step 42 (#931) keeps the v41 classification of every category, checked on random
+    /// v41 trees: built-ins (every starter name and `import:transfers`) at random places,
+    /// custom categories and deleted ones, also between live ones. The v41 side is a copy of the
     /// old `category_flows` walk plus how `classify_by_kind`/`BookingFinisher::finish` used
     /// it; the new side is `Vault::category_roles` after the step. Trees stay below the
-    /// 32-level walk bound, whose v38 artefacts the step deliberately does not reproduce.
+    /// 32-level walk bound, whose v41 artefacts the step deliberately does not reproduce.
     #[test]
-    fn category_roles_keep_v38_classification_on_random_trees() {
+    fn category_roles_keep_v41_classification_on_random_trees() {
         use rusqlite::params;
         use std::collections::HashMap;
 
@@ -1555,9 +1630,9 @@ mod tests {
             None,
         }
 
-        // v38: `category_flows` over live rows (`0..32`), then the category's part in
+        // v41: `category_flows` over live rows (`0..32`), then the category's part in
         // `classify_by_kind` (investment before loan) and `finish` (a transfer category wins).
-        fn v38_effects(conn: &Connection) -> HashMap<i64, Effect> {
+        fn v41_effects(conn: &Connection) -> HashMap<i64, Effect> {
             let mut st = conn
                 .prepare(
                     "SELECT id, parent_id, builtin_role FROM categories WHERE deleted_ms IS NULL",
@@ -1672,14 +1747,14 @@ mod tests {
                     deleted.is_some()
                 ));
             }
-            let before = v38_effects(&conn);
+            let before = v41_effects(&conn);
             category_roles(&conn).unwrap();
             let after = new_effects(&conn);
             for (id, effect) in &before {
                 assert_eq!(
                     after.get(id),
                     Some(effect),
-                    "tree {tree}, category {id}: v38 {effect:?}, after step 39 {:?}\n{}",
+                    "tree {tree}, category {id}: v41 {effect:?}, after step 42 {:?}\n{}",
                     after.get(id),
                     rows.join("\n")
                 );

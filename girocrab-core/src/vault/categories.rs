@@ -69,7 +69,8 @@ impl Vault {
             let mut resolved = CategoryRole::Consumption;
             let mut cur = Some(id);
             // Match the display tree's depth bound (`0..=32` = 33 nodes from root to depth 32);
-            // malformed cycles cannot hang a load.
+            // malformed cycles cannot hang a load. One more than the walk before #931
+            // (`0..32`); schema step 42 (`category_roles`) documents that exception.
             for _ in 0..=32 {
                 let Some((parent, role)) = cur.and_then(|c| rows.get(&c)) else {
                     break;
