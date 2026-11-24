@@ -128,6 +128,41 @@ fn normalized(term: &str) -> String {
     term.trim().to_lowercase()
 }
 
+/// Counterparty names that are booking words, not people or firms: as terms
+/// they would blank out the wording of ordinary log messages (lower case).
+const BOOKING_WORDS: &[&str] = &[
+    "lastschrift",
+    "überweisung",
+    "gutschrift",
+    "dauerauftrag",
+    "umbuchung",
+    "bargeld",
+    "barauszahlung",
+    "bareinzahlung",
+    "auszahlung",
+    "einzahlung",
+    "kartenzahlung",
+    "zahlung",
+    "zinsen",
+    "entgelt",
+    "gebühren",
+    "abschluss",
+    "rechnungsabschluss",
+    "kontoführung",
+    "storno",
+    "sepa",
+];
+
+/// Shortest counterparty name used as a term; shorter ones (initials, "DB")
+/// would match inside ordinary words of a log message.
+const MIN_COUNTERPARTY_CHARS: usize = 3;
+
+/// Whether a counterparty name goes into the redaction terms.
+fn redactable_counterparty(name: &str) -> bool {
+    let key = normalized(name);
+    key.chars().count() >= MIN_COUNTERPARTY_CHARS && !BOOKING_WORDS.contains(&key.as_str())
+}
+
 /// Trimmed, de-duplicated terms without bank/connector names (not personal).
 fn public_terms_removed(terms: Vec<String>, banks: &HashSet<String>) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -163,7 +198,13 @@ pub fn known_terms(
     for c in &connections {
         terms.extend([c.display_name.clone(), c.login_name.clone()]);
     }
-    terms.extend(counterparties.iter().cloned());
+    // Counterparties without booking words and very short names (as on Mac/Linux).
+    terms.extend(
+        counterparties
+            .iter()
+            .filter(|n| redactable_counterparty(n))
+            .cloned(),
+    );
     let banks: HashSet<String> = catalog
         .iter()
         .map(|d| normalized(&d.name))
@@ -336,7 +377,8 @@ pub fn prepare(v: Option<&Vault>, view: Target, include_log: bool, demo: bool) -
             connection_id: None,
             only_errors: false,
             search: None,
-            limit: 50,
+            // the 15 newest entries, as in the Mac/Linux report
+            limit: 15,
         };
         let loaded = read_consistent(
             || {
@@ -432,6 +474,32 @@ mod tests {
         assert!(log[0].contains("PayPal"));
         assert!(log[0].contains("nicht erreichbar"));
         assert!(!log[0].contains("Erika"));
+    }
+
+    #[test]
+    fn booking_words_and_short_counterparties_are_no_terms() {
+        assert!(redactable_counterparty("Erika Muster"));
+        assert!(redactable_counterparty("Max"));
+        assert!(!redactable_counterparty("DB"));
+        assert!(!redactable_counterparty("  "));
+        assert!(!redactable_counterparty(" Lastschrift "));
+        assert!(!redactable_counterparty("ÜBERWEISUNG"));
+        let terms: Vec<String> = ["Lastschrift", "DB", "Erika Muster"]
+            .iter()
+            .map(|s| s.to_string())
+            .filter(|n| redactable_counterparty(n))
+            .collect();
+        assert_eq!(terms, vec!["Erika Muster"]);
+        let log = sanitized_log(
+            &[LogLine {
+                head: "h".into(),
+                message: "Lastschrift an Erika Muster abgelehnt".into(),
+            }],
+            &terms,
+        );
+        assert!(log[0].contains("Lastschrift"), "{}", log[0]);
+        assert!(log[0].contains("abgelehnt"), "{}", log[0]);
+        assert!(!log[0].contains("Erika"), "{}", log[0]);
     }
 
     #[test]
