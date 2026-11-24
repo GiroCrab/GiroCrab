@@ -1867,18 +1867,26 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     {
         // "Demo-Modus" button: same as GIROCRAB_DEMO_SEED=1, but without touching the key store.
-        let open = open.clone();
+        let (open, weak) = (open.clone(), win.as_weak());
         win.on_demo(move || {
             vault_key::set_demo(true);
+            // Ansichts-Schalter: im Demo-Modus Standardwerte, kein Speichern.
+            if let Some(win) = weak.upgrade() {
+                view_prefs::set_demo(&win, true);
+            }
             open(true)
         });
     }
     {
         // DemoBanner button: demo data <-> own vault.
-        let (open, demo_active) = (open.clone(), demo_active.clone());
+        let (open, demo_active, weak) = (open.clone(), demo_active.clone(), win.as_weak());
         win.on_demo_switch(move || {
             let to_demo = !*demo_active.lock().unwrap();
             vault_key::set_demo(to_demo);
+            // Demo: Standardwerte ohne Speichern; zurück: die normalen Geräte-Schalter.
+            if let Some(win) = weak.upgrade() {
+                view_prefs::set_demo(&win, to_demo);
+            }
             open(to_demo)
         });
     }

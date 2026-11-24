@@ -4,6 +4,7 @@
 //! „Saldo“ und „Letzter Abruf“ sind nicht Teil dieser Datei (#1757, #1756).
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use slint::ComponentHandle;
 
@@ -65,9 +66,11 @@ impl ViewPrefs {
             .unwrap_or_default()
     }
 
-    /// Atomar: erst `.tmp` schreiben, dann umbenennen (ersetzt auch unter Windows).
+    /// Atomar: erst eine `.tmp` pro Prozess schreiben, dann umbenennen (ersetzt auch unter
+    /// Windows). Der Prozessname im Dateinamen verhindert, dass sich zwei Instanzen mit
+    /// demselben Tresorordner die Zwischendatei wegnehmen.
     pub fn save(self, path: &Path) -> std::io::Result<()> {
-        let tmp = path.with_extension("json.tmp");
+        let tmp = tmp_path(path);
         std::fs::write(&tmp, self.to_json())?;
         std::fs::rename(&tmp, path)
     }
@@ -92,22 +95,77 @@ pub fn prefs_path(vault_path: &Path) -> PathBuf {
     vault_path.with_file_name("view-prefs.json")
 }
 
+/// Zwischendatei für `save`: pro Prozess eindeutig, liegt neben der Zieldatei.
+fn tmp_path(path: &Path) -> PathBuf {
+    path.with_extension(format!("json.{}.tmp", std::process::id()))
+}
+
+/// Zustand der Schalter gegenüber dem Demo-Modus: Im Demo-Modus gelten die Standardwerte,
+/// nichts wird gespeichert, und die normalen Werte bleiben im Speicher für den Rückweg.
+#[derive(Debug)]
+struct PrefsState {
+    demo: bool,
+    normal: ViewPrefs,
+}
+
+impl PrefsState {
+    /// Ein Schalter wurde bedient. `true`: normal speichern. Im Demo-Modus nie.
+    fn changed(&mut self, current: ViewPrefs) -> bool {
+        if self.demo {
+            return false;
+        }
+        self.normal = current;
+        true
+    }
+
+    /// Wechsel von/in den Demo-Modus. Liefert die Werte, die das Fenster zeigen soll.
+    fn set_demo(&mut self, demo: bool) -> ViewPrefs {
+        self.demo = demo;
+        if demo {
+            ViewPrefs::default()
+        } else {
+            self.normal
+        }
+    }
+}
+
+static STATE: Mutex<Option<PrefsState>> = Mutex::new(None);
+
+fn state() -> MutexGuard<'static, Option<PrefsState>> {
+    STATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Lädt die Schalter ins Fenster und speichert jede Änderung. `None` (Demo/Screenshot):
 /// Standardwerte, nichts wird geschrieben.
 pub fn install(win: &MainWindow, path: Option<PathBuf>) {
-    path.as_deref()
-        .map(ViewPrefs::load)
-        .unwrap_or_default()
-        .apply(win);
+    let initial = path.as_deref().map(ViewPrefs::load).unwrap_or_default();
+    initial.apply(win);
+    *state() = Some(PrefsState {
+        demo: false,
+        normal: initial,
+    });
     let weak = win.as_weak();
     win.on_view_prefs_changed(move || {
         let (Some(win), Some(path)) = (weak.upgrade(), path.as_deref()) else {
             return;
         };
-        if let Err(e) = ViewPrefs::read(&win).save(path) {
+        let current = ViewPrefs::read(&win);
+        if !state().as_mut().is_some_and(|s| s.changed(current)) {
+            return;
+        }
+        if let Err(e) = current.save(path) {
             eprintln!("Ansichts-Schalter nicht gespeichert: {e}");
         }
     });
+}
+
+/// Demo-Modus der App ein- oder ausgeschaltet: im Demo-Modus Standardwerte und kein
+/// Speichern, danach wieder die normalen Geräte-Schalter.
+pub fn set_demo(win: &MainWindow, demo: bool) {
+    let prefs = state().as_mut().map(|s| s.set_demo(demo));
+    if let Some(prefs) = prefs {
+        prefs.apply(win);
+    }
 }
 
 #[cfg(test)]
@@ -167,7 +225,7 @@ mod tests {
         };
         prefs.save(&path).unwrap();
         assert_eq!(ViewPrefs::load(&path), prefs);
-        assert!(!path.with_extension("json.tmp").exists());
+        assert!(!tmp_path(&path).exists());
         let _ = std::fs::remove_file(&path);
     }
 
@@ -175,5 +233,71 @@ mod tests {
     fn prefs_live_next_to_the_vault() {
         let p = prefs_path(Path::new("/data/GiroCrab/vault.sqlite"));
         assert_eq!(p, Path::new("/data/GiroCrab/view-prefs.json"));
+    }
+
+    #[test]
+    fn staging_file_is_per_process_and_next_to_target() {
+        let target = Path::new("/data/GiroCrab/view-prefs.json");
+        let tmp = tmp_path(target);
+        assert_eq!(tmp.parent(), target.parent());
+        assert_ne!(tmp, target.with_extension("json.tmp"));
+        let name = tmp.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.contains(&std::process::id().to_string()), "{name}");
+        assert!(name.ends_with(".tmp"));
+    }
+
+    fn normal_prefs() -> ViewPrefs {
+        ViewPrefs {
+            show_chart: false,
+            show_statistics: true,
+            compact_header: true,
+        }
+    }
+
+    #[test]
+    fn normal_mode_saves_and_remembers_the_change() {
+        let mut s = PrefsState {
+            demo: false,
+            normal: ViewPrefs::default(),
+        };
+        assert!(s.changed(normal_prefs()));
+        assert_eq!(s.normal, normal_prefs());
+    }
+
+    #[test]
+    fn demo_mode_never_saves_and_keeps_normal_values() {
+        let mut s = PrefsState {
+            demo: false,
+            normal: normal_prefs(),
+        };
+        assert_eq!(
+            s.set_demo(true),
+            ViewPrefs::default(),
+            "Demo: Standardwerte"
+        );
+        let demo_toggle = ViewPrefs {
+            show_chart: true,
+            show_statistics: false,
+            compact_header: false,
+        };
+        assert!(!s.changed(demo_toggle), "im Demo-Modus nicht speichern");
+        assert_eq!(s.normal, normal_prefs(), "normale Werte bleiben erhalten");
+        assert_eq!(
+            s.set_demo(false),
+            normal_prefs(),
+            "Rückweg stellt sie wieder her"
+        );
+        assert!(s.changed(demo_toggle), "danach wird wieder gespeichert");
+    }
+
+    #[test]
+    fn entering_demo_twice_does_not_lose_normal_values() {
+        let mut s = PrefsState {
+            demo: false,
+            normal: normal_prefs(),
+        };
+        s.set_demo(true);
+        s.set_demo(true);
+        assert_eq!(s.set_demo(false), normal_prefs());
     }
 }
