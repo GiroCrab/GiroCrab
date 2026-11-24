@@ -2184,9 +2184,24 @@ mod own_transfer_tests {
     #[test]
     fn imported_moneymoney_security_purchases_are_investments_on_read() {
         let (_dir, v, ids) = vault_with(&[
-            ("Unbekanntes Wertpapier", -250_00, "Kauf", Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage")),
-            ("Supermarkt", -40_00, "Einkauf", Some("Ausgaben/Lebensmittel")),
-            ("Tagesgeld", -75_00, "Sparen", Some("Ausgaben/Sparen & Anlegen/Tagesgeld")),
+            (
+                "Unbekanntes Wertpapier",
+                -250_00,
+                "Kauf",
+                Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage"),
+            ),
+            (
+                "Supermarkt",
+                -40_00,
+                "Einkauf",
+                Some("Ausgaben/Lebensmittel"),
+            ),
+            (
+                "Tagesgeld",
+                -75_00,
+                "Sparen",
+                Some("Ausgaben/Sparen & Anlegen/Tagesgeld"),
+            ),
         ]);
         assert_eq!(flow_of(&v, ids[0]), FlowKind::Investment);
         assert_eq!(flow_of(&v, ids[1]), FlowKind::Consumption);
@@ -2196,12 +2211,21 @@ mod own_transfer_tests {
         assert_eq!(page.consumption_cents, -115_00);
     }
 
-
     #[test]
     fn imported_security_sales_reduce_net_investment() {
         let (_dir, v, ids) = vault_with(&[
-            ("Unbekanntes Wertpapier", -250_00, "Kauf", Some("Ausgaben/Sparen & Investieren/ETF-Sparpläne")),
-            ("Unbekanntes Wertpapier", 100_00, "Verkauf", Some("Einnahmen/Sparen & Investieren/Wertpapierverkäufe")),
+            (
+                "Unbekanntes Wertpapier",
+                -250_00,
+                "Kauf",
+                Some("Ausgaben/Sparen & Investieren/ETF-Sparpläne"),
+            ),
+            (
+                "Unbekanntes Wertpapier",
+                100_00,
+                "Verkauf",
+                Some("Einnahmen/Sparen & Investieren/Wertpapierverkäufe"),
+            ),
             ("Depot", 20_00, "Dividende", Some("Einnahmen/Dividenden")),
             ("Bank", 5_00, "Zinsen", Some("Einnahmen/Zinsen")),
         ]);
@@ -2214,7 +2238,10 @@ mod own_transfer_tests {
         assert_eq!(page.income_cents, 25_00);
         assert_eq!(page.consumption_cents, 0);
         assert_eq!(page.flow.invested_cents, 150_00);
-        assert_eq!(v.selection_flow(vec![], None, None).unwrap().invested_cents, 150_00);
+        assert_eq!(
+            v.selection_flow(vec![], None, None).unwrap().invested_cents,
+            150_00
+        );
     }
 
     #[test]
@@ -2613,7 +2640,6 @@ mod list_cache_tests {
         let b = after.transactions.iter().find(|b| b.id == target).unwrap();
         assert_eq!(b.category_id, Some(cat[3].id));
     }
-
 
     #[test]
     fn moneymoney_security_purchase_category_is_specific() {
