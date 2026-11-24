@@ -577,27 +577,27 @@ pub(crate) fn merge_attached(
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
         (Option<i64>, i64, String, i64, String, i64),
-        (bool, i64, Option<String>, i64, bool),
+        (bool, i64, Option<String>, i64, bool, Option<i64>),
     )> = tx
         .prepare(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
                     archived_unix, archived_ms, sf_symbol, symbol_ms, note, note_ms,
-                    include_in_total != 0, total_ms, bank_label, bank_label_ms, archive_unknown != 0
+                    include_in_total != 0, total_ms, bank_label, bank_label_ms, archive_unknown != 0, last_fetch_unix
              FROM other.accounts",
         )?
         .query_map([], |r| {
             Ok((
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?),
                 (r.get(8)?, r.get(9)?, r.get(10)?, r.get(11)?, r.get(12)?, r.get(13)?),
-                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?),
+                (r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?, r.get(19)?),
             ))
         })?
         .collect::<Result<_, _>>()?;
     for (
         (oid, uuid, order, placed, name, named, color, colored),
         (archived, archived_ms, symbol, symbol_ms, note, noted),
-        (in_total, total_ms, label, label_ms, unknown),
+        (in_total, total_ms, label, label_ms, unknown, last_fetch),
     ) in rows
     {
         let Some(&id) = acc_map.get(&oid) else {
@@ -651,6 +651,15 @@ pub(crate) fn merge_attached(
             pass_bank_label_on(tx, id, bank)?;
         }
         changed += label_rows as u32;
+        // last single-account fetch (#1716): the later time wins, so every
+        // device ends up with the same one; no stamp needed
+        if let Some(fetched) = last_fetch {
+            changed += tx.execute(
+                "UPDATE accounts SET last_fetch_unix = ?2
+                  WHERE id = ?1 AND (last_fetch_unix IS NULL OR last_fetch_unix < ?2)",
+                params![id, fetched],
+            )? as u32;
+        }
         // only a user's choice travels; the type's default stays local
         changed += tx.execute(
             "UPDATE accounts SET sf_symbol = ?2, symbol_ms = ?3 WHERE id = ?1 AND symbol_ms < ?3",
