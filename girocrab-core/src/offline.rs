@@ -248,8 +248,11 @@ fn finish(conn: &Connection, account_id: i64) -> CoreResult<()> {
     crate::opening_balance::refresh(conn, account_id)
 }
 
-fn validate(s: &ManualBookingSetup) -> CoreResult<(String, String, String, String)> {
-    if s.amount_cents == 0 {
+fn validate(
+    s: &ManualBookingSetup,
+    unchanged_zero_split: bool,
+) -> CoreResult<(String, String, String, String)> {
+    if s.amount_cents == 0 && !unchanged_zero_split {
         return Err(CoreError::invalid(tr("Der Betrag darf nicht 0 sein.")));
     }
     Ok((
@@ -306,12 +309,34 @@ impl Vault {
         booking_id: Option<i64>,
         setup: ManualBookingSetup,
     ) -> Result<i64, CoreError> {
-        let (date, counterparty, purpose, note) = validate(&setup)?;
+        self.save_manual_booking_with_splits(account_id, booking_id, setup, None)
+    }
+
+    /// Saves the booking and optional replacement splits atomically. `None` keeps its splits.
+    /// Changing a split booking's amount requires nonempty parts summing to the new amount.
+    pub fn save_manual_booking_with_splits(
+        &self,
+        account_id: i64,
+        booking_id: Option<i64>,
+        setup: ManualBookingSetup,
+        splits: Option<Vec<crate::models::TransactionSplitInput>>,
+    ) -> Result<i64, CoreError> {
+        if let Some(parts) = &splits {
+            crate::planning::validate_splits(setup.amount_cents, parts)?;
+        }
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
+        let unchanged_zero_split = if let Some(id) = booking_id {
+            tx.query_row("SELECT amount_cents=0 AND EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=?1) FROM transactions WHERE id=?1", [id], |r| r.get::<_,bool>(0)).optional()?.unwrap_or(false) && setup.amount_cents == 0
+        } else {
+            false
+        };
+        let (date, counterparty, purpose, note) = validate(&setup, unchanged_zero_split)?;
         require_offline(&tx, account_id)?;
         require_category(&tx, setup.category_id)?;
         ensure_opening(&tx, account_id)?;
+        let mut amount_changed = false;
+        let mut date_changed = false;
         let id = match booking_id {
             None => insert_booking(
                 &tx,
@@ -325,6 +350,18 @@ impl Vault {
             Some(id) => {
                 if booking_account(&tx, id)? != account_id {
                     return Err(not_found(trf("Buchung {0}", &[&id])));
+                }
+                let (changed, has_splits): (bool, bool) = tx.query_row(
+                    "SELECT amount_cents != ?2, EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=?1)
+                     FROM transactions WHERE id=?1",
+                    params![id, setup.amount_cents], |r| Ok((r.get(0)?, r.get(1)?)),
+                )?;
+                amount_changed = changed;
+                date_changed = tx.query_row("SELECT booking_date != ?2 OR COALESCE(value_date,'') != ?2 FROM transactions WHERE id=?1", params![id,date], |r| r.get(0))?;
+                if amount_changed && has_splits && splits.as_ref().is_none_or(Vec::is_empty) {
+                    return Err(CoreError::invalid(tr(
+                        "Bitte passen Sie die Aufteilung zusammen mit dem Buchungsbetrag an.",
+                    )));
                 }
                 let ms = now_ms();
                 let old: (Option<i64>, String, String) = tx.query_row(
@@ -359,6 +396,15 @@ impl Vault {
                 id
             }
         };
+        if let Some(parts) = &splits {
+            crate::planning::store_splits(&tx, id, parts)?;
+        }
+        if amount_changed || date_changed {
+            tx.execute(
+                "UPDATE transactions SET splits_ms=MAX(splits_ms+1,?2) WHERE id=?1",
+                params![id, now_ms()],
+            )?;
+        }
         finish(&tx, account_id)?;
         tx.commit()?;
         Ok(id)

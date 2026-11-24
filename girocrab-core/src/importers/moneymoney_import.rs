@@ -744,7 +744,12 @@ fn write_splits(
         if preserve_notes && !s.note.trim().is_empty() {
             st.notes += 1;
         }
-        lines.push((cat, s.amount_cents, split_note(s, preserve_notes)));
+        lines.push(crate::models::TransactionSplitInput {
+            uuid: None,
+            category_id: cat,
+            amount_cents: s.amount_cents,
+            note: split_note(s, preserve_notes),
+        });
     }
     crate::planning::store_splits(conn, id, &lines)
 }

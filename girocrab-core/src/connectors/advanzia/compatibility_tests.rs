@@ -97,7 +97,7 @@ fn old_postings_keep_their_ids_edits_splits_and_documents_without_duplicates() {
     let row = old_row(&v, account, false, "old");
     {
         let db = v.db().unwrap();
-        db.execute("INSERT INTO transaction_splits(transaction_id,amount_cents,note) VALUES (?1,-2098,'invented split')",[row]).unwrap();
+        db.execute("INSERT INTO transaction_splits(transaction_id,amount_cents,note,uuid,position) VALUES (?1,-2098,'invented split','part-1',0)",[row]).unwrap();
         db.execute("INSERT INTO booking_documents(booking_id,account_id,title,pdf_bytes) VALUES (?1,?2,'fictional attachment',X'00')",params![row,account]).unwrap();
     }
     assert_eq!(
@@ -328,7 +328,7 @@ fn partial_history_keeps_old_holds_and_splits_prevent_automatic_settlement() {
     v.db()
         .unwrap()
         .execute(
-            "INSERT INTO transaction_splits(transaction_id,amount_cents) VALUES (?1,-2098)",
+            "INSERT INTO transaction_splits(transaction_id,amount_cents,uuid,position) VALUES (?1,-2098,'part-1',0)",
             [hold],
         )
         .unwrap();

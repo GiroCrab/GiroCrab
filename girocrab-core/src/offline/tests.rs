@@ -4,7 +4,7 @@ use rusqlite::params;
 
 use super::ManualBookingSetup;
 use crate::error::CoreError;
-use crate::models::AccountKind;
+use crate::models::{AccountKind, TransactionSplitInput};
 use crate::vault::Vault;
 
 fn vault(tag: &str) -> Arc<Vault> {
@@ -46,6 +46,160 @@ fn live_count(v: &Vault, id: i64) -> i64 {
             |r| r.get(0),
         )
         .unwrap()
+}
+
+#[test]
+fn round7_manual_dates_sync_with_amount_and_date_only_edits() {
+    for amount in [-1000, -500] {
+        let v = vault("round7-manual-dates");
+        let peer = vault("round7-manual-dates-peer");
+        let account = v
+            .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let id = v
+            .save_manual_booking(account, None, setup("2026-01-31", -500, "Shop"))
+            .unwrap();
+        peer.merge_other_vault(v.file_path(), vec![7; 32]).unwrap();
+        v.save_manual_booking(account, Some(id), setup("2026-02-01", amount, "Shop"))
+            .unwrap();
+        peer.merge_other_vault(v.file_path(), vec![7; 32]).unwrap();
+        let got: (String, String, i64) = peer.db().unwrap().query_row("SELECT booking_date,value_date,amount_cents FROM transactions WHERE counterparty='Shop'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(got, ("2026-02-01".into(), "2026-02-01".into(), amount));
+    }
+}
+
+#[test]
+fn round7_zero_split_metadata_save_is_allowed_but_new_zero_is_not() {
+    let v = vault("round7-zero-split");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    assert!(
+        v.save_manual_booking(account, None, setup("2026-01-01", 0, "Shop"))
+            .is_err()
+    );
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-01", 100, "Shop"))
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute("UPDATE transactions SET amount_cents=0 WHERE id=?1", [id])
+        .unwrap();
+    v.set_transaction_splits(
+        id,
+        vec![
+            TransactionSplitInput {
+                uuid: None,
+                category_id: None,
+                amount_cents: 100,
+                note: String::new(),
+            },
+            TransactionSplitInput {
+                uuid: None,
+                category_id: None,
+                amount_cents: -100,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    v.save_manual_booking(account, Some(id), setup("2026-01-01", 0, "Updated"))
+        .unwrap();
+    assert_eq!(v.list_transaction_splits(id).unwrap().len(), 2);
+}
+
+#[test]
+fn split_amount_edits_require_atomic_matching_replacements() {
+    let v = vault("offline-split-amount");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-01", -100, "Shop"))
+        .unwrap();
+    let part = |uuid, amount| TransactionSplitInput {
+        uuid,
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(id, vec![part(None, -40), part(None, -60)])
+        .unwrap();
+    let parts = v.list_transaction_splits(id).unwrap();
+    let changed = setup("2026-01-02", -200, "Changed");
+    assert!(
+        v.save_manual_booking(account, Some(id), changed.clone())
+            .is_err()
+    );
+    assert!(
+        v.save_manual_booking_with_splits(account, Some(id), changed.clone(), Some(vec![]))
+            .is_err()
+    );
+    assert!(
+        v.save_manual_booking_with_splits(
+            account,
+            Some(id),
+            changed.clone(),
+            Some(vec![part(None, -1), part(None, -1)])
+        )
+        .is_err()
+    );
+    assert!(
+        v.save_manual_booking_with_splits(
+            account,
+            Some(id),
+            changed.clone(),
+            Some(vec![part(Some("missing".into()), -100), part(None, -100)])
+        )
+        .is_err()
+    );
+    assert_eq!(balance(&v, account), -100);
+    let db = v.db().unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT booking_date || ':' || counterparty FROM transactions WHERE id=?1",
+            [id],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "2026-01-01:Shop"
+    );
+    drop(db);
+    assert_eq!(
+        v.list_transaction_splits(id)
+            .unwrap()
+            .iter()
+            .map(|p| &p.uuid)
+            .collect::<Vec<_>>(),
+        parts.iter().map(|p| &p.uuid).collect::<Vec<_>>()
+    );
+    v.save_manual_booking_with_splits(
+        account,
+        Some(id),
+        changed,
+        Some(vec![
+            part(Some(parts[0].uuid.clone()), -80),
+            part(Some(parts[1].uuid.clone()), -120),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(balance(&v, account), -200);
+    let after = v.list_transaction_splits(id).unwrap();
+    assert_eq!(
+        after.iter().map(|p| &p.uuid).collect::<Vec<_>>(),
+        parts.iter().map(|p| &p.uuid).collect::<Vec<_>>()
+    );
+    assert_eq!(after.iter().map(|p| p.amount_cents).sum::<i64>(), -200);
+    v.save_manual_booking(account, Some(id), setup("2026-01-03", -200, "Same amount"))
+        .unwrap();
+    v.save_manual_booking_with_splits(
+        account,
+        Some(id),
+        setup("2026-01-03", -200, "Unsplit"),
+        Some(vec![]),
+    )
+    .unwrap();
+    assert!(v.list_transaction_splits(id).unwrap().is_empty());
 }
 
 #[test]

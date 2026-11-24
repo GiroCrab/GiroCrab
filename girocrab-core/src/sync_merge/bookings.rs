@@ -6,8 +6,8 @@ use rusqlite::{Connection, params};
 
 use crate::error::CoreResult;
 
-/// One split line: (category uuid, amount, note).
-type SplitLine = (Option<String>, i64, String);
+/// One split line: (part uuid, category uuid, amount, note).
+type SplitLine = (String, Option<String>, i64, String);
 
 /// The synced fields of a booking, categories as uuids of live local
 /// categories. `cat` is the manual category; a rule result counts as none.
@@ -23,6 +23,8 @@ struct BookingFields {
     text_ms: i64,
     splits: Vec<SplitLine>,
     splits_ms: i64,
+    manual_amount: Option<i64>,
+    manual_dates: Option<(String, Option<String>)>,
     /// tag uuids, sorted (#228)
     tags: crate::tags::merge::TagSet,
     tags_ms: i64,
@@ -74,13 +76,30 @@ impl BookingFields {
                 t.clone(),
             )
         });
-        take_ranked(
-            &mut self.splits,
-            &mut self.splits_ms,
-            &o.splits,
-            o.splits_ms,
-            Clone::clone,
+        let mut unit = (
+            self.manual_amount,
+            self.splits.clone(),
+            self.manual_dates.clone(),
         );
+        let other_unit = (o.manual_amount, o.splits.clone(), o.manual_dates.clone());
+        if self.manual_amount.is_some() && o.manual_amount.is_some() {
+            take_ranked(
+                &mut unit,
+                &mut self.splits_ms,
+                &other_unit,
+                o.splits_ms,
+                Clone::clone,
+            );
+            (self.manual_amount, self.splits, self.manual_dates) = unit;
+        } else {
+            take_ranked(
+                &mut self.splits,
+                &mut self.splits_ms,
+                &o.splits,
+                o.splits_ms,
+                Clone::clone,
+            );
+        }
         // the tag set as a whole; equal stamps: the larger set by value
         take_ranked(
             &mut self.tags,
@@ -93,24 +112,23 @@ impl BookingFields {
     }
 }
 
-/// transaction id -> its split lines (sorted), categories as uuids.
+/// transaction id -> its split lines in user order, categories as uuids.
 fn load_splits(
     conn: &Connection,
     schema: &str,
     uuid_of: impl Fn(Option<i64>) -> Option<String>,
 ) -> CoreResult<HashMap<i64, Vec<SplitLine>>> {
     let mut out: HashMap<i64, Vec<SplitLine>> = HashMap::new();
-    let rows: Vec<(i64, Option<i64>, i64, String)> = conn
+    let rows: Vec<(i64, String, Option<i64>, i64, String)> = conn
         .prepare(&format!(
-            "SELECT transaction_id, category_id, amount_cents, note FROM {schema}.transaction_splits"
+            "SELECT transaction_id, uuid, category_id, amount_cents, note FROM {schema}.transaction_splits ORDER BY position, id"
         ))?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
         .collect::<Result<_, _>>()?;
-    for (t, c, amount, note) in rows {
-        out.entry(t).or_default().push((uuid_of(c), amount, note));
-    }
-    for lines in out.values_mut() {
-        lines.sort();
+    for (t, uuid, c, amount, note) in rows {
+        out.entry(t)
+            .or_default()
+            .push((uuid, uuid_of(c), amount, note));
     }
     Ok(out)
 }
@@ -119,6 +137,7 @@ fn load_splits(
 struct OtherBooking {
     id: i64,
     account_id: i64,
+    amount_cents: i64,
     external_id: String,
     import_fp: String,
     /// `import_fp`, or one computed from the booking (see `match_fingerprint`)
@@ -139,7 +158,8 @@ const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
         imported_unix, purpose_code, gvc, salary_flag,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms
+        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms,
+        external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM other.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan'))
      FROM other.transactions ORDER BY account_id, external_id";
 
 /// The id both sides keep for one booking known under two ids: the bank's
@@ -206,7 +226,7 @@ pub(crate) fn merge_bookings(
     cat_map: &HashMap<i64, i64>,
     rule_map: &HashMap<i64, i64>,
     stats: &mut crate::vault::MergeStats,
-) -> CoreResult<()> {
+) -> CoreResult<HashMap<i64, i64>> {
     // live local categories: id <-> uuid
     let live_cats: Vec<(i64, String)> = conn
         .prepare("SELECT id, uuid FROM categories WHERE deleted_ms IS NULL AND uuid IS NOT NULL")?
@@ -229,18 +249,22 @@ pub(crate) fn merge_bookings(
     // (account, import_fp) -> (external_id, id) of local fingerprinted rows
     let mut fp_rows: Vec<((i64, String, bool), (String, i64))> = Vec::new();
     let mut local: HashMap<i64, BookingFields> = HashMap::new();
+    let mut local_amounts: HashMap<i64, i64> = HashMap::new();
+    let mut id_map = HashMap::new();
+    let mut pending_splits = HashMap::new();
     {
         let mut st = conn.prepare(
             // includes soft-deleted rows
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms
+                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan')), value_date
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
+            local_amounts.insert(id, r.get(17)?);
             let acc: i64 = r.get(1)?;
             let ext: String = r.get(2)?;
             by_key.insert((acc, ext.clone()), id);
@@ -268,6 +292,11 @@ pub(crate) fn merge_bookings(
                     text_ms: r.get(13)?,
                     splits: local_splits.remove(&id).unwrap_or_default(),
                     splits_ms: r.get(14)?,
+                    manual_amount: r.get::<_, bool>(20)?.then(|| r.get(17)).transpose()?,
+                    manual_dates: r
+                        .get::<_, bool>(20)?
+                        .then(|| Ok::<_, rusqlite::Error>((r.get(16)?, r.get(21)?)))
+                        .transpose()?,
                     tags: local_tags.remove(&id).unwrap_or_default(),
                     tags_ms: r.get(19)?,
                     deleted_ms: r.get(15)?,
@@ -286,6 +315,7 @@ pub(crate) fn merge_bookings(
             Ok(OtherBooking {
                 id,
                 account_id: r.get(1)?,
+                amount_cents: r.get(6)?,
                 external_id: r.get(2)?,
                 import_fp: r.get(3)?,
                 match_fp: match_fingerprint(
@@ -315,6 +345,11 @@ pub(crate) fn merge_bookings(
                     text_ms: r.get(24)?,
                     splits: Vec::new(),
                     splits_ms: r.get(25)?,
+                    manual_amount: r.get::<_, bool>(32)?.then(|| r.get(6)).transpose()?,
+                    manual_dates: r
+                        .get::<_, bool>(32)?
+                        .then(|| Ok::<_, rusqlite::Error>((r.get(4)?, r.get(5)?)))
+                        .transpose()?,
                     tags: Vec::new(),
                     tags_ms: r.get(31)?,
                     deleted_ms: r.get(26)?,
@@ -400,10 +435,22 @@ pub(crate) fn merge_bookings(
         };
         match existing {
             Some((id, renamed)) => {
+                id_map.insert(o.id, id);
                 let old = local[&id].clone();
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
+                if !m.splits.is_empty()
+                    && m.splits
+                        .iter()
+                        .try_fold(0i128, |sum, p| sum.checked_add(i128::from(p.2)))
+                        != Some(i128::from(m.manual_amount.unwrap_or(local_amounts[&id])))
+                {
+                    m.splits = old.splits.clone();
+                    m.splits_ms = old.splits_ms;
+                    m.manual_amount = old.manual_amount;
+                    m.manual_dates = old.manual_dates.clone();
+                }
                 m.deleted_ms = m.deleted_ms.or(acc_deleted);
                 if m == old {
                     if renamed {
@@ -411,7 +458,13 @@ pub(crate) fn merge_bookings(
                     }
                     continue;
                 }
+                if m.splits != old.splits {
+                    pending_splits.insert(id, m.splits.clone());
+                }
                 write_booking(conn, id, &old, &m, &cat_id, &tag_ids, &mut cleared)?;
+                if let Some(amount) = m.manual_amount {
+                    local_amounts.insert(id, amount);
+                }
                 local.insert(id, m);
                 stats.bookings_updated += 1;
             }
@@ -463,7 +516,9 @@ pub(crate) fn merge_bookings(
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
-                insert_splits(conn, id, &f.splits, &cat_id)?;
+                id_map.insert(o.id, id);
+                local_amounts.insert(id, o.amount_cents);
+                pending_splits.insert(id, f.splits.clone());
                 if !f.tags.is_empty() {
                     tag_ids.write(conn, id, &f.tags)?;
                 }
@@ -474,6 +529,81 @@ pub(crate) fn merge_bookings(
                 }
             }
         }
+    }
+
+    let live: HashSet<i64> = conn.prepare("SELECT t.id FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.deleted_ms IS NULL AND a.deleted_ms IS NULL")?
+        .query_map([],|r|r.get(0))?.collect::<Result<_,_>>()?;
+    let mut owners: HashMap<String, Vec<(i64, usize)>> = HashMap::new();
+    let mut keys = HashMap::new();
+    for (&id, fields) in &local {
+        for (position, line) in fields.splits.iter().enumerate() {
+            owners
+                .entry(line.0.clone())
+                .or_default()
+                .push((id, position));
+        }
+    }
+    let mut reserved: HashSet<String> = owners.keys().cloned().collect();
+    let mut collisions: Vec<_> = owners
+        .iter()
+        .filter(|(_, entries)| entries.len() > 1)
+        .collect();
+    collisions.sort_unstable_by_key(|(uuid, _)| *uuid);
+    for (_, entries) in collisions {
+        for &(id, _) in entries {
+            keys.insert(id, super::booking_key(conn, id)?);
+        }
+        let &(winner, _) = entries
+            .iter()
+            .max_by(|&&(a, ap), &&(b, bp)| {
+                live.contains(&a).cmp(&live.contains(&b)).then_with(|| {
+                    if !live.contains(&a) {
+                        return keys[&b].cmp(&keys[&a]);
+                    }
+                    let (af, bf) = (&local[&a], &local[&b]);
+                    let (pa, pb) = (&af.splits[ap], &bf.splits[bp]);
+                    (af.splits_ms, &pa.1, pa.2, &pa.3, &keys[&a]).cmp(&(
+                        bf.splits_ms,
+                        &pb.1,
+                        pb.2,
+                        &pb.3,
+                        &keys[&b],
+                    ))
+                })
+            })
+            .unwrap();
+        let mut losers: Vec<_> = entries
+            .iter()
+            .copied()
+            .filter(|(id, _)| *id != winner)
+            .collect();
+        losers.sort_unstable_by(|(a, ap), (b, bp)| (&keys[a], ap).cmp(&(&keys[b], bp)));
+        for (id, position) in losers {
+            let fields = local.get_mut(&id).unwrap();
+            let seed = format!("split-owner|{}|{position}", keys[&id]);
+            fields.splits[position].0 = (0u64..)
+                .find_map(|attempt| {
+                    let key = if attempt == 0 {
+                        seed.clone()
+                    } else {
+                        format!("{seed}|{attempt}")
+                    };
+                    let uuid = uuid::Uuid::new_v5(&super::NAMESPACE, key.as_bytes()).to_string();
+                    reserved.insert(uuid.clone()).then_some(uuid)
+                })
+                .unwrap();
+            pending_splits.insert(id, fields.splits.clone());
+        }
+    }
+
+    for id in pending_splits.keys() {
+        conn.execute(
+            "DELETE FROM transaction_splits WHERE transaction_id=?1",
+            [id],
+        )?;
+    }
+    for (id, lines) in pending_splits {
+        insert_splits(conn, id, &lines, &cat_id)?;
     }
 
     // nothing points at a deleted category (derived, no stamps)
@@ -491,7 +621,7 @@ pub(crate) fn merge_bookings(
     if !cleared.is_empty() {
         crate::vault::Vault::apply_rules_to(conn, &cleared)?;
     }
-    Ok(())
+    Ok(id_map)
 }
 
 fn insert_splits(
@@ -500,11 +630,11 @@ fn insert_splits(
     lines: &[SplitLine],
     cat_id: &impl Fn(&Option<String>) -> Option<i64>,
 ) -> CoreResult<()> {
-    for (cat, amount, note) in lines {
+    for (position, (uuid, cat, amount, note)) in lines.iter().enumerate() {
         conn.execute(
-            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, note)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![id, cat_id(cat), amount, note],
+            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, note, uuid, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, cat_id(cat), amount, note, uuid, position as i64],
         )?;
     }
     Ok(())
@@ -520,6 +650,20 @@ fn write_booking(
     tag_ids: &crate::tags::merge::TagIds,
     cleared: &mut HashSet<i64>,
 ) -> CoreResult<()> {
+    if m.manual_dates != old.manual_dates
+        && let Some((date, value_date)) = &m.manual_dates
+    {
+        conn.execute(
+            "UPDATE transactions SET booking_date=?2,value_date=?3 WHERE id=?1",
+            params![id, date, value_date],
+        )?;
+    }
+    if m.manual_amount != old.manual_amount {
+        conn.execute(
+            "UPDATE transactions SET amount_cents=?2 WHERE id=?1",
+            params![id, m.manual_amount],
+        )?;
+    }
     if m.cat != old.cat {
         if m.cat.is_some() {
             conn.execute(
@@ -535,13 +679,6 @@ fn write_booking(
             )?;
             cleared.insert(id);
         }
-    }
-    if m.splits != old.splits {
-        conn.execute(
-            "DELETE FROM transaction_splits WHERE transaction_id = ?1",
-            [id],
-        )?;
-        insert_splits(conn, id, &m.splits, cat_id)?;
     }
     if m.tags != old.tags {
         tag_ids.write(conn, id, &m.tags)?;
