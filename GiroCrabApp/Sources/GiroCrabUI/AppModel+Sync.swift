@@ -433,6 +433,10 @@ extension AppModel {
                 self.activeSession = session
                 let step = try await session.start()
                 guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
+                // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with .finished
+                if self.activeChallenge?.busy == true {
+                    guard case .finished = step else { return }
+                }
                 self.handle(step, connection: connection)
             } catch {
                 if let started, self.activeSession !== started { return }
