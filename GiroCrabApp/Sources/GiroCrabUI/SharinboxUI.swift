@@ -59,7 +59,16 @@ enum SharinboxScripts {
         if (blocks !== items.length) fail('Unbekanntes Seitenformat.');
         return items;
       };
+      // Share rights: the start page shows only their number ("Menge"); none listed = no section
+      const parseRights = html => {
+        const at = html.indexOf('id="myChart-droitsActions"');
+        if (at < 0) return null;
+        const m = /panelChartBorderBordeaux[\s\S]*?<span\s+class="text-muted">[^<]*<\/span>\s*(?:<br\s*\/?>)?\s*([^<]*?)\s*<\/div>/.exec(html.slice(at));
+        if (!m) fail('Aktienrechte nicht erkannt.');
+        return {quantity: amount(m[1])};
+      };
       const MARKERS = ['myChart-assets-', 'myChart-droitsActions'];
+      const depotOf = html => { const rights = parseRights(html); return rights ? {items: parse(html), rights} : {items: parse(html)}; };
       const hasOverview = html => MARKERS.some(m => html.includes(m));
       // The overview the user sees: this document and same-origin frames (the portal may embed it).
       const shown = () => {
@@ -130,7 +139,7 @@ enum SharinboxScripts {
           const got = await page(HOME);
           const html = got.html && hasOverview(got.html) ? got.html : shown()[0];
           if (!html) fail(got.status ? 'Abruf fehlgeschlagen (HTTP ' + got.status + '). Bitte erneut anmelden.' : 'Keine Bestandsübersicht erkannt. Bitte erneut anmelden.');
-          return JSON.stringify({version: 1, asOf: new Date().toISOString().slice(0, 10), depot: {items: parse(html)}});
+          return JSON.stringify({version: 1, asOf: new Date().toISOString().slice(0, 10), depot: depotOf(html)});
         },
         documents: async () => {
           const got = await page(DOCS);

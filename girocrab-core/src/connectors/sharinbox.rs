@@ -59,6 +59,20 @@ struct Position {
     value: i64,
 }
 
+/// Share rights (claims to shares that are allotted later): only the number is shown by the
+/// portal, so the position carries no price and no value. `None` = the page lists none.
+fn rights(depot: &Value) -> CoreResult<Option<f64>> {
+    let rights = &depot["rights"];
+    if rights.is_null() {
+        return Ok(None);
+    }
+    let quantity = number(rights, "quantity")?;
+    if quantity < 0.0 {
+        return Err(invalid());
+    }
+    Ok((quantity > 0.0).then_some(quantity))
+}
+
 /// ISO 6166: two capital letters, nine capital letters or digits, one check digit (Luhn over the
 /// letters written as 10..35).
 fn valid_isin(isin: &str) -> bool {
@@ -160,6 +174,7 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
     let as_of = date(&root, "asOf")?;
     let depot = &root["depot"];
     let positions = positions(depot)?;
+    let rights = rights(depot)?;
     let total: i64 = positions.iter().map(|p| p.value).sum();
     let mut result = FetchResult {
         bank_name: Some("Sharinbox".into()),
@@ -182,6 +197,19 @@ fn snapshot(json: &str) -> CoreResult<FetchResult> {
             direct_crypto: false,
             account_ref: ACCOUNT_REF.into(),
             holding: holding(p),
+        });
+    }
+    if let Some(quantity) = rights {
+        // own position, no ISIN, price or value yet: the note is part of the name
+        result.holdings.push(RemoteHolding {
+            classification: Default::default(),
+            direct_crypto: false,
+            account_ref: ACCOUNT_REF.into(),
+            holding: Holding {
+                name: tr("Aktienrechte (noch nicht zugeteilt)").into(),
+                quantity,
+                ..Default::default()
+            },
         });
     }
     // an empty list clears positions that were sold since the last fetch
@@ -401,6 +429,32 @@ mod tests {
         assert_eq!((h.current_price_cents, h.value_cents), (4514, 451_400));
         assert_eq!(h.purchase_price_cents, 0);
         assert_eq!(r.holdings_fetched, vec![ACCOUNT_REF.to_string()]);
+    }
+
+    #[test]
+    fn share_rights_become_their_own_position_without_value() {
+        let mut f = fixture();
+        f["depot"]["rights"] = json!({"quantity": 2085.0});
+        let r = snapshot(&f.to_string()).unwrap();
+        assert_eq!(r.holdings.len(), 2);
+        let h = &r.holdings[1].holding;
+        assert_eq!(
+            (h.isin.as_str(), h.quantity, h.value_cents),
+            ("", 2085.0, 0)
+        );
+        assert!(h.name.contains("noch nicht zugeteilt"));
+        // the total of the account stays the value of the shares held
+        assert_eq!(r.accounts[0].balance_cents, 451_400);
+        // zero rights, no entry, negative or missing quantity
+        f["depot"]["rights"] = json!({"quantity": 0.0});
+        assert_eq!(snapshot(&f.to_string()).unwrap().holdings.len(), 1);
+        f["depot"]["rights"] = json!({"quantity": -1.0});
+        assert!(snapshot(&f.to_string()).is_err());
+        f["depot"]["rights"] = json!({});
+        assert!(snapshot(&f.to_string()).is_err());
+        // rights alone are a valid depot
+        f["depot"] = json!({"items": [], "rights": {"quantity": 5.0}});
+        assert_eq!(snapshot(&f.to_string()).unwrap().holdings.len(), 1);
     }
 
     #[test]

@@ -17,8 +17,11 @@ optionally, the **PDF documents** of the document list ("Meine Dokumente").
 
 - One securities account ("Mitarbeiteraktien") with one position per security the start page
   lists: ISIN, name, quantity, price with its date, and value.
-- Quantity and value are the available and the blocked balance added up.
-- Share rights (Aktienrechte) are not imported.
+- Quantity and value of the securities are the available and the blocked balance added up.
+- Share rights (Aktienrechte), i.e. claims to shares that are allotted later, appear as their own
+  position "Aktienrechte (noch nicht zugeteilt)" with the number the start page shows. The
+  portal gives no ISIN or price for them, so the position has no value and does not count
+  towards the account total. Without such a section on the page, no position is created.
 - The portal shows no purchase price, so no profit or loss is derived.
 - Only EUR is accepted; anything else is rejected rather than guessed.
 - Documents: every entry of the portal's document list (statements, transaction notices,

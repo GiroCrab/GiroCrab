@@ -26,7 +26,13 @@ const block = (isin, name, price, free, blocked) => `
     </div></div>
   <div class="row"><div class="col-md-6"><canvas id="myChart-detail-${isin}"></canvas></div></div>
 </div>`;
-const rights = '<div class="ml-3 mt-3"><canvas id="myChart-droitsActions"></canvas> let valeurTotal = \'2.085\';</div>';
+const rightsBlock = qty => `<div class="ml-3 mt-3"><canvas id="myChart-droitsActions"></canvas> let valeurTotal = '${qty}';
+  <div class="panelChartBorderBordeaux"><div class="ml-2"><span class="font-weight-bold">Aktienrechte</span>
+    <div class="row"><div class="col"><span
+      class="text-muted">Menge</span><br/>
+      ${qty}
+    </div></div></div></div></div>`;
+const rights = rightsBlock('2.085');
 const home = (...blocks) => '<html><body><h4>Wertpapiere</h4>' + blocks.join('') + rights + '</body></html>';
 const standard = home(block('FR0000000001', 'Test AG', '45,140 (EUR)', ['16.290', '735.330,60 EUR'], ['-', '-']));
 
@@ -57,12 +63,25 @@ test('collects the share, its price and value; nothing else crosses', async () =
   assert.match(data.asOf, /^\d{4}-\d{2}-\d{2}$/);
   assert.deepEqual(data.depot.items, [{isin:'FR0000000001', name:'Test AG', quantity:16290, price:45.14,
     priceDate:'2026-11-20', currency:'EUR', value:735330.6}]);
-  assert(!snapshot.includes('2.085'));
+  assert.deepEqual(data.depot.rights, {quantity: 2085});
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, '/SharinBox/connexion.do');
   assert.equal(calls[0].options.credentials, 'same-origin');
   assert.equal(calls[0].options.mode, 'same-origin');
   assert.equal(calls[0].options.method, 'GET');
+});
+
+test('share rights: own entry with the number only; none listed or unreadable', async () => {
+  const items = [block('FR0000000001', 'Test AG', '45,140 (EUR)', ['10', '451,40 EUR'], ['-', '-'])];
+  const collect = html => page(async () => response(html), {shown: html}).__gcSharinbox.collect();
+  const withRights = JSON.parse(await collect('<html>' + items.join('') + rightsBlock('7') + '</html>'));
+  assert.deepEqual(withRights.depot.rights, {quantity: 7});
+  // no rights section: no entry
+  const without = JSON.parse(await collect('<html>' + items.join('') + '<canvas id="myChart-assets-X"></canvas></html>'.replace('<canvas id="myChart-assets-X"></canvas>', '') + '</html>'));
+  assert.equal('rights' in without.depot, false);
+  // a section whose number cannot be found must not look like "no rights"
+  const broken = '<html>' + items.join('') + '<canvas id="myChart-droitsActions"></canvas></html>';
+  await assert.rejects(collect(broken), /Aktienrechte/);
 });
 
 test('available and blocked balances are added up; several securities are listed', async () => {
