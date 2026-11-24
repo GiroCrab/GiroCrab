@@ -30,14 +30,18 @@ import uniffi.girocrab_core.Tag as CoreTag
 object VaultSnapshotMapper {
 
     /**
-     * One page, not the whole list: 3.3 replaces this with a cursor. A vault with more bookings
-     * than this shows the newest ones and says so — silently truncating without a word would be
-     * worse than a visible limit.
+     * Rows per query, not the size of the list: [BookingsPaging] reads page after page until the
+     * core's own count is covered. The size stays fixed so that memory and query cost per step
+     * are predictable; a vault above [BookingsPaging.MAX_PAGES] pages says what is missing
+     * instead of truncating silently.
      */
     const val PAGE_SIZE: UInt = 1000u
 
-    /** Filter for the first page: every account, every date, both directions, no day split. */
-    fun firstPageFilter(): CoreFilter = CoreFilter(
+    /**
+     * Filter for one page: every account, every date, both directions, no day split.
+     * [offset] is the row offset [BookingsPaging] asks for; see there for the `wholeDays` caveat.
+     */
+    fun firstPageFilter(offset: Int = 0): CoreFilter = CoreFilter(
         accountIds = emptyList(),
         categoryId = null,
         includeSubcategories = true,
@@ -46,7 +50,7 @@ object VaultSnapshotMapper {
         dateFrom = null,
         dateTo = null,
         limit = PAGE_SIZE,
-        offset = 0u,
+        offset = offset.toUInt(),
         scope = BookingScope.ALL,
         merchantKey = null,
         direction = BookingDirection.ALL,
@@ -56,10 +60,34 @@ object VaultSnapshotMapper {
         wholeDays = false,
     )
 
+    /**
+     * Single-page call. Kept so callers that hold one `BookingPage` (tests, spot reads) do not
+     * have to unwrap it; the app itself goes through the list variant below.
+     */
     fun map(
         groups: List<CoreGroup>,
         accounts: List<CoreAccount>,
         page: CorePage,
+        categories: List<CoreCategory>,
+        tags: List<CoreTag>,
+        holdingsByAccount: Map<Long, List<CoreHolding>>,
+        assets: List<CoreAssetItem>,
+    ): VaultSnapshot = map(
+        groups = groups,
+        accounts = accounts,
+        bookings = page.transactions,
+        bookingsTotal = page.totalCount.toInt(),
+        categories = categories,
+        tags = tags,
+        holdingsByAccount = holdingsByAccount,
+        assets = assets,
+    )
+
+    fun map(
+        groups: List<CoreGroup>,
+        accounts: List<CoreAccount>,
+        bookings: List<CoreBooking>,
+        bookingsTotal: Int,
         categories: List<CoreCategory>,
         tags: List<CoreTag>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
@@ -69,9 +97,9 @@ object VaultSnapshotMapper {
         val quoteCurrencies = accounts.associate { it.id to it.currency.ifBlank { "EUR" } }
         return VaultSnapshot(
             groups = groups.map { group(it, accounts) },
-            bookingsTotal = page.totalCount.toInt(),
+            bookingsTotal = bookingsTotal,
             accounts = accounts.map(::account),
-            bookings = page.transactions.map(::booking),
+            bookings = bookings.map(::booking),
             categories = categories.map(::category),
             tags = tags.map(::tag),
             holdings = holdingsByAccount.flatMap { (accountId, rows) ->

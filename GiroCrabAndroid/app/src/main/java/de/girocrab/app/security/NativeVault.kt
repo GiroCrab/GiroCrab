@@ -1,5 +1,6 @@
 package de.girocrab.app.security
 
+import de.girocrab.app.model.BookingsPaging
 import de.girocrab.app.model.VaultSnapshot
 import de.girocrab.app.model.VaultSnapshotMapper
 import java.io.File
@@ -7,6 +8,7 @@ import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import uniffi.girocrab_core.Account as CoreAccount
 import uniffi.girocrab_core.AssetItem as CoreAssetItem
+import uniffi.girocrab_core.Booking as CoreBooking
 import uniffi.girocrab_core.AccountGroup as CoreGroup
 import uniffi.girocrab_core.BookingPage as CorePage
 import uniffi.girocrab_core.Category as CoreCategory
@@ -156,8 +158,14 @@ class NativeVaultOpener {
                 ?: throw IllegalStateException("listAccountGroups did not return a list")
             val accounts = callNoArgs("listAccounts") as? List<CoreAccount>
                 ?: throw IllegalStateException("listAccounts did not return a list")
-            val page = callWith("listTransactions", VaultSnapshotMapper.firstPageFilter()) as? CorePage
-                ?: throw IllegalStateException("listTransactions did not return a page")
+            // Every page, not just the first: the analytics screen sums whatever arrived, so a
+            // truncated page made its totals too small without saying so (#1429, 3.3).
+            val coverage = BookingsPaging.readAll<CoreBooking> { offset ->
+                val page = callWith("listTransactions", VaultSnapshotMapper.firstPageFilter(offset))
+                    as? CorePage
+                    ?: throw IllegalStateException("listTransactions did not return a page")
+                BookingsPaging.Page(page.transactions, page.totalCount.toInt())
+            }
             // The core wants both bounds explicitly; `null` means "no limit", not "today".
             val noDate: String? = null
             val categories = callWith("listCategories", noDate, noDate) as? List<CoreCategory>
@@ -172,7 +180,16 @@ class NativeVaultOpener {
             }
             val assets = callNoArgs("listAllAssetItems") as? List<CoreAssetItem>
                 ?: throw IllegalStateException("listAllAssetItems did not return a list")
-            return VaultSnapshotMapper.map(groups, accounts, page, categories, tags, holdings, assets)
+            return VaultSnapshotMapper.map(
+                groups = groups,
+                accounts = accounts,
+                bookings = coverage.rows,
+                bookingsTotal = coverage.totalCount,
+                categories = categories,
+                tags = tags,
+                holdingsByAccount = holdings,
+                assets = assets,
+            )
         }
 
         /**
