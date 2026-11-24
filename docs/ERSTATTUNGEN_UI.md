@@ -147,8 +147,8 @@ Aufheben und tokenbasiertes Rückgängig auch per Tastatur. Escape schließt den
 Lesen und Schreiben laufen auf Hintergrundthreads. Anfragezähler und
 Tresoridentität verwerfen alte Ergebnisse. Während Teilwechseln und Änderungen
 sind alte Zeilen nicht bedienbar. Nach Synchronisation, Split- und Kategorieänderungen
-werden Buchungen, Kategorien, Analysen und Cockpit neu geladen; eine Linkänderung lädt nur
-die Buchungsliste (Markierungen) und die Erstattungskarte neu, da sie keine Summen ändert.
+und nach einer Linkänderung werden Buchungen, Kategorien, Analysen und Cockpit neu geladen
+(der gemeinsame Ladepfad); eine Linkänderung ändert dabei keine Summen.
 Beim Aktivieren des Datenschutzes verschwinden alte Dialoginhalte sofort;
 neu geladene Daten verwenden den aktuellen Datenschutzstatus.
 
