@@ -94,7 +94,6 @@ extension AppModel {
     /// - the account counters ("ohne Kategorie"), published always.
     /// Quick successive assignments only publish the last result.
     private func refreshAfterEdit() {
-        refundRevision &+= 1
         // A selection still loading publishes everything itself.
         if selectionLoadTask != nil { settlePendingSelectionLoad(); reloadAccounts(); return }
         categoryRefreshTask?.cancel()
