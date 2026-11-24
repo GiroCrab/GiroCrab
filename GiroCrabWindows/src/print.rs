@@ -196,6 +196,7 @@ tr{{page-break-inside:avoid}}</style></head><body>\n",
 }
 
 /// Schreibt das HTML in eine neue, eindeutig benannte Datei im Temp-Verzeichnis.
+/// Unter Unix nur für den Eigentümer lesbar (0600).
 pub fn write_temp(html: &str) -> std::io::Result<PathBuf> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -205,10 +206,14 @@ pub fn write_temp(html: &str) -> std::io::Result<PathBuf> {
         "girocrab-druck-{}-{nanos}.html",
         std::process::id()
     ));
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&path)?;
     f.write_all(html.as_bytes())?;
     Ok(path)
 }
