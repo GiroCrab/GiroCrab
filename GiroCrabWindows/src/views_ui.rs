@@ -545,7 +545,9 @@ pub fn render_view(win: &MainWindow) {
     match mode {
         MODE_DEPOT => {
             let Some(data) = with_ui(|u| u.depot.take()) else {
-                depot_chart::reset(win);
+                // A redraw while the depot loads: hide the curve but keep the cached series
+                // (locking forgets it in `on_lock`).
+                depot_chart::hide(win);
                 return;
             };
             let cur = data.account.currency.clone();
@@ -579,7 +581,11 @@ pub fn render_view(win: &MainWindow) {
                 .collect();
             win.set_kpis(ModelRc::new(VecModel::from(kpis)));
             set_shares(win, &view.composition);
-            depot_chart::render(win, data.account.id, &cur_money, &date);
+            let selected = match with_state(|st| st.target) {
+                Target::Account(id) => Some(id),
+                _ => None,
+            };
+            depot_chart::render(win, data.account.id, selected, &cur_money, &date);
             match tab {
                 DepotTab::Positions => {
                     set_columns(win, &portfolio::POSITION_COLUMNS);

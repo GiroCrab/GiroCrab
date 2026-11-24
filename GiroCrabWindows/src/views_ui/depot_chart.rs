@@ -131,18 +131,30 @@ pub fn readout(
     s
 }
 
-/// Draws the chart of `account_id`; amounts go through `money` (masked in privacy mode).
+/// The cached series if it belongs to `account_id` and that depot is the selected one; empty
+/// otherwise, so a redraw of a retained depot never shows its curve beside another selection.
+fn series_of(
+    cached: Option<&(i64, Vec<Point>)>,
+    account_id: i64,
+    selected: Option<i64>,
+) -> &[Point] {
+    match cached {
+        Some((id, p)) if *id == account_id && !is_foreign(Some(account_id), selected) => p,
+        _ => &[],
+    }
+}
+
+/// Draws the chart of `account_id` while it is the `selected` depot; amounts go through `money`
+/// (masked in privacy mode). Otherwise the chart stays hidden and the cached series is kept.
 pub fn render(
     win: &MainWindow,
     account_id: i64,
+    selected: Option<i64>,
     money: &dyn Fn(i64) -> String,
     date: &dyn Fn(&str) -> String,
 ) {
     let guard = SERIES.lock().unwrap_or_else(|e| e.into_inner());
-    let all: &[Point] = match &*guard {
-        Some((id, p)) if *id == account_id => p,
-        _ => &[],
-    };
+    let all = series_of(guard.as_ref(), account_id, selected);
     let start = range_period(win.get_depot_chart_range()).start(&today_iso());
     let points = in_range(all, start.as_deref());
     let (path, ticks) = match chart(points) {
@@ -210,6 +222,18 @@ mod tests {
             value_cents,
             covered,
         }
+    }
+
+    #[test]
+    fn redraw_shows_only_the_series_of_the_selected_depot() {
+        let cached = (3, vec![pt("2026-11-01", 100, 1)]);
+        assert_eq!(series_of(Some(&cached), 3, Some(3)).len(), 1);
+        // Retained depot 3 redrawn while depot 4 (or no single depot) is selected: no curve.
+        assert!(series_of(Some(&cached), 3, Some(4)).is_empty());
+        assert!(series_of(Some(&cached), 3, None).is_empty());
+        // The cached series of another depot is never drawn for this one.
+        assert!(series_of(Some(&cached), 4, Some(4)).is_empty());
+        assert!(series_of(None, 3, Some(3)).is_empty());
     }
 
     #[test]
