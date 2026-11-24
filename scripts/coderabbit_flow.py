@@ -8,10 +8,15 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 STICKY_MARKER = "<!-- girocrab-coderabbit-flow -->"
+
+
+class ForbiddenError(RuntimeError):
+    """The workflow token may not do this (GraphQL error type FORBIDDEN)."""
 
 
 def gh_api(method: str, path: str, payload: dict | None = None) -> dict | list:
@@ -38,6 +43,8 @@ def gh_api(method: str, path: str, payload: dict | None = None) -> dict | list:
 def gh_graphql(query: str, variables: dict) -> dict:
     res = gh_api("POST", "/graphql", {"query": query, "variables": variables})
     if isinstance(res, dict) and res.get("errors"):
+        if all(e.get("type") == "FORBIDDEN" for e in res["errors"]):
+            raise ForbiddenError(f"GraphQL error: {res['errors']}")
         raise RuntimeError(f"GraphQL error: {res['errors']}")
     return res.get("data", {}) if isinstance(res, dict) else {}
 
@@ -104,11 +111,32 @@ def resolve_thread(thread_id: str) -> bool:
       }
     }
     """
-    data = gh_graphql(mutation, {"threadId": thread_id})
+    try:
+        data = gh_graphql(mutation, {"threadId": thread_id})
+    except ForbiddenError as err:
+        # The thread stays open; a missing permission is no defect of the PR (#1829).
+        print(f"::warning::Could not resolve review thread {thread_id}: {err}")
+        return False
     return bool(((data.get("resolveReviewThread") or {}).get("thread") or {}).get("isResolved"))
 
 
+def resolve_threads(items: list[dict]) -> tuple[int, list[dict]]:
+    """Resolves the threads; returns how many worked and the items that are still open."""
+    remaining = [item for item in items if not resolve_thread(item["id"])]
+    return len(items) - len(remaining), remaining
+
+
 def upsert_sticky_comment(owner: str, repo: str, pr_nr: int, body: str) -> None:
+    try:
+        _upsert_sticky_comment(owner, repo, pr_nr, body)
+    except urllib.error.HTTPError as err:
+        if err.code != 403:
+            raise
+        # pull_request_review runs of fork PRs get a read-only token (#1829).
+        print(f"::warning::Could not write the status comment on PR #{pr_nr}: {err}")
+
+
+def _upsert_sticky_comment(owner: str, repo: str, pr_nr: int, body: str) -> None:
     comments = gh_api("GET", f"/repos/{owner}/{repo}/issues/{pr_nr}/comments?per_page=100")
     existing_id = None
     if isinstance(comments, list):
@@ -256,9 +284,9 @@ def main() -> int:
             # Keep GitHub GraphQL reviewThreads in sync when CodeRabbit confirms resolution (e.g. from AutoCraft).
             auto_resolvable, open_items = classify_threads(threads)
             targets = auto_resolvable + open_items
-            resolved = sum(1 for item in targets if resolve_thread(item["id"]))
+            resolved, remaining = resolve_threads(targets)
             if resolved > 0:
-                upsert_sticky_comment(owner, repo, pr_nr, render_status_comment([], resolved))
+                upsert_sticky_comment(owner, repo, pr_nr, render_status_comment(remaining, resolved))
             print(f"Synced CodeRabbit resolution: {resolved}/{len(targets)} thread(s) resolved.")
             return 0
 
@@ -285,17 +313,18 @@ def main() -> int:
 
     if args.resolve_all:
         targets = auto_resolvable + open_items
-        resolved = sum(1 for item in targets if resolve_thread(item["id"]))
-        upsert_sticky_comment(owner, repo, pr_nr, render_status_comment([], resolved))
+        resolved, remaining = resolve_threads(targets)
+        upsert_sticky_comment(owner, repo, pr_nr, render_status_comment(remaining, resolved))
         if resolved > 0:
             gh_api("POST", f"/repos/{owner}/{repo}/issues/{pr_nr}/comments", {"body": "@coderabbitai resolve"})
         print(f"Resolved {resolved}/{len(targets)} CodeRabbit thread(s).")
         return 0
 
-    resolved_auto = sum(1 for item in auto_resolvable if resolve_thread(item["id"]))
-    if open_items or resolved_auto:
-        upsert_sticky_comment(owner, repo, pr_nr, render_status_comment(open_items, resolved_auto))
-    print(f"Synced PR #{pr_nr}: {len(open_items)} open, {resolved_auto} auto-resolved.")
+    resolved_auto, remaining = resolve_threads(auto_resolvable)
+    still_open = open_items + remaining
+    if still_open or resolved_auto:
+        upsert_sticky_comment(owner, repo, pr_nr, render_status_comment(still_open, resolved_auto))
+    print(f"Synced PR #{pr_nr}: {len(still_open)} open, {resolved_auto} auto-resolved.")
     return 0
 
 
