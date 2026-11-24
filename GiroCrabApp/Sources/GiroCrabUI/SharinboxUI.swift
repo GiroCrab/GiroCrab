@@ -204,7 +204,11 @@ struct SharinboxWebSheet: View {
                 if documentsOn { Toggle("PDF-Postbox abrufen", isOn: $includeDocuments).disabled(running) }
                 Toggle("Nicht zugeteilte Aktienrechte abrufen", isOn: Binding(
                     get: { rightsOn },
-                    set: { rightsOn = $0; model.setSharinboxRights(connection.id, $0) }
+                    // save first, then show what is stored: a failed save keeps the old value
+                    set: {
+                        model.setSharinboxRights(connection.id, $0)
+                        rightsOn = model.sharinboxRightsEnabled(connection.id)
+                    }
                 )).disabled(running)
                 Spacer()
                 Button("Bestand abrufen") { start() }.buttonStyle(.borderedProminent).disabled(!ready || running)
