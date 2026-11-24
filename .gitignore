@@ -148,3 +148,4 @@ GiroCrabAndroid/app/src/main/generated/
 !/.claude/
 !/.claude/skills/
 !/.claude/skills/**
+**/settings.local.json
