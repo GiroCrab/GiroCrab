@@ -27,8 +27,8 @@ lesend — und zeigt acht Compose-Oberflächen (sieben Screens plus Buchungsdeta
   Snapshot und überleben keinen harten Lock. Dazu 3.2b (Regeln, Daueraufträge, Mandate, Kredite), die Ankündigungen aus der
   signierten Policy-Datei, 3.3 Cursor-Paging, 3.4 Analysesummen und das Lesen des Snapshots außerhalb des
   Main-Threads.
-- **Alpha.** Debug- und Release-APK als CI-Artefakt, 58 instrumentierte Tests im Job
-  `android-instrumented`. Das Alpha-Label fällt nach Stufe 2.
+- **Alpha.** Debug-APK als CI-Artefakt; die Release-APK baut derselbe Job nur als
+  R8-Smoke-Test und lädt sie nicht hoch. 58 instrumentierte Tests im Job `android-instrumented`. Das Alpha-Label fällt nach Stufe 2.
 
 ## Ist-Stand im Einzelnen
 
@@ -75,7 +75,8 @@ Mapper entscheidet nichts über Geld.
 
 Vier Stufen statt „Android wie macOS" als ein Ziel. Jede Stufe ist für sich benutzbar.
 
-**Stufe 1 — native Schicht und Lesepfad.** *Erledigt (#1427, #1428, #1429 über #1688).* Build-Skript,
+**Stufe 1 — native Schicht und Lesepfad.** *Erledigt bis auf 3.2b, 3.3 und 3.4 (#1427, #1428,
+#1429 über #1688).* Build-Skript,
 NDK/UniFFI in der CI, CI-Gate gegen APKs ohne `.so`, Keystore-umhüllter Tresorschlüssel,
 `openOwnVault()` über die Bindings, Mapper auf `VaultSnapshot`, Import der Desktop-Sicherung.
 
@@ -84,11 +85,10 @@ Snapshot-Mutation, Kategorien/Regeln/Notizen/Einstellungen über die Kern-API, s
 TAN-Fehler, Reload-Disziplin nach jeder Mutation, und Persistenz eigener Bearbeitungen über einen
 harten Lock hinweg. Ergebnis: die Alpha-Kennzeichnung fällt.
 
-**Stufe 3 — Konten.** *Teil 1 erledigt (3.1 Datenabbildung, 3.2a Holdings und Sachwerte), Rest offen.*
+**Stufe 3 — Konten.** *Offen.*
 Bankzugänge über die bestehenden Konnektoren in `girocrab-core/src/connectors/` (FinTS, comdirect,
 Trade Republic, Enable Banking, PayPal, Portal-Importer), alles über denselben FFI-Rand — kein eigener
-Android-Code. Offen: 3.2b (Regeln, Daueraufträge, Mandate, Kredite samt Modellangleichung), 3.3 (Cursor-Paging über `listTransactions`), 3.4 (Analysesummen aus der
-Saldenhistorie des Kerns).
+Android-Code. Die Aufgaben 3.1 bis 3.4 gehören dagegen zu Stufe 1c (Issue #1429) und stehen dort.
 
 **Stufe 4 — Rest.** Import/Export, Dokumente, Daueraufträge, Depot.
 
@@ -133,7 +133,7 @@ Signatur pro exportierter Funktion (heute **103 `#[uniffi::export]`-Blöcke**, r
 bei jeder Kern-Änderung mitdriftet. Also `uniffi-bindgen generate --language kotlin` als Build-Schritt.
 Verworfen: JNI von Hand, Kotlin-Multiplatform-Ersatz für den Kern (verdoppelt die Geschäftslogik).
 
-**Ein Build-Skript, ein Name.** `app/build.gradle.kts:38` nennt `src/main/jniLibs`, das Skript füllt
+**Ein Build-Skript, ein Name.** `app/build.gradle.kts:39` nennt `src/main/jniLibs`, das Skript füllt
 genau diesen Pfad; die CI ruft dasselbe Skript auf, damit lokaler und CI-Build nicht auseinanderlaufen.
 
 **Schlüssel: Keystore-umhüllt, Biometrie über `CryptoObject`.** Der 32-Byte-Tresorschlüssel wird mit
