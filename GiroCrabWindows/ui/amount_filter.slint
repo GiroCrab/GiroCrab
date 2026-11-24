@@ -1,0 +1,65 @@
+import { Button, LineEdit, ComboBox } from "std-widgets.slint";
+
+// Amount filter of the booking list (#357): toggle button with one-click reset.
+export component AmountFilterButton inherits HorizontalLayout {
+    in property <string> title: "Betrag";
+    in property <bool> active;
+    in-out property <bool> open;
+    callback reset();
+    spacing: 4px;
+    Button {
+        text: (root.active ? "● " : "") + root.title;
+        checkable: true;
+        checked <=> root.open;
+    }
+    if root.active: Button {
+        text: "×";
+        width: 28px;
+        clicked => { root.reset(); }
+    }
+}
+
+// "Betrag von … bis …" + direction; at most ~580px wide (fits the 780px window).
+export component AmountFilterRow inherits HorizontalLayout {
+    in property <bool> masked;
+    in property <string> error;
+    in-out property <string> from-text;
+    in-out property <string> to-text;
+    in-out property <int> direction-index;
+    callback apply(string, string, int);
+    spacing: 8px;
+    if root.masked: Text {
+        text: "Im Privatmodus ist der Betragsfilter ausgeblendet.";
+        vertical-alignment: center;
+    }
+    if !root.masked: Text { text: "Betrag von"; vertical-alignment: center; }
+    if !root.masked: LineEdit {
+        width: 96px;
+        placeholder-text: "0,00";
+        text <=> root.from-text;
+        accepted => { root.apply(root.from-text, root.to-text, root.direction-index); }
+    }
+    if !root.masked: Text { text: "bis"; vertical-alignment: center; }
+    if !root.masked: LineEdit {
+        width: 96px;
+        placeholder-text: "0,00";
+        text <=> root.to-text;
+        accepted => { root.apply(root.from-text, root.to-text, root.direction-index); }
+    }
+    if !root.masked: ComboBox {
+        width: 150px;
+        model: ["Alle", "Nur Einnahmen", "Nur Ausgaben"];
+        current-index <=> root.direction-index;
+    }
+    if !root.masked: Button {
+        text: "Anwenden";
+        clicked => { root.apply(root.from-text, root.to-text, root.direction-index); }
+    }
+    if root.error != "": Text {
+        text: root.error;
+        color: #c0392b;
+        overflow: elide;
+        horizontal-stretch: 1;
+        vertical-alignment: center;
+    }
+}

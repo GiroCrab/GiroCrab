@@ -4,6 +4,28 @@
 
 use girocrab_core::{Category, TransactionSplitInput, TransferTemplate};
 
+/// `1` / `1.234` / `1.234.567` (same separator throughout, later groups of three digits).
+fn is_thousands_groups(prefix: &str, sep: &str) -> bool {
+    let mut groups = prefix.split(sep);
+    let first_ok = groups
+        .next()
+        .is_some_and(|g| !g.is_empty() && g.chars().all(|c| c.is_ascii_digit()));
+    first_ok && groups.all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Integer part in front of the decimal separator: plain digits (or empty, as in ",50"), or
+/// thousands groups of one separator kind that differs from the decimal one ("1.234,50",
+/// "1,234,567.89"). Rejects "12,34,56", "12.34.56" and "1.234.50".
+fn is_valid_int_part(int_part: &str, dec_sep: char) -> bool {
+    if int_part.is_empty() || int_part.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let Some(sep) = int_part.chars().find(|c| matches!(c, ',' | '.')) else {
+        return false;
+    };
+    sep != dec_sep && is_thousands_groups(int_part, &sep.to_string())
+}
+
 /// Parses a German or plain amount ("1.234,56", "12,5", "-3.20", "7") into cents.
 pub fn parse_cents(text: &str) -> Option<i64> {
     let t = text.trim().replace(['€', ' ', '\u{a0}'], "");
@@ -17,10 +39,14 @@ pub fn parse_cents(text: &str) -> Option<i64> {
     // The last separator is the decimal one when 1-2 digits follow it; the others group thousands.
     let dec_pos = t.rfind([',', '.']);
     let (int_part, frac) = match dec_pos {
-        Some(p) if t.len() - p - 1 <= 2 && (t.len() - p - 1 > 0) => (&t[..p], &t[p + 1..]),
-        Some(p) if t.len() - p - 1 == 3 && t[..p].chars().all(|c| c.is_ascii_digit()) => {
-            (&t[..], "")
+        Some(p)
+            if t.len() - p - 1 <= 2
+                && (t.len() - p - 1 > 0)
+                && is_valid_int_part(&t[..p], t.as_bytes()[p] as char) =>
+        {
+            (&t[..p], &t[p + 1..])
         }
+        Some(p) if t.len() - p - 1 == 3 && is_thousands_groups(&t[..p], &t[p..=p]) => (&t[..], ""),
         Some(_) => return None,
         None => (&t[..], ""),
     };
@@ -384,6 +410,10 @@ mod tests {
         assert_eq!(parse_cents("7"), Some(700));
         assert_eq!(parse_cents("12,5 €"), Some(1250));
         assert_eq!(parse_cents("1.234"), Some(123_400));
+        assert_eq!(parse_cents("1.234.567"), Some(123_456_700));
+        assert_eq!(parse_cents("1.234.567,50"), Some(123_456_750));
+        assert_eq!(parse_cents("1.23.567"), None);
+        assert_eq!(parse_cents("1.234,567"), None);
         assert_eq!(parse_cents(",5"), Some(50));
         assert_eq!(parse_cents(""), None);
         assert_eq!(parse_cents("abc"), None);
