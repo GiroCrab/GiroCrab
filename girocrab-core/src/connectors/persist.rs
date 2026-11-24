@@ -71,6 +71,7 @@ struct Stored {
     mandate_id: String,
     creditor_id: String,
     item_refs: String,
+    booking_text: String,
 }
 
 impl Stored {
@@ -82,7 +83,7 @@ impl Stored {
         Ok(tx
             .prepare_cached(
                 "SELECT id, deleted_ms IS NOT NULL, counterparty, purpose, purpose_code, gvc,
-                        end_to_end_id, mandate_id, creditor_id, item_refs
+                        end_to_end_id, mandate_id, creditor_id, item_refs, booking_text
                    FROM transactions WHERE account_id = ?1 AND external_id = ?2",
             )?
             .query_row(params![account_id, external_id], |r| {
@@ -97,6 +98,7 @@ impl Stored {
                     mandate_id: r.get(7)?,
                     creditor_id: r.get(8)?,
                     item_refs: r.get(9)?,
+                    booking_text: r.get(10)?,
                 })
             })
             .optional()?)
@@ -131,6 +133,8 @@ fn refresh_existing(
     // a counterparty the bank (or a newer version) names now fills an empty one,
     // e.g. the merchant of a comdirect card payment (#1135)
     let [named] = fill([&s.counterparty], [&t.counterparty]);
+    // likewise a booking text, e.g. the booking key of a Hanseatic interest booking
+    let [text] = fill([&s.booking_text], [&t.booking_text]);
     let set = [
         heal(&s.counterparty, &t.counterparty).or(named),
         heal(&s.purpose, &t.purpose),
@@ -140,8 +144,9 @@ fn refresh_existing(
         mandate,
         creditor,
         items,
+        text,
     ];
-    if set == [None; 8] {
+    if set == [None; 9] {
         return Ok(());
     }
     let [
@@ -153,12 +158,14 @@ fn refresh_existing(
         mandate,
         creditor,
         items,
+        text,
     ] = set;
     tx.prepare_cached(
         "UPDATE transactions SET counterparty = COALESCE(?2, counterparty), purpose = COALESCE(?3, purpose),
                 purpose_code = COALESCE(?4, purpose_code), gvc = COALESCE(?5, gvc),
                 end_to_end_id = COALESCE(?6, end_to_end_id), mandate_id = COALESCE(?7, mandate_id),
-                creditor_id = COALESCE(?8, creditor_id), item_refs = COALESCE(?9, item_refs)
+                creditor_id = COALESCE(?8, creditor_id), item_refs = COALESCE(?9, item_refs),
+                booking_text = COALESCE(?10, booking_text)
           WHERE id = ?1",
     )?
     .execute(params![
@@ -170,7 +177,8 @@ fn refresh_existing(
         e2e,
         mandate,
         creditor,
-        items
+        items,
+        text
     ])?;
     Ok(())
 }
@@ -809,6 +817,9 @@ pub(crate) fn store_fetch(
         // (same account, amount and recipient IBAN; a batch: amount only) or after 14 days.
         // Connectors that report their complete open-hold list (`hold_prefix`) manage
         // those holds below (#1111) so same-amount payments or >14d holds are not dropped early.
+        // FinTS holds also when this fetch's list is incomplete (a failed or cut camt
+        // request, #1043): only a complete list removes them.
+        let fints_hold_like = format!("{}%", super::fints::camt::HOLD_PREFIX);
         let managed_hold_like = data
             .hold_prefix
             .as_deref()
@@ -820,6 +831,7 @@ pub(crate) fn store_fetch(
               WHERE external_id LIKE 'pending-%' AND deleted_ms IS NULL
                 -- web-portal holds (#629) are settled or discarded explicitly
                 AND external_id NOT LIKE 'pending-hold-portal-%'
+                AND external_id NOT LIKE ?3
                 AND (?2 = '' OR external_id NOT LIKE ?2 ESCAPE '\\') AND (
                 imported_unix < strftime('%s','now') - 14*86400 OR EXISTS (
                     SELECT 1 FROM transactions r WHERE r.account_id = transactions.account_id
@@ -835,7 +847,7 @@ pub(crate) fn store_fetch(
                                AND (r.booking_text LIKE '%Sammel%' OR r.purpose LIKE '%Sammel%')
                                AND r.booking_date <= date(transactions.booking_date, '+7 days')))
                       AND r.booking_date >= transactions.booking_date))",
-            params![crate::dates::now_ms(), managed_hold_like],
+            params![crate::dates::now_ms(), managed_hold_like, fints_hold_like],
         )?;
         // Entries the connector recognised as no real movement (stored by an older version).
         for (account_ref, external_id) in &data.withdrawn {
@@ -1234,7 +1246,9 @@ const POSTBOX_DAYS: i64 = 7;
 /// Whether a sync may add the PostBox fetch (#838).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PostboxMode {
-    /// Never: an automatic sync must not ask for an approval.
+    /// Never: an automatic sync must not ask for an approval. Also a sync of
+    /// one account or of statements only; none of these starts an account
+    /// without bookings further back than 90 days (#1043).
     Off,
     /// When it is on for the login and due.
     Due,
@@ -1263,14 +1277,17 @@ impl Vault {
 
     /// Like [`begin_sync`](Self::begin_sync) for an automatic sync in the
     /// background: nothing in it may need a new approval, so the comdirect
-    /// PostBox fetch (#838) is left out.
+    /// PostBox fetch (#838) is left out, and the fetch asks for no TAN (#1730).
     pub fn begin_quiet_sync(
         self: Arc<Self>,
         connection_id: i64,
         secret: String,
         demo: bool,
     ) -> Result<Arc<SyncSession>, CoreError> {
-        self.begin_sync_inner(connection_id, secret, demo, None, PostboxMode::Off, None)
+        let session =
+            self.begin_sync_inner(connection_id, secret, demo, None, PostboxMode::Off, None)?;
+        session.set_quiet();
+        Ok(session)
     }
 
     /// Like [`begin_sync`](Self::begin_sync) for one account of its login
@@ -1589,7 +1606,7 @@ impl Vault {
             secret
         };
         let secret = SecretString::new(secret);
-        let (kind, key_str, login, state, ctx_settings, since, skipped, demo) = {
+        let (kind, key_str, login, state, ctx_settings, since, history, skipped, demo) = {
             let db = self.db()?;
             let (kind, login, state): (String, String, SecretJson) = db
                 .query_row(
@@ -1724,11 +1741,23 @@ impl Vault {
                     "Dieses Konto ist archiviert oder vom Abruf ausgenommen.",
                 )));
             }
-            let days: i64 = Vault::setting_inner(&db, "sync.days_back")?
-                .and_then(|d| d.parse().ok())
-                .unwrap_or(90);
-            let since = since_window(crate::dates::today(), days, &newest);
-            (kind, key_str, login, state, settings, since, skipped, demo)
+            // Only a full sync the user started starts accounts without bookings further
+            // back than 90 days, or runs a pending full fetch (#1043): `PostboxMode::Off` is
+            // an automatic one, one account or statements only.
+            let user_full_sync = postbox != PostboxMode::Off;
+            let days = super::history::first_fetch_days(&db, kind, user_full_sync)?;
+            let history = if user_full_sync {
+                super::history::pending(&db, connection_id)?
+            } else {
+                None
+            };
+            let full_days = history
+                .as_deref()
+                .map(|v| super::history::HistoryRange::parse(v).days(kind));
+            let since = since_window(crate::dates::today(), days, &newest, full_days);
+            (
+                kind, key_str, login, state, settings, since, history, skipped, demo,
+            )
         };
         let (since, since_by_account) = since;
         let documents = match only_account {
@@ -1747,6 +1776,9 @@ impl Vault {
             documents,
             skipped_accounts: skipped.into_iter().collect(),
             only_account,
+            // set by `SyncSession` when the fetch starts
+            prompt: None,
+            cancelled: Default::default(),
         };
         let mut connector = make_connector_for(kind, &key_str, demo);
         if !demo && is_comdirect_fints(&key_str) {
@@ -1771,6 +1803,7 @@ impl Vault {
             kind,
             connector,
             ctx,
+            history,
         )))
     }
 

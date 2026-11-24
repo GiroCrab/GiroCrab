@@ -337,6 +337,7 @@ async fn live_scan_of_the_public_test_wallet() {
         documents: crate::connectors::Documents::Off,
         skipped_accounts: Default::default(),
         only_account: None,
+        ..Default::default()
     };
     let mut c = BitcoinConnector::new();
     assert!(matches!(c.begin(&ctx).await.unwrap(), Phase::Ready));

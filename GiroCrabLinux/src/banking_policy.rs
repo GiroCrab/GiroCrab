@@ -404,6 +404,7 @@ pub fn display_name(id: &str) -> String {
         "hanseatic" => "Hanseatic Bank",
         "bhw" => "BHW Bausparkasse",
         "kontist" => "Kontist",
+        "monefit" => "Monefit SmartSaver",
         "bitcoin" => "Bitcoin-Wallet",
         other => other,
     };

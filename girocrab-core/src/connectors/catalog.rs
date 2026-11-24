@@ -190,6 +190,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             required_settings: vec![],
             note: tr("Bitcoin Core: der Bestand einer Wallet im eigenen Knoten als Depot mit der Position Bitcoin, bewertet zum aktuellen Euro-Kurs. Der Knoten muss beim Abruf laufen, mit eingeschaltetem RPC-Server (server=1); die Anmeldung erfolgt über seine .cookie-Datei. Über Adressen und Bestand verlässt nichts den Rechner, nur der Kurs wird öffentlich abgefragt.").into(),
         },
+        ConnectorKind::Monefit => BankDescriptor {
+            kind,
+            name: "Monefit SmartSaver".into(),
+            protocol: tr("Web-App (Direkt-Login)").into(),
+            bank_code: String::new(),
+            sf_symbol: "banknote".into(),
+            login_label: tr("E-Mail-Adresse").into(),
+            secret_label: tr("Passwort").into(),
+            required_settings: vec![],
+            note: tr("Monefit SmartSaver: Saldo und alle Umsätze des Sparkontos. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich. Eine Anmeldung mit zweitem Faktor wird noch nicht unterstützt.").into(),
+        },
         ConnectorKind::Bhw => BankDescriptor {
             kind,
             name: "BHW Bausparkasse".into(),
@@ -719,6 +730,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Monefit SmartSaver",
+        kind: Some(ConnectorKind::Monefit),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[Capability::Transactions, Capability::Balances],
+        status: Status::TestingWanted,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "Uberspace",
         kind: Some(ConnectorKind::Uberspace),
         interface: Interface::WebPortal,
@@ -957,6 +977,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::Finpension => Box::new(finpension::FinpensionConnector),
         ConnectorKind::Bitcoin => Box::new(bitcoin::BitcoinConnector::new()),
         ConnectorKind::Kontist => Box::new(kontist::KontistConnector::new()),
+        ConnectorKind::Monefit => Box::new(monefit::MonefitConnector::new()),
         ConnectorKind::ScalableCapital => Box::new(scalable::ScalableConnector::new()),
         ConnectorKind::EnableBanking => {
             let (country, aspsp) = ConnectorKind::enable_banking_target(key).unwrap_or(("DE", ""));
