@@ -6,40 +6,56 @@
 
 ## Context
 
-Every device keeps its own encrypted vault. `Vault::merge_other_vault`
-([`vault/merge.rs`](../../girocrab-core/src/vault/merge.rs)) merges another device's file into
-it: it migrates the other file to the current schema, then runs one merge step per entity
-([`sync_merge.rs`](../../girocrab-core/src/sync_merge.rs) and its submodules). The building
-blocks are documented there and this ADR describes them as they are:
+### How devices sync today
 
-- **Per-field stamps.** A synced field has a `*_ms` stamp from `dates::now_ms`; `take_newer`
-  keeps the newer value, on equal stamps the larger value.
-- **Tombstones.** `deleted_ms` marks a deleted row; a deletion is never undone by a merge.
-  `merged_into` points from a combined duplicate to its survivor; bookings follow it.
-- **Deterministic identities.** Categories get a UUIDv5 from their path, tags from their
-  name, rules from their content, so two vaults that never met agree on them. After a rename
-  or move a category keeps its uuid; a category created anew under the new path gets another
-  one, and the merge combines same-named live siblings by name (`combine_categories`).
-- **Version skew.** An older build refuses a vault written by a newer one
-  (`schema::check_not_too_new`); a newer build migrates an older file before merging.
+Every device keeps its own encrypted vault. To sync, a device reads the vault file of another
+device and merges it into its own (`Vault::merge_other_vault` in
+[`vault/merge.rs`](../../girocrab-core/src/vault/merge.rs)). There is no server that decides
+what is right; each device merges on its own, whenever a file arrives. The merge works like
+this ([`sync_merge.rs`](../../girocrab-core/src/sync_merge.rs) and its submodules):
 
-What is not written down is what a merge must guarantee. Reviews of
+- **Each editable field carries the time of its last edit.** A category's name has
+  `name_ms`, its parent `parent_ms`, and so on. When both vaults have the same category, the
+  merge keeps, field by field, the value that was edited last (`take_newer`). If both times
+  are equal, it keeps the larger value.
+- **Deleted rows stay as markers.** A deleted row keeps its data with a deletion time
+  (`deleted_ms`), so the deletion reaches other devices. A merge never brings it back.
+- **Duplicates are combined.** If two devices created a category with the same name under
+  the same parent, the merge keeps one and marks the other as merged into it
+  (`merged_into`); the bookings of the second move to the first.
+- **The same thing gets the same id on every device.** A category's id is computed from its
+  path at creation, a tag's from its name, a rule's from its content. Two devices that create
+  "Lebensmittel › Supermarkt" independently therefore agree that it is one category. A renamed
+  category keeps its old id, so only then does the merge have to fall back to matching by
+  name.
+- **Different app versions.** An older app refuses to open a vault written by a newer one
+  (`schema::check_not_too_new`). A newer app first upgrades the other device's file to its own
+  schema, then merges.
+
+### What went wrong
+
+None of this says what a merge must guarantee. The reviews of
 [#1833](https://github.com/GiroCrab/GiroCrab/pull/1833) (category roles) went through many
-rounds that each found one more case where the result depended on the order in which devices
-synced, or where an upgrade changed a vault's numbers. Most of them had one of three causes:
+rounds. Each round found another case where two devices ended up with different data
+depending on which one synced first, or where the upgrade changed how existing bookings were
+counted. Most cases had one of three causes:
 
-1. **Derived values written during the merge.** Copying a duplicate's role into its survivor
-   (`forward_merged_roles`, removed in #1833) stuck to whichever survivor an earlier merge
-   chose. A randomized test found 112 order-dependent cases out of 2591.
-2. **Defaults stored like choices.** Schema step 42 seeds roles with stamp `0` in the same
-   column as user choices. Equal stamps then fall back to comparing values (`Some` beats
-   `None`), which decides between two defaults by accident.
-3. **Migrations that read context.** Step 42 derives a role from a category's position in the
-   tree. Devices that migrate before and after a sync see different positions.
+1. **The merge stored a value it had worked out itself.** When a duplicate category was
+   combined, the merge copied its role into the remaining category. If a later sync assigned
+   the duplicate to a different category, the copy stayed where it was. A randomized test with
+   three devices found 112 of 2591 cases where the result depended on the order of syncs.
+2. **Values the app set on its own looked like a user's choice.** The upgrade (schema step 42)
+   gives built-in categories a role and stores it in the same field as a role the user picks,
+   with time `0`. When two devices disagreed, the rule "on equal times keep the larger value"
+   decided between two values that nobody had chosen.
+3. **The upgrade read more than the row it changed.** Step 42 gives a category a role
+   depending on where it sits in the tree. Each device upgrades on its own, at a different
+   time; a device that upgrades after a sync has moved a category sees another tree than one
+   that upgraded before.
 
-The same structure shows outside roles: whether two same-named categories get combined
-depends on the merge order ([#1869](https://github.com/GiroCrab/GiroCrab/issues/1869)), and
-wall-clock stamps let a device with a fast clock win
+The same problems exist outside roles. Whether two same-named categories get combined
+depends on the order of syncs ([#1869](https://github.com/GiroCrab/GiroCrab/issues/1869)).
+Edit times come from the device clock, so a device whose clock runs ahead wins
 ([#1840](https://github.com/GiroCrab/GiroCrab/issues/1840)).
 
 Names from #1833 used below (`role_winners`, `role_ms`, schema step 42 and its tests) exist on
@@ -47,97 +63,119 @@ Names from #1833 used below (`role_winners`, `role_ms`, schema step 42 and its t
 
 ## Decision drivers
 
-1. **Devices converge.** Once every device has merged the same files, all hold the same data,
-   whatever the order.
-2. **A user's choice survives.** No merge, import or upgrade replaces something the user chose
-   with something the app derived.
-3. **Upgrades keep the numbers.** A migration does not change KPIs or cash flows of an existing
-   vault, also not after the next sync.
-4. **Reviewable.** A reviewer can check a merge change against stated rules and tests instead
-   of finding cases one by one.
+1. **All devices end up with the same data.** Once every device has merged the same files,
+   they hold the same data, no matter in which order the files arrived.
+2. **What the user chose stays.** No merge, import or upgrade replaces a user's choice with a
+   value the app worked out.
+3. **Upgrades do not change the numbers.** After an upgrade an existing vault shows the same
+   income, expenses and balances as before, also after the next sync.
+4. **Changes can be checked against rules.** A reviewer compares a change to written rules and
+   tests, instead of finding problems case by case.
 
 ## Decision
 
-Proposed rules for every synced entity. Where the code does not follow them yet, the tracking
-issue lists the work.
+Six rules for everything the devices sync. Where the code does not follow them yet, the
+tracking issue lists the work.
 
-### 1. Merging is order-independent
+### 1. The order of syncs does not matter
 
-For every synced field the merge of two values is commutative, associative and idempotent.
-Ties are broken deterministically and the rule is written next to the merge step. A merge
-never stamps anything itself (as today).
+A device may receive the files of the others in any order, and it may receive the same file
+twice. Every merge step must give the same result in each case. When two devices changed the
+same field at exactly the same time, a fixed rule decides which value stays, and that rule is
+written next to the merge step.
 
-### 2. Synced columns hold facts, not derived values
+*Not allowed:* a result that depends on which device's file arrived first, as in #1869.
 
-A synced, stamped column holds what a user or an import did. Values derived from other rows
-— survivors, combined duplicates, a category's effective role, totals — are computed when
-reading, or recomputed from the merged facts as a whole after each merge. A merge step does
-not write a derived value as if someone had edited it. Example: since #1833 the role of a
-combined duplicate stays on the duplicate and counts for the survivor when reading
-(`sync_merge::role_winners`).
+### 2. The merge only stores what someone did
 
-### 3. Defaults are not choices
+Fields that the merge compares by edit time hold edits: something a user did, or what an
+import brought in. The merge does not store a value in such a field that it worked out itself
+from other rows. Values like that — which category a duplicate belongs to, the role a
+category inherits, totals — are computed when the app reads the data.
 
-A value the app sets on its own (migration, import, starter data) is marked as such and loses
-against any user choice. It does not travel to other rows as if it were a choice (#1833: only
-roles with `role_ms > 0` count for a survivor). Whether stamp `0` stays the marker or defaults
-move to a column of their own is open for comment.
+*Why:* a stored value stays even when the rows it came from change on another device later.
+Which value stays then depends on the order of syncs (cause 1 above).
 
-### 4. Identities are deterministic
+*Example:* since #1833 the role of a combined duplicate stays on the duplicate; when reading,
+it counts for the category it was combined into (`sync_merge::role_winners`).
 
-A new synced entity gets a deterministic identity like the existing ones. Matching by name is
-a fallback for rows created independently under the same name, and its merge rule is part of
-rule 1 (#1869).
+### 3. What the app sets on its own never beats a user's choice
 
-### 5. Migrations of synced data say what they read
+Upgrades, imports and the starter categories set values without anyone choosing them. Such a
+value must be recognisable as "not chosen", lose against every choice a user makes on any
+device, and not be carried over to other rows by the merge.
 
-A schema step that writes synced values documents which context it reads beyond the row
-itself, and how the merge treats devices that migrated with different context (as step 42
-does for the tree position). Prefer steps that read only the row.
+*Example:* step 42 gives a built-in `Sparen & Investieren` the role `Investment` with time
+`0`, which marks it as not chosen. If another device combines this category as a duplicate
+into another one, the role does not move along (#1833).
 
-### 6. Version skew stays as it is
+*Open for comment:* whether time `0` stays the marker, or such values move to a field of their
+own that the merge never compares.
 
-Older builds refuse newer vaults; newer builds migrate older files before merging.
+### 4. Rows get the same id on every device
+
+Something that two devices create independently should get the same id on both, computed from
+what it is (as categories, tags and rules do today). Matching by name is only for rows where
+that does not work, such as a renamed category. That matching must follow rule 1 as well
+(#1869).
+
+### 5. An upgrade that changes synced data reads only the row, or says what else it reads
+
+Each device upgrades its own vault, at its own time. If an upgrade step computes a value from
+more than the row it changes — for example from where a category sits in the tree — two
+devices can compute different values for the same row. Such a step says in its
+documentation what it reads and what happens when devices disagree, and its tests cover
+that case. Step 42 does this for the position in the tree.
+
+### 6. A merge never mixes two schema versions
+
+This is already how the app works and stays so: an older app does not open a vault written by
+a newer one, and a newer app upgrades the other device's file before merging it.
 
 ## Not covered
 
-- **Clocks.** Replacing wall-clock stamps with hybrid logical clocks and a device id as
-  tie-break is left to #1840; rule 1 holds with either.
-- **The merge transport.** How files reach other devices (iCloud) and when a merge runs.
+- **Clocks.** Replacing the device clock with a clock that cannot run ahead (hybrid logical
+  clocks, with the device as tie-break) is left to #1840. Rule 1 holds either way.
+- **How files reach other devices** (iCloud) and when a merge runs.
 - **Individual fixes.** #1869 and the other items of the tracking issue decide their own
   details.
 
 ## Alternatives considered
 
 - **Keep fixing cases as reviews find them.** Each fix is small, but every reviewer has to
-  rediscover the rules, and a fix can reintroduce an earlier case (#1833: a filter added for
-  one review finding made roles order-dependent again). Fails driver 4.
-- **Adopt a CRDT library or a CRDT extension for SQLite.** Gives rule 1 by construction, but
-  replaces the merge of every entity, the file-based sync of encrypted vaults and the
-  migration path of existing vaults at once. Worth revisiting if the property tests show
-  that rule 1 cannot be kept with the current design.
-- **Sync an operation log instead of states.** Merges operations in causal order instead of
-  comparing states. Needs a log in every vault and a way to compact it; a larger change than
-  the problems so far justify.
+  work out the rules again, and a fix can bring back an earlier problem: in #1833 a filter
+  added for one review finding made roles depend on the order of syncs again. Fails driver 4.
+- **Use a library that merges data without conflicts by design (CRDT), or such an extension
+  for SQLite.** It would give rule 1 automatically, but it replaces the merge of every kind of
+  data, the file-based sync of encrypted vaults and the upgrade path of existing vaults at
+  once. Worth revisiting if the tests below show that rule 1 cannot be kept with the current
+  design.
+- **Sync a list of edits instead of the data.** Devices would replay each other's edits in
+  order instead of comparing their data. Every vault would need such a list and a way to keep
+  it small; a larger change than the problems so far justify.
 
 ## Consequences
 
-- Merge changes are reviewed against the rules above; a violation needs a reason in the code.
-- Known violations become tracked work instead of review findings: `combine_categories`
-  writes combinations that a newer rename on another device cannot undo (#1869) and merges
-  `builtin_role` into the survivor; `resolve_parents` writes derived parents.
-- Defaults need a marker everywhere the app seeds synced data, not only for roles.
-- Re-evaluate when the property tests find a class of violations the current design cannot
-  fix, or when #1840 changes the stamps.
+- Changes to the merge are reviewed against these rules; code that breaks one needs a comment
+  that says why.
+- Places that break a rule today become tracked work instead of review findings:
+  - `combine_categories` combines duplicates in a way that a later rename on another device
+    cannot undo (#1869), and copies `builtin_role` into the remaining category.
+  - `resolve_parents` stores a parent it worked out itself.
+- Every place where the app sets synced values on its own needs the "not chosen" marker of
+  rule 3, not only roles.
+- Re-evaluate when the tests below find problems the current design cannot fix, or when #1840
+  changes how edit times are taken.
 
 ## Confirmation
 
-- A property test per synced entity: random devices make random edits, then merge in every
-  order; all orders must give the same data. `roles_do_not_depend_on_merge_order_on_random_states`
-  in [`sync_merge/categories.rs`](../../girocrab-core/src/sync_merge/categories.rs) (#1833)
-  is the first one; the tracking issue extends it to every entity.
-- For a schema step that changes how data is classified: a comparison with an independent
-  copy of the old behaviour on random data (as `category_roles_keep_v41_classification_on_random_trees`
-  for step 42).
-- Review checklist for changes under `sync_merge/` and to schema steps that write synced
-  columns.
+- **A test per kind of synced data:** several simulated devices make random changes, then
+  merge in every order; all orders must give the same data.
+  `roles_do_not_depend_on_merge_order_on_random_states` in
+  [`sync_merge/categories.rs`](../../girocrab-core/src/sync_merge/categories.rs) (#1833) is
+  the first one; the tracking issue extends it to everything that syncs.
+- **For an upgrade that changes how bookings are counted:** a comparison with an independent
+  copy of the old behaviour on random data, as
+  `category_roles_keep_v41_classification_on_random_trees` does for step 42.
+- **A review checklist** for changes under `sync_merge/` and for upgrade steps that write
+  synced data.
