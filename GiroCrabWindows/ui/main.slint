@@ -1241,8 +1241,9 @@ export component MainWindow inherits Window {
     capture-key-pressed(event) => {
         if (root.transfer-open && event.modifiers.control && event.modifiers.shift && (event.text == "V" || event.text == "v" || event.text == "\u{16}")) { root.paste-transfer(); return accept; }
         if (root.unlocked && event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p" || event.text == "\u{10}")) { root.privacy = !root.privacy; root.privacy-changed(); return accept; }
-        if (root.unlocked && event.modifiers.control && (event.text == "," || event.text == ";")) { SettingsImportState.request(); return accept; }
-        if (root.unlocked && !root.busy && event.modifiers.control && !event.modifiers.shift && (event.text == "e" || event.text == "\u{5}")) { SettingsImportState.request(); SettingsImportState.tab = 1; return accept; }
+        // Bei offenem „Problem melden“ öffnen weder Ctrl+, noch Ctrl+E die Einstellungen darüber.
+        if (root.unlocked && !root.report-open && event.modifiers.control && (event.text == "," || event.text == ";")) { SettingsImportState.request(); return accept; }
+        if (root.unlocked && !root.busy && !root.report-open && event.modifiers.control &&!event.modifiers.shift && (event.text == "e" || event.text == "\u{5}")) { SettingsImportState.request(); SettingsImportState.tab = 1; return accept; }
         if (root.shortcut(event.text, event.modifiers.control)) { return accept; }
         reject
     }
