@@ -32119,6 +32119,17 @@
         }
       }
     },
+    "Vermögenswerte ohne Immobilien" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total assets excluding property"
+          }
+        }
+      }
+    },
     "Versand" : {
       "extractionState" : "manual",
       "localizations" : {
