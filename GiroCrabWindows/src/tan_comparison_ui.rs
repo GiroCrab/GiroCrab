@@ -16,14 +16,14 @@ pub struct TanComparison {
 }
 
 impl TanComparison {
-    /// `None` ohne Empfänger-IBAN. Leerzeichen werden ignoriert, Buchstaben großgeschrieben.
+    /// `None` bei weniger als 4 Zeichen (ohne Leerzeichen). Leerzeichen werden ignoriert, Buchstaben großgeschrieben.
     pub fn new(iban: &str, amount_cents: impl Into<i128>) -> Option<Self> {
         let iban: Vec<char> = iban
             .chars()
             .filter(|c| !c.is_whitespace())
             .flat_map(char::to_uppercase)
             .collect();
-        if iban.is_empty() {
+        if iban.len() < 4 {
             return None;
         }
         let split = iban.len().saturating_sub(4);
@@ -188,11 +188,7 @@ mod tests {
         assert_eq!(c.prefix, "MT84 MALT 0110 0001 2345 MTLC AST");
         assert_eq!(c.end_chars, "001S");
         assert_eq!(c.amount, "0,05 €");
-        let short = TanComparison::new("AB1", 0_i64).unwrap();
-        assert_eq!(
-            (short.prefix.as_str(), short.end_chars.as_str()),
-            ("", "AB1")
-        );
+        assert_eq!(TanComparison::new("AB1", 0_i64), None);
         assert_eq!(TanComparison::new("  ", 100_i64), None);
     }
 
@@ -218,7 +214,7 @@ mod tests {
         assert_eq!(order.visible(), Some(cmp));
     }
 
-    // einziger Test, der den globalen Platz benutzt (keine Parallelitäts-Kollision)
+    // läuft im eigenen Test-Thread; Plätze sind je Thread getrennt (keine Parallelitäts-Kollision)
     #[test]
     fn guard_disarms_after_transfer() {
         let cmp = TanComparison::new("DE89370400440532013000", 500_i64);
