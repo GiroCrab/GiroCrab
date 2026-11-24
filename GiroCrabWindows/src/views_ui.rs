@@ -712,7 +712,7 @@ pub fn apply_header(win: &MainWindow) {
         _ => String::new(),
     };
     let fetched = match target {
-        Target::Account(id) => crate::fetched_label(id),
+        Target::Account(id) => crate::fetched_label(id, win.get_privacy()),
         _ => String::new(),
     };
     win.set_selected_subtitle(subtitle.into());

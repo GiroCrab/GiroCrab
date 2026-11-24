@@ -1302,40 +1302,93 @@ fn tokio_runtime() -> Result<tokio::runtime::Runtime, String> {
 }
 
 thread_local! {
-    /// Last successful fetch (Unix ms) per account id, taken from its bank connection (#815).
-    /// Filled by `render_header`; `apply_header` reads it without touching the vault.
-    static FETCHED_MS: std::cell::RefCell<std::collections::HashMap<i64, i64>> =
+    /// Last fetch per account id, taken from its bank connection (#815): `Some(ms)` = last
+    /// successful fetch (Unix ms), `None` = connected but never synced. Accounts without a
+    /// connection (offline, import) get no entry. Filled by `render_header`; `apply_header`
+    /// reads it without touching the vault.
+    static FETCHED_MS: std::cell::RefCell<std::collections::HashMap<i64, Option<i64>>> =
         Default::default();
 }
 
 /// Remembers when each account's bank connection last fetched successfully. Accounts without a
-/// connection (offline, import) or connections that never synced get no entry.
+/// connection (offline, import) get no entry; a connection that never synced maps to `None`.
 fn remember_fetch_times(vault: &Vault, accounts: &[girocrab_core::Account]) {
-    let synced: std::collections::HashMap<i64, i64> = vault
+    let synced: std::collections::HashMap<i64, Option<i64>> = vault
         .list_bank_connections()
         .map(|cs| {
             cs.into_iter()
-                .filter_map(|c| Some((c.id, c.last_sync_unix?)))
+                .map(|c| (c.id, c.last_sync_unix.map(|s| s * 1_000)))
                 .collect()
         })
         .unwrap_or_default();
     let map = accounts
         .iter()
-        .filter_map(|a| Some((a.id, synced.get(&a.connection_id?)? * 1_000)))
+        .filter_map(|a| Some((a.id, *synced.get(&a.connection_id?)?)))
         .collect();
     FETCHED_MS.with(|f| *f.borrow_mut() = map);
 }
 
-/// "Abgerufen vor 5 Minuten" for the header of an account; empty without a fetch. Not masked:
-/// dates and times stay visible in privacy mode.
-fn fetched_label(account_id: i64) -> String {
+/// Header text for one account. `entry`: `None` = no bank connection (no text),
+/// `Some(None)` = connected but never fetched, `Some(Some(ms))` = last successful fetch.
+/// Hidden in privacy mode (as in the reference app).
+fn fetched_text(now_ms: i64, entry: Option<Option<i64>>, privacy: bool) -> String {
+    if privacy {
+        return String::new();
+    }
+    match entry {
+        None => String::new(),
+        Some(fetched) => daily::format_last_fetch(now_ms, fetched).map_or_else(
+            || "Noch nie abgerufen".to_string(),
+            |t| format!("Abgerufen {t}"),
+        ),
+    }
+}
+
+/// "Abgerufen vor 5 Minuten" / "Noch nie abgerufen" for the header of an account; empty for
+/// accounts without a bank connection and in privacy mode.
+fn fetched_label(account_id: i64, privacy: bool) -> String {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64);
-    let fetched = FETCHED_MS.with(|f| f.borrow().get(&account_id).copied());
-    daily::format_last_fetch(now_ms, fetched)
-        .map(|t| format!("Abgerufen {t}"))
-        .unwrap_or_default()
+    let entry = FETCHED_MS.with(|f| f.borrow().get(&account_id).copied());
+    fetched_text(now_ms, entry, privacy)
+}
+
+#[cfg(test)]
+mod fetched_label_tests {
+    use super::fetched_text;
+
+    const NOW: i64 = 1_700_000_000_000;
+
+    #[test]
+    fn never_synced_connection_says_so() {
+        assert_eq!(fetched_text(NOW, Some(None), false), "Noch nie abgerufen");
+        // A zero timestamp is not a real fetch either.
+        assert_eq!(
+            fetched_text(NOW, Some(Some(0)), false),
+            "Noch nie abgerufen"
+        );
+    }
+
+    #[test]
+    fn account_without_connection_shows_nothing() {
+        assert_eq!(fetched_text(NOW, None, false), "");
+    }
+
+    #[test]
+    fn recent_fetch_gets_prefix() {
+        assert_eq!(
+            fetched_text(NOW, Some(Some(NOW - 5 * 60_000)), false),
+            "Abgerufen vor 5 Minuten"
+        );
+    }
+
+    #[test]
+    fn privacy_hides_label() {
+        for entry in [None, Some(None), Some(Some(NOW - 5 * 60_000))] {
+            assert_eq!(fetched_text(NOW, entry, true), "");
+        }
+    }
 }
 
 /// Redraws the account list and header (balances follow privacy mode).
@@ -1387,8 +1440,13 @@ fn render_header(
     win.set_selected_name(cur.0.into());
     win.set_selected_balance(cur.1.into());
     win.set_selected_currency(cur.2.into());
-    // "Alle Konten" (0) has no entry, so it stays empty.
-    win.set_selected_fetched(sel.map(fetched_label).unwrap_or_default().into());
+    // "Alle Konten" (0) has no entry, so it stays empty; privacy mode hides it.
+    let privacy = win.get_privacy();
+    win.set_selected_fetched(
+        sel.map(|id| fetched_label(id, privacy))
+            .unwrap_or_default()
+            .into(),
+    );
     Ok(sel)
 }
 
