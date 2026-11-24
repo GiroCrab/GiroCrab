@@ -703,6 +703,16 @@ fn write_booking(
     if m.splits.is_empty() && !old.splits.is_empty() && m.cat.is_none() {
         cleared.insert(id);
     }
+    // parts added: the parts carry the categories, a rule result on the booking goes (as
+    // `clear_split_category` does for an import); the rules are not run for it
+    if !m.splits.is_empty() && old.splits.is_empty() && m.cat.is_none() {
+        conn.execute(
+            "UPDATE transactions SET category_id = NULL, rule_id = NULL, category_source = 'none'
+              WHERE id = ?1 AND category_source = 'rule'",
+            [id],
+        )?;
+        cleared.remove(&id);
+    }
     if m.cat != old.cat {
         if m.cat.is_some() {
             conn.execute(
