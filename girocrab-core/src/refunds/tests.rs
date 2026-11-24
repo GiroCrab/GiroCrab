@@ -487,6 +487,58 @@ mod self_review {
         assert!(links[0].inactive && links[0].allocated_cents == 0);
     }
 
+    /// CodeRabbit (#1852): a twin's whole-booking link does not widen onto a bank booking of
+    /// another amount; with the same amount it moves.
+    #[test]
+    fn twin_whole_link_moves_only_with_the_same_amount() {
+        for (bank_amount, moves) in [(-100, true), (-120, false)] {
+            let f = Fixture::new();
+            let r = f.add("refund", 100);
+            let bank = f.add("bank", bank_amount);
+            let twin = f.add("twin", -100);
+            f.link(r, "", twin, "");
+            let db = f.v.db().unwrap();
+            db.execute_batch(
+                "ATTACH DATABASE ':memory:' AS other;
+                CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+                CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+                CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;
+                DELETE FROM main.refund_links;",
+            )
+            .unwrap();
+            store::merge_folded(&db, &HashMap::from([(r, r), (bank, bank), (twin, bank)])).unwrap();
+            crate::sync_merge::soft_delete_booking(&db, twin).unwrap();
+            drop(db);
+            let active =
+                f.v.refund_links(r)
+                    .unwrap()
+                    .iter()
+                    .any(|l| l.original_id == bank && !l.inactive);
+            assert_eq!(active, moves, "{bank_amount}");
+        }
+    }
+
+    /// CodeRabbit (#1852): in a local fold an explicit unlink follows to the keeper's part like a
+    /// live link, so it still suppresses the keeper's own copy of that link.
+    #[test]
+    fn local_fold_moves_an_unlink_to_the_keeper_part() {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let keeper = f.add("keeper", -150);
+        let dup = f.add("dup", -100);
+        let parts = f.split(keeper, &[-100, -50]);
+        f.link(r, "", keeper, &parts[0]);
+        f.link(r, "", dup, "");
+        f.unlink(r, "", dup, "");
+        store::fold_booking(&f.v.db().unwrap(), dup, keeper, true, false).unwrap();
+        assert!(
+            f.v.refund_links(r)
+                .unwrap()
+                .iter()
+                .all(|l| l.original_id != keeper)
+        );
+    }
+
     /// CodeRabbit (#1853): a whole-booking link moves to a replacement only with the same signed
     /// amount; a hold settled at another amount leaves it inactive.
     #[test]

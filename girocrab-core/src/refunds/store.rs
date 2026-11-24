@@ -168,11 +168,16 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                 }
                 // a user unlink follows like a live link, so it still suppresses the bank's
                 // copy of that link on the survivor's part
-                if (row.deleted_ms.is_none() || !row.moved)
-                    && old.0 != target.0
-                    && let Some(part) = survivor_part(conn, "other", old, target.0, true)?
-                {
-                    target.1 = part;
+                if (row.deleted_ms.is_none() || !row.moved) && old.0 != target.0 {
+                    match survivor_part(conn, "other", old, target.0, true)? {
+                        Some(part) => target.1 = part,
+                        // a whole booking with another amount: the link stays on the folded
+                        // twin booking (same vault, deleted with it) and is inactive
+                        None if old.1.is_empty() && row.deleted_ms.is_none() => {
+                            *target = old.clone()
+                        }
+                        None => {}
+                    }
                 }
             }
             if previous.refund.1 != row.key.refund.1 || previous.original.1 != row.key.original.1 {
@@ -359,7 +364,8 @@ pub(crate) fn fold_booking(
         if let Some(source) = &mut target.moved_from {
             remap(source);
         }
-        if target.deleted_ms.is_none() {
+        // a user unlink follows like a live link (move markers stay where they are)
+        if target.deleted_ms.is_none() || !target.moved {
             let mut previous = target.key.clone();
             remap(&mut previous);
             for (old, endpoint) in [
