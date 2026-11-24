@@ -95,14 +95,15 @@ only where its `builtin_role` decided the classification this way:
 
 - Built-in categories at the top level start with the role their `builtin_role` stood for.
 - `Umbuchungen` and imported transfer categories start as `Neutral` at any depth.
-- `Gehalt` starts as `Salary` wherever it is, except below a transfer category.
+- `Gehalt` starts as `Salary` wherever it is, except below a category that starts as
+  `Investment`, `Loan` or `Neutral`.
 - `ETF-Sparpläne` and `Aktien` already moved to the top level start as `Investment`: before,
   a keyword check on the top-level `builtin_role`, meant for imported category paths, matched
   their keys.
 
 Every other category starts without a role and inherits from its parent. A built-in category
 moved elsewhere thus keeps the classification its position gave it; `Gehalt` under
-`Umbuchungen` stays `Neutral`. These roles are ones nobody chose (stamp `0`), so any user
+`Umbuchungen` stays `Neutral`, under `Sparen & Investieren` `Investment`. These roles are ones nobody chose (stamp `0`), so any user
 choice wins over them. From then on only roles count: a moved category keeps its explicit
 role, and one without inherits from its new parent. The schema step `category_roles` in
 [`schema.rs`](../../girocrab-core/src/schema.rs) implements this.
