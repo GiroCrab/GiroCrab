@@ -1906,7 +1906,11 @@ QtObject {
     property var syncingConnectionID: null
     /// The bank dialog in progress (session handle of src/sessions.rs).
     property var activeSession: null
-    /// { connection, challenge, waiting, busy, error }
+    /// { connection, challenge, waiting, busy, error, canSkipOrder, polling }
+    /// canSkipOrder: the TAN is for one order of the fetch, not the login: „TAN auslassen“
+    /// leaves that order out and the rest is stored (#1827, step.fetching).
+    /// polling: a poll of this question is in flight (fetch only): core may move on to the
+    /// next order, so „TAN auslassen“ would hit that one and not the one on screen.
     property var activeChallenge: null
     property var pendingLogin: null          // BankConnection asking for the PIN
     property var setupRequest: null          // { connection, keys }
@@ -2026,6 +2030,8 @@ QtObject {
             activeSession = id
             coreAsync("session_start", { session: id }, step => {
                 if (activeSession !== id || gen !== syncGeneration) return   // skipped / cancelled meanwhile
+                // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with Finished
+                if (activeChallenge && activeChallenge.busy && !step.Finished) return
                 handleStep(step, connection)
             }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
         }
@@ -2074,13 +2080,17 @@ QtObject {
         }
         if (step.NeedsChallenge) {
             const c = step.NeedsChallenge.challenge
-            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "" }
+            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "",
+                                canSkipOrder: step.fetching === true, polling: false }
             if (c.kind === "DecoupledPush" || c.kind === "Progress") schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.StillWaiting) {
             const c = step.StillWaiting.challenge
             activeChallenge = activeChallenge === null
-                ? { connection: connection, challenge: c, waiting: true, busy: false, error: "" }
-                : Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false })
+                ? { connection: connection, challenge: c, waiting: true, busy: false, error: "",
+                    canSkipOrder: step.fetching === true, polling: false }
+                // progress steps bring a new text
+                : Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false,
+                                                       canSkipOrder: step.fetching === true, polling: false })
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             const s = step.Finished.summary
@@ -2131,6 +2141,8 @@ QtObject {
         const parts = [qsTr("%1: %2 neue Buchungen, %3 kategorisiert").arg(connection.display_name).arg(s.transactions_imported).arg(s.transactions_categorized)]
         if (s.new_accounts.length) parts.push(qsTr("Neue Konten: %1").arg(s.new_accounts.join(", ")))
         if (s.revoked_accounts.length) parts.push(qsTr("Kein Zugriff mehr: %1").arg(s.revoked_accounts.join(", ")))
+        // e.g. an order left out with „TAN auslassen“ (#1827): the sync log names it
+        if (s.warnings.length) parts.push(qsTr("Nicht alles abgerufen, Details im Abruf-Protokoll"))
         let text = parts.join(" · ")
         if (s.transactions_skipped_archived) text += " · " + qsTr("%1 Buchungen archivierter Konten übersprungen").arg(s.transactions_skipped_archived)
         return text
@@ -2145,8 +2157,13 @@ QtObject {
         if (activeTransfer !== null) { pollTransfer(connection); return }
         const id = activeSession
         if (id === null) return
-        coreAsync("session_poll", { session: id }, step => { if (activeSession === id) handleStep(step, connection) },
-                  err => { if (activeSession === id) finishSync(err, connection) })
+        if (activeChallenge && activeChallenge.canSkipOrder) activeChallenge = Object.assign({}, activeChallenge, { polling: true })
+        coreAsync("session_poll", { session: id }, step => {
+            if (activeSession !== id) return   // skipped / cancelled meanwhile
+            // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with Finished
+            if (activeChallenge && activeChallenge.busy && !step.Finished) return
+            handleStep(step, connection)
+        }, err => { if (activeSession === id) finishSync(err, connection) })
     }
     function submitCode(code) {
         if (activeTransfer !== null && activeChallenge) { submitTransferCode(code); return }
@@ -2154,6 +2171,17 @@ QtObject {
         if (id === null || !ch) return
         activeChallenge = Object.assign({}, ch, { busy: true, error: "" })
         coreAsync("session_submit", { session: id, code: code }, step => { if (activeSession === id) handleStep(step, ch.connection) },
+                  err => { if (activeSession === id) finishSync(err, ch.connection) })
+    }
+    /// „TAN auslassen“ (AppModel+Sync.swift › skipOrder, #1827): leaves out the order the bank
+    /// wants a TAN for during the fetch; the sync goes on with the rest and reports the order
+    /// as a warning (sync log „Teilweise“).
+    function skipOrder() {
+        const id = activeSession, ch = activeChallenge
+        if (id === null || !ch || !ch.canSkipOrder || ch.busy || activeTransfer !== null) return
+        pollTimer.stop()
+        activeChallenge = Object.assign({}, ch, { busy: true, error: "" })
+        coreAsync("session_skip", { session: id }, step => { if (activeSession === id) handleStep(step, ch.connection) },
                   err => { if (activeSession === id) finishSync(err, ch.connection) })
     }
     /// Cancel button of the TAN sheet: in a batch drop this login and go on.
