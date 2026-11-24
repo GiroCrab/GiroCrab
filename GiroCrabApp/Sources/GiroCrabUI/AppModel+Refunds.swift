@@ -202,7 +202,7 @@ extension AppModel {
                 if let index = bookings.firstIndex(where: { $0.id == id }) { bookings[index] = fresh }
             }
         }
-        reloadListInBackground()
+        startSelectionLoad(keepingShown: true)
     }
 
     func prepareRefundDemo(_ name: String) async {
