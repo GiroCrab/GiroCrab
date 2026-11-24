@@ -14,7 +14,9 @@ Zugangsdaten mitschicken.
 
 GiroCrab ist eine lokale Anwendung: Ein Rust-Kern (`girocrab-core`) hält alle Daten, die Oberflächen
 (SwiftUI, Qt, Slint, …) zeigen sie an. Es gibt kein GiroCrab-Konto und keinen GiroCrab-Server, der Finanzdaten sieht.
-Dieses Dokument beschreibt den Stand des Branches `main`; ein externes Audit gab es bisher nicht.
+Dieses Dokument beschreibt den Stand des Branches `main`; ein externes Audit gab es bisher nicht. Wie die Zusagen geprüft
+werden, steht im [Verification Plan](docs/verification-plan.md), der Vorschlag für ein Audit im
+[Audit-Scope](docs/audit-scope.md).
 
 | Bereich | Maßnahme |
 |---|---|
@@ -140,7 +142,9 @@ security advisory) in `GiroCrab/GiroCrab`. Do not include real financial data, I
 
 GiroCrab is a local application: a Rust core (`girocrab-core`) holds all data; the UIs (SwiftUI, Qt, Slint, …) display
 it. There is no GiroCrab account and no GiroCrab server that sees financial data. This document describes the state of
-the `main` branch; there has been no external audit so far.
+the `main` branch; there has been no external audit so far. The [verification plan](docs/verification-plan.md) shows how
+the promises are checked, the [audit scope](docs/audit-scope.md) is a proposal for an audit (both German with an English
+summary).
 
 | Area | Measure |
 |---|---|
