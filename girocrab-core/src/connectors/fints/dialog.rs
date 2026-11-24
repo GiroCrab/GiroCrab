@@ -10,8 +10,8 @@ use super::syntax::{SegmentBuilder, escape, parse_response};
 use super::{BankReply, CONSORSBANK_BLZ, COUNTRY, FinTsConnector, rah10};
 use crate::connectors::fints_directory::COMDIRECT_BLZ;
 use crate::connectors::{
-    Challenge, ChallengeKind, ConnectContext, Phase, ensure_secure_fints_url,
-    http_client_no_redirect, read_text_limited,
+    Challenge, ChallengeKind, ConnectContext, FetchPrompt, Phase, PromptAnswer,
+    ensure_secure_fints_url, http_client_no_redirect, read_text_limited,
 };
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -54,6 +54,38 @@ pub(super) fn period_hint() -> &'static str {
     tr(
         "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen.",
     )
+}
+
+/// What an order of the fetch reads, for the title of its TAN prompt (#1730).
+/// Names no account: the account goes into the prompt with the front ends' redaction.
+fn order_name(seg_id: &str) -> &'static str {
+    match seg_id {
+        "HKSAL" => tr("Saldo"),
+        "HKKAZ" | "HKCAZ" => tr("Umsätze"),
+        "HKKKU" | "DKKKU" => tr("Kartenumsätze"),
+        "HKWPD" => tr("Depotbestand"),
+        "HKCDB" => tr("Daueraufträge"),
+        "HKEKA" | "HKEKP" => tr("Kontoauszüge"),
+        _ => tr("diesen Auftrag"),
+    }
+}
+
+/// `question` with a title that says which order of the fetch it is for.
+fn titled_for(question: Phase, seg_id: &str) -> Phase {
+    let what = order_name(seg_id);
+    let titled = |mut c: Challenge| {
+        c.title = if c.kind == ChallengeKind::DecoupledPush {
+            trf("{0} in der Banking-App freigeben", &[&what])
+        } else {
+            trf("TAN für {0}", &[&what])
+        };
+        c
+    };
+    match question {
+        Phase::Challenge(c) => Phase::Challenge(titled(c)),
+        Phase::Pending(c) => Phase::Pending(titled(c)),
+        other => other,
+    }
 }
 
 /// Whether a TAN medium name already carries the "SO:" (security object) prefix.
@@ -567,21 +599,62 @@ impl FinTsConnector {
             || (self.blz == CONSORSBANK_BLZ && matches!(seg_id, "HKKAZ" | "HKSAL"))
     }
 
+    /// HKTAN process S: asks whether the app approval of `task` happened.
+    pub(super) fn hktan_status(&self, n: u32, task: &str) -> Vec<u8> {
+        SegmentBuilder::new("HKTAN", n, self.version("HKTAN"))
+            .raw("S")
+            .raw("")
+            .raw("")
+            .raw("")
+            .de(&[task])
+            .raw("N")
+            .build()
+    }
+
+    /// HKTAN process 2 for `task`; the TAN itself goes into the signature.
+    pub(super) fn hktan_with_tan(&self, n: u32, task: &str) -> Vec<u8> {
+        SegmentBuilder::new("HKTAN", n, self.version("HKTAN"))
+            .raw("2")
+            .raw("")
+            .raw("")
+            .raw("")
+            .de(&[task])
+            .raw("N")
+            .build()
+    }
+
     /// Sends one business segment; adds HKTAN process 4 (referencing that
-    /// segment) when the bank requires SCA for it (HIPINS), and waits for a
-    /// decoupled approval (HKTAN process S polling) if the bank asks for one.
+    /// segment) when the bank requires SCA for it (HIPINS). When the bank asks
+    /// for a TAN or an app approval, a sync the user started asks them
+    /// (`ctx.prompt`, #1730); without one, a decoupled approval is waited for
+    /// here (HKTAN process S polling) and a TAN to type fails the request.
     pub(super) async fn request(
         &mut self,
         ctx: &ConnectContext,
         seg_id: &str,
         segment: Vec<u8>,
     ) -> CoreResult<BankReply> {
+        // cancelled during the fetch, also an automatic one: nothing more goes to the bank
+        if ctx.cancelled.is_set() {
+            return Err(CoreError::SessionClosed);
+        }
+        let prompt = ctx.prompt.as_ref();
         let sec = self.sec();
         let mut payload = vec![segment];
         if sec != "999" && self.needs_hktan(seg_id) {
             payload.push(self.hktan_process4(4, seg_id));
         }
         let mut reply = self.send(ctx, payload, &sec, None).await?;
+        let wants_sca = reply.has("3955") || reply.has("3956") || reply.has("0030");
+        if let Some(prompt) = prompt.filter(|_| wants_sca) {
+            // only this reply's task counts, not one left from the login
+            self.task_reference = None;
+            if let Some(question) = self.challenge_from(&reply)? {
+                let reply = self.ask_during_fetch(ctx, prompt, seg_id, question).await?;
+                reply.check()?;
+                return Ok(reply);
+            }
+        }
         if reply.has("3955") || reply.has("3956") {
             let _ = self.challenge_from(&reply)?;
             let task = self.task_reference.clone().ok_or_else(|| {
@@ -590,14 +663,10 @@ impl FinTsConnector {
             let mut approved = false;
             for _ in 0..60 {
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                let seg = SegmentBuilder::new("HKTAN", 3, self.version("HKTAN"))
-                    .raw("S")
-                    .raw("")
-                    .raw("")
-                    .raw("")
-                    .de(&[&task])
-                    .raw("N")
-                    .build();
+                if ctx.cancelled.is_set() {
+                    return Err(CoreError::SessionClosed);
+                }
+                let seg = self.hktan_status(3, &task);
                 let r = self.send(ctx, vec![seg], &sec, None).await?;
                 if !approval_pending(&r) {
                     reply = r;
@@ -625,6 +694,74 @@ impl FinTsConnector {
         }
         reply.check()?;
         Ok(reply)
+    }
+
+    /// The bank wants a TAN or an app approval for `seg_id` during the fetch
+    /// (#1730): shows `question` (from [`challenge_from`](Self::challenge_from))
+    /// and sends the answer: the TAN with HKTAN process 2, a status query
+    /// (process S) for every poll of an app approval. Returns the bank's reply
+    /// to the order. Skipping fails the request like a fetch without a prompt
+    /// (0030), so the fetch reports it and does not try another format.
+    async fn ask_during_fetch(
+        &mut self,
+        ctx: &ConnectContext,
+        prompt: &FetchPrompt,
+        seg_id: &str,
+        question: Phase,
+    ) -> CoreResult<BankReply> {
+        let task = self.task_reference.clone().ok_or_else(|| {
+            CoreError::protocol(trf("{0}: Freigabe ohne Auftragsreferenz", &[&seg_id]))
+        })?;
+        let mut question = titled_for(question, seg_id);
+        let sec = self.sec();
+        loop {
+            let decoupled = matches!(
+                &question,
+                Phase::Challenge(c) | Phase::Pending(c) if c.kind == ChallengeKind::DecoupledPush
+            );
+            let asked = match &question {
+                Phase::Challenge(c) | Phase::Pending(c) => c.clone(),
+                _ => return Err(CoreError::protocol("no challenge to ask for")),
+            };
+            let answer = prompt.ask(question).await?;
+            // cancelled after the answer was given: no TAN, no status query
+            if ctx.cancelled.is_set() {
+                return Err(CoreError::SessionClosed);
+            }
+            match (answer, decoupled) {
+                (PromptAnswer::Skip, _) => {
+                    return Err(CoreError::Bank {
+                        code: "0030".into(),
+                        message: trf("Die TAN-Eingabe für {0} wurde übersprungen.", &[&seg_id]),
+                    });
+                }
+                (PromptAnswer::Code(tan), false) => {
+                    let seg = self.hktan_with_tan(3, &task);
+                    let reply = self.send(ctx, vec![seg], &sec, Some(tan.expose())).await?;
+                    if reply.has("0030") {
+                        return Err(CoreError::Bank {
+                            code: "0030".into(),
+                            message: trf(
+                                "Die Bank hat die TAN für {0} nicht angenommen.",
+                                &[&seg_id],
+                            ),
+                        });
+                    }
+                    return Ok(reply);
+                }
+                // a TAN to type: a poll changes nothing, ask again
+                (PromptAnswer::Poll, false) => question = Phase::Challenge(asked),
+                // an app approval: whatever the answer, ask the bank whether it happened
+                (PromptAnswer::Poll | PromptAnswer::Code(_), true) => {
+                    let seg = self.hktan_status(3, &task);
+                    let reply = self.send(ctx, vec![seg], &sec, None).await?;
+                    if !approval_pending(&reply) {
+                        return Ok(reply);
+                    }
+                    question = Phase::Pending(asked);
+                }
+            }
+        }
     }
 
     /// Authenticated dialog (HKIDN/HKVVB + HKTAN process 4 for SCA).

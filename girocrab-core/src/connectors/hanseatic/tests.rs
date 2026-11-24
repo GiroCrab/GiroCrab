@@ -540,3 +540,31 @@ fn repeated_syncs_store_every_booking_once() {
     drop(v);
     std::fs::remove_file(path).ok();
 }
+
+#[test]
+fn an_interest_booking_takes_the_booking_key_as_text() {
+    let interest = json!({
+        "transactionDate": "30.10.2026", "date": "30.10.2026", "amount": 19.72, "booked": true,
+        "creditDebitKey": "ABSCHLUSS", "creditDebitKeyPhraseCompatible": "ABSCHLUSS",
+        "accountingMonth": "11.2026", "description": "", "merchantName": "", "recipientName": "",
+        "city": "", "transactionId": ""
+    });
+    let raw = [
+        interest.clone(),
+        booking("10.11.2026", json!(-9.5), true, "tx-test-1"),
+    ];
+    let t = parse_bookings(&raw, "hanseatic:1000000001", "2026-01-01").unwrap();
+    assert_eq!(t[0].booking_text, "Abschluss");
+    assert_eq!(t[0].counterparty, "");
+    // a card payment keeps no booking text: its key is only "D"
+    assert_eq!(t[1].booking_text, "");
+
+    // the booking text is not part of the content id, so a stored interest
+    // booking keeps its id and is not stored twice
+    let mut without_key = interest;
+    without_key["creditDebitKey"] = json!("");
+    without_key["creditDebitKeyPhraseCompatible"] = json!("");
+    let old = parse_bookings(&[without_key], "hanseatic:1000000001", "2026-01-01").unwrap();
+    assert_eq!(old[0].booking_text, "");
+    assert_eq!(old[0].external_id, t[0].external_id);
+}
