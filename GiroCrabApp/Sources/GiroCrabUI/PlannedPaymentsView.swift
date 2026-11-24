@@ -153,7 +153,7 @@ struct PlannedPaymentsView: View {
             .padding(.vertical, 10)
             Rectangle().fill(Theme.border).frame(height: 1)
         }
-        .modifier(DayCardSegment(isTop: true, isBottom: false))
+        .modifier(DayCardSegment())
     }
 }
 
@@ -188,7 +188,12 @@ private struct PlannedRow: View {
             .padding(.vertical, 5)
             .background(model.selectedPlannedID == p.id ? Theme.selection : Color.clear)
             .contentShape(Rectangle())
-            .onTapGesture { model.selectedPlannedID = p.id }
+            .onTapGesture {
+                model.selectedPlannedID = p.id
+                #if os(iOS)
+                model.showBookingSheet = true
+                #endif
+            }
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(model.selectedPlannedID == p.id ? [.isButton, .isSelected] : .isButton)
             .contextMenu { PlannedActions(payment: p) }
@@ -196,7 +201,7 @@ private struct PlannedRow: View {
                 Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1).padding(.leading, 64)
             }
         }
-        .modifier(DayCardSegment(isTop: false, isBottom: isLast))
+        .modifier(DayCardSegment())
     }
 }
 
@@ -270,7 +275,7 @@ struct PlannedInspector: View {
 
     var body: some View {
         if let p = model.plannedPayments.first(where: { $0.id == model.selectedPlannedID }) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(p.counterparty).appFont(.title3, weight: .semibold).sensitive()
                     Text(Money.format(p.amountCents))
@@ -280,27 +285,30 @@ struct PlannedInspector: View {
                     Text(p.kindText).appFont(.callout).foregroundStyle(Theme.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .card()
-                VStack(alignment: .leading, spacing: 10) {
+                .flatSection()
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
                     field("Ausführung", DateText.medium(p.date), sensitive: false)
                     field("Konto", p.accountName)
                     if !p.counterpartyIban.isEmpty { field("IBAN", p.counterpartyIban, mono: true) }
                     if !p.purpose.isEmpty { field("Verwendungszweck", p.purpose) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .card()
+                .flatSection()
+                Divider()
                 HStack { PlannedActions(payment: p) }
                     .buttonStyle(.bordered)
+                    .flatSection(vertical: 10)
             }
         } else {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 Label("Keine Zahlung ausgewählt", systemImage: "calendar.badge.clock")
                     .appFont(.headline)
                 Text("Wählen Sie eine geplante Zahlung, um Details zu sehen.")
                     .appFont(.callout).foregroundStyle(Theme.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .card()
+            .flatSection()
         }
     }
 

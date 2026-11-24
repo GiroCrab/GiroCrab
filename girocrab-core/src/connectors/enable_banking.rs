@@ -559,6 +559,29 @@ fn pick_account_balance(balances: &[Value]) -> (i64, Option<String>) {
     (cents, b["reference_date"].as_str().map(str::to_string))
 }
 
+/// Account currency for GiroCrab: PayPal reports "XXX" ("no currency") for its
+/// wallet although the balances come in EUR; an empty or "XXX" currency is EUR.
+fn account_currency(currency: &str) -> String {
+    let c = currency.trim();
+    if c.is_empty() || c.eq_ignore_ascii_case("XXX") {
+        "EUR".into()
+    } else {
+        c.to_uppercase()
+    }
+}
+
+/// Booking text when the bank sends no description: PayPal only sends the
+/// plain-word code `PAYMENT` / `REFUND` (no remittance information at all).
+/// ISO codes of other banks (`PMNT`, `RCDT`, …) are left alone.
+fn code_booking_text(btc: &Value) -> String {
+    let word = |k: &str| btc[k].as_str().unwrap_or_default().trim().to_uppercase();
+    match (word("code").as_str(), word("sub_code").as_str()) {
+        ("PAYMENT", "REFUND") => tr("Erstattung").into(),
+        ("PAYMENT", "PAYMENT" | "") => tr("Zahlung").into(),
+        _ => String::new(),
+    }
+}
+
 /// One Enable Banking transaction as a GiroCrab booking. `external_id` is the
 /// bank's `entry_reference` (stable across sessions), else empty – the caller
 /// fills in a content id. `transaction_id` is not used: it "may change".
@@ -604,10 +627,10 @@ fn map_transaction(t: &Value, account_ref: &str) -> Option<RemoteTransaction> {
                     .join(" ")
             })
             .unwrap_or_default(),
-        booking_text: t["bank_transaction_code"]["description"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
+        booking_text: match t["bank_transaction_code"]["description"].as_str() {
+            Some(d) if !d.trim().is_empty() => d.to_string(),
+            _ => code_booking_text(&t["bank_transaction_code"]),
+        },
         purpose_code: eb_purpose_code(t),
         // The API has no end-to-end id or creditor id on transactions; a direct
         // debit's mandate reference comes as `reference_number` with scheme SDDM.
@@ -667,6 +690,22 @@ fn split_transactions(items: &[Value], account_ref: &str) -> Vec<RemoteTransacti
 }
 
 impl EnableBankingConnector {
+    /// Kind of a bank (non-card) account. PayPal is a payment service, as
+    /// with its own API and in imported data; reported as a current account it
+    /// would never take over the imported PayPal account (#834).
+    fn bank_account_kind(&self, acc: &EbAccount) -> AccountKind {
+        let bank = if self.st.aspsp_name.is_empty() {
+            &self.aspsp_default
+        } else {
+            &self.st.aspsp_name
+        };
+        if bank.trim().eq_ignore_ascii_case("PayPal") {
+            AccountKind::PaymentService
+        } else {
+            kind_of(acc)
+        }
+    }
+
     pub fn new(
         aspsp_setting: &'static str,
         aspsp_default: &'static str,
@@ -783,9 +822,7 @@ impl EnableBankingConnector {
             if a.name.is_empty() {
                 a.name = self.aspsp_default.clone();
             }
-            if a.currency.is_empty() || a.currency.eq_ignore_ascii_case("XXX") {
-                a.currency = "EUR".into();
-            }
+            a.currency = account_currency(&a.currency);
         }
         let refs: Vec<String> = out.iter().map(|a| stable_ref(a, &out, card_mode)).collect();
         for (a, r) in out.iter_mut().zip(refs) {
@@ -956,8 +993,9 @@ impl EnableBankingConnector {
             owner: acc.holder.clone(),
             iban: acc.iban.clone(),
             account_number: acc.account_number.clone(),
-            currency: acc.currency.clone(),
-            kind: kind_of(acc),
+            // stored state of older versions (or a /details refresh) can still hold "XXX"
+            currency: account_currency(&acc.currency),
+            kind: self.bank_account_kind(acc),
             balance_cents,
             balance_date: ref_date.unwrap_or_else(super::today),
         });
@@ -1492,12 +1530,7 @@ impl EnableBankingConnector {
         let uid = acc.uid.clone();
         let name = acc.name.clone();
         let iban = acc.iban.clone();
-        let currency = if acc.currency.trim().is_empty() || acc.currency.eq_ignore_ascii_case("XXX")
-        {
-            "EUR".to_string()
-        } else {
-            acc.currency.clone()
-        };
+        let currency = account_currency(&acc.currency);
         let external_ref = acc.ext_ref.clone();
         {
             crate::depot_debug::log(&format!(
@@ -1902,6 +1935,48 @@ mod tests {
         );
     }
 
+    /// PayPal via PSD2 sends no remittance information and no description,
+    /// only the plain-word code (shape as delivered, values invented).
+    #[test]
+    fn a_paypal_booking_gets_its_code_as_booking_text() {
+        let paypal = |sub: &str, indicator: &str| {
+            json!({
+                "entry_reference": "E1", "status": "BOOK", "transaction_date": "2026-11-10",
+                "transaction_amount": {"amount": "12.34", "currency": "EUR"},
+                "credit_debit_indicator": indicator,
+                "bank_transaction_code": {"code": "PAYMENT", "sub_code": sub, "description": null},
+                "creditor": {"name": "Beispielladen", "contact_details": {"email_address": "shop@example.org"}},
+                "debtor": {"name": null},
+                "remittance_information": []
+            })
+        };
+        let pay = map_transaction(&paypal("PAYMENT", "DBIT"), "r").unwrap();
+        assert_eq!(pay.booking_text, "Zahlung");
+        assert_eq!(pay.counterparty, "Beispielladen");
+        assert_eq!(pay.purpose, "");
+        let refund = map_transaction(&paypal("REFUND", "CRDT"), "r").unwrap();
+        assert_eq!(refund.booking_text, "Erstattung");
+
+        // a description always wins; ISO codes of other banks stay unnamed
+        let mut described = paypal("PAYMENT", "DBIT");
+        described["bank_transaction_code"]["description"] = json!("Lastschrift");
+        assert_eq!(
+            map_transaction(&described, "r").unwrap().booking_text,
+            "Lastschrift"
+        );
+        let mut iso = paypal("", "DBIT");
+        iso["bank_transaction_code"] = json!({"code": "PMNT", "sub_code": "RCDT"});
+        assert_eq!(map_transaction(&iso, "r").unwrap().booking_text, "");
+    }
+
+    #[test]
+    fn no_currency_is_euro() {
+        assert_eq!(account_currency("XXX"), "EUR");
+        assert_eq!(account_currency("xxx"), "EUR");
+        assert_eq!(account_currency(" "), "EUR");
+        assert_eq!(account_currency("usd"), "USD");
+    }
+
     fn generic() -> EnableBankingConnector {
         EnableBankingConnector::for_aspsp("C24", "DE")
     }
@@ -2036,6 +2111,20 @@ mod tests {
             AccountKind::CreditCard
         );
         assert_eq!(kind_of(&acc("SVGS", "")), AccountKind::Savings);
+    }
+
+    #[test]
+    fn paypal_accounts_are_payment_services() {
+        // #834: as with PayPal's own API and in imported data, so the first
+        // fetch takes over the imported PayPal account
+        let a = EbAccount {
+            cash_account_type: "CACC".into(),
+            ..Default::default()
+        };
+        let paypal = EnableBankingConnector::for_aspsp("PayPal", "DE");
+        assert_eq!(paypal.bank_account_kind(&a), AccountKind::PaymentService);
+        let other = EnableBankingConnector::for_aspsp("C24", "DE");
+        assert_eq!(other.bank_account_kind(&a), AccountKind::Checking);
     }
 
     #[test]

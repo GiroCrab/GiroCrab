@@ -276,9 +276,13 @@ pub fn parse_export(input: &str) -> CoreResult<FinpensionExport> {
         parse_json(input)
     } else {
         let rows = parse_csv_rows(input)?;
-        let is_holdings = rows
-            .first()
-            .is_some_and(|h| h.iter().any(|c| matches!(norm(c).as_str(), "isin")));
+        let header_has = |names: &[&str]| {
+            rows.first()
+                .is_some_and(|h| h.iter().any(|c| names.contains(&norm(c).as_str())))
+        };
+        // The transaction report also has an ISIN column (of the asset traded),
+        // so a cash-flow column decides first.
+        let is_holdings = header_has(&["isin"]) && !header_has(&["cashflow"]);
         let mut out = FinpensionExport::default();
         if is_holdings {
             out.holdings = holdings_from_csv_rows(&rows)?;
@@ -400,22 +404,38 @@ fn holdings_from_csv_rows(rows: &[Vec<String>]) -> CoreResult<Vec<FinpensionHold
 fn transactions_from_csv_rows(rows: &[Vec<String>]) -> CoreResult<Vec<FinpensionTransaction>> {
     let c = Columns::new(&rows[0]);
     let date = c.require(&["date", "datum", "buchungsdatum", "valuta"])?;
-    let desc = c.require(&[
+    let desc = c.find(&[
         "description",
         "beschreibung",
         "text",
         "buchungstext",
         "verwendungszweck",
-    ])?;
-    let amount = c.require(&["amount", "betrag"])?;
+    ]);
+    // The transaction report has no description: category and asset name make it.
+    let category = c.find(&["category", "kategorie"]);
+    let asset = c.find(&["assetname"]);
+    if desc.is_none() && category.is_none() {
+        return Err(invalid("missing column description"));
+    }
+    let amount = c.require(&["amount", "betrag", "cashflow"])?;
     let cur = c.find(&["currency", "währung", "waehrung", "whg"]);
     let reference = c.find(&["reference", "referenz", "id"]);
     rows[1..]
         .iter()
         .map(|r| {
+            let text = match desc {
+                Some(i) => cell(r, i).to_string(),
+                None => [category, asset]
+                    .into_iter()
+                    .flatten()
+                    .map(|i| cell(r, i))
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" – "),
+            };
             build_transaction(
                 cell(r, date),
-                cell(r, desc),
+                &text,
                 parse_decimal(cell(r, amount))?,
                 cur.map(|i| cell(r, i)).unwrap_or(""),
                 reference.map(|i| cell(r, i)).unwrap_or(""),
@@ -505,11 +525,12 @@ fn parse_decimal(s: &str) -> CoreResult<f64> {
         (None, Some(_)) => t.replace(',', "."),
         _ => t,
     };
+    // Fixed text: the value comes from the export file and must not reach error texts or logs.
     normalized
         .parse::<f64>()
         .ok()
         .filter(|n| n.is_finite() && n.abs() < 1e12)
-        .ok_or_else(|| invalid(format!("invalid number '{s}'")))
+        .ok_or_else(|| invalid("invalid number".to_string()))
 }
 
 fn cents(x: f64) -> i64 {
@@ -521,7 +542,8 @@ fn currency(s: &str) -> CoreResult<String> {
     match c.to_ascii_uppercase().as_str() {
         "CHF" => Ok("CHF".into()),
         "EUR" => Ok("EUR".into()),
-        _ => Err(invalid(format!("unsupported currency '{c}'"))),
+        // Fixed text: the value comes from the export file and must not reach error texts or logs.
+        _ => Err(invalid("unsupported currency".to_string())),
     }
 }
 
@@ -544,14 +566,15 @@ fn build_holding(
     cur: &str,
 ) -> CoreResult<FinpensionHolding> {
     let isin = isin.to_ascii_uppercase();
+    // Fixed texts: the ISIN comes from the export file and must not reach error texts or logs.
     if !valid_isin(&isin) {
-        return Err(invalid(format!("invalid ISIN '{isin}'")));
+        return Err(invalid("invalid ISIN in a holding".to_string()));
     }
     if name.is_empty() {
-        return Err(invalid(format!("missing name for {isin}")));
+        return Err(invalid("missing name in a holding".to_string()));
     }
     if quantity < 0.0 || price < 0.0 || value < 0.0 {
-        return Err(invalid(format!("negative figures for {isin}")));
+        return Err(invalid("negative figures in a holding".to_string()));
     }
     Ok(FinpensionHolding {
         isin,
@@ -586,9 +609,10 @@ fn parse_date(s: &str) -> CoreResult<String> {
         .get(..10)
         .and_then(|p| jiff::civil::Date::strptime("%Y-%m-%d", p).ok())
         .or_else(|| jiff::civil::Date::strptime("%d.%m.%Y", s).ok());
+    // Fixed text: the value comes from the export file and must not reach error texts or logs.
     parsed
         .map(crate::dates::iso)
-        .ok_or_else(|| invalid(format!("invalid date '{s}'")))
+        .ok_or_else(|| invalid("invalid date".to_string()))
 }
 
 #[cfg(test)]
@@ -602,6 +626,34 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
     const TX_CSV: &str = "Datum,Beschreibung,Betrag,Währung,Referenz\n\
 15.03.2026,\"Einzahlung Säule 3a, März\",\"6'000.00\",CHF,R-1\n\
 2026-03-31,Verwaltungsgebühr,-12.34,CHF,R-2\n";
+
+    #[test]
+    fn value_errors_never_quote_file_content() {
+        // A colon plus a line break once let the Windows filter show the part after the colon.
+        let leak = "x:geheim\nrest";
+        let errors = [
+            currency(leak).err().unwrap().to_string(),
+            parse_date(leak).err().unwrap().to_string(),
+            build_holding(leak, "Fonds", 1.0, 1.0, 1.0, "CHF")
+                .err()
+                .unwrap()
+                .to_string(),
+            build_holding("CH0000000011", "Fonds", 1.0, 1.0, 1.0, leak)
+                .err()
+                .unwrap()
+                .to_string(),
+        ];
+        for e in &errors {
+            assert!(!e.contains("geheim") && !e.contains('\n'), "{e}");
+            assert!(!e.contains("x:"), "{e}");
+        }
+        assert!(errors[0].contains("unsupported currency"), "{}", errors[0]);
+        assert!(errors[1].contains("invalid date"), "{}", errors[1]);
+        assert!(errors[2].contains("invalid ISIN"), "{}", errors[2]);
+        // Supported currencies are unchanged.
+        assert_eq!(currency("").ok().as_deref(), Some("CHF"));
+        assert_eq!(currency("eur").ok().as_deref(), Some("EUR"));
+    }
 
     #[test]
     fn urls_accepted() {
@@ -670,6 +722,28 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
         assert_eq!(
             r[0].external_id,
             remote_transactions("cash:1", &t)[0].external_id
+        );
+    }
+
+    // Header as exported by the portal's transaction report; synthetic rows.
+    const REPORT_CSV: &str = "Date;Category;\"Asset Name\";ISIN;\"Number of Shares\";\"Asset Currency\";\"Currency Rate\";\"Asset Price in CHF\";\"Cash Flow\";Balance\n\
+2026-03-15;Deposit;;;;CHF;1;;6000.00;6000.00\n\
+2026-03-20;Buy;\"Synthetic Equity Fund\";CH0000000011;12.5;CHF;1;100.20;-1252.50;4747.50\n";
+
+    #[test]
+    fn transaction_report_with_isin_column_is_read_as_transactions() {
+        let e = parse_export(REPORT_CSV).unwrap();
+        assert!(e.holdings.is_empty());
+        assert_eq!(e.transactions.len(), 2);
+        assert_eq!(e.transactions[0].amount_cents, 600_000);
+        assert_eq!(e.transactions[0].currency, "CHF");
+        assert_eq!(e.transactions[1].amount_cents, -125_250);
+        assert!(e.transactions[0].description.contains("Deposit"));
+        assert!(e.transactions[1].description.contains("Buy"));
+        assert!(
+            e.transactions[1]
+                .description
+                .contains("Synthetic Equity Fund")
         );
     }
 

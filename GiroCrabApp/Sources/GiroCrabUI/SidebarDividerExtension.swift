@@ -16,6 +16,9 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
         private weak var splitView: NSSplitView?
         private weak var background: NSView?
         private var observers: [NSObjectProtocol] = []
+        /// The toolbar line's layers: AppKit moves a line back to its old start a moment after the
+        /// window opens without changing any view frame, so the layers themselves are watched.
+        private var lineObservers: [ObjectIdentifier: [NSKeyValueObservation]] = [:]
         private var applying = false
 
         override func viewDidMoveToWindow() {
@@ -52,11 +55,28 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
                 // Not the backing layer of a subview: a layer the container draws itself.
                 for layer in containerLayer.sublayers ?? [] where (layer.delegate as? NSView)?.layer !== layer
                     && layer.contents != nil && layer.frame.height <= 1.5 {
+                    watchLine(layer)
                     guard let frame = Self.trimmed(layer.frame, to: lineStart) else { continue }
                     CATransaction.begin()
                     CATransaction.setDisableActions(true)
                     layer.frame = frame
                     CATransaction.commit()
+                }
+                // The sidebar's line (shown once the list is scrolled): AppKit places it under the
+                // title bar as it was when the layer was made. Opened from the lock screen, whose
+                // title bar has no toolbar, that is 10 pt too high, and AppKit does not move it when
+                // the toolbar comes. Its bottom belongs on the title bar's bottom edge, like the
+                // toolbar line's.
+                if !container.isFlipped {
+                    for layer in containerLayer.sublayers ?? [] where (layer.delegate as? NSView)?.layer !== layer
+                        && layer.contents != nil && layer.frame.height <= 5 && layer.frame.minX < lineStart
+                        && layer.frame.maxY > 0.25 && layer.frame.maxY < container.bounds.height {
+                        watchLine(layer)
+                        CATransaction.begin()
+                        CATransaction.setDisableActions(true)
+                        layer.frame.origin.y = -layer.frame.height
+                        CATransaction.commit()
+                    }
                 }
             }
         }
@@ -85,6 +105,12 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
                 observers.append(center.addObserver(forName: NSSplitView.didResizeSubviewsNotification,
                                                     object: splitView, queue: .main, using: refresh))
             }
+            // The sidebar's line appears with the first scroll: check again when the list scrolls.
+            if let sidebar = splitView?.arrangedSubviews.first, let clip = Self.firstScrollView(in: sidebar)?.contentView {
+                clip.postsBoundsChangedNotifications = true
+                observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification,
+                                                    object: clip, queue: .main, using: refresh))
+            }
             if let background {
                 background.postsFrameChangedNotifications = true
                 observers.append(center.addObserver(forName: NSView.frameDidChangeNotification,
@@ -99,6 +125,31 @@ private struct ToolbarBackgroundTrim: NSViewRepresentable {
         private func stopObserving() {
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
+            lineObservers.values.joined().forEach { $0.invalidate() }
+            lineObservers = [:]
+        }
+
+        /// Trims again whenever AppKit moves or resizes the line layer. The trim itself also
+        /// reports a change; the second pass then finds the line in place and leaves it.
+        private func watchLine(_ layer: CALayer) {
+            let id = ObjectIdentifier(layer)
+            guard lineObservers[id] == nil else { return }
+            let changed: @Sendable (CALayer, NSKeyValueObservedChange<CGPoint>) -> Void = { [weak self] _, _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.apply() } }
+            }
+            let resized: @Sendable (CALayer, NSKeyValueObservedChange<CGRect>) -> Void = { [weak self] _, _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.apply() } }
+            }
+            lineObservers[id] = [layer.observe(\.position, changeHandler: changed),
+                                 layer.observe(\.bounds, changeHandler: resized)]
+        }
+
+        private static func firstScrollView(in view: NSView) -> NSScrollView? {
+            if let scroll = view as? NSScrollView { return scroll }
+            for sub in view.subviews {
+                if let found = firstScrollView(in: sub) { return found }
+            }
+            return nil
         }
 
         /// The `NavigationSplitView`'s split view: the one with a sidebar item.

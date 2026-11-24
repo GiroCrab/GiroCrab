@@ -10,6 +10,14 @@ use crate::models::ConnectorKind;
 use crate::secret::{SecretJson, SecretString, wipe};
 use crate::vault::Vault;
 
+/// Result of reapplying the bank's filing and matching rules to stored documents.
+#[derive(Debug, Clone, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DocumentResortResult {
+    pub resorted: u32,
+    pub linked: u32,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ConnectionStatus {
@@ -473,6 +481,28 @@ impl Vault {
     pub fn clear_connection_session(&self, connection_id: i64) -> Result<(), CoreError> {
         let db = self.db()?;
         clear_session_inner(&db, connection_id)
+    }
+
+    /// Reapplies the connection's document rules without replacing booking links.
+    pub fn resort_portal_documents(
+        &self,
+        connection_id: i64,
+    ) -> Result<DocumentResortResult, CoreError> {
+        let db = self.db()?;
+        let tx = db.unchecked_transaction()?;
+        let key: Option<String> = tx
+            .query_row(
+                "SELECT connector FROM bank_connections WHERE id = ?1 AND deleted_ms IS NULL",
+                [connection_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let (resorted, linked) = match key {
+            Some(key) => crate::connectors::document_resort::resort(&tx, connection_id, &key)?,
+            None => (0, 0),
+        };
+        tx.commit()?;
+        Ok(DocumentResortResult { resorted, linked })
     }
 
     pub fn connection_status(&self, connection_id: i64) -> Result<ConnectionStatus, CoreError> {
@@ -1349,8 +1379,7 @@ mod tests {
 
     #[test]
     fn deduplicate_leaves_soft_deleted_twin_alone() {
-        let p =
-            std::env::temp_dir().join(format!("girocrab-dedup-del-{}.db", uuid::Uuid::new_v4()));
+        let p = crate::test_support::thread_temp_path("dedup-del.db");
         let v = Vault::open(p.to_string_lossy().to_string(), vec![4u8; 32]).unwrap();
         {
             let db = v.db().unwrap();

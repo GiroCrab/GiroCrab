@@ -129,6 +129,8 @@ Erstelle einen neuen Branch, committe die Änderungen mit den AI-Attribution-Tra
 
 New issue authors get this hint once as a comment (`.github/workflows/issue-ai-invite.yml`).
 
+**Kein KI-Abo nötig / No AI subscription required:** Die automatischen Mitbau-Links setzen ein Claude-Abo (Pro/Max) oder API-Zugang für Claude Code voraus (in der kostenlosen Claude-Desktop-App ist der lokale Projektzugriff deaktiviert). Du kannst aber jederzeit auch ohne KI-Abo über normale GitHub-Issues, Screenshots/Skizzen oder klassische Fork-PRs beitragen.
+
 ### 🌟 Community Success Story: Vom anonymisierten Browser-Mitschnitt (HAR) zum eigenen Bank-Connector (#42)
 
 `@zcarsten` hat ohne Rust-Vorkenntnisse einen Connector für seine Bank gebaut – mit einem Browser-Mitschnitt und einer KI:
@@ -163,6 +165,7 @@ To avoid two people building the same thing (it has happened, e.g. account group
    and merged on its own.
 4. **Link your PR** with `Closes #123` (or `Refs #123` if it is only part of it).
 5. **Let go if plans change.** If you can't continue, comment `/unassign` (or tell us on the issue) so it can be reassigned.
+6. **Close resolved issues.** If you opened an issue and your question is answered or the problem is fixed, please close it yourself via **Close issue** with a brief closing comment. For issues opened by someone else, leave a short note (e.g. *"Solved via #123, can be closed"*) so the author or a maintainer can close it.
 
 ## Pull requests
 
@@ -202,7 +205,7 @@ fehlende Angabe mit ⚠️.
 - [ ] **Text size:** text styles use `.appFont(...)` (`scripts/lint-fonts.sh`); check visually with `--screenshot <png> --text-size larger` next to `--text-size standard`.
 - [ ] **Linux / serde:** every `uniffi::Record` / `uniffi::Enum` carries the `serde` `cfg_attr`. `scripts/lint-serde-feature.sh` passes and `cargo check -q -p girocrab-core --features serde` builds.
 - [ ] **iOS:** with `#if os(macOS)` or other platform-specific APIs, the iOS target still builds (`xcodebuild -quiet`, iOS scheme).
-- [ ] **Schema:** a new table or column is a new entry at the end of `STEPS` in `girocrab-core/src/schema.rs`, plus the fixture (`cargo run -q -p girocrab-core --example make_fixture_vault`). Check what `vault/merge.rs` (iCloud merge) does with it. Never edit an existing step.
+- [ ] **Schema:** a new table or column is a new entry at the end of `STEPS` in `girocrab-core/src/schema.rs`, plus the fixture (`cargo run -q -p girocrab-core --example make_fixture_vault`). Describe the step in the module comment of `schema.rs` and in the table of `docs/ARCHITECTURE.md` (checked by `scripts/lint-schema-docs.sh`). Check what `vault/merge.rs` (iCloud merge) does with it. Never edit an existing step.
 - [ ] **Strings:** `scripts/xcstrings.py check` passes.
 - [ ] **Swift tests and `UserDefaults`:** tests that use `UserDefaults.standard` carry `// test: serial-defaults` (run serially after the parallel phase, `scripts/swift-test-split.sh`); own suites always with `\(UUID().uuidString)` (`scripts/lint-test-defaults.sh`).
 - [ ] **Before pushing:** `cargo fmt --all`, `cargo clippy -q --workspace --all-targets -- -D warnings`, `scripts/lint-appmodel-internals.sh`.

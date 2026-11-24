@@ -1,3 +1,4 @@
+// test: serial-defaults
 import XCTest
 import GiroCrabCore
 @testable import GiroCrabUI
@@ -373,6 +374,122 @@ final class CloudSyncTests: XCTestCase {
             .filter { $0.hasPrefix("tresor-") && $0 != peer.1.ownURL.lastPathComponent }
         XCTAssertEqual(own.count, 1, "the pending change was written after the poll")
     }
+
+    /// #1090: the sync after a restore waits for a running one, and another sync
+    /// started while it waits never makes it drop out (`isSyncing` guard): it
+    /// runs last and reports its start only then.
+    @MainActor
+    func test_restore_sync_runs_after_a_sync_started_while_it_waits() async throws {
+        let folder = try tempDir()
+        let peer = try device(folder, seeded: true)
+        XCTAssertTrue(try peer.1.write(vault: peer.0).wrote)
+        let (v, _) = try device(folder, seeded: true)
+        let sync = CloudSyncManager.shared
+        let gate = holdAutoSync(sync, folder: folder, vault: v)
+        defer { gate.finish() }
+        let started = StartLog()
+        let polling = Task { await sync.runForTesting(write: false, poll: true) }
+        await gate.entered()
+        // the poll holds the turn (`inFlight`) until released
+        let restore = Task { await sync.syncWhenIdle(vault: v) { started.names.append("restore") } }
+        let other = Task {
+            await sync.sync(vault: v) {
+                started.names.append("other")
+                gate.release()
+            }
+        }
+        let otherRan = await other.value
+        gate.release() // also when `other` did not run, so the test fails instead of hanging
+        let restoreRan = await restore.value
+        await polling.value
+        XCTAssertTrue(otherRan)
+        XCTAssertTrue(restoreRan, "the restore sync must not be dropped")
+        XCTAssertEqual(started.names, ["other", "restore"])
+        XCTAssertFalse(sync.isSyncing)
+    }
+
+    /// #1090: a vault locked while the restore sync waits is never synced.
+    @MainActor
+    func test_restore_sync_drops_out_when_the_vault_is_released_while_waiting() async throws {
+        let folder = try tempDir()
+        let (v, _) = try device(folder, seeded: true)
+        let sync = CloudSyncManager.shared
+        let gate = holdAutoSync(sync, folder: folder, vault: v)
+        defer { gate.finish() }
+        let current = Flag()
+        let started = StartLog()
+        let polling = Task { await sync.runForTesting(write: false, poll: true) }
+        await gate.entered()
+        let restore = Task {
+            await sync.syncWhenIdle(vault: v, onStart: { started.names.append("restore") }, isCurrent: { current.value })
+        }
+        await Task.yield()
+        current.value = false
+        gate.release()
+        let ran = await restore.value
+        await polling.value
+        XCTAssertFalse(ran, "a released vault must not be synced")
+        XCTAssertEqual(started.names, [])
+        XCTAssertFalse(sync.isSyncing)
+    }
+
+    /// Holds the next automatic run inside `inFlight` until released; turns
+    /// iCloud Sync on for the test (the manager reads it from its defaults).
+    @MainActor
+    private func holdAutoSync(_ sync: CloudSyncManager, folder: URL, vault: Vault) -> RunGate {
+        let gate = RunGate(sync: sync, wasEnabled: sync.isEnabled)
+        if !sync.isEnabled { sync.isEnabled = true }
+        sync.setFolderForTesting(folder)
+        sync.prepareAutoSyncForTesting(vault: vault)
+        sync.testingRunGate = { [gate] in await gate.hold() }
+        return gate
+    }
+
+    @MainActor
+    private final class RunGate {
+        let sync: CloudSyncManager
+        let wasEnabled: Bool
+        private var entry: CheckedContinuation<Void, Never>?
+        private var didEnter = false
+        private var exit: CheckedContinuation<Void, Never>?
+        private var released = false
+
+        init(sync: CloudSyncManager, wasEnabled: Bool) {
+            self.sync = sync
+            self.wasEnabled = wasEnabled
+        }
+
+        func hold() async {
+            didEnter = true
+            entry?.resume(); entry = nil
+            guard !released else { return }
+            await withCheckedContinuation { exit = $0 }
+        }
+
+        func entered() async {
+            guard !didEnter else { return }
+            await withCheckedContinuation { entry = $0 }
+        }
+
+        func release() {
+            released = true
+            exit?.resume(); exit = nil
+        }
+
+        func finish() {
+            release()
+            sync.testingRunGate = nil
+            sync.setFolderForTesting(nil)
+            sync.stopAutoSync()
+            if sync.isEnabled != wasEnabled { sync.isEnabled = wasEnabled }
+        }
+    }
+
+    @MainActor
+    private final class StartLog { var names: [String] = [] }
+
+    @MainActor
+    private final class Flag { var value = true }
 
     // MARK: where to sync
 

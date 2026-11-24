@@ -26,9 +26,14 @@ extension AppModel {
 
     /// Segmented control of the batch sheet: back to the single transfer form.
     func switchToSingleTransfer() {
+        transferKindSwitching = true
         showBatchSheet = false
         transferError = nil
-        Task { @MainActor in presentTransfer() } // keeps the draft (Umbuchung chosen in the batch sheet)
+        Task { @MainActor in // keeps the draft (Umbuchung chosen in the batch sheet)
+            presentTransfer()
+            transferKindSwitching = false
+            resumePaymentLink()
+        }
     }
 
     /// Any own account other than a sender can receive an Umbuchung.
@@ -54,8 +59,13 @@ extension AppModel {
 
     /// Segmented control of the single form: on to the batch sheet.
     func switchToBatchTransfer() {
+        transferKindSwitching = true
         showTransferSheet = false
-        Task { @MainActor in openBatchTransfer() }
+        Task { @MainActor in
+            openBatchTransfer()
+            transferKindSwitching = false
+            resumePaymentLink()
+        }
     }
 
     func cancelBatchSheet() {

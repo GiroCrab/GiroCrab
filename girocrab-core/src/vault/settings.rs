@@ -127,6 +127,22 @@ pub const KNOWN_SETTINGS: &[(&str, &str, &str, &str, bool, &str)] = &[
         "",
     ),
     (
+        "bitcoin_core.datadir",
+        "Bitcoin-Core-Datenverzeichnis",
+        "Ordner des eigenen Knotens mit der .cookie-Datei; leer = Standardordner (Mac: ~/Library/Application Support/Bitcoin).",
+        "Bitcoin Core",
+        false,
+        "",
+    ),
+    (
+        "bitcoin_core.rpc_url",
+        "Bitcoin-Core-RPC-Adresse",
+        "Adresse des RPC-Servers auf diesem Rechner; leer = http://127.0.0.1:8332.",
+        "Bitcoin Core",
+        false,
+        "",
+    ),
+    (
         "bunq.environment",
         "bunq-Umgebung",
         "production oder sandbox (Test-API von bunq).",
@@ -227,11 +243,11 @@ pub const KNOWN_SETTINGS: &[(&str, &str, &str, &str, bool, &str)] = &[
     ),
     (
         "sync.days_back",
-        "Tage beim ersten Abruf",
-        "Ältere Umsätze werden nur einmal abgefragt.",
+        "Zeitraum beim ersten Abruf",
+        "max = so weit Bank und Anbindung es zulassen, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze.",
         "Allgemein",
         false,
-        "90",
+        "max",
     ),
 ];
 

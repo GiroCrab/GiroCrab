@@ -18,9 +18,9 @@ enum BookingDensity: String, CaseIterable, Identifiable {
 
     var verticalPadding: CGFloat {
         switch self {
-        case .compact: 4
-        case .standard: 5
-        case .spacious: 9
+        case .compact: 3
+        case .standard: 4
+        case .spacious: 7
         }
     }
 

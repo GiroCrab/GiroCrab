@@ -2515,6 +2515,26 @@ fn newer_manual_category_beats_older_and_rule() {
 }
 
 #[test]
+fn explicit_rule_refresh_beats_an_older_manual_edit_in_either_direction() {
+    each_order(
+        "bk-explicit-rule-refresh",
+        |a, b| {
+            let mut rule = plain_rule(cat(a, "Food"), "Shop");
+            rule.id = a.save_rule(rule.clone()).unwrap();
+            assert_eq!(a.apply_rule(rule.id, false).unwrap(), 1);
+            exec(a, "UPDATE transactions SET category_ms = 200 WHERE id = 1");
+            b.set_transaction_category(1, Some(cat(b, "Food"))).unwrap();
+            exec(b, "UPDATE transactions SET category_ms = 250 WHERE id = 1");
+
+            rule.category_id = cat(a, "Fun");
+            let id = a.save_rule(rule).unwrap();
+            assert_eq!(a.apply_rule(id, false).unwrap(), 1);
+        },
+        |v| assert_eq!(bk_cat(v, 1), "Fun/rule"),
+    );
+}
+
+#[test]
 fn rule_category_never_overwrites_manual_in_either_direction() {
     each_order(
         "bk-rule",
@@ -3709,6 +3729,109 @@ fn loan_links_skip_deleted_bookings_and_match_by_key() {
                  JOIN transactions t ON t.id = l.transaction_id"
             ),
             "mm-F-1"
+        );
+    }
+}
+
+/// #1591: the #998 mark "state unknown" goes with the archive state. A device that gets a
+/// repaired account by merge gets the mark too (its next import gives the account MoneyMoney's
+/// state); a choice made there later ends the mark on every device.
+#[test]
+fn the_repair_mark_travels_with_the_archive_state() {
+    use crate::importers::moneymoney_db::archive_unknown;
+    let tmp = crate::test_support::TempDir::new("archive-note");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
+    // what step 38 leaves on A: active, stamped just after the import's archive, marked;
+    // B has never seen the account
+    exec(
+        &a,
+        "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+         INSERT INTO accounts(id, group_id, external_ref, name, archived_ms, archive_unknown)
+             VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124, 1);",
+    );
+    fill_missing_uuids(&a.db().unwrap()).unwrap();
+    both_ways(&a, &b);
+    let karte = n(&b, "SELECT id FROM accounts WHERE name = 'Karte'");
+    assert_eq!(archive_unknown(&b.db().unwrap()).unwrap(), vec![karte]);
+    // archived and reactivated on B: stays active, A's mark ends too
+    b.set_account_archived(karte, true).unwrap();
+    b.set_account_archived(karte, false).unwrap();
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert!(archive_unknown(&v.db().unwrap()).unwrap().is_empty());
+    }
+    assert_eq!(
+        n(
+            &a,
+            "SELECT archived_unix IS NULL FROM accounts WHERE id = 1"
+        ),
+        1
+    );
+}
+
+/// #998: step 38 stamps its reactivation one millisecond after the wrong archive, so two devices
+/// that repaired the same account carry the same stamp and keep their marks, while a choice made
+/// later on another device still wins over the repair.
+#[test]
+fn repairs_of_one_account_agree_and_a_later_choice_wins() {
+    use crate::importers::moneymoney_db::archive_unknown;
+    let tmp = crate::test_support::TempDir::new("archive-repair");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
+    for v in [&a, &b] {
+        // what step 38 leaves: active, stamped just after the import's archive, marked
+        exec(
+            v,
+            "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+             INSERT INTO accounts(id, group_id, external_ref, name, archived_ms, archive_unknown)
+                 VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124, 1);",
+        );
+        fill_missing_uuids(&v.db().unwrap()).unwrap();
+    }
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(archive_unknown(&v.db().unwrap()).unwrap(), vec![1]);
+    }
+    // archived on B later: A takes it over, mark included
+    b.set_account_archived(1, true).unwrap();
+    both_ways(&a, &b);
+    assert!(archive_unknown(&a.db().unwrap()).unwrap().is_empty());
+    assert_eq!(
+        n(
+            &a,
+            "SELECT archived_unix IS NOT NULL FROM accounts WHERE id = 1"
+        ),
+        1
+    );
+}
+
+/// #998 review: two known archive states with one stamp (an explicit choice that happens to
+/// carry the stamp of an import's resolution) end alike in both directions: archived wins.
+#[test]
+fn equal_archive_stamps_end_alike_on_both_devices() {
+    let tmp = crate::test_support::TempDir::new("archive-tie");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
+    for (v, unix) in [(&a, "NULL"), (&b, "1790001000")] {
+        exec(
+            v,
+            &format!(
+                "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+                 INSERT INTO accounts(id, group_id, external_ref, name, archived_unix, archived_ms)
+                     VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', {unix}, 1790001000125);"
+            ),
+        );
+        fill_missing_uuids(&v.db().unwrap()).unwrap();
+    }
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(
+            n(
+                v,
+                "SELECT IFNULL(archived_unix, 0) FROM accounts WHERE id = 1"
+            ),
+            1790001000
         );
     }
 }

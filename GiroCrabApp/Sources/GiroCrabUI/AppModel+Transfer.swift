@@ -8,22 +8,22 @@ extension AppModel {
     /// Checking accounts that are connected via FinTS (HKCCS-capable banks).
     var transferAccounts: [Account] { sendableAccounts(of: .checking) }
 
-    /// What the TAN sheet asks the user to compare (#949): only for the TAN of a single transfer that
-    /// was sent, never for its login SCA or a sync's challenge, and always the values sent to the bank.
+    /// What the TAN sheet asks the user to compare (#949): only for the TAN of a single transfer or of a
+    /// standing order that was sent (#1475), never for its login SCA or a sync's challenge, and always the
+    /// values sent to the bank.
     var tanComparison: TanComparison? {
         Self.visibleTanComparison(
             snapshot: activeTransferComparison,
             orderApproval: activeChallenge?.orderApproval == true,
             isBatch: activeTransferIsBatch,
-            isStanding: activeTransferIsStanding,
             isDebit: activeTransferIsDebit
         )
     }
 
     static func visibleTanComparison(
-        snapshot: TanComparison?, orderApproval: Bool, isBatch: Bool, isStanding: Bool, isDebit: Bool
+        snapshot: TanComparison?, orderApproval: Bool, isBatch: Bool, isDebit: Bool
     ) -> TanComparison? {
-        guard orderApproval, !isBatch, !isStanding, !isDebit else { return nil }
+        guard orderApproval, !isBatch, !isDebit else { return nil }
         return snapshot
     }
 
@@ -123,6 +123,55 @@ extension AppModel {
         transferDraft.amountText = Money.plain(abs(b.amountCents))
         transferDraft.purpose = String(b.purpose.prefix(140))
         presentTransfer()
+    }
+
+    // MARK: Überweisungs-Link (girocrab://transfer, docs/payment-link.md)
+
+    /// A `girocrab://` link opened from another app or a web page. A transfer link fills a new
+    /// form (never sends); while the form cannot open it waits (`pendingPaymentLink`).
+    func openLink(_ url: URL) {
+        guard PaymentLink.handles(url) else { return }
+        switch PaymentLink.payment(from: url) {
+        case .failure(let failure):
+            showError(String(localized: "Link nicht übernommen"), failure.message)
+        case .success(let payment):
+            // A newer link replaces one still waiting: the last one opened is what the user
+            // asked for, and nothing of the earlier one was shown yet.
+            pendingPaymentLink = payment
+            presentPendingPaymentLink()
+        }
+    }
+
+    /// Opens the form for `pendingPaymentLink` once the vault is open, its accounts are loaded,
+    /// no sync or bank order is running and no form is open (also not one on its result step:
+    /// the link waits until it is closed, never replaces it). Later events retry (`resumePaymentLink`).
+    func presentPendingPaymentLink() {
+        // `vaultState`, not only `vault`: the lock-screen preview keeps the demo vault loaded.
+        guard let payment = pendingPaymentLink, vault != nil, vaultState == .open, accountsLoaded,
+              syncingConnectionID == nil, activeTransfer == nil, !transferKindSwitching,
+              !showTransferSheet, !showBatchSheet, !showStandingSheet else { return }
+        pendingPaymentLink = nil
+        // The link names a recipient, and a savings account books only to own accounts:
+        // without a checking account to send from, the link's recipient would be lost.
+        guard canTransfer, let checking = (transferAccounts + giroCodeAccounts).first else {
+            showError(String(localized: "Link nicht übernommen"),
+                      String(localized: "Es gibt kein Girokonto mit IBAN, von dem aus überwiesen werden kann."))
+            return
+        }
+        transferDraft = TransferDraft(accountID: transferDraft.accountID)
+        presentTransfer()
+        if allAccounts.first(where: { $0.id == transferDraft.accountID })?.kind == .savings {
+            transferDraft.accountID = checking.id
+        }
+        fillTransferDraft(payment)
+        transferDraft.fromLink = true
+    }
+
+    /// After unlocking, a sync, a bank order or a closed form: a link that came meanwhile
+    /// (later, so the rest of that change is in place before the form picks its account).
+    func resumePaymentLink() {
+        guard pendingPaymentLink != nil else { return }
+        Task { @MainActor [weak self] in self?.presentPendingPaymentLink() }
     }
 
     /// A template, a paste or an invoice names a recipient: that is a transfer to

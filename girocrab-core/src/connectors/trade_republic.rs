@@ -292,6 +292,51 @@ impl DocumentCandidate {
     }
 }
 
+/// How Trade Republic documents are matched to bookings by content (`document_matching`): they
+/// use bookings on the cash account. The security is the part after the dash of the stored title
+/// (`"<Dokument> – <Eintrag>"`), statements and tax papers are left out.
+pub(crate) const DOCUMENT_MATCH: crate::connectors::document_matching::DocumentMatchRules =
+    crate::connectors::document_matching::DocumentMatchRules {
+        booking_account: |external_ref, _| external_ref == "tr:cash",
+        subjects: |title, _| {
+            title
+                .split_once(" \u{2013} ")
+                .map(|(_, subject)| vec![subject.to_owned()])
+                .unwrap_or_default()
+        },
+        subjects_from_text: false,
+        link_types: &["abrechnung", "beleg"],
+        direction_required: false,
+        account_from_text: false,
+        amount_labels: &[],
+        slack_days: 5,
+        inflow: document_inflow,
+    };
+
+/// Infers direction from the document-type title and the start of the PDF text. The
+/// security name after the title separator does not influence direction.
+fn document_inflow(title: &str, text: &str) -> Option<bool> {
+    let (event, security) = title.split_once(" \u{2013} ").unwrap_or((title, ""));
+    crate::connectors::document_matching::inflow_in_without(event, text, &[security], 400)
+}
+
+/// A stored title has no separate timeline event. Classify the document name and
+/// retain the saved type when that name alone does not identify one.
+pub(super) fn stored_document_filing<'a>(
+    title: &str,
+    stored_type: &'a str,
+) -> (&'a str, Option<&'static str>) {
+    let head = title
+        .split_once(" \u{2013} ")
+        .map_or(title, |(head, _)| head);
+    let head = head.to_lowercase();
+    let doc_type = match crate::documents::type_from_title(&head) {
+        "beleg" => stored_type,
+        known => known,
+    };
+    (doc_type, document_account_ref(&head, doc_type))
+}
+
 /// The account a Trade Republic document belongs to (`tr:depot` or `tr:cash`), decided by what the
 /// document is, never by the way it arrived (a booking's detail screen or the activity list): a
 /// confirmation or credit for a security (trade, savings plan, dividend, corporate action, the

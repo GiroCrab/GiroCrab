@@ -268,7 +268,83 @@ pub fn amazon_text(c: &AmazonCheck, eur: &dyn Fn(i64) -> String) -> String {
 
 // ---- export ----------------------------------------------------------------------------------------
 
-pub fn export_rows(list: &[Booking]) -> Vec<ExportCsvRow> {
+/// Column switches of the CSV export tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CsvOptions {
+    pub category: bool,
+    pub note: bool,
+    pub iban: bool,
+    pub running_balance: bool,
+}
+
+/// Maps the switches onto the core's CSV columns (daily balance and tags are not offered here).
+pub fn csv_columns(o: CsvOptions) -> girocrab_core::export::ExportCsvColumns {
+    girocrab_core::export::ExportCsvColumns {
+        category: o.category,
+        note: o.note,
+        daily_balance: false,
+        running_balance: o.running_balance,
+        iban: o.iban,
+        tags: false,
+    }
+}
+
+/// Comparison key for file names as NTFS sees them: each character uppercased on its own,
+/// one to one (so `ς`, `σ` and `Σ` collide); multi-character mappings (`ß` → `SS`) are not applied.
+fn ntfs_key(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+/// `name` for the first try (`i` < 2), then `stem-2.ext`, `stem-3.ext`, …
+pub fn numbered_file_name(name: &str, i: u32) -> String {
+    if i < 2 {
+        return name.to_string();
+    }
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}-{i}.{ext}"),
+        _ => format!("{name}-{i}"),
+    }
+}
+
+/// One CSV file name per account, in the given order: cleaned account name, unique within the
+/// batch (case-insensitive like NTFS, see `ntfs_key`) and not taken in the folder (`exists`);
+/// clashes get `-2`, `-3`, … The fixed prefix rules out reserved device names (`CON`, `NUL`, …).
+pub fn per_account_file_names(
+    names: &[String],
+    today: &str,
+    exists: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut taken = std::collections::HashSet::new();
+    names
+        .iter()
+        .map(|n| {
+            let base = crate::lists::safe_file_name(&n.replace(['/', '\\'], "_"), "Konto");
+            let stem = format!("girocrab-umsaetze-{base}-{today}");
+            let mut name = format!("{stem}.csv");
+            let mut i = 2;
+            while taken.contains(&ntfs_key(&name)) || exists(&name) {
+                name = format!("{stem}-{i}.csv");
+                i += 1;
+            }
+            taken.insert(ntfs_key(&name));
+            name
+        })
+        .collect()
+}
+
+/// `balances`: running balance per booking id (`BookingPage.running_balances`), empty when not wanted.
+pub fn export_rows(
+    list: &[Booking],
+    balances: &std::collections::HashMap<i64, i64>,
+) -> Vec<ExportCsvRow> {
     list.iter()
         .map(|b| ExportCsvRow {
             date: b.booking_date.chars().take(10).collect(),
@@ -282,7 +358,7 @@ pub fn export_rows(list: &[Booking]) -> Vec<ExportCsvRow> {
             amount_cents: b.amount_cents,
             currency: b.currency.clone(),
             day_balance_cents: None,
-            balance_cents: None,
+            balance_cents: balances.get(&b.id).copied(),
         })
         .collect()
 }
@@ -299,11 +375,75 @@ pub fn parse_day(text: &str) -> Result<Option<String>, String> {
             _ => c.is_ascii_digit(),
         })
         && matches!(t[5..7].parse::<u32>(), Ok(1..=12))
-        && matches!(t[8..10].parse::<u32>(), Ok(1..=31));
+        && t[8..10].parse::<u32>().is_ok_and(|d| {
+            let (y, m) = (
+                t[..4].parse::<u32>().unwrap_or(0),
+                t[5..7].parse::<u32>().unwrap_or(0),
+            );
+            let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+            let days = match m {
+                2 if leap => 29,
+                2 => 28,
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            (1..=days).contains(&d)
+        });
     if ok {
         Ok(Some(t.to_string()))
     } else {
         Err(format!("„{t}“ ist kein Datum (JJJJ-MM-TT)."))
+    }
+}
+
+/// Period menu of the export tab (`settings_import_dialog.slint`): 0 this month, 1 this year,
+/// 2 all, 3 own Von/Bis, 4 the range of the main list.
+pub const PERIOD_CUSTOM: i32 = 3;
+pub const PERIOD_SELECTION: i32 = 4;
+
+/// Maps the period menu onto the core's `date_from` / `date_to` (like the Mac export sheet).
+/// `today` is `YYYY-MM-DD`; `list_from` is the start of the main list's range ("" = all).
+/// An own range with Von after Bis (or a malformed day) is an error.
+pub fn export_period(
+    preset: i32,
+    today: &str,
+    from: &str,
+    to: &str,
+    list_from: &str,
+) -> Result<(Option<String>, Option<String>), String> {
+    match preset {
+        0 => Ok((today.get(..7).map(|m| format!("{m}-01")), None)),
+        1 => Ok((today.get(..4).map(|y| format!("{y}-01-01")), None)),
+        PERIOD_CUSTOM => {
+            let (from, to) = (parse_day(from)?, parse_day(to)?);
+            match (&from, &to) {
+                (Some(f), Some(t)) if f > t => Err(format!(
+                    "„Von“ ({f}) liegt nach „Bis“ ({t}). Bitte den Zeitraum korrigieren."
+                )),
+                _ => Ok((from, to)),
+            }
+        }
+        PERIOD_SELECTION => parse_day(list_from).map(|from| (from, Some(today.to_string()))),
+        _ => Ok((None, None)),
+    }
+}
+
+/// Hint below the period row; empty = the export buttons are enabled.
+pub fn export_period_hint(preset: i32, from: &str, to: &str) -> String {
+    if preset != PERIOD_CUSTOM {
+        return String::new();
+    }
+    export_period(preset, "", from, to, "")
+        .err()
+        .unwrap_or_default()
+}
+
+/// CAMT version menu: 0 = `camt.053.001.02` (older programs), otherwise `camt.053.001.08`.
+pub fn camt_version(index: i32) -> girocrab_core::export::CamtVersion {
+    if index == 0 {
+        girocrab_core::export::CamtVersion::V02
+    } else {
+        girocrab_core::export::CamtVersion::V08
     }
 }
 
@@ -391,6 +531,7 @@ pub fn setting_lines(list: &[SettingEntry]) -> Vec<Line> {
 pub fn outcome_name(o: SyncLogOutcome) -> &'static str {
     match o {
         SyncLogOutcome::Ok => "Erfolgreich",
+        SyncLogOutcome::Partial => "Teilweise",
         SyncLogOutcome::Error => "Fehler",
         SyncLogOutcome::Cancelled => "Abgebrochen",
     }
@@ -425,7 +566,7 @@ pub fn log_lines(list: &[SyncLogEntry]) -> Vec<Line> {
                 outcome_name(e.outcome),
                 source_name(e.source)
             );
-            if e.outcome == SyncLogOutcome::Ok {
+            if matches!(e.outcome, SyncLogOutcome::Ok | SyncLogOutcome::Partial) {
                 detail.push_str(&format!(" · {} neu", e.imported));
             }
             if !e.message.is_empty() {
@@ -473,6 +614,94 @@ mod tests {
     }
 
     #[test]
+    fn csv_switches_map_to_core_columns() {
+        let off = csv_columns(CsvOptions::default());
+        assert!(!off.category && !off.note && !off.iban && !off.running_balance);
+        assert!(!off.daily_balance && !off.tags);
+        let on = csv_columns(CsvOptions {
+            category: true,
+            note: true,
+            iban: true,
+            running_balance: true,
+        });
+        assert!(on.category && on.note && on.iban && on.running_balance);
+        assert!(!on.daily_balance && !on.tags);
+        let only_iban = csv_columns(CsvOptions {
+            iban: true,
+            ..Default::default()
+        });
+        assert!(only_iban.iban && !only_iban.running_balance && !only_iban.category);
+    }
+
+    #[test]
+    fn same_named_accounts_get_unique_files() {
+        let names: Vec<String> = vec!["Girokonto".into(), "Girokonto".into(), "girokonto".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Girokonto-2025-03-31.csv",
+                "girocrab-umsaetze-Girokonto-2025-03-31-2.csv",
+                "girocrab-umsaetze-girokonto-2025-03-31-3.csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn account_names_are_cleaned() {
+        let names: Vec<String> = vec!["Giro/Spar: Haushalt".into(), "".into(), "...".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Giro_Spar_ Haushalt-2025-03-31.csv",
+                "girocrab-umsaetze-Konto-2025-03-31.csv",
+                "girocrab-umsaetze-Konto-2025-03-31-2.csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn existing_files_are_not_overwritten() {
+        let names: Vec<String> = vec!["Giro".into()];
+        let taken = "girocrab-umsaetze-Giro-2025-03-31.csv";
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |f| f == taken),
+            vec!["girocrab-umsaetze-Giro-2025-03-31-2.csv"]
+        );
+    }
+
+    #[test]
+    fn batch_names_collide_like_ntfs() {
+        // ς, σ and Σ uppercase to the same letter on NTFS
+        let names: Vec<String> = vec!["Kontoσ".into(), "Kontoς".into(), "KontoΣ".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Kontoσ-2025-03-31.csv",
+                "girocrab-umsaetze-Kontoς-2025-03-31-2.csv",
+                "girocrab-umsaetze-KontoΣ-2025-03-31-3.csv",
+            ]
+        );
+        // NTFS maps one to one: ß does not become SS
+        let names: Vec<String> = vec!["Straße".into(), "STRASSE".into()];
+        assert_eq!(
+            per_account_file_names(&names, "2025-03-31", |_| false),
+            vec![
+                "girocrab-umsaetze-Straße-2025-03-31.csv",
+                "girocrab-umsaetze-STRASSE-2025-03-31.csv",
+            ]
+        );
+    }
+
+    #[test]
+    fn numbered_names() {
+        assert_eq!(numbered_file_name("a.csv", 1), "a.csv");
+        assert_eq!(numbered_file_name("a.csv", 2), "a-2.csv");
+        assert_eq!(numbered_file_name("a-2.csv", 3), "a-2-3.csv");
+        assert_eq!(numbered_file_name("ohne", 2), "ohne-2");
+        assert_eq!(numbered_file_name(".csv", 2), ".csv-2");
+    }
+
+    #[test]
     fn dates_and_stamps() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00+00:00");
         assert_eq!(iso_utc(1_743_422_400), "2025-03-31T12:00:00+00:00");
@@ -487,6 +716,70 @@ mod tests {
         assert_eq!(parse_day("2025-03-01"), Ok(Some("2025-03-01".into())));
         assert!(parse_day("01.03.2025").is_err());
         assert!(parse_day("2025-13-01").is_err());
+        assert!(parse_day("2026-02-30").is_err());
+        assert!(parse_day("2026-02-29").is_err());
+        assert!(parse_day("2026-04-31").is_err());
+        assert_eq!(parse_day("2024-02-29"), Ok(Some("2024-02-29".into())));
+        assert!(parse_day("1900-02-29").is_err());
+        assert_eq!(parse_day("2000-02-29"), Ok(Some("2000-02-29".into())));
+        assert!(export_period_hint(PERIOD_CUSTOM, "2026-02-30", "").contains("kein Datum"));
+    }
+
+    #[test]
+    fn export_period_presets() {
+        let t = "2026-11-23";
+        assert_eq!(
+            export_period(0, t, "", "", ""),
+            Ok((Some("2026-11-01".into()), None))
+        );
+        assert_eq!(
+            export_period(1, t, "", "", ""),
+            Ok((Some("2026-01-01".into()), None))
+        );
+        // Von/Bis only count for the own range, even when they are reversed.
+        assert_eq!(
+            export_period(2, t, "2026-04-01", "2026-03-31", ""),
+            Ok((None, None))
+        );
+    }
+
+    #[test]
+    fn custom_period_validation() {
+        let t = "2026-11-23";
+        assert_eq!(
+            export_period(PERIOD_CUSTOM, t, " 2026-02-01 ", "2026-03-31", ""),
+            Ok((Some("2026-02-01".into()), Some("2026-03-31".into())))
+        );
+        assert_eq!(
+            export_period(PERIOD_CUSTOM, t, "", "2026-03-31", ""),
+            Ok((None, Some("2026-03-31".into())))
+        );
+        assert!(export_period(PERIOD_CUSTOM, t, "2026-03-31", "2026-03-31", "").is_ok());
+        assert!(export_period(PERIOD_CUSTOM, t, "2026-04-01", "2026-03-31", "").is_err());
+        assert!(export_period(PERIOD_CUSTOM, t, "31.03.2026", "", "").is_err());
+        assert_eq!(
+            export_period_hint(PERIOD_CUSTOM, "2026-02-01", "2026-03-31"),
+            ""
+        );
+        assert!(
+            export_period_hint(PERIOD_CUSTOM, "2026-04-01", "2026-03-31").contains("liegt nach")
+        );
+        assert_eq!(export_period_hint(2, "2026-04-01", "2026-03-31"), "");
+    }
+
+    #[test]
+    fn selection_period_and_camt_version() {
+        let t = "2026-11-23";
+        assert_eq!(
+            export_period(PERIOD_SELECTION, t, "x", "y", "2026-08-25"),
+            Ok((Some("2026-08-25".into()), Some(t.into())))
+        );
+        assert_eq!(
+            export_period(PERIOD_SELECTION, t, "", "", ""),
+            Ok((None, Some(t.into())))
+        );
+        assert_eq!(camt_version(0), girocrab_core::export::CamtVersion::V02);
+        assert_eq!(camt_version(1), girocrab_core::export::CamtVersion::V08);
     }
 
     #[test]

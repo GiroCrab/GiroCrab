@@ -139,7 +139,7 @@ struct BudgetProgressCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ViewLayout.cardSpacing) {
+        VStack(alignment: .leading, spacing: ViewLayout.sectionSpacing) {
             HStack {
                 CardChevron(collapsed: $collapsed)
                 Text("Monatsbudgets").appFont(.subheadline, weight: .semibold)
@@ -200,7 +200,7 @@ struct BudgetProgressCard: View {
                 }
             } }
         }
-        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))
+        .flatSection(vertical: collapsed ? 4 : ViewLayout.sectionPadding)
         .task(id: token) {
             let now = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: Date())
             if let loaded = await model.budgetProgress(year: now.year ?? 2025, month: now.month ?? 1) { items = loaded }
@@ -291,6 +291,9 @@ struct CashflowCard: View {
     @State private var granularity: PeriodGranularity = .month
     @State private var rows: [PeriodCashflow] = []
     @AppStorage(ViewLayout.cashflowCollapsedKey) private var collapsed = false
+    /// Period (x label) under the pointer and where the pointer is (#889).
+    @State private var hovered: String?
+    @State private var spot: HoverCardSpot?
 
     private struct Bar: Identifiable {
         let id = UUID()
@@ -307,6 +310,38 @@ struct CashflowCard: View {
         HStack(spacing: 5) { Circle().fill(color).frame(width: 8, height: 8); Text(title) }
     }
 
+    /// The period whose group of bars lies under the pointer; nil above or beside the plot.
+    private static func period(atX x: CGFloat, y: CGFloat, proxy: ChartProxy, geo: GeometryProxy) -> String? {
+        guard let plot = proxy.plotFrame else { return nil }
+        let frame = geo[plot]
+        guard frame.contains(CGPoint(x: x, y: y)) else { return nil }
+        return proxy.value(atX: x - frame.origin.x, as: String.self)
+    }
+
+    /// Income, expenses and the balance of one period, at the pointer.
+    private func hoverCard(_ r: PeriodCashflow, income: String, expense: String) -> some View {
+        let net = r.incomeCents - r.expenseCents
+        func line(_ title: String, _ cents: Int64, _ color: Color) -> some View {
+            HStack(spacing: 10) {
+                Text(title).foregroundStyle(Theme.secondary)
+                Spacer(minLength: 0)
+                Text(verbatim: Money.format(cents)).sensitive(.amounts).foregroundStyle(color)
+            }
+            .appFont(.caption, monospacedDigit: true)
+        }
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(label(r.key)).appFont(.caption, weight: .semibold)
+            line(income, r.incomeCents, Theme.inflow)
+            line(expense, r.expenseCents, Theme.outflow)
+            line(String(localized: "Saldo"), net, net >= 0 ? Theme.inflow : Theme.outflow)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .frame(minWidth: 150, alignment: .leading)
+        .fixedSize()
+        // Transient hover readout: a flat plate, no tile or drop shadow.
+        .background(Theme.systemSurface)
+    }
+
     var body: some View {
         let palette = ChartColorPalette(rawValue: paletteRaw) ?? .girocrab
         let income = String(localized: "Einnahmen")
@@ -315,7 +350,7 @@ struct CashflowCard: View {
             [Bar(period: label(r.key), kind: income, euros: Double(r.incomeCents) / 100),
              Bar(period: label(r.key), kind: expense, euros: Double(r.expenseCents) / 100)]
         }
-        VStack(alignment: .leading, spacing: ViewLayout.cardSpacing) {
+        VStack(alignment: .leading, spacing: ViewLayout.sectionSpacing) {
             HStack {
                 CardChevron(collapsed: $collapsed)
                 Text("Cashflow").appFont(.subheadline, weight: .semibold)
@@ -355,8 +390,26 @@ struct CashflowCard: View {
                     .foregroundStyle(by: .value("Art", b.kind))
                     .position(by: .value("Art", b.kind))
                     .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .opacity(hovered == nil || hovered == b.period ? 1 : 0.4)
             }
             .chartForegroundStyleScale([income: palette.incomeGradient, expense: palette.expenseGradient])
+            .chartOverlay { proxy in
+                GeometryReader { geo in
+                    Color.clear.contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let point):
+                                let period = Self.period(atX: point.x, y: point.y, proxy: proxy, geo: geo)
+                                if hovered != period { hovered = period }
+                                let origin = geo.frame(in: .named(HoverCardSpace.name)).origin
+                                spot = period.map { HoverCardSpot(id: $0, point: CGPoint(x: origin.x + point.x, y: origin.y + point.y)) }
+                            case .ended:
+                                if hovered != nil { hovered = nil }
+                                if spot != nil { spot = nil }
+                            }
+                        }
+                }
+            }
             .chartLegend(.hidden)
             .chartYAxis {
                 AxisMarks(position: .leading) { v in
@@ -374,7 +427,7 @@ struct CashflowCard: View {
                     AxisValueLabel { Text(verbatim: v.as(String.self) ?? "").appFont(.caption2).fixedSize() }
                 }
             }
-            .frame(height: 160)
+            .frame(height: 124)
             .accessibilityLabel("Cashflow")
             .accessibilityChartDescriptor(BarChartDescriptor(
                 title: String(localized: "Cashflow"),
@@ -395,7 +448,12 @@ struct CashflowCard: View {
             .accessibilityHidden(true)   // the chart descriptor names both series
             }
         }
-        .card(padding: ViewLayout.cardPadding, vertical: ViewLayout.cardVerticalPadding(collapsed: collapsed))
+        .hoverCardHost(spot) { period in
+            if let row = rows.first(where: { label($0.key) == period }) {
+                hoverCard(row, income: income, expense: expense)
+            }
+        }
+        .flatSection(vertical: collapsed ? 4 : ViewLayout.sectionPadding)
         // Follows the sidebar: overview = all accounts, account/group = its accounts (#731).
         // The calculation context is part of the key: switching between a single
         // account and a group of only that account keeps ids and booking count,

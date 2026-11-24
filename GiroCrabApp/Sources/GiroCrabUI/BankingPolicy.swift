@@ -170,10 +170,12 @@ public struct BankingGate: Equatable, Sendable {
         case "ibkr": base = "Interactive Brokers"
         case "equateplus": base = "EquatePlus"
         case "quirion": base = "quirion"
+        case "sharinbox": base = "Sharinbox (Société Générale)"
         case "easybank": base = "easybank"
         case "fin4u": base = "Alte Leipziger"
         case "volkswagenbank": base = "Volkswagen Bank"
         case "uberspace": base = "Uberspace"
+        case "bitcoincore": base = "Bitcoin Core"
         case "schwaebischhall": base = "Schwäbisch Hall"
         case "ffb": base = "FFB"
         case "fordmoney": base = "Ford Money"
@@ -182,6 +184,7 @@ public struct BankingGate: Equatable, Sendable {
         case "bhw": base = "BHW Bausparkasse"
         case "finpension": base = "Finpension"
         case "kontist": base = "Kontist"
+        case "monefit": base = "Monefit SmartSaver"
         default: base = parts.first ?? id
         }
         guard parts.count == 2 else { return base }

@@ -243,7 +243,7 @@ extension AppModel {
                     }
                     try Task.checkCancellation()
                     let recurring = try vault.recurringSnapshot(accountIds: ids, year: Int32(month.year ?? 2026), month: UInt32(month.month ?? 1))
-                    let categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents)
+                    let categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
                     let uncategorized = Int(try vault.countTransactions(filter: uncategorizedQuery))
                     try Task.checkCancellation()
                     let history = try vault.balanceHistory(accountIds: chart.ids, days: chart.days)
@@ -293,6 +293,11 @@ extension AppModel {
         } else if !cycleLoaded {
             salaryCycle = shownSalaryCycle
         }
+        // the switch ends with the failed load: nothing of the old view stays selected (a kept
+        // booking would resolve through the sticky row and could still be reviewed), and a later
+        // refresh of this view is no switch (#1808)
+        if viewSwitchPending { selectedBookingID = nil }
+        viewSwitchPending = false
         errorMessage = describe(error)
     }
 
@@ -593,12 +598,32 @@ extension AppModel {
 
     // MARK: - Keyboard navigation
 
+    /// Rows per Bild↑/Bild↓ step in the booking list (GitHub #1561).
+    nonisolated static let keyboardPageStep = 10
+
+    /// Target row for keyboard navigation. `current` nil = nothing selected (as if
+    /// just above the first row). Clamped to the list; `delta` may be `±Int.max`
+    /// (Pos1/Ende) without overflowing. Nil for an empty list.
+    nonisolated static func selectionTarget(from current: Int?, delta: Int, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        let step = max(-count, min(count, delta))
+        return max(0, min(count - 1, (current ?? -1) + step))
+    }
+
+    /// Row to select for a keyboard move, and whether the list must be scrolled explicitly
+    /// because the move lands on the row that is already selected (no selection change, so
+    /// `SelectionScroller`'s `onChange` would not fire). Nil for an empty list.
+    nonisolated static func keyboardMove<ID: Equatable>(ids: [ID], current: ID?, delta: Int) -> (index: Int, rescroll: Bool)? {
+        let idx = current.flatMap { id in ids.firstIndex(of: id) }
+        guard let next = selectionTarget(from: idx, delta: delta, count: ids.count) else { return nil }
+        return (next, next == idx)
+    }
+
     func moveSelection(_ delta: Int) {
         let list = visibleBookings
-        guard !list.isEmpty else { return }
-        let idx = selectedBookingID.flatMap { id in list.firstIndex { $0.id == id } } ?? -1
-        let next = max(0, min(list.count - 1, idx + delta))
+        guard let move = Self.keyboardMove(ids: list.map(\.id), current: selectedBookingID, delta: delta) else { return }
         selectedBookingIDs = []
-        selectedBookingID = list[next].id
+        selectedBookingID = list[move.index].id
+        if move.rescroll { keyboardScrollToken &+= 1 }
     }
 }

@@ -1,4 +1,6 @@
+// test: serial-defaults
 import XCTest
+import GiroCrabCore
 @testable import GiroCrabUI
 
 /// Scheduled balance fetch (GiroCrab/GiroCrab#546): interval, skipping while
@@ -89,5 +91,47 @@ final class AutoSyncTests: XCTestCase {
         let status = AutoSyncStatus(lastRun: now, failureDetail: "geheim")
         XCTAssertEqual(status.notice(.covered, intervalOn: false).count, 1)
         XCTAssertFalse(status.notice(.covered, intervalOn: false)[0].contains("geheim"))
+    }
+}
+
+@MainActor
+final class ConnectionAutoSyncTests: XCTestCase {
+    func testBackgroundFetchUsesEachLoginsSchedule() async throws {
+        let model = AppModel(options: LaunchOptions(arguments: [], environment: [:]))
+        model.bankingPolicy = BankingPolicy(publicKeys: [], store: MemoryBankingPolicyStore(),
+                                            fetcher: nil, bundled: nil, distribution: .developerID,
+                                            bundleVersion: "1")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let vault = try Vault.open(path: folder.appendingPathComponent("test.girocrab").path,
+                                   key: Data(repeating: 0x54, count: 32))
+        let kinds: [ConnectorKind] = [.volkswagenBank, .opelDirektbank, .fordMoney, .hanseaticBank]
+        let ids = try kinds.map { kind in
+            // The demo login routes straight to the simulated connector even outside the demo vault.
+            try vault.addBankConnection(connector: kind, displayName: "", loginName: "demo")
+        }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let defaults = AppDefaults.store
+        let attemptKeys = ids.map(AutoSync.attemptKey)
+        let oldAttempts = attemptKeys.map { defaults.object(forKey: $0) }
+        defer {
+            model.releaseVaultState()
+            for (key, value) in zip(attemptKeys, oldAttempts) { defaults.set(value, forKey: key) }
+        }
+        model.useVault(vault, demo: true)
+        // Allow a manual tick without starting the periodic task or marking this as a personal vault.
+        model.demoActive = false
+        for (id, schedule) in zip(ids, [AutoSync.never, 0, 6, 2]) {
+            XCTAssertTrue(model.setConnectionPin(id, "12345"))
+            XCTAssertTrue(model.setSyncSchedule(id, schedule))
+        }
+        for key in attemptKeys {
+            defaults.set(now.timeIntervalSince1970 - 3 * 3600, forKey: key)
+        }
+        model.autoSyncTick(now: now)
+        XCTAssertEqual(model.syncingConnectionID, ids.last)
+        XCTAssertEqual(model.quietSyncConnectionID, ids.last)
+        XCTAssertEqual(model.autoSyncStatus.lastRun, now)
     }
 }

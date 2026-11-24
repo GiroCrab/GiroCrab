@@ -11,10 +11,11 @@ use crate::planning::euro;
 pub const DEFAULT_GROUP_SYMBOL: &str = "folder";
 
 /// Account kinds in the order of the picker.
-pub const KINDS: [(AccountKind, &str); 8] = [
+pub const KINDS: [(AccountKind, &str); 9] = [
     (AccountKind::Checking, "Girokonto"),
     (AccountKind::Savings, "Sparkonto"),
     (AccountKind::TimeDeposit, "Festgeld"),
+    (AccountKind::BuildingSavings, "Bausparen"),
     (AccountKind::CreditCard, "Kreditkarte"),
     (AccountKind::PaymentService, "Zahlungsdienst"),
     (AccountKind::Brokerage, "Depot"),

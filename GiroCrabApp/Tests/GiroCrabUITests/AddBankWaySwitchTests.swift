@@ -22,7 +22,7 @@ final class AddBankWaySwitchTests: XCTestCase {
             XCTAssertTrue(KindAddForm.loginRequired(kind), "\(kind)")
         }
         // the field is only a display name there
-        for kind: ConnectorKind in [.payPal, .bunq, .americanExpress, .amazonVisa] {
+        for kind: ConnectorKind in [.payPal, .bunq, .americanExpress, .amazonVisa, .bitcoinCore] {
             XCTAssertFalse(KindAddForm.loginRequired(kind), "\(kind)")
         }
     }

@@ -107,7 +107,7 @@ Item {
                 TextField { id: targetField; Layout.fillWidth: true; horizontalAlignment: TextInput.AlignRight; font.features: { "tnum": 1 }
                             onAccepted: correction.apply(); Sensitive { amounts: true } }
             }
-            Text { text: qsTr("Der Unterschied wird als Buchung „Saldokorrektur“ mit heutigem Datum angelegt. Den Startsaldo ändern Sie über „Startsaldo …“ im Kontextmenü des Kontos.")
+            Text { text: qsTr("Der Unterschied wird als Buchung „Saldokorrektur“ mit heutigem Datum angelegt. Den Startsaldo ändern Sie über „Einstellungen …“ im Kontextmenü des Kontos.")
                    font.pixelSize: Theme.caption; color: Theme.tertiary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true

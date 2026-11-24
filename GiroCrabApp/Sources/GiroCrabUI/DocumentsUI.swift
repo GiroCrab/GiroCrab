@@ -176,7 +176,7 @@ struct DocumentsCard: View {
             }
             .help("Für die Steuererklärung: alle Belege nach Jahr sortiert in einen Ordner")
         }
-        .card()
+        .flatSection()
         .fileImporter(isPresented: $exporting, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportAllDocuments(to: url) }
         }

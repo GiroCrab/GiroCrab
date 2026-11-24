@@ -54,6 +54,12 @@
 //!   switched-off bundled merchants) and `custom_merchants` (own merchants), both merged.
 //! - 36: per-account bank label (#1467): `accounts.bank_label` (NULL = the bank
 //!   name, `''` = none, else the user's text) and its sync stamp `bank_label_ms`.
+//! - 37: one sidebar section per account kind (#1003): the accounts of the old
+//!   section "Giro & Tagesgeld" move to Girokonten, Tagesgeld / Sparen, Festgeld, Bargeld
+//!   and Zahlungsdienste by `accounts.kind`; the old section is removed.
+//! - 38: repair (#998): accounts the MoneyMoney import archived because their last refresh there
+//!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]), marked
+//!   in `accounts.archive_unknown` until an import or the user settles their state.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -106,6 +112,8 @@ const STEPS: &[Step] = &[
     Step::Hook(account_total_flag),                            // 34 (#337)
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
+    Step::Hook(account_kind_groups),                           // 37 (#1003)
+    Step::Hook(unarchive_cancelled_refreshes),                 // 38: repair (#998)
 ];
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
@@ -131,6 +139,46 @@ fn account_notes(conn: &Connection) -> CoreResult<()> {
         [crate::user_groups::MOVED_NOTE_MS],
     )?;
     conn.execute("DELETE FROM settings WHERE key GLOB 'account.note.*'", [])?;
+    Ok(())
+}
+
+/// An archive the app (`set_account_archived`, also the account selection) or the MoneyMoney
+/// import sets carries its time and its stamp from the same second. Step 38 takes an archive
+/// whose time lies more than this before its stamp for one the import of v0.8.5 made.
+pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
+
+/// Step 38 (#998): the MoneyMoney import of v0.8.5 read `cancel_tsp` (when the last refresh of an
+/// account was cancelled there, e.g. a TAN not confirmed) as "closed" and archived accounts that
+/// are in use: they left the totals and syncs skipped them. Such an archive carries MoneyMoney's
+/// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]), and the vault merge
+/// copies time and stamp as a pair. Only the import archived that way: accounts that still carry
+/// its reference, and those with its bookings (`mm-…`, not the `mm-switch-…` marks of a switch):
+/// a fetch took them over by IBAN in the meantime (the reference is gone, the archive stayed), or
+/// the import merged into a bank account. One taken over without imported bookings stays; the next
+/// import brings it back when its own MoneyMoney account reports it open.
+/// The reactivation is stamped one millisecond after that wrong archive: the merge carries it to
+/// devices that still hold the archive, an edit made after it (on any device) still wins, and two
+/// devices that repair the same account stamp it alike, so neither takes the other's. Some of these
+/// accounts are closed in MoneyMoney after all, which the vault cannot tell: `archive_unknown`
+/// marks them, so the next import gives them MoneyMoney's state. The mark is part of the archive
+/// state: it syncs with it (a device that gets such an account by merge gets the mark, #1591),
+/// and any later archive choice ends it.
+fn unarchive_cancelled_refreshes(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "archive_unknown")? {
+        conn.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN archive_unknown INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    conn.execute(
+        "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1, archive_unknown = 1
+          WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?1
+            AND deleted_ms IS NULL
+            AND (external_ref LIKE 'moneymoney-db:%'
+                 OR EXISTS (SELECT 1 FROM transactions t
+                             WHERE t.account_id = accounts.id AND t.external_id LIKE 'mm-%'
+                               AND t.external_id NOT LIKE 'mm-switch-%'))",
+        [ARCHIVE_STAMP_GAP_MS],
+    )?;
     Ok(())
 }
 
@@ -281,13 +329,13 @@ fn builtin_roles(conn: &Connection) -> CoreResult<()> {
         }
     }
     if groups_need_roles {
-        for kind in [
-            crate::models::AccountKind::Checking,
-            crate::models::AccountKind::CreditCard,
-            crate::models::AccountKind::Brokerage,
-            crate::models::AccountKind::Loan,
+        // The sections as this step found them (frozen: `group_for` has changed since, #1003).
+        for (name, symbol, order) in [
+            ("Giro & Tagesgeld", "building.columns", 1),
+            ("Kreditkarten", "creditcard", 2),
+            ("Depots & ETFs", "chart.pie", 3),
+            ("Darlehen & Kredite", "house", 4),
         ] {
-            let (name, symbol, order) = crate::connectors::group_for(kind);
             conn.execute("UPDATE account_groups SET builtin_role=?1 WHERE name=?1 AND sf_symbol=?2 AND sort_order=?3",
             rusqlite::params![name, symbol, order])?;
         }
@@ -913,6 +961,59 @@ fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// Step 37 (#1003): the sidebar's "by kind" view had one section for checking,
+/// savings, time deposit, cash and payment accounts. Each kind now has its own
+/// (`connectors::group_for`). The accounts of the old section move by `kind`
+/// (the sections are fixed, nothing in them was editable), the other built-in
+/// sections only take their new place in the order, and the old section goes.
+fn account_kind_groups(conn: &Connection) -> CoreResult<()> {
+    use rusqlite::OptionalExtension;
+    // The sections of this step (frozen, like the step itself).
+    fn section(kind: &str) -> (&'static str, &'static str, i32) {
+        match kind {
+            "savings" => ("Tagesgeld / Sparen", "banknote", 2),
+            "time_deposit" => ("Festgeld", "lock", 3),
+            "cash" => ("Bargeld", "eurosign.circle", 4),
+            "payment_service" => ("Zahlungsdienste", "wallet.pass", 5),
+            "credit_card" => ("Kreditkarten", "creditcard", 6),
+            "brokerage" => ("Depots & ETFs", "chart.pie", 7),
+            "loan" => ("Darlehen & Kredite", "house", 8),
+            _ => ("Girokonten", "building.columns", 1),
+        }
+    }
+    for kind in ["credit_card", "brokerage", "loan"] {
+        let (name, _, order) = section(kind);
+        conn.execute(
+            "UPDATE account_groups SET sort_order = ?2 WHERE builtin_role = ?1",
+            rusqlite::params![name, order],
+        )?;
+    }
+    let old: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM account_groups WHERE builtin_role = 'Giro & Tagesgeld'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(old) = old else {
+        return Ok(());
+    };
+    let accounts: Vec<(i64, String)> = conn
+        .prepare("SELECT id, kind FROM accounts WHERE group_id = ?1")?
+        .query_map([old], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, kind) in accounts {
+        let (name, symbol, order) = section(&kind);
+        let group = crate::vault::Vault::ensure_group(conn, name, symbol, order)?;
+        conn.execute(
+            "UPDATE accounts SET group_id = ?2 WHERE id = ?1",
+            rusqlite::params![id, group],
+        )?;
+    }
+    conn.execute("DELETE FROM account_groups WHERE id = ?1", [old])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1082,7 +1183,65 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 36);
+        assert_eq!(SCHEMA_VERSION, 38);
+    }
+
+    /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for
+    /// the next import, also once a fetch took it over (its bookings show the import); an account
+    /// the user archived, a deleted one, an archive from before the stamps and a bank account
+    /// without imported bookings stay as they are.
+    #[test]
+    fn accounts_archived_for_a_cancelled_refresh_are_reactivated() {
+        let mut conn = schema_at(37);
+        conn.execute_batch(
+            "INSERT INTO account_groups(name,sf_symbol,sort_order) VALUES ('Konten','building.columns',1);
+             INSERT INTO accounts(group_id,external_ref,name,archived_unix,archived_ms,deleted_ms) VALUES
+               (1,'moneymoney-db:1','Girokonto',1790000000,1790001000123,NULL),
+               (1,'moneymoney-db:2','Alte Karte',1790002000,1790002000456,NULL),
+               (1,'moneymoney-db:3','Gelöscht',1790000000,1790001000123,1790003000000),
+               (1,'moneymoney-db:4','Früher archiviert',1700000000,0,NULL),
+               (1,'DE89370400440532013000','Bankkonto',1790000000,1790001000123,NULL),
+               (1,'DE02120300000000202051','Übernommen',1790000000,1790001000123,NULL),
+               (1,'DE02500105170137075030','Umgestellt',1790000000,1790001000123,NULL);
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 SELECT id, 'mm-abc-1', '2026-01-01', -5 FROM accounts WHERE name = 'Übernommen';
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 SELECT id, 'mm-switch-pending-hold-1', '2026-01-01', -5 FROM accounts WHERE name = 'Umgestellt';",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        // (id, archived_unix, archived_ms)
+        let row = |name: &str| {
+            conn.query_row(
+                "SELECT id, archived_unix, archived_ms FROM accounts WHERE name = ?1",
+                [name],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Option<i64>>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+        };
+        let (giro, archived, stamp) = row("Girokonto");
+        assert_eq!(archived, None);
+        // just after the wrong archive: the merge carries it, a later edit wins
+        assert_eq!(stamp, 1790001000124);
+        assert_eq!(row("Alte Karte").1, Some(1790002000));
+        assert_eq!(row("Gelöscht").1, Some(1790000000));
+        assert_eq!(row("Früher archiviert").1, Some(1700000000));
+        assert_eq!(row("Bankkonto").1, Some(1790000000));
+        // the mark of a switch is no imported booking
+        assert_eq!(row("Umgestellt").1, Some(1790000000));
+        // taken over by a fetch: the import's reference is gone, its bookings show it
+        let (adopted, archived, _) = row("Übernommen");
+        assert_eq!(archived, None);
+        assert_eq!(
+            crate::importers::moneymoney_db::archive_unknown(&conn).unwrap(),
+            vec![giro, adopted]
+        );
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers
@@ -1130,5 +1289,99 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, 10);
+    }
+
+    fn migrate_to_latest(conn: &mut Connection) {
+        migrate(conn).unwrap();
+    }
+
+    /// #1003: the accounts of the old "Giro & Tagesgeld" section move by kind,
+    /// the other sections keep their accounts and only change place; the old
+    /// section is gone, and sections without accounts are not created.
+    #[test]
+    fn account_kind_groups_split_the_old_section() {
+        let mut conn = schema_at(36);
+        for (name, symbol, order) in [
+            ("Giro & Tagesgeld", "building.columns", 1),
+            ("Kreditkarten", "creditcard", 2),
+            ("Depots & ETFs", "chart.pie", 3),
+        ] {
+            conn.execute(
+                "INSERT INTO account_groups(name, sf_symbol, sort_order, builtin_role) VALUES (?1, ?2, ?3, ?1)",
+                rusqlite::params![name, symbol, order],
+            )
+            .unwrap();
+        }
+        let group = |name: &str| -> i64 {
+            conn.query_row(
+                "SELECT id FROM account_groups WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        for (i, (kind, group_name)) in [
+            ("checking", "Giro & Tagesgeld"),
+            ("savings", "Giro & Tagesgeld"),
+            ("time_deposit", "Giro & Tagesgeld"),
+            ("cash", "Giro & Tagesgeld"),
+            ("payment_service", "Giro & Tagesgeld"),
+            ("credit_card", "Kreditkarten"),
+            ("brokerage", "Depots & ETFs"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            conn.execute(
+                "INSERT INTO accounts(group_id, external_ref, name, kind) VALUES (?1, ?2, ?2, ?3)",
+                rusqlite::params![group(group_name), format!("a{i}"), kind],
+            )
+            .unwrap();
+        }
+        migrate_to_latest(&mut conn);
+        let section_of = |kind: &str| -> (String, i32) {
+            conn.query_row(
+                "SELECT g.name, g.sort_order FROM accounts a JOIN account_groups g ON g.id = a.group_id
+                 WHERE a.kind = ?1",
+                [kind],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        for (kind, name, order) in [
+            ("checking", "Girokonten", 1),
+            ("savings", "Tagesgeld / Sparen", 2),
+            ("time_deposit", "Festgeld", 3),
+            ("cash", "Bargeld", 4),
+            ("payment_service", "Zahlungsdienste", 5),
+            ("credit_card", "Kreditkarten", 6),
+            ("brokerage", "Depots & ETFs", 7),
+        ] {
+            assert_eq!(section_of(kind), (name.to_string(), order), "{kind}");
+            let (expected, _, expected_order) =
+                crate::connectors::group_for(crate::models::AccountKind::from_str(kind));
+            assert_eq!((expected, expected_order), (name, order), "{kind}");
+        }
+        let names: Vec<String> = conn
+            .prepare("SELECT name FROM account_groups ORDER BY sort_order")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(!names.iter().any(|n| n == "Giro & Tagesgeld"));
+        assert!(!names.iter().any(|n| n == "Darlehen & Kredite"));
+        assert_eq!(names.len(), 7);
+    }
+
+    /// A vault without the old section (new or empty) is left as it is.
+    #[test]
+    fn account_kind_groups_leave_a_vault_without_the_old_section() {
+        let mut conn = schema_at(36);
+        migrate_to_latest(&mut conn);
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM account_groups", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
     }
 }

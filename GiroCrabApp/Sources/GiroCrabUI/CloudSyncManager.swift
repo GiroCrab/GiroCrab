@@ -194,18 +194,33 @@ public final class CloudSyncManager {
         folderAccessDenied = false
     }
 
+    /// Returns once no `sync` is running. `sync` returns at once while another
+    /// one runs; a caller that reads its result (`lastMergeFoundSnapshot`,
+    /// `lastError`) waits here first (#1503). Main actor: the next `sync` call
+    /// right after this starts before any other can.
+    public func waitUntilIdle() async {
+        while isSyncing { do { try await Task.sleep(for: .milliseconds(100)) } catch { return } }
+    }
+
     /// Merges the other devices' snapshots into `vault`, then writes this
     /// device's own snapshot. Uses the open vault's key: no keychain prompt.
     /// - Parameters:
     ///   - remoteKey: key pasted from another device, for snapshots this
     ///     vault's key doesn't open.
     ///   - mergeOnly: merge but don't write (used while adopting a pasted key).
-    public func sync(vault: Vault, remoteKey: Data? = nil, mergeOnly: Bool = false) async {
+    ///   - onStart: runs once this sync holds `isSyncing`, before any work.
+    /// - Returns: false when it did not run (dev bypass, another sync running).
+    @discardableResult
+    public func sync(
+        vault: Vault, remoteKey: Data? = nil, mergeOnly: Bool = false,
+        onStart: (@MainActor () -> Void)? = nil
+    ) async -> Bool {
         // Dev bypass (`tresor-dev.girocrab`, throw-away key): never write into the user's iCloud folder.
-        guard !VaultKeyManager.keychainBypassed else { return }
-        guard !isSyncing else { return }
+        guard !VaultKeyManager.keychainBypassed else { return false }
+        guard !isSyncing else { return false }
         isSyncing = true; lastError = nil; keyMismatch = false; folderAccessDenied = false
         defer { isSyncing = false }
+        onStart?()
         do {
             let (dir, release) = try await syncDirectory()
             defer { release() }
@@ -223,6 +238,10 @@ public final class CloudSyncManager {
                 return (r, w)
             }.value
             record(result, written)
+            if let note = Self.skippedWriteNote(mergeOnly: mergeOnly, wrote: written.wrote, merged: !result.stats.isEmpty) {
+                lastStats = note
+                defaults.set(note, forKey: K.stats)
+            }
             await refreshLegacyNotice()
             #if os(iOS)
             if location == .folder { repickFolderHint = ICloudFolderMigration.hasMovedMarker(in: dir) }
@@ -231,6 +250,7 @@ public final class CloudSyncManager {
             lastError = error.localizedDescription
             folderAccessDenied = Self.isFolderAccessError(error)
         }
+        return true
     }
 
     /// Stores what a merge did: last sync time and summary, the peers'
@@ -262,6 +282,22 @@ public final class CloudSyncManager {
         }
     }
 
+    /// Text for a sync that merged nothing and wrote nothing: `SyncFolder.write`
+    /// skips a vault that never had an account, so the folder stays empty (#1703).
+    /// nil when something was written or merged, or for a merge-only run.
+    nonisolated static func skippedWriteNote(mergeOnly: Bool, wrote: Bool, merged: Bool) -> String? {
+        guard !mergeOnly, !wrote, !merged else { return nil }
+        return String(localized: "Noch nichts in iCloud gespeichert: Der Tresor wird erst synchronisiert, sobald er ein Konto enthält.")
+    }
+
+    /// Status after an automatic run whose poll went through `record`: a run
+    /// that neither wrote nor merged anything (key mismatch, unreadable peer)
+    /// keeps the previous text, e.g. the note from `skippedWriteNote`, instead
+    /// of claiming „aktualisiert“ (#1703).
+    nonisolated static func pollStats(previous: String?, recorded: String?, merged: Bool, wrote: Bool) -> String? {
+        merged || wrote ? recorded : previous
+    }
+
     /// This installation's id in the sync folder's file names.
     private var deviceID: String {
         if let cachedDeviceID { return cachedDeviceID }
@@ -281,6 +317,10 @@ public final class CloudSyncManager {
         autoState = AutoSyncState()
         _ = autoState.tick(changeCount: vault.changeCount(), now: Date())
     }
+
+    /// Tests only: awaited inside an automatic run once it holds `inFlight`,
+    /// before any work, so a test can keep that run going.
+    @ObservationIgnored var testingRunGate: (@MainActor () async -> Void)?
 
     func runForTesting(write: Bool, poll: Bool) async {
         guard let autoVault else { return }
@@ -383,6 +423,32 @@ public final class CloudSyncManager {
         }
     }
 
+    /// The sync after a restore (#1090): waits until no sync (manual or
+    /// automatic) runs, then starts its own. The last check and `sync` taking
+    /// `isSyncing` run on the main actor without a suspension point in between
+    /// (a same-actor call starts synchronously), so no other sync can take the
+    /// turn and make `sync` drop this one. `onStart` runs once it started.
+    /// - Parameter isCurrent: checked in that same turn; false (the vault was
+    ///   locked or swapped while waiting) drops the sync before it writes.
+    /// - Returns: false when it did not run (sync switched off or vault no
+    ///   longer current while waiting, dev bypass).
+    @discardableResult
+    public func syncWhenIdle(
+        vault: Vault, onStart: (@MainActor () -> Void)? = nil,
+        isCurrent: @MainActor () -> Bool = { true }
+    ) async -> Bool {
+        while true {
+            if let running = inFlight {
+                await running.value
+            } else if isSyncing || autoBusy {
+                try? await Task.sleep(for: .milliseconds(100))
+            } else {
+                guard isEnabled, isCurrent() else { return false }
+                return await sync(vault: vault, onStart: onStart)
+            }
+        }
+    }
+
     private func flush(_ vault: Vault) async {
         while let running = inFlight { await running.value }
         _ = autoState.tick(changeCount: vault.changeCount(), now: Date())
@@ -401,6 +467,7 @@ public final class CloudSyncManager {
         guard inFlight == nil else { return }
         // Cleared inside the task, before anyone awaiting it resumes.
         let task = Task {
+            if let gate = self.testingRunGate { await gate() }
             await self.perform(vault: vault, write: write, poll: poll)
             self.inFlight = nil
         }
@@ -443,12 +510,25 @@ public final class CloudSyncManager {
             }
             lastSync = Date()
             defaults.set(lastSync, forKey: K.last)
+            // Ein erfolgreiches Schreiben ersetzt den Hinweis „Noch nichts in iCloud gespeichert“.
+            // Ein Merge im selben Lauf überschreibt den Text anschließend über `record`.
+            lastStats = Self.writtenText(location)
+            defaults.set(lastStats, forKey: K.stats)
         }
         if let error = outcome.error { lastError = error }
         if let merge = outcome.merge {
             autoState.merged(changes: merge.stats.reduce(UInt64(0)) { $0 + $1.changes })
             lastError = nil
+            let previousStats = lastStats
             record(merge)
+            let kept = Self.pollStats(
+                previous: previousStats, recorded: lastStats,
+                merged: !merge.stats.isEmpty, wrote: outcome.written.wrote
+            )
+            if kept != lastStats {
+                lastStats = kept
+                defaults.set(kept, forKey: K.stats)
+            }
             let changed = merge.stats.contains {
                 $0.accountsAdded + $0.categoriesAdded + $0.rulesAdded + $0.bookingsAdded + $0.bookingsUpdated + $0.groupsUpdated > 0
             }
@@ -473,7 +553,7 @@ public final class CloudSyncManager {
         #if os(macOS)
         let message = String(localized: "GiroCrab darf den Sync-Ordner „\(name)“ nicht lesen. Wählen Sie ihn mit „Ordner wählen …“ aus oder erlauben Sie den Zugriff in den Systemeinstellungen unter Datenschutz & Sicherheit › Dateien und Ordner (iCloud Drive).")
         #else
-        let message = String(localized: "GiroCrab kann den Sync-Ordner „\(name)“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter iCloud Sync neu aus.")
+        let message = String(localized: "GiroCrab kann den Sync-Ordner „\(name)“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter Sicherheit neu aus.")
         #endif
         return NSError(domain: "CloudSync", code: 4, userInfo: [NSLocalizedDescriptionKey: message, NSUnderlyingErrorKey: underlying])
     }
@@ -484,7 +564,12 @@ public final class CloudSyncManager {
     }
 
     nonisolated private static var keyMismatchError: NSError {
-        NSError(domain: "CloudSync", code: 3, userInfo: [NSLocalizedDescriptionKey: String(localized: "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › iCloud Sync).")])
+        #if os(iOS)
+        let message = String(localized: "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › Sicherheit).")
+        #else
+        let message = String(localized: "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › iCloud Sync).")
+        #endif
+        return NSError(domain: "CloudSync", code: 3, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func resolveBookmark() throws -> URL? {

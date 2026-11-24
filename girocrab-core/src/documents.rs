@@ -484,28 +484,32 @@ pub fn account_document_type(title: &str) -> &'static str {
 
 /// Amounts (cents, positive) mentioned in a text: "56,13", "1.234,56 €", "EUR 12.50".
 pub fn amounts_in(text: &str) -> Vec<i64> {
+    let mut out = Vec::new();
+    for (_, amount) in amount_occurrences(text) {
+        if !out.contains(&amount) {
+            out.push(amount);
+        }
+    }
+    out
+}
+
+pub(crate) fn amount_occurrences(text: &str) -> impl Iterator<Item = (usize, i64)> + '_ {
     static AMOUNT: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:^|[^\d,.])(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2})").unwrap()
     });
-    let mut out: Vec<i64> = Vec::new();
-    for c in AMOUNT.captures_iter(text) {
-        // The trailing separator is not part of the match (so "12,50 13,00"
-        // finds both); only a following digit disqualifies it.
-        if text[c.get(1).map_or(0, |m| m.end())..]
+    AMOUNT.captures_iter(text).filter_map(move |capture| {
+        let amount = capture.get(1)?;
+        // A following digit belongs to the same number, e.g. the third decimal of a price.
+        if text[amount.end()..]
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_digit())
         {
-            continue;
+            return None;
         }
-        if let Ok(v) = crate::money::parse_cents(&c[1]) {
-            let v = v.abs();
-            if v > 0 && !out.contains(&v) {
-                out.push(v);
-            }
-        }
-    }
-    out
+        let cents = crate::money::parse_cents(amount.as_str()).ok()?.abs();
+        (cents > 0).then_some((amount.start(), cents))
+    })
 }
 
 /// Dates mentioned in a text as ISO strings.
@@ -891,12 +895,26 @@ impl Vault {
 
     /// Re-links (or unlinks) a document.
     pub fn link_document(&self, doc_id: i64, booking_id: Option<i64>) -> Result<(), CoreError> {
-        let db = self.db()?;
-        db.execute(
+        let mut db = self.db()?;
+        let tx = db.transaction()?;
+        let changed = tx.execute(
             "UPDATE booking_documents SET booking_id = ?1,
                 account_id = COALESCE((SELECT account_id FROM transactions WHERE id = ?1), account_id) WHERE id = ?2",
             params![booking_id, doc_id],
         )?;
+        if changed > 0 {
+            let key = format!("doc.unlinked.{doc_id}");
+            if booking_id.is_none() {
+                tx.execute(
+                    "INSERT INTO settings(key, value) VALUES (?1, '1')
+                     ON CONFLICT(key) DO UPDATE SET value = '1'",
+                    [key],
+                )?;
+            } else {
+                tx.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -908,7 +926,7 @@ impl Vault {
         doc_id: i64,
         account_id: Option<i64>,
     ) -> Result<(), CoreError> {
-        let db = self.db()?;
+        let mut db = self.db()?;
         if let Some(a) = account_id {
             let exists: bool = db.query_row(
                 "SELECT EXISTS (SELECT 1 FROM accounts WHERE id = ?1 AND deleted_ms IS NULL)",
@@ -921,7 +939,20 @@ impl Vault {
                 });
             }
         }
-        let n = db.execute(
+        let previous: Option<Option<i64>> = db
+            .query_row(
+                "SELECT account_id FROM booking_documents WHERE id = ?1",
+                [doc_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(previous) = previous else {
+            return Err(CoreError::NotFound {
+                what: trf("Dokument {0}", &[&doc_id]),
+            });
+        };
+        let tx = db.transaction()?;
+        tx.execute(
             "UPDATE booking_documents SET account_id = ?1,
                 booking_id = CASE WHEN ?1 IS NOT NULL AND
                     (SELECT account_id FROM transactions WHERE id = booking_id) = ?1
@@ -929,17 +960,28 @@ impl Vault {
               WHERE id = ?2",
             params![account_id, doc_id],
         )?;
-        if n == 0 {
-            return Err(CoreError::NotFound {
-                what: trf("Dokument {0}", &[&doc_id]),
-            });
+        if previous != account_id {
+            tx.execute(
+                "DELETE FROM settings WHERE key = ?1",
+                [format!("doc.unlinked.{doc_id}")],
+            )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
     pub fn delete_document(&self, doc_id: i64) -> Result<(), CoreError> {
-        self.db()?
-            .execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
+        let mut db = self.db()?;
+        let tx = db.transaction()?;
+        tx.execute("DELETE FROM booking_documents WHERE id = ?1", [doc_id])?;
+        tx.execute(
+            "DELETE FROM settings WHERE key IN (?1, ?2)",
+            rusqlite::params![
+                format!("doc.unlinked.{doc_id}"),
+                format!("doc.match_days.{doc_id}")
+            ],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 

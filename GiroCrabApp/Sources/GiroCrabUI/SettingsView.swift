@@ -77,12 +77,14 @@ struct GeneralSettings: View {
     @AppStorage(PrivacyMode.scopeKey) private var privacyScope = PrivacyMode.defaultScope
     @AppStorage(AppAppearance.defaultsKey) private var appearance: AppAppearance = .system
     @AppStorage(BookingDensity.defaultsKey) private var bookingDensity: BookingDensity = .standard
+    @AppStorage(SidebarDensity.defaultsKey) private var sidebarDensity: SidebarDensity = .defaultValue
 
-    /// Core setting `sync.days_back`: how far the first fetch of a new account reaches back.
-    private var firstFetchDays: Binding<Int> {
+    /// Core setting `sync.days_back`: how far the first fetch of a new login reaches back,
+    /// `max` (as far as the bank delivers, #1043) or days.
+    private var firstFetchPeriod: Binding<String> {
         Binding(
-            get: { Int(model.settingEntry("sync.days_back")?.value ?? "") ?? 90 },
-            set: { model.saveSetting("sync.days_back", String($0)) }
+            get: { model.settingEntry("sync.days_back")?.value ?? "max" },
+            set: { model.saveSetting("sync.days_back", $0) }
         )
     }
 
@@ -111,6 +113,11 @@ struct GeneralSettings: View {
                 }
                 Text("Kompakt öffnet die aktive Buchung mit allen Details. Standard zeigt einen kurzen Verwendungszweck. Großzügig zeigt alle Buchungen ausführlich.")
                     .appFont(.caption).foregroundStyle(.secondary)
+                Picker("Seitenleiste", selection: $sidebarDensity) {
+                    ForEach(SidebarDensity.allCases) { Text($0.title).appFont(.body).tag($0) }
+                }
+                Text("Großzügig zeigt Kontoname, Inhaber, neue Buchungen und Saldo in einer Zeile. Kompakt braucht weniger Breite und zeigt den Saldo unter dem Namen.")
+                    .appFont(.caption).foregroundStyle(.secondary)
                 #if os(macOS)
                 // iOS: the system's Dynamic Type setting (Einstellungen › Anzeige & Helligkeit).
                 Picker("Schriftgröße", selection: $textSize) {
@@ -130,7 +137,7 @@ struct GeneralSettings: View {
                         .help("Versteht Angaben wie „Lebensmittel letzten Monat über 50 €“. Läuft vollständig auf diesem Gerät; an das Modell gehen nur Suchtext, heutiges Datum und Kategorienamen.")
                 }
                 Toggle("Auswertungen in der Übersicht anzeigen", isOn: $showStatistics)
-                Text("Blendet Saldoverlauf, Cashflow und Budgets über der Buchungsliste aus. Auch im Menü Ansicht umschaltbar.")
+                Text("Blendet die Kennzahlen (Konsumausgaben, Investiert, Einnahmen, Fixkosten offen) und die Cashflow-Karte über der Buchungsliste aus. Das Diagramm hat mit „Diagramm anzeigen“ einen eigenen Schalter. Budgets bleiben unabhängig und haben ebenfalls einen eigenen Schalter. Auch im Menü Ansicht umschaltbar.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 Toggle("Budgets anzeigen", isOn: $showBudgets)
                 Text("Wer keine Monatsbudgets nutzt, blendet die Budget-Karte und „Monatsbudget festlegen …“ ganz aus. Auch im Menü Ansicht umschaltbar.")
@@ -153,22 +160,22 @@ struct GeneralSettings: View {
                 }
                 Text(model.autoReviewDelay.helpText)
                     .appFont(.caption).foregroundStyle(.secondary)
-                Picker("Zeitraum beim ersten Abruf", selection: firstFetchDays) {
-                    Text("90 Tage").tag(90)
-                    Text("1 Jahr").tag(365)
-                    Text("2 Jahre").tag(730)
+                Picker("Zeitraum beim ersten Abruf", selection: firstFetchPeriod) {
+                    Text("90 Tage").tag("90")
+                    Text("1 Jahr").tag("365")
+                    Text("2 Jahre").tag("730")
+                    Text("Maximum").tag("max")
                     // a value set elsewhere (e.g. synced from another device) stays selectable
-                    if ![90, 365, 730].contains(firstFetchDays.wrappedValue) {
-                        Text("\(firstFetchDays.wrappedValue) Tage").tag(firstFetchDays.wrappedValue)
+                    if !["90", "365", "730", "max"].contains(firstFetchPeriod.wrappedValue) {
+                        Text("\(Int(firstFetchPeriod.wrappedValue) ?? 90) Tage").tag(firstFetchPeriod.wrappedValue)
                     }
                 }
-                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Kontos zurückgeht. Viele Banken liefern nur 90 Tage oder verlangen für mehr eine TAN. Bereits abgerufene Konten betrifft das nicht.")
+                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Buchungen").appSectionHeader() }
             TransferSettingsSection()
             BalanceChartSettingsSection()
             #if os(macOS)
-            AutoSyncSettingsSection()
             DockAndMenuBarSettingsSection()
             #endif
             #if os(iOS)
@@ -420,7 +427,7 @@ struct DocumentFolderSettings: View {
                 if let path = model.documentMirrorPath {
                     LabeledContent("Ordner") {
                         HStack {
-                            Text(displayPath(path))
+                            Text(ICloudFolderMigration.readablePath(path))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .sensitive() // the path names the user
@@ -452,15 +459,6 @@ struct DocumentFolderSettings: View {
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.setDocumentMirror(url) }
         }
-    }
-
-    /// "~/Library/Mobile Documents/com~apple~CloudDocs/GiroCrab" -> "iCloud Drive/GiroCrab".
-    private func displayPath(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let cloud = home + "/Library/Mobile Documents/com~apple~CloudDocs"
-        if path.hasPrefix(cloud) { return "iCloud Drive" + path.dropFirst(cloud.count) }
-        if path.hasPrefix(home) { return "~" + path.dropFirst(home.count) }
-        return path
     }
 }
 #endif
@@ -797,14 +795,16 @@ struct ICloudSyncSection: View {
         } message: {
             Text("Der gewählte Ordner enthält einen Unterordner „\(wrongFolderHint ?? "GiroCrab")“ mit Ihrem Tresor. Wählen Sie bitte genau diesen Unterordner aus, damit kein neuer Tresor angelegt wird.")
         }
-        .alert("Neuen Tresor in diesem Ordner anlegen?", isPresented: Binding(get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } })) {
+        // the alert holds the folder itself, so the text never shows empty quotes while it closes
+        .alert("Neuen Tresor in diesem Ordner anlegen?", isPresented: Binding(get: { pendingFolder != nil }, set: { if !$0 { pendingFolder = nil } }), presenting: pendingFolder) { url in
             Button("Neuen Tresor anlegen") {
-                if let url = pendingFolder { do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { } }
+                do { try sync.setFolder(url, chosen: true); model.syncNow() } catch { }
                 pendingFolder = nil
             }
             Button("Abbrechen", role: .cancel) { pendingFolder = nil }
-        } message: {
-            Text("Der gewählte Ordner enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen.")
+        } message: { url in
+            // say where (#909): when the picker jumps back, the user can't tell where the vault would land
+            Text("Der gewählte Ordner „\(ICloudFolderMigration.readablePath(url.path))“ enthält noch keinen GiroCrab-Tresor. Dort wird ein neuer Tresor angelegt. Erwarten Sie Ihre Daten in einem anderen Ordner, brechen Sie ab und wählen Sie diesen.")
         }
         #if os(macOS)
         .fileDialogDefaultDirectory(Self.syncFolderOrCloudDocs)
@@ -889,7 +889,7 @@ struct KeyPasteSheet: View {
                     .disabled(!valid)
             }
             HStack {
-                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Abbrechen", role: .cancel) { model.cancelKeyAdoption(); dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if working { ProgressView().controlSize(.small) }
                 Button("Übernehmen") { model.adoptSyncKey(text) }

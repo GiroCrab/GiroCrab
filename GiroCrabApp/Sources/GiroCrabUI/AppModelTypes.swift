@@ -43,6 +43,9 @@ enum SidebarItem: Hashable {
 enum MainColumn: Equatable {
     case bookings, documents, planned, directDebits, wealth
 
+    /// The right column: Belege & Postbox has its own preview, Vermögen no booking list.
+    var hasInspector: Bool { self != .documents && self != .wealth }
+
     init(_ item: SidebarItem?) {
         switch item {
         case .documents?: self = .documents
@@ -496,6 +499,9 @@ struct TransferDraft {
     /// Terminüberweisung: when on, `executionDate` is sent (FinTS only).
     var scheduled = false
     var executionDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+    /// Filled from a `girocrab://transfer` link (`PaymentLink`): the form warns that another
+    /// app or a web page chose the recipient. A new draft starts without it.
+    var fromLink = false
 
     /// The fields a payment fills (paste, invoice, clipboard check #663).
     static let paymentFields: [WritableKeyPath<TransferDraft, String>] = [\.name, \.iban, \.bic, \.amountText, \.purpose]
@@ -636,6 +642,8 @@ let settingLabels: [String: String] = [
     "paypal.client_id": String(localized: "PayPal Client-ID"),
     "paypal.client_secret": String(localized: "PayPal Secret"),
     "kontist.client_id": String(localized: "Kontist Client-ID"),
+    "bitcoin_core.datadir": String(localized: "Bitcoin-Core-Datenverzeichnis"),
+    "bitcoin_core.rpc_url": String(localized: "Bitcoin-Core-RPC-Adresse"),
     "kontist.client_secret": String(localized: "Kontist Client-Secret"),
     "enablebanking.application_id": String(localized: "Enable Banking Application-ID"),
     "enablebanking.private_key_pem": String(localized: "Enable Banking Private Key"),
@@ -725,13 +733,14 @@ extension Result where Failure == Error {
 
 /// Account kinds the user can pick (import, Konto-Einstellungen), on Mac and iPhone.
 extension AccountKind {
-    static let importChoices: [AccountKind] = [.checking, .savings, .timeDeposit, .creditCard, .paymentService, .brokerage, .cash, .loan]
+    static let importChoices: [AccountKind] = [.checking, .savings, .timeDeposit, .buildingSavings, .creditCard, .paymentService, .brokerage, .cash, .loan]
 
     var label: String {
         switch self {
         case .checking: return String(localized: "Girokonto")
         case .savings: return String(localized: "Tagesgeld / Sparen")
         case .timeDeposit: return String(localized: "Festgeld")
+        case .buildingSavings: return String(localized: "Bausparen")
         case .creditCard: return String(localized: "Kreditkarte")
         case .paymentService: return String(localized: "Zahlungsdienst")
         case .brokerage: return String(localized: "Depot")
@@ -755,6 +764,19 @@ enum LocalApiCheck: Equatable {
     /// The helper did not finish in time and was stopped.
     case noAnswer
     case failed(String)
+}
+
+/// A block of the account filter menu (#357): one group of the sidebar's
+/// current view ("Nach Gruppe", "Nach Bank" or "Nach Kontoart") with the
+/// accounts of the filter it holds, subgroups included.
+struct AccountFilterGroup: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let symbol: String
+    let accounts: [Account]
+    var accountIDs: [Int64] { accounts.map(\.id) }
+
+    static func == (a: Self, b: Self) -> Bool { a.id == b.id && a.accountIDs == b.accountIDs }
 }
 
 /// The running socket and the vault it serves (`reconcileLocalApiServer`).

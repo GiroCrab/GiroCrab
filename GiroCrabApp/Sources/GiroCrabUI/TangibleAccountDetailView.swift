@@ -26,6 +26,12 @@ struct TangibleAccountDetailView: View {
     /// The selected item, if there is one: its value and history instead of the account's.
     private var item: AssetItem? { model.selectedAssetItem(in: account.id) }
 
+    /// The list waits for the classification like the composition card above it: otherwise it first takes the
+    /// card's place and jumps down when the card appears (#1537).
+    nonisolated static func showsAssetList(classificationLoaded: Bool, hasError: Bool) -> Bool {
+        classificationLoaded || hasError
+    }
+
     var body: some View {
         AssetAccountFrame(
             searchText: $query,
@@ -49,8 +55,12 @@ struct TangibleAccountDetailView: View {
             },
             content: { wide in
                 if let message = classificationError { classificationFailure(message) }
-                TangibleAssetsList(account: account, query: query, keys: compositionFilter, classified: classified, wide: wide,
-                                   editingClassification: $editingClassification, deleting: $deleting)
+                if Self.showsAssetList(classificationLoaded: classificationLoaded, hasError: classificationError != nil) {
+                    TangibleAssetsList(account: account, query: query, keys: compositionFilter, classified: classified, wide: wide,
+                                       editingClassification: $editingClassification, deleting: $deleting)
+                } else {
+                    DelayedLoadingIndicator()
+                }
             }
         )
         .task(id: "\(account.id)-\(account.balanceCents)-\(account.balanceDate)-\(model.assetClassificationVersion)-\(model.vaultRevision)-\(reloadToken)") {

@@ -308,6 +308,23 @@ extension AppModel {
         documentsVersion += 1
     }
 
+    func resortPortalDocuments(_ id: Int64) async {
+        guard let pin = pinVault() else { return }
+        do {
+            let result = try await pin.run { try $0.resortPortalDocuments(connectionId: id) }
+            guard isCurrent(pin) else { return }
+            let message = String(localized: "\(Int(result.resorted)) Dokumente neu einsortiert · \(Int(result.linked)) Buchungen verknüpft")
+            toast = message
+            logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
+            if result.resorted > 0 || result.linked > 0 { documentsChanged() }
+        } catch {
+            guard isCurrent(pin) else { return }
+            let message = describe(error)
+            toast = message
+            logSync(connectionID: id, source: .manual, outcome: .error, message: message)
+        }
+    }
+
     private func documentsChanged() {
         documentsVersion += 1
         reloadBookings()

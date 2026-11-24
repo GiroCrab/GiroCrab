@@ -14,7 +14,7 @@ struct InspectorView: View {
     private func updateLayout(_ change: (inout InspectorLayout) -> Void) {
         var next = layout
         change(&next)
-        withAnimation(.snappy(duration: 0.2)) { layoutValue = next.persistedValue }
+        withAnimation(Motion.animation(.snappy(duration: 0.2))) { layoutValue = next.persistedValue }
     }
 
     var body: some View {
@@ -28,7 +28,7 @@ struct InspectorView: View {
             }
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 0) {
                         if model.mainColumn == .planned {
                             PlannedInspector()
                         } else if model.mainColumn == .directDebits {
@@ -41,7 +41,8 @@ struct InspectorView: View {
                                 if editingLayout {
                                     InspectorLayoutEditor(booking: booking, layout: layout, update: updateLayout)
                                 } else {
-                                    ForEach(visibleSections(for: booking)) { section in
+                                    ForEach(Array(visibleSections(for: booking).enumerated()), id: \.element.id) { index, section in
+                                        if index > 0 { Divider() }
                                         InspectorSectionCard(section: section, booking: booking) {
                                             proxy.scrollTo(InspectorSection.note.id)
                                         }
@@ -49,18 +50,19 @@ struct InspectorView: View {
                                     }
                                 }
                             } else {
-                                VStack(alignment: .leading, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 8) {
                                     Label("Keine Buchung ausgewählt", systemImage: "doc.text.magnifyingglass")
                                         .appFont(.headline)
                                     Text("Wählen Sie eine Buchung, um Beleg, Händler-Historie und Kategorie zu sehen.")
                                         .appFont(.callout).foregroundStyle(Theme.secondary)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .card()
+                                .flatSection()
                             }
                         }
                     }
-                    .padding(16)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 8)
                 }
                 .onChange(of: model.pendingNoteFocus, initial: true) { _, requestedID in
                     guard let requestedID, requestedID == model.selectedBookingID else { return }
@@ -75,14 +77,19 @@ struct InspectorView: View {
                 }
             }
         }
-        .background(Theme.canvas)
+        .background(Theme.systemBackground)
     }
 
     private func visibleSections(for booking: Booking) -> [InspectorSection] {
+        let sections: [InspectorSection]
         if revealedNoteBookingID == booking.id, layout.hidden.contains(.note) {
-            return layout.visible + [.note]
+            sections = layout.visible + [.note]
+        } else {
+            sections = layout.visible
         }
-        return layout.visible
+        // The salary card renders nothing for an outflow. Skip the section so the
+        // flat list does not show a divider with no content below it.
+        return sections.filter { $0 != .salary || booking.amountCents > 0 }
     }
 
     /// The single-booking cards are shown, so their layout can be edited.
@@ -106,13 +113,14 @@ private struct SelectedLoanCard: View {
 
 struct ReceiptCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     @State private var editing = false
     @State private var draftName = ""
     @State private var draftPurpose = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Spacer()
                 Button {
@@ -129,7 +137,7 @@ struct ReceiptCard: View {
                     TextField("Gegenpartei", text: $draftName).textFieldStyle(.roundedBorder)
                     Text("Verwendungszweck").appFont(.caption).foregroundStyle(Theme.secondary)
                     TextEditor(text: $draftPurpose)
-                        .appFont(.callout).frame(height: 90)
+                        .appFont(.callout).frame(height: 90 * textScale)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.secondary.opacity(0.3)))
                     HStack {
                         Spacer()
@@ -141,7 +149,7 @@ struct ReceiptCard: View {
                         }.keyboardShortcut(.defaultAction)
                     }
                 }
-                .padding(14).frame(width: 340)
+                .padding(14).frame(width: 340 * textScale)
             }
             HStack(spacing: 12) {
                 MerchantSignet(merchant: booking.merchant, categorySymbol: booking.categorySymbol, size: 48)
@@ -174,7 +182,8 @@ struct ReceiptCard: View {
             }
             Text(Money.signed(booking.amountCents, currency: booking.currency))
                 .sensitive(.amounts)
-                .font(.system(.largeTitle, design: .rounded, weight: .semibold).monospacedDigit())
+                // follows the text size like the rest of the card (#343, UI-Audit INS-1)
+                .appFont(.largeTitle, weight: .semibold, design: .rounded, monospacedDigit: true)
                 .foregroundStyle(Money.ink(booking.amountCents))
             HStack(spacing: 6) {
                 Image(systemName: "calendar").foregroundStyle(Theme.tertiary)
@@ -252,13 +261,14 @@ struct ReceiptCard: View {
                 .controlSize(.small)
                 .appFont(.caption)
         }
-        .card()
+        .flatSection()
     }
 }
 
 /// Free-text user note (imported from MoneyMoney or typed here).
 struct NoteCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     var scrollToNote: (() -> Void)?
     @State private var draft = ""
@@ -283,11 +293,22 @@ struct NoteCard: View {
             TextEditor(text: $draft)
                 .id(editorID)
                 .appFont(.callout)
-                .frame(minHeight: 54, maxHeight: 120)
+                .frame(minHeight: 54 * textScale, maxHeight: 120 * textScale)
                 .sensitive()
                 .scrollContentBackground(.hidden)
+                .background(Theme.systemSurface)
+                // an empty editor read as a blank box; the label ties it to the heading for VoiceOver (UI-Audit INS-10)
+                .overlay(alignment: .topLeading) {
+                    if draft.isEmpty && !focused {
+                        Text("Notiz hinzufügen …")
+                            .appFont(.callout).foregroundStyle(Theme.tertiary)
+                            .padding(.leading, 5).padding(.top, 1)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .accessibilityLabel(Text("Notiz"))
                 .focused($focused)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border))
                 .onChange(of: focused) { _, f in if !f { save() } }
                 // Esc: leave the note (saves via focus loss) and go back to the list
                 .onKeyPress(.escape) {
@@ -296,7 +317,7 @@ struct NoteCard: View {
                     return .handled
                 }
         }
-        .card()
+        .flatSection()
         .onAppear { start(booking); claimFocus() }
         .onDisappear { save() }
         .onChange(of: draft) { if focused { typed = true } }
@@ -453,7 +474,7 @@ struct SalaryCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .flatSection()
     }
 
     private var hint: LocalizedStringKey {
@@ -490,7 +511,7 @@ struct MerchantHistoryCard: View {
     let booking: Booking
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             // The heading opens the list of this merchant's bookings (#495).
             Button { model.focusMerchant(of: booking) } label: {
                 HStack(spacing: 4) {
@@ -526,7 +547,7 @@ struct MerchantHistoryCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .flatSection()
     }
 
     private func statsRow(label: LocalizedStringKey?, accountName: String? = nil, _ s: MerchantStats) -> some View {
@@ -572,6 +593,8 @@ struct MerchantHistoryCard: View {
 /// "Regel für diesen Händler erstellen …".
 struct CategoryGridCard: View {
     @Environment(AppModel.self) private var model
+    /// Column minimums grow with the text, or larger text gets more, narrower tiles (UI-Audit INS-2).
+    @Environment(\.textScale) private var textScale
     let booking: Booking
     /// Opened categories from the top level down; nil = the booking's branch.
     @State private var openPath: [Int64]?
@@ -601,7 +624,7 @@ struct CategoryGridCard: View {
 
     var body: some View {
         let path = openPath ?? currentPath
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Kategorie").appFont(.subheadline, weight: .semibold)
                 Spacer()
@@ -612,7 +635,7 @@ struct CategoryGridCard: View {
                let category = model.categories.first(where: { $0.id == s.categoryId }) {
                 CategorySuggestionBox(booking: booking, suggestion: s, category: category)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], spacing: 6) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104 * textScale), spacing: 6)], spacing: 6) {
                 ForEach(model.categoryTree) { node in
                     CategoryChip(category: node.category, selected: node.id == path.first) {
                         pick(node, level: 0, in: path)
@@ -623,7 +646,7 @@ struct CategoryGridCard: View {
                 if let kids = model.categoryTree.node(id)?.children {
                     let selected = level + 1 < path.count ? path[level + 1] : booking.categoryId
                     Divider()
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], spacing: 6) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150 * textScale), spacing: 6)], spacing: 6) {
                         ForEach(kids) { kid in
                             CategoryChip(category: kid.category, selected: kid.id == selected, filled: true) {
                                 pick(kid, level: level + 1, in: path)
@@ -648,7 +671,7 @@ struct CategoryGridCard: View {
             Text("In der Liste: C kategorisieren · R Regel erstellen")
                 .appFont(.caption2).foregroundStyle(Theme.tertiary)
         }
-        .card()
+        .flatSection()
         .onChange(of: booking.id) { _, _ in openPath = nil }
     }
 }
@@ -821,7 +844,7 @@ struct RawDataCard: View {
                 .padding(.top, 8)
             }
         }
-        .card()
+        .flatSection()
     }
 
     /// `hides`: what the bug report screenshot covers (#301); raw data is personal.
@@ -847,7 +870,7 @@ struct MultiSelectionCard: View {
         let expense = many.filter { $0.amountCents < 0 }.reduce(Int64(0)) { $0 + $1.amountCents }
         let currencies = Array(Set(many.map(Self.code))).sorted()
         let currency = currencies.first ?? "EUR"
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Label("\(many.count) Buchungen ausgewählt", systemImage: "checkmark.circle")
                 .appFont(.headline)
             VStack(alignment: .leading, spacing: 4) {
@@ -891,6 +914,6 @@ struct MultiSelectionCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
+        .flatSection()
     }
 }

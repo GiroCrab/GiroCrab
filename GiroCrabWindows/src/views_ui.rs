@@ -62,6 +62,8 @@ struct Ui {
     side_model: Option<Rc<VecModel<SideRow>>>,
     /// Drops the result of a superseded load.
     generation: u64,
+    /// Incremented on lock so in-flight worker callbacks do not repopulate a locked session.
+    lock_generation: u64,
     depot: Option<DepotData>,
     wealth: Option<WealthData>,
     series: Vec<RecurringSeries>,
@@ -69,11 +71,32 @@ struct Ui {
     docs: Vec<DocumentInfo>,
     /// Document ids by table row of the Belege view.
     doc_rows: Vec<i64>,
+    /// Unread document ids of the shown Belege list ("Alle als gelesen markieren").
+    doc_unread: Vec<i64>,
     selected_doc: Option<i64>,
     link_ids: Vec<i64>,
     rules: Vec<Rule>,
     rule_categories: Vec<Category>,
     rule_gate: DeleteGate,
+}
+
+impl Ui {
+    /// The shown table was emptied: "Alle als gelesen markieren" only ever takes ids of the
+    /// displayed list. The selection stays, so "Nur ungelesene" keeps the open document after
+    /// the reload that follows "Als gelesen markieren".
+    fn forget_shown_list(&mut self) {
+        self.doc_unread.clear();
+    }
+
+    fn reset_for_lock(&mut self) {
+        let model = self.side_model.take();
+        let generation = self.generation.wrapping_add(1);
+        let lock_generation = self.lock_generation.wrapping_add(1);
+        *self = Self::default();
+        self.side_model = model;
+        self.generation = generation;
+        self.lock_generation = lock_generation;
+    }
 }
 
 thread_local! {
@@ -270,6 +293,8 @@ pub fn select_target(win: &MainWindow, vault: &Arc<Vault>, target: Target) {
     });
     win.set_table_selected(-1);
     with_ui(|u| u.selected_doc = None);
+    // Navigation changes the scope: a position history of the old one must not stay open.
+    crate::position_history_ui::close(win);
     apply_view(win, vault);
 }
 
@@ -286,8 +311,14 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
         return;
     }
     clear_table(win, "Wird geladen …");
+    // The old positions are gone: no history action until the new table is ready. The open
+    // dialog stays, so a refresh of the same depot can reload it (`prepare(Some(..))`).
+    crate::position_history_ui::loading(win);
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
     let generation = with_ui(|u| {
+        // A tab or period change while loading must not re-render the previous depot
+        // (and put its CSV back into the export cache).
+        u.depot = None;
         u.generation += 1;
         u.generation
     });
@@ -307,10 +338,13 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
                         Loaded::Mandates(m) => u.mandates = m,
                         Loaded::Documents(d) => u.docs = d,
                     });
+                    crate::position_history_ui::ready();
                     render_view(&win);
                 }
                 Err(e) => {
                     clear_table(&win, "");
+                    crate::position_history_ui::ready();
+                    crate::position_history_ui::close(&win);
                     win.set_view_status(e.into());
                 }
             }
@@ -408,6 +442,7 @@ fn to_table(rows: Vec<Cells>) -> Vec<TableRow> {
             c3: r.cells[3].clone().into(),
             c4: r.cells[4].clone().into(),
             negative: r.negative,
+            unread: r.unread,
         })
         .collect()
 }
@@ -427,6 +462,11 @@ fn clear_table(win: &MainWindow, empty: &str) {
     win.set_kpis(ModelRc::new(VecModel::from(Vec::<KpiTile>::new())));
     win.set_shares(ModelRc::new(VecModel::from(Vec::<ShareBar>::new())));
     win.set_view_note(SharedString::new());
+    // The next render_view restores both from the list it shows.
+    with_ui(Ui::forget_shown_list);
+    // Load start, failed load and vault lock all pass here: no CSV of an earlier depot survives.
+    crate::depot_export_ui::forget();
+    win.set_doc_unread_any(false);
 }
 
 fn set_shares(win: &MainWindow, shares: &[portfolio::Share]) {
@@ -447,6 +487,9 @@ fn set_shares(win: &MainWindow, shares: &[portfolio::Share]) {
 pub fn render_view(win: &MainWindow) {
     let privacy = privacy_on(win);
     let mode = win.get_view_mode();
+    if mode != MODE_DEPOT {
+        crate::position_history_ui::prepare(win, None, german_date, privacy_on);
+    }
     let eur = move |c: i64| eur_text(c, "EUR", privacy);
     let date = |d: &str| german_date(d);
     win.set_period_labels(ModelRc::new(VecModel::from(
@@ -463,9 +506,20 @@ pub fn render_view(win: &MainWindow) {
             let cur = data.account.currency.clone();
             let cur_money = move |c: i64| eur_text(c, &cur, privacy);
             let period = Period::from_index(win.get_period_index());
-            let view =
-                portfolio::depot_view(&data, period, &portfolio::today_iso(), &cur_money, &date);
+            let today = portfolio::today_iso();
+            let view = portfolio::depot_view(&data, period, &today, &cur_money, &date);
             let tab = DepotTab::from_index(win.get_depot_tab());
+            // Unmasked rows of the active tab for "Als CSV exportieren …" (same order and period).
+            crate::depot_export_ui::remember(
+                portfolio::depot_csv(
+                    &data,
+                    tab,
+                    Period::from_index(win.get_period_index()),
+                    &today,
+                    &date,
+                ),
+                portfolio::depot_csv_file_name(tab, &today),
+            );
             win.set_view_title(mask(&view.title, privacy).into());
             win.set_view_total(view.total.clone().into());
             win.set_view_note(view.note.clone().into());
@@ -484,10 +538,12 @@ pub fn render_view(win: &MainWindow) {
                 DepotTab::Positions => {
                     set_columns(win, &portfolio::POSITION_COLUMNS);
                     set_rows(win, view.positions, "Keine Positionen");
+                    crate::position_history_ui::prepare(win, Some(&data), german_date, privacy_on);
                 }
                 DepotTab::Activities => {
                     set_columns(win, &portfolio::ACTIVITY_COLUMNS);
                     set_rows(win, view.activities, "Keine Aktivitäten im Zeitraum");
+                    crate::position_history_ui::prepare(win, None, german_date, privacy_on);
                 }
             }
             with_ui(|u| u.depot = Some(data));
@@ -543,7 +599,7 @@ pub fn render_view(win: &MainWindow) {
         }
         MODE_DOCUMENTS => {
             win.set_view_title("Belege & Postbox".into());
-            let (mut rows, accounts) = with_ui(|u| {
+            let (rows, accounts) = with_ui(|u| {
                 (
                     lists::document_rows(&u.docs, &date),
                     u.accounts
@@ -553,6 +609,13 @@ pub fn render_view(win: &MainWindow) {
                         .collect::<Vec<_>>(),
                 )
             });
+            let keep = with_ui(|u| u.selected_doc);
+            let rows = lists::unread_only(rows, win.get_docs_unseen_only(), keep);
+            let unread = lists::unread_ids(&rows);
+            win.set_doc_unread_any(!unread.is_empty());
+            win.set_doc_seen(!keep.is_some_and(|id| unread.contains(&id)));
+            with_ui(|u| u.doc_unread = unread);
+            let mut rows = rows;
             for r in &mut rows {
                 r.mask(&[0, 3], privacy);
             }
@@ -672,13 +735,12 @@ pub fn rerender(win: &MainWindow) {
 pub fn on_lock(win: &MainWindow) {
     clear_opened_documents();
     with_ui(|u| {
-        let model = u.side_model.take();
-        *u = Ui::default();
-        u.side_model = model;
+        u.reset_for_lock();
         if let Some(m) = &u.side_model {
             sync_model(m, Vec::new());
         }
     });
+    win.set_busy(false);
     win.set_view_mode(MODE_BOOKINGS);
     win.set_side_selected("all".into());
     win.set_side_query(SharedString::new());
@@ -744,16 +806,34 @@ fn reload_docs(win: &MainWindow, vault: &Arc<Vault>, status: String) {
     win.set_view_status(status.into());
 }
 
+/// The vault part of "Als gelesen markieren" / "Alle als gelesen markieren": one UPDATE per id,
+/// so it runs on a worker thread (`run_doc_job`). An empty message keeps the status line clear.
+fn mark_seen_job(vault: &Vault, ids: Vec<i64>, seen: bool) -> Result<String, String> {
+    vault
+        .mark_documents_seen(ids, seen)
+        .map(|_| String::new())
+        .map_err(|e| e.to_string())
+}
+
+/// Marks documents read or unread on a worker thread; the list reloads afterwards.
+fn mark_seen(win: &MainWindow, vault: &Arc<Vault>, ids: Vec<i64>, seen: bool) {
+    run_doc_job(win, vault, move |vault| mark_seen_job(vault, ids, seen));
+}
+
 fn run_doc_job(
     win: &MainWindow,
     vault: &Arc<Vault>,
     job: impl FnOnce(&Vault) -> Result<String, String> + Send + 'static,
 ) {
+    let lock_generation = with_ui(|u| u.lock_generation);
     win.set_busy(true);
     let (weak, v) = (win.as_weak(), vault.clone());
     std::thread::spawn(move || {
         let result = job(&v);
         let _ = weak.upgrade_in_event_loop(move |win| {
+            if with_ui(|u| u.lock_generation) != lock_generation {
+                return;
+            }
             win.set_busy(false);
             match result {
                 Ok(msg) => reload_docs(&win, &v, msg),
@@ -770,8 +850,17 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         let _ = &slot2;
         let doc = with_ui(|u| u.doc_rows.get(i as usize).copied());
         with_ui(|u| u.selected_doc = doc);
+        if win.get_view_mode() == MODE_DOCUMENTS && win.get_docs_unseen_only() {
+            // "Nur ungelesene" keeps the open document: rebuild the rows for the new selection,
+            // so a read document kept for the previous one disappears.
+            render_view(&win);
+            return;
+        }
         win.set_table_selected(if doc.is_some() { i } else { -1 });
         set_doc_flags(&win);
+        win.set_doc_seen(!with_ui(|u| {
+            u.selected_doc.is_some_and(|id| u.doc_unread.contains(&id))
+        }));
     });
 
     let (weak, slot2) = (win.as_weak(), slot.clone());
@@ -871,6 +960,35 @@ fn wire_documents(win: &MainWindow, slot: &VaultSlot) {
         });
     });
 
+    let weak = win.as_weak();
+    win.on_docs_filter_changed(move || {
+        if let Some(win) = weak.upgrade() {
+            render_view(&win);
+        }
+    });
+
+    let (weak, slot2) = (win.as_weak(), slot.clone());
+    win.on_doc_mark_seen(move |seen| {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+            return;
+        };
+        let Some(id) = with_ui(|u| u.selected_doc) else {
+            return;
+        };
+        mark_seen(&win, &v, vec![id], seen);
+    });
+
+    let (weak, slot2) = (win.as_weak(), slot.clone());
+    win.on_doc_mark_all_seen(move || {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&slot2)) else {
+            return;
+        };
+        let ids = with_ui(|u| u.doc_unread.clone());
+        if !ids.is_empty() {
+            mark_seen(&win, &v, ids, true);
+        }
+    });
+
     let (weak, slot2) = (win.as_weak(), slot.clone());
     win.on_doc_link_open(move || {
         let Some(win) = weak.upgrade() else { return };
@@ -941,6 +1059,7 @@ fn search_bookings(win: &MainWindow, vault: &Arc<Vault>, query: String) {
                             String::new(),
                         ],
                         negative: b.amount_cents < 0,
+                        unread: false,
                     })
                     .collect();
                 with_ui(|u| u.link_ids = rows.iter().map(|r| r.id).collect());
@@ -1236,6 +1355,7 @@ fn wire_rules(win: &MainWindow, slot: &VaultSlot) {
 // ------------------------------------------------------------------------------ wiring
 
 pub fn wire(win: &MainWindow, vault: VaultSlot) {
+    crate::position_history_ui::install(vault.clone());
     let model = Rc::new(VecModel::<SideRow>::default());
     win.set_side_rows(ModelRc::from(model.clone()));
     with_ui(|u| u.side_model = Some(model));
@@ -1388,6 +1508,36 @@ mod tests {
     }
 
     #[test]
+    fn emptied_table_drops_mark_all_ids_but_keeps_the_selection() {
+        let mut u = Ui {
+            doc_unread: vec![4, 6],
+            selected_doc: Some(6),
+            ..Ui::default()
+        };
+        u.forget_shown_list();
+        assert!(u.doc_unread.is_empty());
+        assert_eq!(u.selected_doc, Some(6));
+    }
+
+    #[test]
+    fn mark_seen_job_writes_the_read_status_without_a_status_text() {
+        let (vault, path) = demo_vault();
+        let ids: Vec<i64> = vault
+            .list_all_documents(DocumentFilter::default())
+            .unwrap()
+            .iter()
+            .map(|d| d.id)
+            .collect();
+        // Mark all, then back to unread, then again: every round trip succeeds quietly.
+        assert_eq!(mark_seen_job(&vault, ids.clone(), true), Ok(String::new()));
+        assert_eq!(mark_seen_job(&vault, ids.clone(), false), Ok(String::new()));
+        assert_eq!(mark_seen_job(&vault, ids, true), Ok(String::new()));
+        // An id that no longer exists (deleted meanwhile) changes nothing and is no error.
+        assert_eq!(mark_seen_job(&vault, vec![-1], true), Ok(String::new()));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn rules_round_trip_through_the_vault() {
         let (vault, path) = demo_vault();
         let cats = vault.list_categories(None, None).unwrap();
@@ -1411,5 +1561,23 @@ mod tests {
         vault.delete_rule(id).unwrap();
         assert!(vault.list_rules().unwrap().iter().all(|r| r.id != id));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reset_for_lock_advances_generations_and_clears_cached_documents() {
+        let mut u = Ui {
+            generation: 4,
+            lock_generation: 7,
+            doc_rows: vec![11, 12],
+            doc_unread: vec![12],
+            selected_doc: Some(11),
+            ..Ui::default()
+        };
+        u.reset_for_lock();
+        assert_eq!(u.generation, 5);
+        assert_eq!(u.lock_generation, 8);
+        assert!(u.doc_rows.is_empty());
+        assert!(u.doc_unread.is_empty());
+        assert_eq!(u.selected_doc, None);
     }
 }

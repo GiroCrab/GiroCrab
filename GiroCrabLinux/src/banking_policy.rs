@@ -393,7 +393,9 @@ pub fn display_name(id: &str) -> String {
         "ibkr" => "Interactive Brokers",
         "equateplus" => "EquatePlus",
         "quirion" => "quirion",
+        "sharinbox" => "Sharinbox",
         "uberspace" => "Uberspace",
+        "bitcoincore" => "Bitcoin Core",
         "schwaebischhall" => "Schwäbisch Hall",
         "fin4u" => "Alte Leipziger",
         "ffb" => "FFB",
@@ -402,6 +404,7 @@ pub fn display_name(id: &str) -> String {
         "hanseatic" => "Hanseatic Bank",
         "bhw" => "BHW Bausparkasse",
         "kontist" => "Kontist",
+        "monefit" => "Monefit SmartSaver",
         other => other,
     };
     match tail {

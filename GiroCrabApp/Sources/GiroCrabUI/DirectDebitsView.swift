@@ -90,28 +90,36 @@ struct DirectDebitsView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Picker("Gläubigerkonto", selection: Binding(
-                    get: { model.effectiveMandateAccount?.id },
-                    set: { model.mandateAccountID = $0; model.mandateError = nil; model.mandateNote = nil })) {
-                    ForEach(model.debitAccounts) { a in
-                        Label(a.name, systemImage: a.sfSymbol).tag(Int64?.some(a.id))
+            // One row when it fits; a narrow column (iPhone, half an iPad or an unfolded
+            // iPhone Duo next to the detail column) stacks the account and the actions.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    accountPicker
+                    Spacer(minLength: 0)
+                    importButton
+                    exportButton
+                    addButton
+                    collectButton
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    accountPicker
+                    HStack(spacing: 12) {
+                        importButton
+                        exportButton
+                        Spacer(minLength: 0)
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            addButton
+                            Spacer(minLength: 0)
+                            collectButton
+                        }
+                        VStack(alignment: .leading, spacing: 10) {
+                            addButton
+                            collectButton
+                        }
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .sensitive(.labels)
-                .frame(minWidth: 150, maxWidth: 260)
-                Spacer(minLength: 0)
-                Button("Importieren …", systemImage: "square.and.arrow.down") { showImporter = true }
-                    .help("CSV-Mitgliederliste oder SEPA-Lastschriftdatei (pain.008)")
-                Button("Exportieren …", systemImage: "square.and.arrow.up") { model.exportMandates() }
-                    .disabled(model.mandates.isEmpty)
-                Button("Mandat hinzufügen", systemImage: "plus") { model.newMandate() }
-                Button("Einzug vorbereiten …", systemImage: "arrow.down.doc") { model.openCollection() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.mandates.contains(where: \.active) || model.creditorID.isEmpty)
-                    .help(model.creditorID.isEmpty ? "Zuerst die Gläubiger-ID eintragen." : "")
             }
             HStack(spacing: 8) {
                 Text("Gläubiger-ID").appFont(.callout).foregroundStyle(Theme.secondary)
@@ -133,6 +141,41 @@ struct DirectDebitsView: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    private var accountPicker: some View {
+        Picker("Gläubigerkonto", selection: Binding(
+            get: { model.effectiveMandateAccount?.id },
+            set: { model.mandateAccountID = $0; model.mandateError = nil; model.mandateNote = nil })) {
+            ForEach(model.debitAccounts) { a in
+                Label(a.name, systemImage: a.sfSymbol).tag(Int64?.some(a.id))
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .sensitive(.labels)
+        .frame(minWidth: 150, maxWidth: 260)
+    }
+
+    private var importButton: some View {
+        Button("Importieren …", systemImage: "square.and.arrow.down") { showImporter = true }
+            .help("CSV-Mitgliederliste oder SEPA-Lastschriftdatei (pain.008)")
+    }
+
+    private var exportButton: some View {
+        Button("Exportieren …", systemImage: "square.and.arrow.up") { model.exportMandates() }
+            .disabled(model.mandates.isEmpty)
+    }
+
+    private var addButton: some View {
+        Button("Mandat hinzufügen", systemImage: "plus") { model.newMandate() }
+    }
+
+    private var collectButton: some View {
+        Button("Einzug vorbereiten …", systemImage: "arrow.down.doc") { model.openCollection() }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.mandates.contains(where: \.active) || model.creditorID.isEmpty)
+            .help(model.creditorID.isEmpty ? "Zuerst die Gläubiger-ID eintragen." : "")
     }
 
     // MARK: list
@@ -182,7 +225,7 @@ struct DirectDebitsView: View {
             .padding(.vertical, 10)
             Rectangle().fill(Theme.border).frame(height: 1)
         }
-        .modifier(DayCardSegment(isTop: true, isBottom: false))
+        .modifier(DayCardSegment())
     }
 }
 
@@ -261,7 +304,12 @@ private struct MandateRow: View {
             .opacity(m.active ? 1 : 0.65)
             .background(model.selectedMandateID == m.id ? Theme.selection : Color.clear)
             .contentShape(Rectangle())
-            .onTapGesture { model.selectedMandateID = m.id }
+            .onTapGesture {
+                model.selectedMandateID = m.id
+                #if os(iOS)
+                model.showBookingSheet = true
+                #endif
+            }
             .simultaneousGesture(TapGesture(count: 2).onEnded { model.editMandate(m) })
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(model.selectedMandateID == m.id ? [.isButton, .isSelected] : .isButton)
@@ -277,6 +325,6 @@ private struct MandateRow: View {
                 Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1).padding(.leading, 64)
             }
         }
-        .modifier(DayCardSegment(isTop: false, isBottom: isLast))
+        .modifier(DayCardSegment())
     }
 }

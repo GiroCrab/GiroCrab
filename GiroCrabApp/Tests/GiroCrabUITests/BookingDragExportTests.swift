@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 import GiroCrabCore
 @testable import GiroCrabUI
 
@@ -91,12 +92,27 @@ final class BookingDragExportTests: XCTestCase {
     }
 
     #if os(macOS)
-    func testDragItemKeepsTheSidebarPayload() throws {
+    func testDragProviderServesTheSidebarAndExternalApps() async throws {
         let bookings = Array(model.bookings.prefix(3))
-        let item = BookingDragItem(bookings: bookings, accounts: model.accountsByID)
-        XCTAssertEqual(BookingDrag.ids(BookingDrag.payload(item.ids)), bookings.map(\.id))
-        XCTAssertEqual(item.export.transactions.map(\.id), bookings.map(\.id))
-        XCTAssertNil(item.documents, "no reader given")
+        let ids = bookings.map(\.id)
+        let provider = BookingDragItem(bookings: bookings, accounts: model.accountsByID).itemProvider()
+        XCTAssertTrue(provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier))
+
+        let payload: String = try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadObject(ofClass: NSString.self) { object, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: object as? String ?? "") }
+            }
+        }
+        XCTAssertEqual(BookingDrag.ids(payload), ids)
+
+        let json: Data = try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.girocrabTransactions.identifier) { data, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: data ?? Data()) }
+            }
+        }
+        XCTAssertEqual(try BookingDragExport.decode(json).transactions.map(\.id), ids)
     }
     #endif
 }

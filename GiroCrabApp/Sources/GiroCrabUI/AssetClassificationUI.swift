@@ -56,15 +56,28 @@ extension AssetClassification {
 /// its line in `WealthClassRow.group(by:)`; chart, legend filter and cards follow from that.
 enum WealthGrouping: String, CaseIterable, Identifiable {
     case account, assetClass, instrument
+    /// Cash only (#1631): Girokonto, Tagesgeld, Festgeld … each with its subtotal.
+    case accountKind
+    /// "Alles" only (#1632): how fast and without loss the money is at hand.
+    case liquidity
     var id: String { rawValue }
 
-    /// The wrapper (ETF, single security, fund) only tells securities apart.
+    /// The wrapper (ETF, single security, fund) only tells securities apart; the account kind only
+    /// tells cash apart (every cash account has the class "Liquidität & Geldmarkt").
     static func available(in scope: WealthScope) -> [Self] {
-        scope == .securities ? [.account, .assetClass, .instrument] : [.account, .assetClass]
+        switch scope {
+        case .securities: [.account, .assetClass, .instrument]
+        case .cash: [.account, .accountKind]
+        case .all: [.account, .assetClass, .liquidity]
+        case .tangibles: [.account, .assetClass]
+        }
     }
-    /// The stored choice, or the class view where the stored one is not offered.
+    /// The stored choice, or the class view where the stored one is not offered. The account kind
+    /// and the liquidity fall back to the account view: they are no classification, the class view would surprise.
     func effective(in scope: WealthScope) -> Self {
-        Self.available(in: scope).contains(self) ? self : .assetClass
+        let available = Self.available(in: scope)
+        if available.contains(self) { return self }
+        return self == .accountKind || self == .liquidity || !available.contains(.assetClass) ? .account : .assetClass
     }
     /// Inside one account type the "account" grouping lists the single positions, so it says so.
     func title(in scope: WealthScope) -> LocalizedStringKey {
@@ -72,6 +85,8 @@ enum WealthGrouping: String, CaseIterable, Identifiable {
         case .account: scope == .securities || scope == .tangibles ? "Nach Position" : "Nach Konto"
         case .assetClass: "Nach Anlageklasse"
         case .instrument: "Nach Instrument"
+        case .accountKind: "Nach Kontoart"
+        case .liquidity: "Nach Liquidität"
         }
     }
 }
@@ -118,6 +133,43 @@ struct WealthGroup: Hashable {
     }
     static func of(_ kind: InstrumentKind) -> WealthGroup {
         WealthGroup(key: kind.key, title: kind.title, order: InstrumentKind.choices.firstIndex(of: kind) ?? 0, unclassified: kind == .unclassified)
+    }
+}
+
+/// How fast and without loss a value turns into money (#1632), derived from what GiroCrab already knows:
+/// the account kind, the asset class and whether a position is held directly. THE single mapping point:
+/// the wealth view groups "Alles" by it, and grade 1 is what the header's "Verfügbar" adds up
+/// (`AppModel.liquidAccounts`, which also counts card debts).
+enum LiquidityGrade: Int, CaseIterable {
+    case immediate, shortTerm, longTerm, illiquid
+
+    var title: String { switch self {
+    case .immediate: String(localized: "Sofort verfügbar")
+    case .shortTerm: String(localized: "Kurzfristig verfügbar")
+    case .longTerm: String(localized: "Langfristig gebunden")
+    case .illiquid: String(localized: "Illiquide")
+    } }
+    var group: WealthGroup { WealthGroup(key: "liquidity:\(rawValue)", title: title, order: rawValue, unclassified: false) }
+
+    /// The grade of an account's money; nil where its positions decide (depot) or it is a debt (loan).
+    /// A Sparbuch with notice period cannot be told from Tagesgeld and counts as at hand. A loan's
+    /// rare credit (overpaid) is shown like card credit: as cash, so at hand.
+    static func of(_ kind: AccountKind) -> Self? {
+        switch kind {
+        case .checking, .savings, .paymentService, .creditCard, .cash: .immediate
+        // without a maturity (#810) every Festgeld counts as short-term
+        case .timeDeposit: .shortTerm
+        case .buildingSavings: .longTerm
+        case .brokerage, .loan: nil
+        }
+    }
+    /// One position. Securities sell within days (with price risk), money-market funds are cash;
+    /// Sachwerte and directly held property take a long sale. Crypto sells within days wherever it
+    /// is kept (depot, wallet, a Sachwert classified as crypto).
+    static func of(_ c: AssetClassification, tangible: Bool) -> Self {
+        if c.assetClass == .crypto { return .shortTerm }
+        if tangible || c.isTangible || c.instrument == .directHolding { return .illiquid }
+        return c.assetClass == .cash ? .immediate : .shortTerm
     }
 }
 
@@ -275,10 +327,22 @@ struct WealthClassRow: Identifiable {
     let classification: AssetClassification
     var quantity: Double? = nil
     var identifier = ""
+    /// Cash and card rows: the account's kind, which decides their liquidity grade.
+    var kind: AccountKind? = nil
+    var liquidity: LiquidityGrade {
+        kind.flatMap(LiquidityGrade.of) ?? .of(classification, tangible: scope == .tangibles)
+    }
     /// Under an instrument heading the class is the missing half, and the other way round.
+    /// Under a liquidity grade the kind or class says why the row is there.
     func subtitle(by grouping: WealthGrouping) -> String {
-        guard grouping == .instrument else { return subtitle }
-        return subtitle(last: classification.assetClass == .unclassified ? nil : classification.assetClass.title)
+        switch grouping {
+        case .instrument:
+            return subtitle(last: classification.assetClass == .unclassified ? nil : classification.assetClass.title)
+        case .liquidity:
+            return subtitle(last: kind?.label ?? (classification.assetClass == .unclassified ? classification.instrumentTitle : classification.assetClass.title))
+        case .account, .assetClass, .accountKind:
+            return subtitle
+        }
     }
     var subtitle: String { subtitle(last: classification.instrumentTitle) }
     private func subtitle(last: String?) -> String {
@@ -288,14 +352,18 @@ struct WealthClassRow: Identifiable {
             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
     func group(by grouping: WealthGrouping) -> WealthGroup {
-        grouping == .instrument ? .of(classification.instrument) : .of(classification.assetClass)
+        switch grouping {
+        case .instrument: .of(classification.instrument)
+        case .liquidity: liquidity.group
+        case .account, .assetClass, .accountKind: .of(classification.assetClass)
+        }
     }
     static func make(_ s: WealthSummary, assets: [Int64: [ClassifiedAsset]]) -> [Self] {
         func c(_ asset: AssetClass, source: ClassificationSource = .rule) -> AssetClassification {
             AssetClassification(securityKey: nil, assetClass: asset, assetClassSource: source, instrument: .unclassified, instrumentSource: .unknown)
         }
-        var rows = s.cash.map { Self(id: "cash:\($0.id)", name: $0.name, accountName: $0.bankName, cents: $0.balanceCents, scope: .cash, classification: c(.cash)) }
-        rows += s.liabilities.filter { $0.balanceCents > 0 }.map { Self(id: "credit:\($0.id)", name: $0.name, accountName: $0.bankName, cents: $0.balanceCents, scope: .cash, classification: c(.cash)) }
+        var rows = s.cash.map { Self(id: "cash:\($0.id)", name: $0.name, accountName: $0.bankName, cents: $0.balanceCents, scope: .cash, classification: c(.cash), kind: $0.kind) }
+        rows += s.liabilities.filter { $0.balanceCents > 0 }.map { Self(id: "credit:\($0.id)", name: $0.name, accountName: $0.bankName, cents: $0.balanceCents, scope: .cash, classification: c(.cash), kind: $0.kind) }
         for (accounts, scope) in [(s.depots, WealthScope.securities), (s.tangibles, WealthScope.tangibles)] {
             for account in accounts {
                 let items = assets[account.id] ?? []

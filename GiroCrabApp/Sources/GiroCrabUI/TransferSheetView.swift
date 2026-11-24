@@ -160,6 +160,9 @@ struct TransferSheetView: View {
                 ClipboardPaymentBanner(offer: offer, apply: { acceptClipboard($0) }, ignore: { clipboardOffer = nil })
                     .padding(.horizontal, 20).padding(.bottom, 10)
             }
+            if step == .form && model.transferDraft.fromLink {
+                linkWarning.padding(.horizontal, 20).padding(.bottom, 10)
+            }
             Divider()
             switch step {
             case .form:
@@ -296,6 +299,25 @@ struct TransferSheetView: View {
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
+    }
+
+    /// The form was filled from a `girocrab://transfer` link (`PaymentLink`): another app or a
+    /// web page chose recipient and IBAN, so the user checks them before anything is sent.
+    private var linkWarning: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Aus einem Link übernommen").appFont(.callout, weight: .semibold)
+                Text("Empfänger, IBAN und Betrag stammen aus einer anderen App oder Webseite. Bitte mit der Rechnung vergleichen, bevor Sie die Überweisung freigeben.")
+                    .appFont(.caption)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.shield").foregroundStyle(Theme.warning)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Theme.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: form
@@ -924,7 +946,7 @@ struct RecipientIBANLine: View {
     }
 }
 
-private extension View {
+extension View {
     /// A text field of the transfer form. macOS: bezeled, so an empty field
     /// reads as a field (#881); iOS keeps the inline trailing style.
     func transferField(alignment: TextAlignment = .leading) -> some View {
