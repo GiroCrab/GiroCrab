@@ -670,6 +670,15 @@ impl BankConnector for FinTsConnector {
                     }
                     Err(e) => errors.push(trf("{0}: Depotbestand (HKWPD) – {1}", &[&label, &e])),
                 }
+            } else if upd
+                .as_ref()
+                .is_some_and(|u| kind_from_code(u.kind_code) == AccountKind::Brokerage)
+            {
+                // a depot by its Kontoart: its value stays as it was, and the user is told (#1743)
+                errors.push(trf(
+                    "{0}: Depotbestand (HKWPD) – von der Bank nicht angeboten",
+                    &[&label],
+                ));
             }
 
             // --- Statements: camt (HKCAZ) first, MT940 (HKKAZ) as fallback. Loans are

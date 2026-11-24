@@ -804,6 +804,13 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Depotbestand (HKWPD) – Wert einzelner Positionen fehlt" => {
             "{0}: holdings (HKWPD) – value of some positions missing"
         }
+        "{0}: Depotbestand (HKWPD) – von der Bank nicht angeboten" => {
+            "{0}: holdings (HKWPD) – not offered by the bank"
+        }
+        "Die Bank hat keinen Depotbestand geliefert." => "The bank did not deliver any holdings.",
+        "Die Bank hat keinen Depotbestand geliefert ({0})." => {
+            "The bank did not deliver any holdings ({0})."
+        }
         "{0}: Umsätze (HKCAZ/camt.052) – {1}" => "{0}: transactions (HKCAZ/camt.052) – {1}",
         "{0}: Umsätze (HKKAZ/MT940) – {1}" => "{0}: transactions (HKKAZ/MT940) – {1}",
         "{0}: Kartenumsätze ({1}) – {2}" => "{0}: card transactions ({1}) – {2}",
