@@ -2120,6 +2120,7 @@ mod body_limit;
 mod content_id;
 mod direct_debit;
 mod document_matching;
+mod fetch_prompt;
 mod history;
 mod import_takeover;
 mod payment_method;

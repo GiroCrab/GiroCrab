@@ -71,6 +71,7 @@ struct Stored {
     mandate_id: String,
     creditor_id: String,
     item_refs: String,
+    booking_text: String,
 }
 
 impl Stored {
@@ -82,7 +83,7 @@ impl Stored {
         Ok(tx
             .prepare_cached(
                 "SELECT id, deleted_ms IS NOT NULL, counterparty, purpose, purpose_code, gvc,
-                        end_to_end_id, mandate_id, creditor_id, item_refs
+                        end_to_end_id, mandate_id, creditor_id, item_refs, booking_text
                    FROM transactions WHERE account_id = ?1 AND external_id = ?2",
             )?
             .query_row(params![account_id, external_id], |r| {
@@ -97,6 +98,7 @@ impl Stored {
                     mandate_id: r.get(7)?,
                     creditor_id: r.get(8)?,
                     item_refs: r.get(9)?,
+                    booking_text: r.get(10)?,
                 })
             })
             .optional()?)
@@ -131,6 +133,8 @@ fn refresh_existing(
     // a counterparty the bank (or a newer version) names now fills an empty one,
     // e.g. the merchant of a comdirect card payment (#1135)
     let [named] = fill([&s.counterparty], [&t.counterparty]);
+    // likewise a booking text, e.g. the booking key of a Hanseatic interest booking
+    let [text] = fill([&s.booking_text], [&t.booking_text]);
     let set = [
         heal(&s.counterparty, &t.counterparty).or(named),
         heal(&s.purpose, &t.purpose),
@@ -140,8 +144,9 @@ fn refresh_existing(
         mandate,
         creditor,
         items,
+        text,
     ];
-    if set == [None; 8] {
+    if set == [None; 9] {
         return Ok(());
     }
     let [
@@ -153,12 +158,14 @@ fn refresh_existing(
         mandate,
         creditor,
         items,
+        text,
     ] = set;
     tx.prepare_cached(
         "UPDATE transactions SET counterparty = COALESCE(?2, counterparty), purpose = COALESCE(?3, purpose),
                 purpose_code = COALESCE(?4, purpose_code), gvc = COALESCE(?5, gvc),
                 end_to_end_id = COALESCE(?6, end_to_end_id), mandate_id = COALESCE(?7, mandate_id),
-                creditor_id = COALESCE(?8, creditor_id), item_refs = COALESCE(?9, item_refs)
+                creditor_id = COALESCE(?8, creditor_id), item_refs = COALESCE(?9, item_refs),
+                booking_text = COALESCE(?10, booking_text)
           WHERE id = ?1",
     )?
     .execute(params![
@@ -170,7 +177,8 @@ fn refresh_existing(
         e2e,
         mandate,
         creditor,
-        items
+        items,
+        text
     ])?;
     Ok(())
 }
@@ -1269,14 +1277,17 @@ impl Vault {
 
     /// Like [`begin_sync`](Self::begin_sync) for an automatic sync in the
     /// background: nothing in it may need a new approval, so the comdirect
-    /// PostBox fetch (#838) is left out.
+    /// PostBox fetch (#838) is left out, and the fetch asks for no TAN (#1730).
     pub fn begin_quiet_sync(
         self: Arc<Self>,
         connection_id: i64,
         secret: String,
         demo: bool,
     ) -> Result<Arc<SyncSession>, CoreError> {
-        self.begin_sync_inner(connection_id, secret, demo, None, PostboxMode::Off, None)
+        let session =
+            self.begin_sync_inner(connection_id, secret, demo, None, PostboxMode::Off, None)?;
+        session.set_quiet();
+        Ok(session)
     }
 
     /// Like [`begin_sync`](Self::begin_sync) for one account of its login
@@ -1769,6 +1780,9 @@ impl Vault {
             documents,
             skipped_accounts: skipped.into_iter().collect(),
             only_account,
+            // set by `SyncSession` when the fetch starts
+            prompt: None,
+            cancelled: Default::default(),
         };
         let mut connector = make_connector_for(kind, &key_str, demo);
         if !demo && is_comdirect_fints(&key_str) {

@@ -390,6 +390,16 @@ impl FinTsConnector {
             // best (newest) format first: …camt.052.001.08 > …001.02
             self.st.camt_formats.sort_by(|a, b| b.cmp(a));
         }
+        // A full BPD comes with HIBPA. A new BPD version replaces the learned pain formats, so
+        // a schema the bank withdrew (e.g. .001.09 from HISPAS) stops being chosen. Replies
+        // without HIBPA (HKTAB, …) and further messages of the same version only add.
+        if let Some(bpa) = reply.first("HIBPA") {
+            let version = bpa.get(1, 0);
+            if !version.is_empty() && version != self.st.bpd_version {
+                self.st.pain_formats.clear();
+                self.st.bpd_version = version.to_string();
+            }
+        }
         for (seg, tx) in [
             ("HICCSS", "HKCCS"),
             ("HIIPZS", "HKIPZ"),
@@ -407,7 +417,8 @@ impl FinTsConnector {
             ("HIBSES", "HKBSE"),
             ("HIBMES", "HKBME"),
         ] {
-            // Merge across BPD messages (anonymous and authenticated dialog).
+            // Merge across BPD messages of the same BPD version (anonymous and
+            // authenticated dialog); a new version was cleared above.
             for f in pain_formats(reply, seg) {
                 let list = self.st.pain_formats.entry(tx.to_string()).or_default();
                 if !list.contains(&f) {
@@ -423,7 +434,7 @@ impl FinTsConnector {
                     let t = v.text();
                     let targets: &[&str] = if t.contains("pain.001.") {
                         &[
-                            "HKCCS", "HKCUM", "HKCSE", "HKCCM", "HKCDE", "HKCDN", "HKCDL",
+                            "HKCCS", "HKCUM", "HKCSE", "HKCCM", "HKCDE", "HKCDN", "HKCDL", "HKCDB",
                         ]
                     } else if t.contains("pain.008.") {
                         &["HKDSE", "HKDME", "HKDSC", "HKDMC", "HKBSE", "HKBME"]

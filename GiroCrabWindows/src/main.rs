@@ -28,6 +28,7 @@ mod settings_import_ui;
 mod sync_flow;
 mod tags_ui;
 mod transfer_flow;
+mod updates;
 mod vault_key;
 mod views_ui;
 
@@ -256,15 +257,30 @@ fn account_rows(vault: &Vault, privacy: bool) -> Result<(Vec<AccountRow>, String
 /// Most bookings the list keeps in memory per account scope; filters run on these without the vault.
 const ROW_LIMIT: u32 = 2000;
 
-/// Bookings of a listing target (one account, all, unchecked, uncategorized or one category).
-fn load_rows(vault: &Vault, target: Target) -> Result<Vec<Row>, String> {
+/// Bookings of a listing target (one account, all, unchecked, uncategorized or one category),
+/// plus the running and day balances when the target is one account (#577).
+fn load_rows(vault: &Vault, target: Target) -> Result<(Vec<Row>, daily::Balances), String> {
+    let single = matches!(target, Target::Account(_));
     let page = vault
         .list_transactions(BookingFilter {
             limit: ROW_LIMIT,
+            with_balances: single,
             ..nav::booking_filter(target)
         })
         .map_err(|e| e.to_string())?;
-    Ok(page.transactions.iter().map(Row::from).collect())
+    let rows: Vec<Row> = page.transactions.iter().map(Row::from).collect();
+    let running = page
+        .running_balances
+        .iter()
+        .map(|b| (b.booking_id, b.balance_cents))
+        .collect();
+    let days = page
+        .day_balances
+        .iter()
+        .map(|d| (d.date.clone(), d.balance_cents))
+        .collect();
+    let balances = daily::Balances::for_scope(single, &rows, running, days);
+    Ok((rows, balances))
 }
 
 /// UI-thread state behind the booking list, filter bar and inspector.
@@ -289,6 +305,8 @@ struct State {
     logos: std::collections::HashMap<String, slint::Image>,
     /// Keys already requested this session (hit or miss), so a miss is not retried on every redraw.
     logos_requested: std::collections::HashSet<String>,
+    /// Running/day balances of a one-account scope (#577); empty otherwise.
+    balances: daily::Balances,
 }
 
 /// One-booking edit run against the vault for the selected booking id.
@@ -356,6 +374,7 @@ fn booking_row(st: &State, b: &Row, privacy: bool) -> BookingRow {
         category_color: tint(&b.category_color_hex),
         detail: daily::mask(&detail, privacy).into(),
         amount: daily::mask(&money(b.amount_cents, &b.currency), privacy).into(),
+        balance: st.balances.row(&st.filter, b.id, privacy, money).into(),
         negative: b.amount_cents < 0 && !privacy,
         checked: b.checked,
         marked: st.marked.contains(&b.id),
@@ -501,6 +520,7 @@ fn render_bookings(win: &MainWindow) {
                 )
                 .into(),
                 negative: d.sum_cents < 0 || privacy,
+                balance: st.balances.day(&st.filter, &d.date, privacy, money).into(),
                 rows: ModelRc::new(VecModel::from(
                     d.indices
                         .iter()
@@ -526,6 +546,17 @@ fn render_bookings(win: &MainWindow) {
     });
     win.set_days(ModelRc::new(VecModel::from(days)));
     win.set_marked_count(with_state(|st| st.marked.len()) as i32);
+    // Sums of the ticked bookings from the cached rows (#878): no new `list_transactions`.
+    let summary = with_state(|st| {
+        daily::selection_summary(st.rows.iter().filter(|r| st.marked.contains(&r.id)))
+    });
+    let texts = daily::selection_texts(&summary, privacy, money);
+    win.set_selection_summary_visible(summary.count >= 2);
+    win.set_selection_count_text(texts.count.into());
+    win.set_selection_income(texts.income.into());
+    win.set_selection_expense(texts.expense.into());
+    win.set_selection_balance(texts.balance.into());
+    win.set_selection_extra(texts.extra.into());
     match inspector {
         Some((i, row, logo, recurring)) => {
             // The note box keeps unsaved typing while the same booking stays selected.
@@ -735,7 +766,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                 return;
             }
             match (rows, cats) {
-                (Ok(rows), Ok(cats)) => {
+                (Ok((rows, balances)), Ok(cats)) => {
                     let mut names = vec![SharedString::from("Ohne Kategorie")];
                     names.extend(cats.iter().map(|c| SharedString::from(c.path.as_str())));
                     win.set_category_names(ModelRc::new(VecModel::from(names)));
@@ -752,6 +783,7 @@ fn reload(win: &MainWindow, vault: Arc<Vault>) {
                     win.set_category_tiles(ModelRc::new(VecModel::from(tiles)));
                     with_state(|st| {
                         st.rows = rows;
+                        st.balances = balances;
                         st.categories = cats;
                     });
                     apply_filter(&win);
@@ -812,6 +844,20 @@ impl DialogBridge {
 
     fn drain(&self) {
         while self.replies.lock().unwrap().try_recv().is_ok() {}
+    }
+
+    /// One masked entry in the PIN dialog (`"pin"` = password field). Empty stays `Some("")`
+    /// so the flow can name the missing field.
+    fn ask_masked(&self, title: &str, message: String) -> Option<Zeroizing<String>> {
+        self.drain();
+        self.show("pin", title.into(), message, None);
+        self.replies
+            .lock()
+            .unwrap()
+            .recv()
+            .ok()
+            .flatten()
+            .map(Zeroizing::new)
     }
 
     fn ask(&self, mode: &'static str, c: &Challenge) -> Option<Zeroizing<String>> {
@@ -893,6 +939,36 @@ impl sync_flow::Ui for DialogBridge {
     fn open_url(&self, url: &str) -> Result<(), String> {
         sync_flow::open_in_browser(url)
     }
+
+    fn ask_api_signature(&self, bank: &str) -> Option<sync_flow::ApiSignature> {
+        let hint = format!(
+            "API-Zugangsdaten für {bank} (PayPal › Kontoeinstellungen › API-Zugriff), nicht das \
+             Login-Passwort. Sie werden verschlüsselt im Tresor gespeichert."
+        );
+        Some(sync_flow::ApiSignature {
+            username: self.ask_masked("PayPal API-Benutzername", hint.clone())?,
+            password: self.ask_masked("PayPal API-Passwort", hint.clone())?,
+            signature: self.ask_masked("PayPal API-Signatur", hint)?,
+        })
+    }
+}
+
+/// PayPal's API signature lives in the vault's encrypted settings (`paypal.api_*`).
+impl sync_flow::SignatureStore for Vault {
+    fn stored_keys(&self) -> Result<Vec<String>, String> {
+        let settings = self.list_settings().map_err(|e| e.to_string())?;
+        Ok(settings
+            .into_iter()
+            .filter(|s| s.has_value)
+            .map(|s| s.key)
+            .collect())
+    }
+
+    fn store(&self, key: &str, value: &str) -> Result<(), String> {
+        // No `e.to_string()`: nothing near the value goes into the error text.
+        self.set_setting(key.to_string(), value.to_string())
+            .map_err(|_| "Die PayPal-Zugangsdaten konnten nicht gespeichert werden.".to_string())
+    }
 }
 
 /// `SyncSession` driven synchronously (the worker thread owns a small tokio runtime).
@@ -945,6 +1021,13 @@ fn run_sync(vault: Arc<Vault>, demo: bool, ui: &DialogBridge) -> Result<String, 
                 Err(e) => problems.push(format!("{}: {e}", c.display_name)),
             }
             continue;
+        }
+        if sync_flow::auth_for(c.connector) == sync_flow::Auth::ApiSignature {
+            // On this worker thread like the sync itself: the vault writes never block the UI.
+            if let Err(e) = sync_flow::ensure_api_signature(&c.display_name, ui, &*vault) {
+                problems.push(format!("{}: {e}", c.display_name));
+                continue;
+            }
         }
         let result = sync_flow::sync_connection(c.connector, &c.display_name, ui, |secret| {
             // `secret` moves into the core, which wipes it when the session ends.
@@ -1192,8 +1275,11 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 // First paint: load the scope's bookings synchronously (selects the first one);
                 // the background reload in `apply_view` then refreshes them.
                 let target = with_state(|st| st.target);
-                if let Ok(rows) = load_rows(vault, target) {
-                    with_state(|st| st.rows = rows);
+                if let Ok((rows, balances)) = load_rows(vault, target) {
+                    with_state(|st| {
+                        st.rows = rows;
+                        st.balances = balances;
+                    });
                     apply_filter(win);
                 }
                 views_ui::apply_view(win, vault);
@@ -1201,6 +1287,7 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
                 with_state(|st| {
                     st.rows.clear();
                     st.shown.clear();
+                    st.balances = daily::Balances::default();
                     st.selected_booking = None;
                 });
                 render_bookings(win);
@@ -1274,6 +1361,7 @@ fn transfer_rule_at(index: i32) -> transfer_flow::RecipientRule {
 /// mode; the real values stay in `State` and are enforced again on submit.
 fn apply_transfer_rule(win: &MainWindow, index: i32) {
     use transfer_flow::RecipientRule;
+    wire_transfer_bank(win);
     let rule = transfer_rule_at(index);
     let privacy = privacy_on(win);
     let (locked, name, iban, hint) = match &rule {
@@ -1291,11 +1379,32 @@ fn apply_transfer_rule(win: &MainWindow, index: i32) {
             transfer_flow::SAVINGS_NO_REFERENCE,
         ),
     };
+    let bank = match &rule {
+        RecipientRule::Fixed(r) => daily::iban_bank_line(&r.iban, privacy),
+        // The IBAN field keeps its text across prefill, privacy toggle and sender switch, so
+        // the line is derived from it again instead of being cleared.
+        RecipientRule::Free => daily::iban_bank_line(win.get_transfer_pre_iban().as_str(), privacy),
+        RecipientRule::Unavailable => String::new(),
+    };
     win.set_tr_recipient_locked(locked);
     win.set_tr_recipient_blocked(rule == RecipientRule::Unavailable);
     win.set_tr_locked_name(name.into());
     win.set_tr_locked_iban(iban.into());
+    win.set_tr_bank(bank.into());
     win.set_tr_recipient_hint(hint.into());
+}
+
+/// Bank line under the recipient IBAN of the transfer dialog (#1563). Re-registering replaces the
+/// handler, so calling this on every open is harmless. The line is derived from the current IBAN text only
+/// and masked in privacy mode; no state is kept.
+fn wire_transfer_bank(win: &MainWindow) {
+    let weak = win.as_weak();
+    win.on_transfer_iban_edited(move |iban| {
+        if let Some(win) = weak.upgrade() {
+            let line = daily::iban_bank_line(iban.as_str(), privacy_on(&win));
+            win.set_tr_bank(line.into());
+        }
+    });
 }
 
 /// Result line of an import run.
@@ -2028,6 +2137,14 @@ fn main() -> Result<(), slint::PlatformError> {
             with_state(|st| *st = State::default());
             win.set_unlocked(false);
             win.set_days(ModelRc::new(VecModel::from(Vec::<DayGroup>::new())));
+            // Selection summary: no amounts may outlive the vault.
+            win.set_marked_count(0);
+            win.set_selection_summary_visible(false);
+            win.set_selection_count_text("".into());
+            win.set_selection_income("".into());
+            win.set_selection_expense("".into());
+            win.set_selection_balance("".into());
+            win.set_selection_extra("".into());
             win.set_accounts(ModelRc::new(VecModel::from(Vec::<AccountRow>::new())));
             win.set_has_inspector(false);
             views_ui::on_lock(&win);
@@ -2193,6 +2310,10 @@ fn main() -> Result<(), slint::PlatformError> {
             match girocode::paste_into(&current, clipboard.as_str()) {
                 Ok(f) => {
                     set_transfer_fields(&win, &f);
+                    // `transfer-iban-edited` fires for user edits only, so refresh the bank line here.
+                    if !win.get_tr_recipient_locked() {
+                        win.set_tr_bank(daily::iban_bank_line(&f.iban, privacy_on(&win)).into());
+                    }
                     win.set_transfer_status(SharedString::new());
                     win.set_girocode_open(false);
                 }
@@ -2515,6 +2636,11 @@ fn wire_batch_actions(win: &MainWindow, vault: Arc<Mutex<Option<Arc<Vault>>>>) {
         let weak = win.as_weak();
         win.on_batch_export(move || {
             let Some(win) = weak.upgrade() else { return };
+            // Privacy mode or a locked vault: nothing leaves the app.
+            if privacy_on(&win) {
+                win.set_sync_status("Export im Privatmodus nicht möglich".into());
+                return;
+            }
             let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
             let csv = with_state(|st| {
                 let mut out = String::from("Datum;Gegenpartei;Verwendungszweck;Kategorie;Betrag\n");
@@ -2715,12 +2841,12 @@ mod tests {
         let (rows, _) = account_rows(&vault, false).unwrap();
         assert!(!rows.is_empty());
         let first = Target::Account(rows[0].id as i64);
-        assert!(!load_rows(&vault, first).unwrap().is_empty());
+        assert!(!load_rows(&vault, first).unwrap().0.is_empty());
         // All accounts (scope 0) holds at least as many rows as one account.
-        assert!(
-            load_rows(&vault, Target::AllAccounts).unwrap().len()
-                >= load_rows(&vault, first).unwrap().len()
-        );
+        let (all, all_balances) = load_rows(&vault, Target::AllAccounts).unwrap();
+        assert!(all.len() >= load_rows(&vault, first).unwrap().0.len());
+        // Several accounts never get a balance column (#569).
+        assert_eq!(all_balances, daily::Balances::default());
         // Privacy hides balances and the IBAN tail.
         let (hidden, total) = account_rows(&vault, true).unwrap();
         assert!(

@@ -8668,13 +8668,13 @@
         }
       }
     },
-    "Blendet Saldoverlauf, Cashflow und Budgets über der Buchungsliste aus. Auch im Menü Ansicht umschaltbar." : {
+    "Blendet die Kennzahlen (Konsumausgaben, Investiert, Einnahmen, Fixkosten offen) und die Cashflow-Karte über der Buchungsliste aus. Das Diagramm hat mit „Diagramm anzeigen“ einen eigenen Schalter. Budgets bleiben unabhängig und haben ebenfalls einen eigenen Schalter. Auch im Menü Ansicht umschaltbar." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hides the balance history, cash flow and budgets above the booking list. Also available in the View menu."
+            "value" : "Hides the KPIs (Consumption, Invested, Income, Open Fixed Costs) and the cash flow card above the booking list. The header chart has its own \"Show Chart\" switch. Budgets are independent and have their own switch too. Also available in the View menu."
           }
         }
       }
@@ -11527,6 +11527,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The copy keeps the logo, colour and kind of “%@” and replaces the built-in merchant as long as it exists."
+          }
+        }
+      }
+    },
+    "Die Liquiditätsgrade zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades show gross assets. Subtracting liabilities gives the net worth shown above."
+          }
+        }
+      }
+    },
+    "Die Liquiditätsgrade zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades show gross assets. Liabilities are currently not deducted above."
           }
         }
       }
@@ -17836,6 +17858,17 @@
         }
       }
     },
+    "Illiquide" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Illiquid"
+          }
+        }
+      }
+    },
     "Im Browser anmelden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21500,6 +21533,17 @@
         }
       }
     },
+    "Kurzfristig verfügbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available Short-Term"
+          }
+        }
+      }
+    },
     "Käufe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21518,6 +21562,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Country"
+          }
+        }
+      }
+    },
+    "Langfristig gebunden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tied Up Long-Term"
           }
         }
       }
@@ -21892,6 +21947,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cash & money market"
+          }
+        }
+      }
+    },
+    "Liquiditätsgrade · Vermögenswerte (brutto)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades · assets (gross)"
           }
         }
       }
@@ -23124,6 +23190,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "By Account Type"
+          }
+        }
+      }
+    },
+    "Nach Liquidität" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By Liquidity"
           }
         }
       }
@@ -24851,6 +24928,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Edit note …"
+          }
+        }
+      }
+    },
+    "Notiz hinzufügen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a note …"
           }
         }
       }
@@ -28818,6 +28906,17 @@
         }
       }
     },
+    "Sofort verfügbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available Immediately"
+          }
+        }
+      }
+    },
     "Software" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30833,6 +30932,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Vault restored from the backup"
+          }
+        }
+      }
+    },
+    "Tresor aus der Sicherung wiederhergestellt. Der Stand wird mit Ihren anderen Geräten abgeglichen; das Ergebnis sehen Sie unter Einstellungen › iCloud Sync." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vault restored from the backup. It will be synchronized with your other devices; see Settings › iCloud Sync for the result."
           }
         }
       }
