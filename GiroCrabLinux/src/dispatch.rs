@@ -41,6 +41,24 @@ unsafe extern "C" {
 static VAULT: Mutex<Option<Arc<Vault>>> = Mutex::new(None);
 /// The unlocked personal vault – `AppModel.ownVault` (stays open while the demo is shown).
 static OWN: Mutex<Option<Arc<Vault>>> = Mutex::new(None);
+static REFUND_TARGET: Mutex<Option<(String, std::sync::Weak<Vault>)>> = Mutex::new(None);
+
+fn pin_refund_target(v: &Arc<Vault>) -> String {
+    let mut target = REFUND_TARGET.lock().unwrap();
+    if let Some((token, current)) = &*target
+        && current
+            .upgrade()
+            .is_some_and(|current| Arc::ptr_eq(&current, v))
+    {
+        return token.clone();
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let token = NEXT
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .to_string();
+    *target = Some((token.clone(), Arc::downgrade(v)));
+    token
+}
 
 /// `AppModel.vaultURL`: ~/.local/share/GiroCrab/tresor.girocrab (XDG data dir);
 /// the keychain bypass uses a separate file, so the real vault is never opened
@@ -448,6 +466,7 @@ fn vault() -> Result<Arc<Vault>, String> {
 
 fn call(method: &str, a: &Value) -> R {
     match method {
+        "refund_vault_identity" => ok(pin_refund_target(&vault()?)),
         "core_version" => ok(girocrab_core::core_version()),
         // --- Settings › Allgemein › Sprache (LanguagePreference.swift) ---
         // HelpView.swift › HelpCatalog, read by build.rs: topics (de/en) and shortcut labels.
@@ -764,6 +783,7 @@ fn call(method: &str, a: &Value) -> R {
             ok(())
         }
         "restore_backup" => {
+            let mut refund_target = REFUND_TARGET.lock().unwrap();
             let Some(own) = OWN.lock().unwrap().clone() else {
                 return Err(crate::i18n::tr(
                     "Bitte zuerst Ihren eigenen Tresor öffnen, dann die Sicherung wiederherstellen.",
@@ -771,6 +791,13 @@ fn call(method: &str, a: &Value) -> R {
             };
             own.restore_backup(local_path(arg(a, "backup_path")?), arg(a, "password")?)
                 .map_err(|e| e.to_string())?;
+            if refund_target
+                .as_ref()
+                .and_then(|(_, v)| v.upgrade())
+                .is_some_and(|v| Arc::ptr_eq(&v, &own))
+            {
+                *refund_target = None;
+            }
             remove_quicklook_files();
             ok(())
         }
@@ -1485,6 +1512,33 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
         // overview card. Not in the macro below because it carries no
         // `respect_in_total` from QML.
         "cashflow_by_period" => Some(cashflow_by_period_totals(v, a)),
+        "refund_sheet" => Some(crate::refunds::sheet(v, a)),
+        "refund_card" => Some(crate::refunds::card(v, a)),
+        "seed_refund_demo" | "edit_refund" => Some((|| {
+            let identity: String = arg(a, "vault_identity")?;
+            let refund_target = REFUND_TARGET.lock().unwrap();
+            let active = VAULT.lock().unwrap();
+            if active
+                .as_ref()
+                .is_none_or(|active| !std::ptr::eq(active.as_ref(), v))
+            {
+                return Err(crate::i18n::tr("Tresor ist gesperrt"));
+            }
+            let target = refund_target
+                .as_ref()
+                .and_then(|(token, vault)| (token == &identity).then(|| vault.upgrade()).flatten());
+            if target
+                .as_ref()
+                .is_none_or(|target| !std::ptr::eq(target.as_ref(), v))
+            {
+                return Err(crate::i18n::tr("Tresor ist gesperrt"));
+            }
+            if method == "seed_refund_demo" {
+                crate::refunds::seed(v, a)
+            } else {
+                crate::refunds::edit(v, a)
+            }
+        })()),
         _ => dispatch_vault_methods(v, method, a),
     }
 }
@@ -1625,6 +1679,11 @@ vault_methods! {
     count_planned_payments() count_active_mandates()
     list_offline_account_ids()
     list_categories_filtered(date_from, date_to, account_ids, checked, direction)
+    link_refund(refund_id, refund_part, original_id, original_part)
+    unlink_refund(refund_id, refund_part, original_id, original_part, expected_changed_ms)
+    restore_refund(refund_id, refund_part, original_id, original_part, token)
+    refund_links(transaction_id) refund_candidates(transaction_id, own_part, query, limit)
+    refund_suggestions(transaction_id, own_part)
     // Buchungsliste: Betragsfilter (#357, ListFilters.qml)
     list_categories_filtered_amount(date_from, date_to, account_ids, checked, direction, amount_min_cents, amount_max_cents, tag_ids, untagged_only)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
@@ -1670,6 +1729,83 @@ mod tests {
 
     /// The tests share the process-wide vault slots.
     static SERIAL: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn refund_mutation_rejects_replaced_vault_and_superseded_pin() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let old = vault().unwrap();
+        let fixture = crate::refunds::seed(&old, &json!({})).unwrap();
+        let token = pin_refund_target(&old);
+        assert_eq!(pin_refund_target(&old), token);
+        let mut args = json!({"action":"link", "vault_identity":token,
+            "refund_id":fixture["refund"], "refund_part":fixture["part"],
+            "original_id":fixture["original"], "original_part":""});
+        call_ok("open_demo", json!({}));
+        let new = vault().unwrap();
+        assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
+        assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_err());
+        args["vault_identity"] = json!(pin_refund_target(&new));
+        assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_err());
+        args.as_object_mut().unwrap().remove("vault_identity");
+        assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
+    }
+
+    #[test]
+    fn refund_worker_cannot_write_its_captured_vault_after_lock() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let captured = vault().unwrap();
+        let args = json!({"vault_identity":pin_refund_target(&captured)});
+        assert!(
+            dispatch_vault(&captured, "seed_refund_demo", &args)
+                .unwrap()
+                .is_ok()
+        );
+        let before = captured.list_accounts().unwrap().len();
+        call_ok("lock", json!({}));
+        assert!(
+            dispatch_vault(&captured, "seed_refund_demo", &args)
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(captured.list_accounts().unwrap().len(), before);
+    }
+
+    #[test]
+    fn refund_demo_seed_rejects_replaced_vault_before_writing() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let old = vault().unwrap();
+        let args = json!({"vault_identity":pin_refund_target(&old)});
+        call_ok("open_demo", json!({}));
+        let new = vault().unwrap();
+        let before = new.list_accounts().unwrap().len();
+        for args in [args.clone(), json!({}), json!({"vault_identity":""})] {
+            assert!(
+                dispatch_vault(&new, "seed_refund_demo", &args)
+                    .unwrap()
+                    .is_err()
+            );
+            assert_eq!(new.list_accounts().unwrap().len(), before);
+        }
+        assert!(
+            dispatch_vault(&old, "seed_refund_demo", &args)
+                .unwrap()
+                .is_err()
+        );
+        let current = json!({"vault_identity":pin_refund_target(&new)});
+        assert!(
+            dispatch_vault(&old, "seed_refund_demo", &args)
+                .unwrap()
+                .is_err()
+        );
+        assert!(
+            dispatch_vault(&new, "seed_refund_demo", &current)
+                .unwrap()
+                .is_ok()
+        );
+    }
 
     /// Sets (`Some`) or removes (`None`) an environment variable for a test that holds
     /// `SERIAL`.
@@ -1731,6 +1867,99 @@ mod tests {
         );
         set_env("XDG_RUNTIME_DIR", saved);
         let _ = std::fs::remove_dir_all(run);
+    }
+
+    #[test]
+    fn refund_parts_roundtrip() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-dispatch-refunds-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let v = Vault::open(path.to_string_lossy().into(), vec![7; 32]).unwrap();
+        let call = |method: &str, args: Value| {
+            crate::dispatch::dispatch_vault(&v, method, &args)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{method}: {e}"))
+        };
+        let cat = call(
+            "create_category",
+            json!({"name":"Shopping", "parent_id":null, "sf_symbol":"tag", "color_hex":"#2563EB"}),
+        );
+        let account = call(
+            "create_offline_account",
+            json!({"name":"Pie", "kind":"Cash", "currency":"EUR", "opening_cents":0}),
+        );
+        let booking = |amount, date| {
+            call(
+                "save_manual_booking",
+                json!({"account_id":account, "booking_id":null, "setup":{"booking_date":date, "amount_cents":amount, "counterparty":"Shop", "purpose":"Order", "category_id":cat, "note":""}}),
+            )
+        };
+        let original = booking(-10000, "2026-11-01");
+        let refund = booking(6000, "2026-11-02");
+        call(
+            "set_transaction_splits",
+            json!({"transaction_id":refund, "splits":[{"uuid":null, "category_id":cat, "amount_cents":2000, "note":"First"}, {"uuid":null, "category_id":cat, "amount_cents":4000, "note":"Second"}]}),
+        );
+        let parts = call("list_transaction_splits", json!({"transaction_id":refund}));
+        let pair = json!({"refund_id":refund, "refund_part":parts[1]["uuid"], "original_id":original, "original_part":""});
+        call("link_refund", pair.clone());
+        let card = |id: Value| call("refund_card", json!({"transaction_id":id}));
+        let linked = card(refund.clone());
+        assert_eq!(linked[0]["booking"]["id"], original);
+        assert_eq!(linked[0]["booking"]["account_name"], "Pie");
+        assert_eq!(linked[0]["booking"]["currency"], "EUR");
+        assert_eq!(linked[0]["link"]["allocated_cents"], 4000);
+        assert_eq!(card(original.clone())[0]["booking"]["id"], refund);
+        assert!(
+            !card(original.clone())[0]["part_label"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            crate::dispatch::dispatch_vault(&v, "refund_card", &json!({}))
+                .unwrap()
+                .is_err()
+        );
+        let sheet = |own: Value, query: &str| {
+            call(
+                "refund_sheet",
+                json!({"transaction_id":refund, "own_part":own, "query":query}),
+            )
+        };
+        let first = sheet(json!(""), "");
+        assert_eq!(first["own_part"], parts[0]["uuid"]);
+        assert_eq!(first["own_open"], 2000);
+        let second = sheet(parts[1]["uuid"].clone(), "shop");
+        assert_eq!(second["own_open"], 0);
+        assert_eq!(second["linked"][0]["allocated_cents"], 4000);
+        assert_eq!(second["suggestions"], json!([]));
+        assert_eq!(second["candidates"], json!([]));
+        assert_eq!(
+            sheet(parts[0]["uuid"].clone(), "not present")["candidates"],
+            json!([])
+        );
+        let mut invalid = pair.clone();
+        invalid["refund_part"] = json!("missing");
+        assert!(
+            crate::dispatch::dispatch_vault(&v, "link_refund", &invalid)
+                .unwrap()
+                .is_err()
+        );
+        let token = call("unlink_refund", pair.clone());
+        assert_eq!(card(refund.clone()), json!([]));
+        assert_eq!(sheet(parts[1]["uuid"].clone(), "")["linked"], json!([]));
+        let mut restore = pair;
+        restore["token"] = token;
+        call("restore_refund", restore);
+        assert_eq!(card(refund)[0]["booking"]["id"], original);
+        drop(v);
+        let _ = std::fs::remove_file(path);
     }
 
     /// Automatischer Abruf (#546, AutoSync.qml): `begin_quiet_sync` registers a SyncSession in
@@ -3454,6 +3683,8 @@ mod tests {
         *VAULT.lock().unwrap() = Some(v.clone());
         *OWN.lock().unwrap() = Some(v.clone());
         let backup = dir.join("sicherung.girocrab");
+        let refund_fixture = crate::refunds::seed(&v, &json!({})).unwrap();
+        let refund_pin = pin_refund_target(&v);
         call_ok(
             "write_backup",
             json!({ "dest_path": format!("file://{}", backup.display()), "password": "geheim1234" }),
@@ -3470,10 +3701,28 @@ mod tests {
         ))
         .unwrap();
         assert!(wrong.get("err").is_some(), "wrong password must be refused");
+        assert_eq!(pin_refund_target(&v), refund_pin);
         call_ok(
             "restore_backup",
             json!({ "backup_path": backup.display().to_string(), "password": "geheim1234" }),
         );
+        let mut args = json!({"action":"link", "vault_identity":refund_pin,
+            "refund_id":refund_fixture["refund"], "refund_part":refund_fixture["part"],
+            "original_id":refund_fixture["original"], "original_part":""});
+        assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_err());
+        args["vault_identity"] = json!(pin_refund_target(&v));
+        assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_ok());
+        let demo = Vault::open(
+            dir.join("other.girocrab").display().to_string(),
+            vec![7; 32],
+        )
+        .unwrap();
+        let demo_pin = pin_refund_target(&demo);
+        call_ok(
+            "restore_backup",
+            json!({ "backup_path": backup.display().to_string(), "password": "geheim1234" }),
+        );
+        assert_eq!(pin_refund_target(&demo), demo_pin);
         let tags = call_ok("list_tags", json!({}));
         assert!(
             !tags
