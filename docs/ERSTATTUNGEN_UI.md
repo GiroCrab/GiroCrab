@@ -111,7 +111,7 @@ skalierte Schrift und lässt Namen umbrechen, ohne Beträge zu verkleinern.
 
 ### macOS
 
-Nur im Demo-Tresor erzeugen `--demo-sheet refund-split`, `refund-negative` und
+Mit der macOS-Oberfläche (eigener Pull Request) erzeugen nur im Demo-Tresor `--demo-sheet refund-split`, `refund-negative` und
 `refund-linked` fiktive Buchungen und Teilverknüpfungen. Die ersten beiden
 öffnen das Blatt, die dritte Variante lässt die markierte Buchungsliste offen.
 `--text-size larger` und `--redact` prüfen Schriftgröße und Berichtsschutz.
