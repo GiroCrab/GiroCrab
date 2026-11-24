@@ -168,6 +168,8 @@ public final class AppModel {
                 sidebarSelection.flatMap { sidebarRowSelections[$0] }?.isSelected = true
                 requestStreamTop()
                 dropMultiSelection()
+                // the next list belongs to this switch: `publish` keeps only what it still shows (#1808)
+                viewSwitchPending = MainColumn(sidebarSelection) == .bookings
             }
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
@@ -183,6 +185,15 @@ public final class AppModel {
             // all accounts only replaced the list the column shows next (#1396).
             guard MainColumn(sidebarSelection) == .bookings else {
                 if selectionLoadTask != nil { endSelectionLoad() }
+                // No booking list here: a selection left over from the last list would stay in the
+                // inspector, and its pending auto review would still run (#1808).
+                if oldValue != sidebarSelection {
+                    selectedBookingID = nil
+                    #if os(iOS)
+                    // the iPhone sheet would otherwise reopen with the next booking selected
+                    showBookingSheet = false
+                    #endif
+                }
                 // the recurring data and salary cycle follow the selection (all accounts here)
                 refreshSalaryCycle()
                 refreshRecurring()
@@ -194,11 +205,18 @@ public final class AppModel {
             reloadSelection(periodChanged: false)
         }
     }
+    /// A sidebar switch to a booking list is under way and the list has not been published yet.
+    @ObservationIgnored var viewSwitchPending = false
     /// The selection the booking column shows: `sidebarSelection` once its data is in, so a new
     /// title never stands over the old figures (#1396). Views read this; loads `sidebarSelection`.
     private(set) var shownSelection: SidebarItem? = .allAccounts {
         didSet {
-            mainColumn = MainColumn(shownSelection)
+            let column = MainColumn(shownSelection)
+            #if os(iOS)
+            // The detail sheet belongs to the list it was opened from (not a depot or Sachwerte view).
+            if !Self.keepsDetailSheet(from: mainColumn, to: column, presentation: presentation) { showBookingSheet = false }
+            #endif
+            mainColumn = column
             showsOverview = shownSelection == .allAccounts
             showsNewBookings = shownSelection == .newBookings
             // „Neue Umsätze“ orders the stream by account card (`visibleBookings`)
@@ -530,7 +548,9 @@ public final class AppModel {
     /// The lingering row was put back into a list whose filter it no longer matches:
     /// it does not count towards the loaded pages (offset of the next page, ⌘A).
     @ObservationIgnored var lingeringRowOutsideFilter = false
-    /// iPhone: set by a tap on a booking row, presents the detail sheet.
+    /// iOS: set by a tap on a row (booking, planned payment, mandate), presents the detail
+    /// sheet when the window has no room for the detail column; cleared when the column changes,
+    /// a depot or Sachwerte account is shown, or an editor opens from the sheet.
     var showBookingSheet = false
     var collapsedGroups: Set<Int64> = Set(AppDefaults.store.array(forKey: "sidebar.collapsedKindGroups") as? [Int64] ?? []) {
         didSet { AppDefaults.store.set(Array(collapsedGroups), forKey: "sidebar.collapsedKindGroups") }

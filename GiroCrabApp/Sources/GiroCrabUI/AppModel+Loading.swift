@@ -603,6 +603,8 @@ extension AppModel {
         }
         // a failed reload ends a ⌘A waiting for it (#1696); on success `publish` has taken it
         selectAllAfterReload = false
+        // a failed load published nothing: the switch is over (#1808)
+        viewSwitchPending = false
         reloadSelectionKPIs()
         reloadCategoryHistory()
         // Every edit, sync and import ends up here: cached merchant histories may be
@@ -637,14 +639,28 @@ extension AppModel {
         let selectAll = selectAllAfterReload
         selectAllAfterReload = false
         page = p
+        if viewSwitchPending {
+            // a booking kept in the inspector after an edit belongs to the list it left: the other
+            // view neither shows nor selects it (#1808)
+            let shown = Set(p.transactions.map(\.id))
+            if let id = lingeringBookingID, !shown.contains(id) { lingeringBookingID = nil }
+            if let sticky = stickyBooking, !shown.contains(sticky.id) { stickyBooking = nil }
+        }
         var balances = ListBalances(currency: balanceCurrency)
         balances.merge(p)
         listBalances = balances
         bookings = keepingLingeringRow(p.transactions)
         if let id = selectedBookingID, booking(withID: id) == nil, stickyBooking?.id != id {
-            // „Neue Umsätze“: no booking selected unasked, auto review would check it
-            selectedBookingID = sidebarSelection == .newBookings ? nil : p.transactions.first?.id
+            if viewSwitchPending {
+                // a switch keeps what the new list still shows and otherwise selects nothing: a booking
+                // chosen unasked would start the auto review (#1808)
+                selectedBookingID = bookings.first { selectedBookingIDs.contains($0.id) }?.id
+            } else {
+                // „Neue Umsätze“: no booking selected unasked, auto review would check it
+                selectedBookingID = sidebarSelection == .newBookings ? nil : p.transactions.first?.id
+            }
         }
+        viewSwitchPending = false
         pruneMultiSelection()
         if selectAll { selectAllShownBookings() }
     }

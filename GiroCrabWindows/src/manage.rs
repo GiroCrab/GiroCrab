@@ -13,6 +13,7 @@ pub enum Modal {
     Rules,
     Link,
     About,
+    History,
 }
 
 /// Which dialogs are open right now.
@@ -26,6 +27,8 @@ pub struct Modals {
     pub rules: bool,
     pub link: bool,
     pub about: bool,
+    /// Price history of a depot position (#578); it lies below every other dialog.
+    pub history: bool,
 }
 
 impl Modals {
@@ -40,6 +43,7 @@ impl Modals {
             (self.rules, Modal::Rules),
             (self.categories, Modal::Categories),
             (self.about, Modal::About),
+            (self.history, Modal::History),
         ]
         .into_iter()
         .find_map(|(open, m)| open.then_some(m))

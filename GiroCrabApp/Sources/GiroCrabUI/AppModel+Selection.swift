@@ -360,6 +360,11 @@ extension AppModel {
         } else if !cycleLoaded {
             salaryCycle = shownSalaryCycle
         }
+        // the switch ends with the failed load: nothing of the old view stays selected (a kept
+        // booking would resolve through the sticky row and could still be reviewed), and a later
+        // refresh of this view is no switch (#1808)
+        if viewSwitchPending { selectedBookingID = nil }
+        viewSwitchPending = false
         errorMessage = describe(error)
     }
 
