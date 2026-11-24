@@ -293,6 +293,8 @@ pub fn select_target(win: &MainWindow, vault: &Arc<Vault>, target: Target) {
     });
     win.set_table_selected(-1);
     with_ui(|u| u.selected_doc = None);
+    // Navigation changes the scope: a position history of the old one must not stay open.
+    crate::position_history_ui::close(win);
     apply_view(win, vault);
 }
 
@@ -309,8 +311,14 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
         return;
     }
     clear_table(win, "Wird geladen …");
+    // The old positions are gone: no history action until the new table is ready. The open
+    // dialog stays, so a refresh of the same depot can reload it (`prepare(Some(..))`).
+    crate::position_history_ui::loading(win);
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
     let generation = with_ui(|u| {
+        // A tab or period change while loading must not re-render the previous depot
+        // (and put its CSV back into the export cache).
+        u.depot = None;
         u.generation += 1;
         u.generation
     });
@@ -330,10 +338,13 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
                         Loaded::Mandates(m) => u.mandates = m,
                         Loaded::Documents(d) => u.docs = d,
                     });
+                    crate::position_history_ui::ready();
                     render_view(&win);
                 }
                 Err(e) => {
                     clear_table(&win, "");
+                    crate::position_history_ui::ready();
+                    crate::position_history_ui::close(&win);
                     win.set_view_status(e.into());
                 }
             }
@@ -453,6 +464,8 @@ fn clear_table(win: &MainWindow, empty: &str) {
     win.set_view_note(SharedString::new());
     // The next render_view restores both from the list it shows.
     with_ui(Ui::forget_shown_list);
+    // Load start, failed load and vault lock all pass here: no CSV of an earlier depot survives.
+    crate::depot_export_ui::forget();
     win.set_doc_unread_any(false);
 }
 
@@ -474,6 +487,9 @@ fn set_shares(win: &MainWindow, shares: &[portfolio::Share]) {
 pub fn render_view(win: &MainWindow) {
     let privacy = privacy_on(win);
     let mode = win.get_view_mode();
+    if mode != MODE_DEPOT {
+        crate::position_history_ui::prepare(win, None, german_date, privacy_on);
+    }
     let eur = move |c: i64| eur_text(c, "EUR", privacy);
     let date = |d: &str| german_date(d);
     win.set_period_labels(ModelRc::new(VecModel::from(
@@ -490,9 +506,20 @@ pub fn render_view(win: &MainWindow) {
             let cur = data.account.currency.clone();
             let cur_money = move |c: i64| eur_text(c, &cur, privacy);
             let period = Period::from_index(win.get_period_index());
-            let view =
-                portfolio::depot_view(&data, period, &portfolio::today_iso(), &cur_money, &date);
+            let today = portfolio::today_iso();
+            let view = portfolio::depot_view(&data, period, &today, &cur_money, &date);
             let tab = DepotTab::from_index(win.get_depot_tab());
+            // Unmasked rows of the active tab for "Als CSV exportieren …" (same order and period).
+            crate::depot_export_ui::remember(
+                portfolio::depot_csv(
+                    &data,
+                    tab,
+                    Period::from_index(win.get_period_index()),
+                    &today,
+                    &date,
+                ),
+                portfolio::depot_csv_file_name(tab, &today),
+            );
             win.set_view_title(mask(&view.title, privacy).into());
             win.set_view_total(view.total.clone().into());
             win.set_view_note(view.note.clone().into());
@@ -511,10 +538,12 @@ pub fn render_view(win: &MainWindow) {
                 DepotTab::Positions => {
                     set_columns(win, &portfolio::POSITION_COLUMNS);
                     set_rows(win, view.positions, "Keine Positionen");
+                    crate::position_history_ui::prepare(win, Some(&data), german_date, privacy_on);
                 }
                 DepotTab::Activities => {
                     set_columns(win, &portfolio::ACTIVITY_COLUMNS);
                     set_rows(win, view.activities, "Keine Aktivitäten im Zeitraum");
+                    crate::position_history_ui::prepare(win, None, german_date, privacy_on);
                 }
             }
             with_ui(|u| u.depot = Some(data));
@@ -1321,6 +1350,7 @@ fn wire_rules(win: &MainWindow, slot: &VaultSlot) {
 // ------------------------------------------------------------------------------ wiring
 
 pub fn wire(win: &MainWindow, vault: VaultSlot) {
+    crate::position_history_ui::install(vault.clone());
     let model = Rc::new(VecModel::<SideRow>::default());
     win.set_side_rows(ModelRc::from(model.clone()));
     with_ui(|u| u.side_model = Some(model));

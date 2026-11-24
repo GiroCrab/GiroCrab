@@ -84,6 +84,7 @@ fn modals(win: &MainWindow) -> Modals {
         link: win.get_link_open(),
         report: win.get_report_open(),
         about: win.get_about_open(),
+        history: crate::position_history_ui::is_open(win),
     }
 }
 
@@ -108,6 +109,7 @@ fn close_modal(win: &MainWindow, m: Modal) {
         // Schließt den Dialog und verwirft eine laufende Bereinigung.
         Modal::Report => crate::bug_report_ui::reset(win),
         Modal::About => win.set_about_open(false),
+        Modal::History => crate::position_history_ui::dismiss(win),
     }
 }
 
