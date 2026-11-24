@@ -20,6 +20,12 @@ extension AppModel {
         }
     }
 
+    /// iOS: the detail sheet stays only while the column shows the same list it was opened from,
+    /// never over a depot or Sachwerte view (both keep `mainColumn` at `.bookings`).
+    static func keepsDetailSheet(from old: MainColumn, to new: MainColumn, presentation: AccountPresentation) -> Bool {
+        old == new && presentation == .bookings
+    }
+
     /// The selected securities depot (never a Sachwerte account).
     var selectedSecuritiesDepot: Account? {
         guard case .securities(let id) = presentation else { return nil }
