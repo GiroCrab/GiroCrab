@@ -480,7 +480,6 @@ impl FinTsConnector {
                 poll_interval_seconds: 3,
             };
             self.challenge = Some(c.clone());
-            self.sca_in_dialog = true;
             return Ok(Some(if reply.has("3956") {
                 Phase::Pending(c)
             } else {
@@ -507,7 +506,6 @@ impl FinTsConnector {
                 poll_interval_seconds: 0,
             };
             self.challenge = Some(c.clone());
-            self.sca_in_dialog = true;
             return Ok(Some(Phase::Challenge(c)));
         }
         Ok(None)
@@ -678,9 +676,12 @@ impl FinTsConnector {
             if let Some(question) = self.challenge_from(&reply)? {
                 let reply = self.ask_during_fetch(ctx, prompt, seg_id, question).await?;
                 reply.check()?;
+                // the TAN or the approval was accepted; a skip or a refusal returned above
+                self.sca_in_dialog = true;
                 return Ok(reply);
             }
         }
+        let mut approval_given = false;
         if reply.has("3955") || reply.has("3956") {
             let _ = self.challenge_from(&reply)?;
             let task = self.task_reference.clone().ok_or_else(|| {
@@ -709,6 +710,7 @@ impl FinTsConnector {
                     ),
                 });
             }
+            approval_given = true;
         } else if reply.has("0030") {
             return Err(CoreError::Bank {
                 code: "0030".into(),
@@ -719,6 +721,10 @@ impl FinTsConnector {
             });
         }
         reply.check()?;
+        // the app approval was given and the bank accepted it
+        if approval_given {
+            self.sca_in_dialog = true;
+        }
         Ok(reply)
     }
 

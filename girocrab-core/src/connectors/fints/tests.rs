@@ -2169,6 +2169,8 @@ async fn a_tan_asked_for_during_the_fetch_is_remembered_for_the_next_sync() {
     drop(ctx);
     assert_eq!(asked.await.unwrap().len(), 1);
     assert!(c.st.sca_seen.contains("HKSAL"), "{:?}", c.st.sca_seen);
+    // the bank took the TAN: replies without SCA later in this dialog prove nothing
+    assert!(c.sca_in_dialog);
     // part of the state that is stored with the login
     let stored = serde_json::to_value(&c.st).unwrap();
     assert_eq!(stored["sca_seen"], serde_json::json!(["HKSAL"]));
@@ -2201,8 +2203,10 @@ async fn a_tan_demanded_in_an_automatic_fetch_is_remembered_and_not_sent_again()
 async fn an_automatic_fetch_leaves_out_what_the_bank_wants_a_tan_for() {
     // #1828: A's balance (HKSAL) is known to need a TAN, B's bookings (MT940) do not:
     // no HKSAL goes out, the warning names it and A's stored balance stays
-    let mt940 = ":20:STARTUMSE\r\n:25:52090000/0012345678\r\n:28C:00000/001\r\n:60F:C250101EUR1000,00\r\n:61:2501030103CR2500,00NTRFNONREF\r\n:86:166?00GUTSCHRIFT?20SVWZ+Gehalt Januar?32Muster GmbH\r\n:62F:C250103EUR3476,55\r\n-\r\n";
-    let (url, seen) = mock_bank(vec![reply_with_binary("HIKAZ:3:7:3+", mt940)]);
+    let (url, seen) = mock_bank(vec![reply_with_binary(
+        "HIKAZ:3:7:3+",
+        MT940_CLOSING_347655,
+    )]);
     let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKKAZ": [7], "HKTAN": [6]}, "tan_required": {"HKSAL": true}, "sca_seen": ["HKSAL"]});
     let mut c = two_step_connector(&url, state);
     c.upd = vec![
@@ -2272,6 +2276,58 @@ async fn a_reply_without_sca_after_an_approval_in_the_dialog_is_not_remembered()
 }
 
 #[tokio::test]
+async fn a_skipped_tan_does_not_protect_what_later_replies_say() {
+    // #1828 (review): the user skips the TAN for HKSAL, nothing was approved in this dialog; the
+    // SCA-free answer to HKKAZ of the next account still clears its entry that is out of date
+    let (url, seen) = mock_bank(vec![
+        SAL_TAN_DEMANDED,
+        reply_with_binary("HIKAZ:3:7:3+", MT940_CLOSING_347655),
+    ]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKKAZ": [7], "HKTAN": [6]}, "tan_required": {"HKSAL": true}, "sca_seen": ["HKKAZ"]});
+    let mut c = two_step_connector(&url, state);
+    c.upd = vec![
+        upd_acc("0532013000", "", IBAN_A, "Tagesgeld", &["HKSAL"]),
+        upd_acc("0000202051", "", IBAN_B, "Girokonto", &["HKKAZ"]),
+    ];
+    let (prompt, asked) = answering_prompt(|_| Some(crate::connectors::PromptAnswer::Skip));
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        ..test_ctx()
+    };
+    let r = c.fetch(&ctx).await.unwrap();
+    drop(ctx);
+    assert_eq!(asked.await.unwrap().len(), 1);
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(r.warnings[0].starts_with(IBAN_A), "{:?}", r.warnings);
+    assert!(!c.sca_in_dialog);
+    assert_eq!(
+        c.st.sca_seen.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["HKSAL"]
+    );
+}
+
+#[tokio::test]
+async fn a_tan_the_bank_does_not_accept_is_no_approval() {
+    // #1828 (review): the bank asks for the TAN again after the user typed one
+    let (url, _seen) = mock_bank(vec![SAL_TAN_DEMANDED]);
+    let mut c = savings_needing_sca(&url);
+    let (prompt, asked) = answering_prompt(|_| {
+        Some(crate::connectors::PromptAnswer::Code(SecretString::new(
+            "123456".into(),
+        )))
+    });
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        ..test_ctx()
+    };
+    assert!(c.fetch(&ctx).await.is_err());
+    drop(ctx);
+    assert_eq!(asked.await.unwrap().len(), 1);
+    assert!(!c.sca_in_dialog);
+    assert!(c.st.sca_seen.contains("HKSAL"), "{:?}", c.st.sca_seen);
+}
+
+#[tokio::test]
 async fn a_skipped_tan_is_reported_and_the_rest_of_the_fetch_goes_on() {
     // #1730: "Überspringen" leaves out the camt request of account B; its MT940
     // is not tried either (it would only ask again), A's balance is stored
@@ -2335,6 +2391,8 @@ async fn an_app_approval_during_the_fetch_is_shown_and_polled_by_the_front_end()
         trf("{0} in der Banking-App freigeben", &[&tr("Saldo")])
     );
     assert_eq!(seen.lock().unwrap().len(), 3);
+    // #1828: the approval was given in this dialog
+    assert!(c.sca_in_dialog);
 }
 
 /// The user's side of a cancel: sets the session's flag when the first
@@ -2418,6 +2476,9 @@ async fn without_a_prompt_a_tan_during_the_fetch_still_fails_the_request() {
     assert!(e.contains("HKSAL"), "{e}");
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
+
+/// One MT940 statement closing with 3476,55 EUR.
+const MT940_CLOSING_347655: &str = ":20:STARTUMSE\r\n:25:52090000/0012345678\r\n:28C:00000/001\r\n:60F:C250101EUR1000,00\r\n:61:2501030103CR2500,00NTRFNONREF\r\n:86:166?00GUTSCHRIFT?20SVWZ+Gehalt Januar?32Muster GmbH\r\n:62F:C250103EUR3476,55\r\n-\r\n";
 
 /// A bank reply carrying `prefix` with `data` as binary element (FinTS `@len@`).
 fn reply_with_binary(prefix: &str, data: &str) -> &'static str {

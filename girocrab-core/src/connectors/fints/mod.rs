@@ -300,8 +300,9 @@ pub struct FinTsConnector {
     /// A statement request still had pages left after the last one GiroCrab
     /// reads: the list is not complete (#1043).
     truncated_statements: bool,
-    /// The bank asked for a TAN or an approval in this dialog and it was given: a later reply
-    /// without SCA (a further page, another job) says nothing about the next sync (#1828).
+    /// A TAN or an approval the bank asked for in this dialog was given and accepted (not when
+    /// it was only asked, skipped or refused): a later reply without SCA (a further page,
+    /// another job) says nothing about the next sync (#1828).
     sca_in_dialog: bool,
     /// The order was handed to the bank: from here on, an unclear reply or a
     /// lost connection means "result unknown", never "not executed".
@@ -516,13 +517,18 @@ impl BankConnector for FinTsConnector {
                     let c = self.challenge.clone().ok_or(CoreError::SessionClosed)?;
                     return Ok(Phase::Pending(c));
                 }
-                self.after_approval(ctx, reply).await
+                let phase = self.after_approval(ctx, reply).await?;
+                // accepted by the bank (a refusal returned above): this dialog is approved (#1828)
+                self.sca_in_dialog = true;
+                Ok(phase)
             }
             ChallengeResponse::Code(tan) => {
                 self.tan_for_next = None;
                 payload.push(self.hktan_with_tan(n, &task));
                 let reply = self.send(ctx, payload, &sec, Some(tan.expose())).await?;
-                self.after_approval(ctx, reply).await
+                let phase = self.after_approval(ctx, reply).await?;
+                self.sca_in_dialog = true;
+                Ok(phase)
             }
         }
     }
