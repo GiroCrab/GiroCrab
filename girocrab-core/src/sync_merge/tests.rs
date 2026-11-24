@@ -2210,6 +2210,49 @@ fn rule_edit_newest_wins_and_deleted_rule_stays_deleted() {
     }
 }
 
+/// A v7 snapshot's row merged into its local match by path (#931): a role it got from the
+/// upgrade (stamp 0, step 42 from its starter `Umbuchungen`) is nobody's choice and stays out
+/// of the local category, as when the row is already known as a merged duplicate.
+#[test]
+fn v7_snapshot_seeded_role_does_not_reach_local_match() {
+    let dir = temp_dir("v7-role");
+    let a = open(&dir, "a.db");
+    let own = a
+        .create_category("Umbuchungen".into(), None, "tag".into(), "#123456".into())
+        .unwrap();
+    // a uuid of its own (not the path uuid), so the v7 row is matched by its path
+    a.db()
+        .unwrap()
+        .execute("UPDATE categories SET uuid = 'u-own' WHERE id = ?1", [own])
+        .unwrap();
+    let (_, symbol, color, _) = crate::demo::STARTER_TREE
+        .iter()
+        .find(|(name, ..)| *name == "Umbuchungen")
+        .unwrap();
+    let path = dir.join("old.db").to_string_lossy().to_string();
+    {
+        let conn = Connection::open(&path).unwrap();
+        Vault::apply_key(&conn, &[7u8; 32]).unwrap();
+        conn.execute_batch(crate::vault::SCHEMA).unwrap();
+        crate::user_groups::migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO categories(id, name, sf_symbol, color_hex) VALUES (1, 'Umbuchungen', ?1, ?2)",
+            params![symbol, color],
+        )
+        .unwrap();
+        conn.execute_batch("PRAGMA user_version = 7;").unwrap();
+    }
+    a.merge_other_vault(path, vec![7u8; 32]).unwrap();
+    let cat = a
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == own)
+        .unwrap();
+    assert_eq!(cat.role, None);
+    assert_eq!(cat.effective_role, crate::models::CategoryRole::Consumption);
+}
+
 #[test]
 fn v7_snapshot_cannot_revive_deleted_category() {
     let dir = temp_dir("v7-revive");

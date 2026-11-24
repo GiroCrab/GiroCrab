@@ -317,10 +317,16 @@ pub(crate) fn merge_categories(
             Some(target) => {
                 // merged into its match; the row itself stays as a tombstone
                 let t = state.get_mut(target).unwrap();
-                t.merge(Cat {
+                let mut incoming = Cat {
                     uuid: target.clone(),
                     ..row.clone()
-                });
+                };
+                // like a merged duplicate (`role_winners`), only a chosen role reaches the
+                // match; the row keeps a role nobody chose (stamp 0) for itself
+                if incoming.role_ms == 0 {
+                    incoming.category_role = None;
+                }
+                t.merge(incoming);
                 let ms = t.name_ms;
                 row.id = 0;
                 row.deleted_ms = Some(ms.max(1));
