@@ -184,7 +184,11 @@ fn candidates(
                 let matches = match reason {
                     RefundMatch::SameAmount => other_amount.checked_abs() == amount.checked_abs(),
                     RefundMatch::SameMerchant => {
-                        let own_merchant = index.merchants.get(&own.0).map(String::as_str).unwrap_or("");
+                        let own_merchant = index
+                            .merchants
+                            .get(&own.0)
+                            .map(String::as_str)
+                            .unwrap_or("");
                         if !merchant.is_empty() && !own_merchant.is_empty() {
                             merchant == own_merchant
                         } else {
@@ -345,4 +349,3 @@ mod date_tests {
         assert!(reference_tokens("Ref 2026-04/17").contains("20260417"));
     }
 }
-
