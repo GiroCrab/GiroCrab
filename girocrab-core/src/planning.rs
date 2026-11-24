@@ -224,8 +224,9 @@ impl Vault {
 
     // ------------------------------------------------------------- splits
 
-    /// Replaces the splits of a booking. An empty list removes the split.
-    /// The amounts must add up to the booking amount.
+    /// Replaces the splits of a booking. An empty list removes the split, except on a booking of
+    /// 0 € (it exists only through its parts; that is rejected). The amounts must add up to the
+    /// booking amount.
     pub fn set_transaction_splits(
         &self,
         transaction_id: i64,
@@ -598,12 +599,13 @@ pub(crate) fn store_splits(
 }
 
 /// Gives the parts of booking `id` UUIDs derived from the booking's sync key and each part's
-/// content (category, amount, note, occurrence), like the schema 39 backfill: an import that
-/// creates the same parts on two devices gives them the same identities. A UUID already taken
+/// content (category, amount, note, occurrence) with the recipe of the schema 39 backfill: an
+/// import that creates the same parts on two devices, or before and after the upgrade on
+/// another device, gives them the same identities. A UUID already taken
 /// elsewhere keeps the random one; a UUID a refund link names (live or undoable) is kept, so the
 /// link still finds its part after a reimport.
 pub(crate) fn derive_split_uuids(conn: &rusqlite::Connection, id: i64) -> Result<(), CoreError> {
-    let key = crate::sync_merge::booking_key(conn, id)?;
+    let identity = split_ids::booking_identity(conn, id)?;
     let parts: Vec<(String, i64, String, Option<String>)> = conn
         .prepare_cached(
             "SELECT s.uuid, s.amount_cents, s.note, c.uuid FROM transaction_splits s
@@ -614,13 +616,11 @@ pub(crate) fn derive_split_uuids(conn: &rusqlite::Connection, id: i64) -> Result
         .collect::<Result<_, _>>()?;
     let mut occurrences = HashMap::new();
     for (uuid, amount, note, category) in parts {
-        let content = (category, amount, note);
-        let occurrence = occurrences.entry(content.clone()).or_insert(0u64);
-        let identity =
-            serde_json::to_vec(&("girocrab.import-split.v1", &key, &content, *occurrence))
-                .expect("split identity");
+        let occurrence = occurrences
+            .entry((category.clone(), amount, note.clone()))
+            .or_insert(0u64);
+        let stable = split_ids::part_uuid(&identity, &category, amount, &note, *occurrence);
         *occurrence += 1;
-        let stable = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &identity).to_string();
         conn.execute(
             "UPDATE OR IGNORE transaction_splits SET uuid = ?2 WHERE transaction_id = ?1 AND uuid = ?3
                AND NOT EXISTS (SELECT 1 FROM refund_links l
@@ -799,6 +799,19 @@ mod tests {
                 .iter()
                 .all(|(_, u)| uuid::Uuid::parse_str(u).unwrap().get_version_num() == 5)
         );
+        // the recipe of the schema 39 backfill: migrated and freshly imported parts agree
+        {
+            let db = v.db().unwrap();
+            let identity = split_ids::booking_identity(&db, id).unwrap();
+            assert_eq!(
+                first[2].1,
+                split_ids::part_uuid(&identity, &None, -20, "b", 0)
+            );
+            assert_eq!(
+                first[1].1,
+                split_ids::part_uuid(&identity, &None, -40, "a", 1)
+            );
+        }
         // a part a refund link names keeps its UUID when a reimport would derive another one
         let linked = first[2].1.clone();
         let refund = tx(&v, "refund", "2025-01-05", 20, None);
