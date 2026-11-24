@@ -237,13 +237,14 @@ fn combine_categories(state: &mut BTreeMap<String, Cat>) -> bool {
 /// its live survivor (e.g. device B edited category Y's role before receiving
 /// device A's duplicate merge of Y into X). The survivor is the one bookings
 /// move to ([`cat_survivor`]). Ordinary deletions (`merged_into` is `None`) do
-/// not touch any live category, and neither does a role nobody chose (stamp 0,
-/// seeded by schema step 42 or an import): it described the tombstone's own place.
-/// Only the role is forwarded: it decides how the survivor's bookings are classified.
+/// not touch any live category. Only the role is forwarded: it decides how the
+/// survivor's bookings are classified. Like `combine_categories` with a live duplicate,
+/// also a role nobody chose (stamp 0): otherwise the survivor's role would depend on
+/// whether a device saw the duplicate live or already merged.
 fn forward_merged_roles(state: &mut BTreeMap<String, Cat>) {
     let updates: Vec<(String, Option<String>, i64)> = state
         .values()
-        .filter(|c| c.merged_into.is_some() && c.role_ms > 0)
+        .filter(|c| c.merged_into.is_some())
         .filter_map(|c| {
             let target = cat_survivor(state, &c.uuid)?;
             Some((target.to_string(), c.category_role.clone(), c.role_ms))
@@ -498,18 +499,40 @@ mod forward_tests {
         assert_eq!(survivor.role_ms, 500);
     }
 
-    /// A role nobody chose (stamp 0) on a merged duplicate stays there: the survivor keeps
-    /// inheriting, so its bookings keep their classification.
+    /// Same-named duplicates with different roles nobody chose (stamp 0): the survivor
+    /// ends with the same role whether the duplicate arrives live (`combine_categories`) or
+    /// already merged into it (`forward_merged_roles`).
     #[test]
-    fn seeded_role_on_a_merged_duplicate_is_not_forwarded() {
-        let mut state = BTreeMap::new();
-        let dup = cat("dup", Some("live"), Some("investment"), 0);
-        let live = cat("live", None, None, 0);
-        state.insert(dup.uuid.clone(), dup);
-        state.insert(live.uuid.clone(), live);
+    fn stamp_0_roles_of_duplicates_do_not_depend_on_sync_order() {
+        // Arrives live: combining folds the duplicate's role into the survivor.
+        let mut live_first = BTreeMap::new();
+        for c in [
+            cat("x", None, Some("investment"), 0),
+            cat("y", None, Some("neutral"), 0),
+        ] {
+            live_first.insert(c.uuid.clone(), c);
+        }
+        for c in live_first.values_mut() {
+            c.name = "Kaution".into();
+        }
+        assert!(combine_categories(&mut live_first));
+        forward_merged_roles(&mut live_first);
 
-        forward_merged_roles(&mut state);
-        assert_eq!(state["live"].category_role, None);
-        assert_eq!(state["live"].role_ms, 0);
+        // Arrives merged: another device already combined it, with the role it had there.
+        let mut merged_first = BTreeMap::new();
+        for c in [
+            cat("x", None, Some("investment"), 0),
+            cat("y", Some("x"), Some("neutral"), 0),
+        ] {
+            merged_first.insert(c.uuid.clone(), c);
+        }
+        forward_merged_roles(&mut merged_first);
+
+        assert_eq!(live_first["x"].category_role.as_deref(), Some("neutral"));
+        assert_eq!(
+            merged_first["x"].category_role,
+            live_first["x"].category_role
+        );
+        assert_eq!(merged_first["x"].role_ms, 0);
     }
 }

@@ -500,7 +500,9 @@ pub enum CategoryRole {
     Investment,
     /// Loans & debt.
     Loan,
-    /// Neutral movement (counts as neither income nor expense; e.g. transfers, outlays, deposits).
+    /// Neutral movement (e.g. transfers, outlays, deposits): the category makes its bookings
+    /// transfers, which count as neither income nor expense. Only a loan link overrides it
+    /// (the booking is then a loan payment).
     Neutral,
 }
 

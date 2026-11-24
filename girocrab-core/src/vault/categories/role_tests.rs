@@ -423,10 +423,11 @@ fn category_role_sync_merge_prefers_newest_edit() {
         // Vault A keeps the stamp-0 backfill (`Neutral`); Vault B explicitly changes it.
         b.set_category_role(b_umb, Some(CategoryRole::Consumption))
             .unwrap();
-        // Both edit `Freizeit` at different times: Vault A is newer.
+        // Both edit `Freizeit` at different times: Vault A is newer. The older edit sorts
+        // after the newer one, so only the stamp can make the newer one win.
         let a_frei = cat_id(&a, "Freizeit");
         let b_frei = cat_id(&b, "Freizeit");
-        b.set_category_role(b_frei, Some(CategoryRole::Investment))
+        b.set_category_role(b_frei, Some(CategoryRole::Neutral))
             .unwrap();
         b.db()
             .unwrap()
@@ -435,7 +436,7 @@ fn category_role_sync_merge_prefers_newest_edit() {
                 [b_frei],
             )
             .unwrap();
-        a.set_category_role(a_frei, Some(CategoryRole::Neutral))
+        a.set_category_role(a_frei, Some(CategoryRole::Investment))
             .unwrap();
         a.db()
             .unwrap()
@@ -460,8 +461,8 @@ fn category_role_sync_merge_prefers_newest_edit() {
             find("Umbuchungen").effective_role,
             CategoryRole::Consumption
         );
-        assert_eq!(find("Freizeit").role, Some(CategoryRole::Neutral));
-        assert_eq!(find("Freizeit").effective_role, CategoryRole::Neutral);
+        assert_eq!(find("Freizeit").role, Some(CategoryRole::Investment));
+        assert_eq!(find("Freizeit").effective_role, CategoryRole::Investment);
         let _ = a_umb;
     }
 }
@@ -1100,15 +1101,15 @@ fn v41_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
         )
         .unwrap();
 
-    let flow_of = |id: i64| {
+    let booking = |id: i64| {
         v.list_transactions(BookingFilter::default())
             .unwrap()
             .transactions
             .into_iter()
             .find(|t| t.id == id)
             .unwrap()
-            .flow
     };
+    let flow_of = |id: i64| booking(id).flow;
 
     // In v41, a transfer ancestor always wins in `BookingFinisher::finish`
     // (`is_own_transfer(..., transfer_category)`): both plain and salary-flagged
@@ -1119,11 +1120,14 @@ fn v41_rearranged_builtins_preserve_legacy_flow_on_upgrade() {
         .unwrap();
     assert_eq!(flow_of(plain_debit), FlowKind::Transfer);
     assert_eq!(flow_of(salary_tx), FlowKind::Transfer);
+    // Still detected as salary: the category, not a lost salary mark, makes it a transfer.
+    assert!(booking(salary_tx).is_salary);
 
     // Later explicit role edit on `Gehalt` overrides inherited `Neutral`.
     v.set_category_role(gehalt.id, Some(CategoryRole::Consumption))
         .unwrap();
     assert_eq!(flow_of(plain_debit), FlowKind::Consumption);
+    assert!(booking(salary_tx).is_salary);
     assert_eq!(flow_of(salary_tx), FlowKind::Income);
 
     // `Sparen & Investieren` already under custom root in v41 stays `Consumption`.
