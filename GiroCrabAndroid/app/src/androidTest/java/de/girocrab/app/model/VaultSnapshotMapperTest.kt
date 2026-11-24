@@ -327,8 +327,8 @@ class VaultSnapshotMapperTest {
 
     private fun coreRule(
         categoryId: Long = 12L,
-        field: CoreRuleField = CoreRuleField.CounterpartyIban,
-        matchKind: CoreMatchKind = CoreMatchKind.Keyword,
+        field: CoreRuleField = CoreRuleField.COUNTERPARTY_IBAN,
+        matchKind: CoreMatchKind = CoreMatchKind.KEYWORD,
     ) = CoreRule(
         id = 4L,
         name = "Lebensmittel",
@@ -368,7 +368,7 @@ class VaultSnapshotMapperTest {
 
     @Test
     fun bookingTextFallsBackToTheAnyField() {
-        val rule = VaultSnapshotMapper.rule(coreRule(field = CoreRuleField.BookingText))
+        val rule = VaultSnapshotMapper.rule(coreRule(field = CoreRuleField.BOOKING_TEXT))
         assertEquals("the app has no separate booking-text column", RuleField.Any, rule.field)
     }
 }

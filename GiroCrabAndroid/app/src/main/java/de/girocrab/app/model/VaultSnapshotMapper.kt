@@ -177,22 +177,22 @@ object VaultSnapshotMapper {
     )
 
     /**
-     * Rule fields the app has no separate column for: [CoreRuleField.BookingText] lands on
+     * Rule fields the app has no separate column for: [CoreRuleField.BOOKING_TEXT] lands on
      * [RuleField.Any] because that is the text the rule is shown against.
      */
     fun rule(row: CoreRule): Rule = Rule(
         id = row.id.toString(),
         field = when (row.field) {
-            CoreRuleField.Any -> RuleField.Any
-            CoreRuleField.Counterparty -> RuleField.Counterparty
-            CoreRuleField.Purpose -> RuleField.Purpose
-            CoreRuleField.BookingText -> RuleField.Any
-            CoreRuleField.CounterpartyIban -> RuleField.Iban
+            CoreRuleField.ANY -> RuleField.Any
+            CoreRuleField.COUNTERPARTY -> RuleField.Counterparty
+            CoreRuleField.PURPOSE -> RuleField.Purpose
+            CoreRuleField.BOOKING_TEXT -> RuleField.Any
+            CoreRuleField.COUNTERPARTY_IBAN -> RuleField.Iban
         },
         matchKind = when (row.matchKind) {
-            CoreMatchKind.Keyword -> MatchKind.Keyword
-            CoreMatchKind.Regex -> MatchKind.Regex
-            CoreMatchKind.Expression -> MatchKind.Expression
+            CoreMatchKind.KEYWORD -> MatchKind.Keyword
+            CoreMatchKind.REGEX -> MatchKind.Regex
+            CoreMatchKind.EXPRESSION -> MatchKind.Expression
         },
         pattern = row.pattern,
         // 0 means "no category" in the core, not category 0.
