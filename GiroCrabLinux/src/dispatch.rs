@@ -43,6 +43,15 @@ static VAULT: Mutex<Option<Arc<Vault>>> = Mutex::new(None);
 static OWN: Mutex<Option<Arc<Vault>>> = Mutex::new(None);
 static REFUND_TARGET: Mutex<Option<(String, std::sync::Weak<Vault>)>> = Mutex::new(None);
 
+/// Puts `v` in front (or none). Every activation, also of the same vault again, ends the refund
+/// target: a refund edit issued before it fails instead of landing in this activation
+/// (CodeRabbit #1854). Same lock order as `edit_refund`: target, then vault.
+fn set_active_vault(v: Option<Arc<Vault>>) {
+    let mut target = REFUND_TARGET.lock().unwrap();
+    *VAULT.lock().unwrap() = v;
+    *target = None;
+}
+
 fn pin_refund_target(v: &Arc<Vault>) -> String {
     let mut target = REFUND_TARGET.lock().unwrap();
     if let Some((token, current)) = &*target
@@ -141,7 +150,7 @@ fn reset_app() -> R {
         "reset_app in tests only with GIROCRAB_NO_KEYCHAIN and temporary XDG dirs"
     );
     crate::sessions::cancel_all();
-    *VAULT.lock().unwrap() = None;
+    set_active_vault(None);
     OWN.lock().unwrap().take();
     remove_quicklook_files();
     let vault = vault_path();
@@ -627,7 +636,7 @@ fn call(method: &str, a: &Value) -> R {
                 .ok_or_else(|| crate::i18n::tr("Der eigene Tresor ist nicht geöffnet."))?;
             // preview copies are named by document id: none may survive into another vault
             remove_quicklook_files();
-            *VAULT.lock().unwrap() = Some(own);
+            set_active_vault(Some(own));
             ok(())
         }
         "has_own_vault" => ok(OWN.lock().unwrap().is_some()),
@@ -640,7 +649,7 @@ fn call(method: &str, a: &Value) -> R {
             if let Some(v) = OWN.lock().unwrap().take() {
                 let _ = v.checkpoint();
             }
-            *VAULT.lock().unwrap() = None;
+            set_active_vault(None);
             ok(())
         }
         "is_unlocked" => ok(VAULT.lock().unwrap().is_some()),
@@ -1404,7 +1413,7 @@ fn open_demo() -> R {
     let key: Vec<u8> = (0..32u32).map(|i| ((i * 7 + 3) & 0xFF) as u8).collect();
     let v = Vault::open(path.display().to_string(), key).map_err(|e| e.to_string())?;
     v.seed_demo_data().map_err(|e| e.to_string())?;
-    *VAULT.lock().unwrap() = Some(v);
+    set_active_vault(Some(v));
     ok(())
 }
 
@@ -1749,6 +1758,24 @@ mod tests {
         assert!(dispatch_vault(&old, "edit_refund", &args).unwrap().is_err());
         args.as_object_mut().unwrap().remove("vault_identity");
         assert!(dispatch_vault(&new, "edit_refund", &args).unwrap().is_err());
+    }
+
+    /// CodeRabbit (#1854): putting the same vault in front again (demo -> own -> demo with one
+    /// `Arc`) starts a new activation; a refund edit of the previous one fails.
+    #[test]
+    fn refund_pin_ends_when_the_same_vault_is_activated_again() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let v = vault().unwrap();
+        let fixture = crate::refunds::seed(&v, &json!({})).unwrap();
+        let args = json!({"action":"link", "vault_identity":pin_refund_target(&v),
+            "refund_id":fixture["refund"], "refund_part":fixture["part"],
+            "original_id":fixture["original"], "original_part":""});
+        set_active_vault(Some(v.clone()));
+        assert!(dispatch_vault(&v, "edit_refund", &args).unwrap().is_err());
+        let mut current = args.clone();
+        current["vault_identity"] = json!(pin_refund_target(&v));
+        assert!(dispatch_vault(&v, "edit_refund", &current).unwrap().is_ok());
     }
 
     #[test]

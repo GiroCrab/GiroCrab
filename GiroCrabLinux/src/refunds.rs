@@ -335,6 +335,12 @@ pub fn edit(v: &Vault, args: &Value) -> R {
         changed_ms: Option<i64>,
     }
     let a: Edit = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
+    let key = (
+        a.refund_id,
+        a.refund_part.clone(),
+        a.original_id,
+        a.original_part.clone(),
+    );
     let token = match a.action.as_str() {
         "link" => {
             // the core says whether this call created the link: an existing one (e.g. a
@@ -370,7 +376,21 @@ pub fn edit(v: &Vault, args: &Value) -> R {
         }
         _ => return Err("Unknown refund action".into()),
     };
-    Ok(json!({"changed":true,"token":token}))
+    // after a link or restore: the revision of the live row, so the inverse unlink is
+    // compare-and-set against exactly this row (CodeRabbit #1854)
+    let changed_ms = if token.is_none() {
+        v.refund_links(key.0)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|l| {
+                (l.refund_id, &l.refund_part, l.original_id, &l.original_part)
+                    == (key.0, &key.1, key.2, &key.3)
+            })
+            .map(|l| l.changed_ms)
+    } else {
+        None
+    };
+    Ok(json!({"changed":true,"token":token,"changed_ms":changed_ms}))
 }
 
 #[cfg(test)]

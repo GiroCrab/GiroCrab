@@ -3145,8 +3145,11 @@ QtObject {
             if (!result.changed) return
             const inverse = action === "unlink" ? "restore" : "unlink"
             const undoToken = result.token
+            // the inverse unlink names the revision this call produced (compare-and-set)
+            const inversePair = inverse === "unlink" && result.changed_ms !== null && result.changed_ms !== undefined
+                ? Object.assign({}, pair, { changed_ms: result.changed_ms }) : pair
             UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
-                if (vaultGeneration === generation) changeRefundLink(pair, inverse, undoToken)
+                if (vaultGeneration === generation) changeRefundLink(inversePair, inverse, undoToken)
             }, phase, branch)
             // documentation only (#714): sums stay, only the list markers change
             refundLinksRevision++
