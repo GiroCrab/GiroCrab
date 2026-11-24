@@ -482,6 +482,8 @@ struct MainSplitView: View {
     /// the booking column needs the width.
     @State private var columns: NavigationSplitViewVisibility = .detailOnly
     @Environment(\.horizontalSizeClass) private var hSize
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var span = WindowSpan()
     #endif
 
@@ -623,7 +625,7 @@ struct MainSplitView: View {
                 InspectorView()
                     .frame(width: inspectorWidth)
                     .frame(minHeight: 0, maxHeight: .infinity)
-                    .background(Theme.canvas.ignoresSafeArea())
+                    .background(Theme.systemBackground.ignoresSafeArea())
             }
         }
         .onGeometryChange(for: WindowSpan.self) {
@@ -648,7 +650,10 @@ struct MainSplitView: View {
                         }
                     }
             }
-            .presentationDetents([.medium, .large])
+            // The presentation can retain the dark launch appearance while
+            // the booking list has already switched to its effective scheme.
+            .preferredColorScheme(colorScheme)
+            .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
             .presentationDragIndicator(.visible)
         }
         // Unfolding or widening the window (compact → regular) would otherwise
