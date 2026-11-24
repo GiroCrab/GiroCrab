@@ -1,8 +1,5 @@
 package de.girocrab.app.ui.screens
 
-import android.os.Build
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -31,12 +28,15 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,71 +50,39 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
 
 // ---------------------------------------------------------------------------
 // Biometric lock
 // ---------------------------------------------------------------------------
 
-private fun authenticators(): Int =
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-    } else {
-        BiometricManager.Authenticators.BIOMETRIC_STRONG
-    }
-
-private fun FragmentActivity.canAuthenticate(): Boolean =
-    BiometricManager.from(this).canAuthenticate(authenticators()) == BiometricManager.BIOMETRIC_SUCCESS
-
-private fun FragmentActivity.showBiometricPrompt(onSuccess: () -> Unit, onFailure: (String?) -> Unit) {
-    val prompt = BiometricPrompt(
-        this,
-        ContextCompat.getMainExecutor(this),
-        object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onSuccess()
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) = onFailure(errString.toString())
-        },
-    )
-    val builder = BiometricPrompt.PromptInfo.Builder()
-        .setTitle("GiroCrab entsperren")
-        .setSubtitle("Bestätige deine Identität, um den Tresor zu öffnen")
-        .setAllowedAuthenticators(authenticators())
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) builder.setNegativeButtonText("Abbrechen")
-    prompt.authenticate(builder.build())
-}
-
 /**
- * Full-screen lock. [onUnlock] runs after a successful biometric/device-credential check.
- * During a lock preview from the demo ([previewMode]) a "Zurück zur Demo" button leaves it without auth.
+ * Full-screen lock. The unlock itself lives in `VaultUnlocker` (#1428, 2.2): it asks the system
+ * prompt for an authenticated Keystore cipher and only that cipher can unwrap the device key.
+ * This screen only starts the request and shows what came of it — [message] carries the reason
+ * when nothing was unlocked.
+ *
+ * During a lock preview from the demo ([previewMode]) a "Zurück zur Demo" button leaves it
+ * without auth.
  */
 @Composable
 fun BiometricLockScreen(
     previewMode: Boolean,
-    onUnlock: () -> Unit,
+    message: String?,
+    onUnlockRequest: () -> Unit,
     onBackToDemo: () -> Unit,
     modifier: Modifier = Modifier,
     autoPrompt: Boolean = true,
+    demoEscape: Boolean = false,
+    onImportRequest: (() -> Unit)? = null,
 ) {
-    val activity = LocalContext.current as? FragmentActivity
-    var message by remember { mutableStateOf<String?>(null) }
-    val available = remember(activity) { activity?.canAuthenticate() ?: false }
+    var previewHint by remember { mutableStateOf<String?>(null) }
 
-    fun prompt() {
-        val a = activity ?: return
-        if (!available) {
-            // No secure lock on the device: do not trap the user outside their own vault.
-            onUnlock(); return
-        }
-        message = null
-        a.showBiometricPrompt(onSuccess = onUnlock, onFailure = { message = it })
-    }
-
-    LaunchedEffect(autoPrompt, previewMode) { if (autoPrompt && !previewMode) prompt() }
+    LaunchedEffect(autoPrompt, previewMode) { if (autoPrompt && !previewMode) onUnlockRequest() }
 
     val pulse by rememberInfiniteTransition(label = "crab").animateFloat(
         initialValue = 0.94f, targetValue = 1.06f,
@@ -128,8 +96,7 @@ fun BiometricLockScreen(
             verticalArrangement = Arrangement.Center,
         ) {
             Box(
-                Modifier.size(112.dp).scale(pulse)
-                    .let { it },
+                Modifier.size(112.dp).scale(pulse),
                 contentAlignment = Alignment.Center,
             ) {
                 Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxSize()) {}
@@ -141,24 +108,40 @@ fun BiometricLockScreen(
             Spacer(Modifier.height(8.dp))
             Text(
                 if (previewMode) "Vorschau des Sperrbildschirms – in der Demo bleiben alle Daten unberührt."
-                else "Entsperre mit Fingerabdruck, Gesicht oder Geräte-PIN.",
+                else "Entsperre mit Fingerabdruck oder Gesicht.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            message?.let {
+            (previewHint ?: message)?.let {
                 Spacer(Modifier.height(12.dp))
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
             }
             Spacer(Modifier.height(28.dp))
-            Button(onClick = { if (previewMode) message = "Vorschau: Entsperren ist in der Demo deaktiviert." else prompt() }) {
+            Button(onClick = {
+                if (previewMode) previewHint = "Vorschau: Entsperren ist in der Demo deaktiviert." else onUnlockRequest()
+            }) {
                 Icon(Icons.Default.Fingerprint, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Entsperren")
             }
+            // The only way onto real data: Android never creates a vault, it imports one (#1428).
+            if (!previewMode && onImportRequest != null) {
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(onClick = onImportRequest) {
+                    Icon(Icons.Default.CloudDownload, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Aus Sicherung einspielen")
+                }
+            }
             if (previewMode) {
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onBackToDemo) { Text("Zurück zur Demo") }
+            } else if (demoEscape) {
+                // A vault opened, but the app cannot show it yet (#1429): offer a labelled way out
+                // instead of silently falling back to the demo.
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onBackToDemo) { Text("Weiter in der Demo") }
             }
         }
     }
@@ -276,4 +259,55 @@ private fun ActionButton(icon: ImageVector, label: String, primary: Boolean, onC
     }
     if (primary) Button(onClick, Modifier.fillMaxWidth()) { content() }
     else OutlinedButton(onClick, Modifier.fillMaxWidth()) { content() }
+}
+
+
+/**
+ * Password for a desktop backup ("Tresor sichern"). Importing needs it because the file is
+ * encrypted with it — the desktop's vault key is never part of the transfer.
+ */
+@Composable
+fun ImportPasswordDialog(
+    fileName: String,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var reveal by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sicherung einspielen") },
+        text = {
+            Column {
+                Text(
+                    "Passwort der Sicherung. Es wurde beim „Tresor sichern“ auf dem Desktop gesetzt.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(fileName, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    singleLine = true,
+                    // A password keyboard keeps the backup password out of the keyboard's learned
+                    // words and its suggestions (#1429).
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    label = { Text("Passwort") },
+                    visualTransformation = if (reveal) androidx.compose.ui.text.input.VisualTransformation.None
+                    else PasswordVisualTransformation(),
+                )
+                TextButton(onClick = { reveal = !reveal }) {
+                    Text(if (reveal) "Passwort verbergen" else "Passwort anzeigen")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSubmit(password) }, enabled = password.isNotEmpty()) {
+                Text("Einspielen")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
+    )
 }
