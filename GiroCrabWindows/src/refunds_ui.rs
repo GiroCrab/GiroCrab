@@ -932,7 +932,8 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
         let (Some(win), Some(v)) = (weak.upgrade(), s.lock().unwrap().clone()) else {
             return;
         };
-        if win.get_rf_loading() || win.get_rf_edit_pending() {
+        // no edits on masked values (as the other edit paths in privacy mode)
+        if win.get_rf_loading() || win.get_rf_edit_pending() || crate::privacy_on(&win) {
             return;
         }
         let action = with_ui(|u| {
@@ -950,6 +951,9 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
         let (Some(win), Some(v)) = (weak.upgrade(), slot.lock().unwrap().clone()) else {
             return;
         };
+        if crate::privacy_on(&win) {
+            return;
+        }
         if let Some((pair, token)) = with_ui(|u| u.undo.clone()) {
             mutate(&win, v, Edit::Restore(pair, token));
         }
