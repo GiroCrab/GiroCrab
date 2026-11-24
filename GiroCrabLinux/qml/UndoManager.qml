@@ -28,7 +28,9 @@ QtObject {
     /// Records `fn` (no arguments) as the undo of the action just done, shown as `name`.
     function register(name, fn, recordedPhase, recordedBranch) {
         const p = recordedPhase === undefined ? phase : recordedPhase
-        if (p !== 0 && recordedBranch !== undefined && recordedBranch !== branch) return
+        // a late undo completion of an abandoned branch is dropped; a redo completion always
+        // puts its inverse back on the undo stack
+        if (p === 1 && recordedBranch !== undefined && recordedBranch !== branch) return
         const entry = { name: name, fn: fn }
         if (p === 1) redoStack = redoStack.concat([entry])
         else {
