@@ -3325,8 +3325,12 @@ fn review_moves_preserve_destination_unlinks_and_reject_collisions() {
             fold_booking(&db, old, new, true, true).unwrap();
         } else {
             move_booking(&db, old, new).unwrap();
+            // as a take-over does: the source booking goes
+            crate::sync_merge::soft_delete_booking(&db, old).unwrap();
         }
         drop(db);
+        // colliding moves keep both links where they were: visible, inactive
+        assert_eq!(f.v.refund_links(r).unwrap().len(), 2);
         if fold {
             let links = f.v.refund_links(r).unwrap();
             assert_eq!(links.len(), 2);

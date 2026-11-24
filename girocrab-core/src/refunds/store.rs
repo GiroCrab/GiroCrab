@@ -171,11 +171,9 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                 if (row.deleted_ms.is_none() || !row.moved) && old.0 != target.0 {
                     match survivor_part(conn, "other", old, target.0, true)? {
                         Some(part) => target.1 = part,
-                        // a whole booking with another amount: the link stays on the folded
-                        // twin booking (same vault, deleted with it) and is inactive
-                        None if old.1.is_empty() && row.deleted_ms.is_none() => {
-                            *target = old.clone()
-                        }
+                        // a whole booking with another amount: the link (or its unlink) stays on
+                        // the folded twin booking (same vault, deleted with it)
+                        None if old.1.is_empty() => *target = old.clone(),
                         None => {}
                     }
                 }
@@ -445,6 +443,11 @@ pub(crate) fn move_endpoints(
         *counts.entry(key.clone()).or_insert(0usize) += 1;
     }
     for (row, key) in targets {
+        // two links would land on one key (e.g. a whole booking and its imported part both
+        // consolidated into one split): both stay where they are, visible and inactive
+        if counts[&key] > 1 {
+            continue;
+        }
         let mut row = row.clone();
         let mut target = row.clone();
         target.key = key;
@@ -453,10 +456,8 @@ pub(crate) fn move_endpoints(
         target.moved_from = Some(row.key.clone());
         target.moved_from_key = source_key(conn, &row.key)?;
         let destination = by_key.get(&target.key).copied();
-        if counts[&target.key] == 1
-            && destination.is_none_or(|d| {
-                d.deleted_ms.is_some() && (d.moved || d.changed_ms < row.changed_ms)
-            })
+        if destination
+            .is_none_or(|d| d.deleted_ms.is_some() && (d.moved || d.changed_ms < row.changed_ms))
         {
             moved.push(target);
         }

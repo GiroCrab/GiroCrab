@@ -164,6 +164,10 @@ fn candidates(
         .map(|id| &p.state.books[id])
         .filter(|b| b.live && b.id != book.id && b.currency == book.currency);
     for b in books {
+        // suggestions look 62 days around the booking only: checked before any other work
+        if reason.is_some() && !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
+            continue;
+        }
         if b.check_capacity().is_err() {
             continue;
         }
@@ -178,9 +182,6 @@ fn candidates(
                 continue;
             }
             if let Some(reason) = reason {
-                if !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
-                    continue;
-                }
                 let matches = match reason {
                     RefundMatch::SameAmount => other_amount.checked_abs() == amount.checked_abs(),
                     RefundMatch::SameMerchant => {
