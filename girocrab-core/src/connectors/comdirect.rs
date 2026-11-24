@@ -528,7 +528,8 @@ impl BankConnector for ComdirectConnector {
                 Err(e) => {
                     let since = super::history::retry_since(&ctx.since, ctx.full_fetch, e)?;
                     let booked = self.booked(&id, &since).await?;
-                    out.warnings.push(super::history::refused_warning(&id));
+                    out.warnings
+                        .push(super::history::refused_warning(&id, &since));
                     booked
                 }
             };

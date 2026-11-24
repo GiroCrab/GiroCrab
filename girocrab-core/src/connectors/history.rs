@@ -149,11 +149,17 @@ pub(crate) fn retry_since(since: &str, full_fetch: bool, err: CoreError) -> Core
 }
 
 /// Warning of a sync whose start date for `account_ref` the bank refused
-/// ([`retry_since`]).
-pub(crate) fn refused_warning(account_ref: &str) -> String {
+/// ([`retry_since`]): says from when on bookings were fetched, as older ones
+/// are missing (also a stretch between an account's newest stored booking and
+/// that date, which later syncs do not fetch).
+pub(crate) fn refused_warning(account_ref: &str, fetched_since: &str) -> String {
+    let date = match crate::dates::parse_iso(fetched_since) {
+        Some(d) => format!("{:02}.{:02}.{}", d.day(), d.month(), d.year()),
+        None => fetched_since.to_string(),
+    };
     trf(
-        "{0}: Die Bank hat den angeforderten Zeitraum abgelehnt; abgerufen wurden die letzten 90 Tage.",
-        &[&account_ref],
+        "{0}: Die Bank hat den angeforderten Zeitraum abgelehnt. Abgerufen wurden nur die Umsätze ab dem {1}, ältere fehlen.",
+        &[&account_ref, &date],
     )
 }
 
