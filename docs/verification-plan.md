@@ -14,7 +14,7 @@ not that the app is free of vulnerabilities.*
 | vor jedem Push (nach `git config core.hooksPath .githooks`) | `scripts/verify-fast.sh --lint-only`: alle `scripts/lint-*.sh`, Formatierung, Lizenzhinweise, Suche nach einer FinTS-Produkt-ID |
 | jeder Pull Request | [`ci.yml`](../.github/workflows/ci.yml): die Lint-Schritte immer; Clippy, Tests und die Builds der Plattformen nur, wenn die Änderung sie betreffen kann (Job `changes`) |
 | wöchentlich | `ci.yml`, Job `audit`: neue Meldungen der RustSec-Datenbank |
-| geplant alle 6 Stunden | [`release-integrity.yml`](../.github/workflows/release-integrity.yml): die veröffentlichten Dateien. GitHub kann geplante Läufe verspäten oder auslassen |
+| geplant alle 6 Stunden | [`release-integrity.yml`](../.github/workflows/release-integrity.yml): `appcast.xml` mit den Disk-Images seiner Einträge und `banking-policy.json` mit Signatur. Nicht enthalten: Windows-, Linux- und Android-Pakete sowie die Mitteilungen. GitHub kann geplante Läufe verspäten oder auslassen |
 
 Für `main` sind die Checks `rust`, `swift` und `audit` vorgeschrieben (Stand 24.11.2026, nicht für Admins). Ein übersprungener Job zählt
 dabei als bestanden. `scripts/lint-connectors.sh` läuft im Push-Hook, aber nicht als Schritt in `ci.yml`.
@@ -65,8 +65,12 @@ austauscht. Nicht jedes Release enthält alle Pakete: Bei v0.8.8 ist der Bau der
 Update-Feed und Sicherheitssperre, nur mit öffentlichen Schlüsseln aus dem Repo (lädt die Disk-Images, braucht macOS):
 
 ```bash
-scripts/verify-release-integrity.sh
+scripts/verify-release-integrity.sh --state build/integrity-state.json
 ```
+
+Der erste Lauf legt den Vergleichswert in der Datei ab. Erst spätere Läufe mit derselben Datei melden eine Sicherheitssperre mit
+kleinerer `sequence` sowie einen verschwundenen Update-Feed oder eine ganz verschwundene Sicherheitssperre. Ohne `--state` fällt das nicht auf: Eine ältere, gültig
+signierte Sicherheitssperre besteht dann die Prüfung.
 
 Das heruntergeladene Disk-Image auf dem Mac:
 
