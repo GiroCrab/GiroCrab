@@ -994,6 +994,13 @@ export component MainWindow inherits Window {
     callback rule-delete();
     callback select-booking(int);
     in property <int> marked-count: 0;
+    // Summenleiste der Auswahl (#878); Beträge kommen im Privatmodus bereits maskiert.
+    in property <bool> selection-summary-visible;
+    in property <string> selection-count-text;
+    in property <string> selection-income;
+    in property <string> selection-expense;
+    in property <string> selection-balance;
+    in property <string> selection-extra;
     callback toggle-booking-checked(int);
     callback toggle-booking-mark(int);
     callback batch-select-all();
@@ -1452,6 +1459,25 @@ export component MainWindow inherits Window {
                 Text { text: root.booking-count; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
             }
             // batch action bar (multi-select)
+            if root.view-mode == 0 && root.selection-summary-visible : VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 2px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: root.selection-count-text; color: Theme.text; font-size: 12px; vertical-alignment: center; }
+                    Text { text: "Einnahmen " + root.selection-income; color: Theme.text; font-size: 12px; overflow: elide; vertical-alignment: center; }
+                    Text { text: "Ausgaben " + root.selection-expense; color: Theme.text; font-size: 12px; overflow: elide; vertical-alignment: center; }
+                    Text { text: "Saldo " + root.selection-balance; color: Theme.text; font-size: 12px; font-weight: 600; overflow: elide; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                if root.selection-extra != "" : Text {
+                    text: root.selection-extra;
+                    color: Theme.muted;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+            }
             if root.view-mode == 0 && root.marked-count > 0: Rectangle {
                 height: 44px;
                 background: Theme.accent.with-alpha(0.15);
