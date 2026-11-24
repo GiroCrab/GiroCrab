@@ -469,9 +469,9 @@ struct MainSplitView: View {
     @Environment(AppModel.self) private var model
     @AppStorage(EnableBankingKeySync.noticeSuppressedKey) private var enableBankingNoticeSuppressed = false
     @Environment(\.textScale) private var textScale
+    @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
     #if os(macOS)
     @State private var columns: NavigationSplitViewVisibility = .all
-    @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
     @State private var inspectorWidth: CGFloat = InspectorWidth.standard
     @State private var inspectorDragStart: CGFloat?
     @State private var splitterHovered = false
@@ -618,9 +618,16 @@ struct MainSplitView: View {
                 sidebar
             } detail: {
                 bookingColumn
+                    .toolbar {
+                        // Only where the column has room: in a narrower window the
+                        // detail is a sheet anyway and the switch would do nothing.
+                        if inspectorFits {
+                            ToolbarItem(placement: .primaryAction) { inspectorToggle }
+                        }
+                    }
             }
             .navigationSplitViewStyle(.balanced)
-            if inspectorFits {
+            if inspectorShown {
                 Divider().ignoresSafeArea()
                 InspectorView()
                     .frame(width: inspectorWidth)
@@ -632,11 +639,11 @@ struct MainSplitView: View {
             WindowSpan(width: $0.size.width, leading: $0.safeAreaInsets.leading, trailing: $0.safeAreaInsets.trailing)
         } action: { span = $0 }
         .capturableSheet(isPresented: Binding(
-            get: { !inspectorFits && model.showBookingSheet && hasDetailSelection },
+            get: { !inspectorShown && model.showBookingSheet && hasDetailSelection },
             // Only a dismissal by the user ends it: when the window gets wide
             // enough the sheet gives way to the column and returns with the
             // same booking once the window is narrow again.
-            set: { if !$0, !inspectorFits { model.showBookingSheet = false } }
+            set: { if !$0, !inspectorShown { model.showBookingSheet = false } }
         )) {
             // Title + "Fertig" (UI-Audit INS-3); the merchant is personal, so the
             // title is masked in the bug report (a parameter text, no `.sensitive()`).
@@ -679,6 +686,23 @@ struct MainSplitView: View {
     /// select: the column would show the booking picked last in another list.
     private var inspectorFits: Bool {
         model.mainColumn != .documents && model.mainColumn != .wealth && span.full >= 760 * textScale
+    }
+
+    /// The detail column is on screen: there is room for it and the user has not
+    /// hidden it. Hidden, the detail opens as a sheet like in a narrow window (#1746).
+    private var inspectorShown: Bool { showInspector && inspectorFits }
+
+    /// Hides or shows the detail column; the choice is kept like on the Mac
+    /// (`ViewLayout.inspectorKey`, the same switch as „Informationen ausblenden“ there).
+    private var inspectorToggle: some View {
+        Button {
+            // A booking tapped while the column was showing asked for no sheet:
+            // hiding the column must not open one for it.
+            if showInspector { model.showBookingSheet = false }
+            showInspector.toggle()
+        } label: {
+            Label(showInspector ? "Informationen ausblenden" : "Informationen einblenden", systemImage: "sidebar.trailing")
+        }
     }
 
     /// The list in the booking column has a selection the detail sheet can show.
