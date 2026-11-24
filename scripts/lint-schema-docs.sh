@@ -7,12 +7,68 @@ cd "$(dirname "$0")/.."
 schema=girocrab-core/src/schema.rs
 doc=docs/ARCHITECTURE.md
 
-# Every `Step::…` between `const STEPS` and its closing `];`, also several on one line.
-# String literals are emptied first, so a `//` inside one (a URL) is not taken for a
-# comment; then `//` comments are left out.
-n=$(awk '/^const STEPS: /{on=1; next} on && /^\];/{exit} on {
-    gsub(/"([^"\\]|\\.)*"/, "\"\""); sub(/\/\/.*/, ""); c += gsub(/Step::/, "")
-} END{print c+0}' "$schema")
+# Counts every `Step::…` between `const STEPS` and its closing `];` (read from stdin), also
+# several on one line. A character scanner keeps its state across lines: string literals
+# (with escapes, also over several lines), `//` comments and `/* … */` comments (nested, as
+# in Rust) are left out, so a `//` in a URL or a commented-out step does not change the
+# count. Raw strings (`r"…"`, `r#"…"#`) are not parsed: the scan fails instead of miscounting.
+count_steps() {
+    awk '
+    /^const STEPS: / { on = 1; next }
+    on && depth == 0 && !str && /^\];/ { exit }
+    on {
+        code = ""
+        len = length($0)
+        for (i = 1; i <= len; i++) {
+            ch = substr($0, i, 1); two = substr($0, i, 2)
+            if (str) {
+                if (ch == "\\") i++
+                else if (ch == "\"") str = 0
+            } else if (depth > 0) {
+                if (two == "/*") { depth++; i++ }
+                else if (two == "*/") { depth--; i++ }
+            } else if (two == "//") {
+                break
+            } else if (two == "/*") {
+                depth = 1; i++
+            } else if (ch == "\"") {
+                prev = substr($0, i - 1, 1)
+                if (prev == "r" || prev == "#") {
+                    print "line " NR ": raw string literal in STEPS is not supported (update scripts/lint-schema-docs.sh)" > "/dev/stderr"
+                    bad = 1; exit
+                }
+                str = 1
+            } else code = code ch
+        }
+        c += gsub(/Step::/, "", code)
+    }
+    END { if (bad) exit 1; print c + 0 }'
+}
+
+# Self-test of the scanner on fixed samples (milliseconds; runs on every lint).
+expect_count() { # expected count, body of STEPS
+    local got
+    got=$(printf 'const STEPS: &[Step] = &[\n%s\n];\n' "$2" | count_steps)
+    [ "$got" = "$1" ] || {
+        echo "$0 self-test: expected $1 steps, counted $got in:" >&2
+        printf '%s\n' "$2" >&2
+        exit 1
+    }
+}
+expect_count 2 $'    Step::Sql(A), Step::Sql(B), // 1, 2'
+expect_count 1 $'    Step::Sql(A), // Step::Sql(Z)'
+expect_count 1 $'    /* Step::Hook(x), */ Step::Sql(A),'
+expect_count 1 $'    /* old /* Step::Sql(B) */\n    Step::Sql(C), */\n    Step::Sql(A),'
+expect_count 2 $'    Step::Sql("http://x"), Step::Sql(B),'
+expect_count 2 $'    Step::Sql("a\\"b // c"), Step::Sql(B),'
+expect_count 2 $'    Step::Sql("a\n    Step::Sql(X) // y"), Step::Sql(B),'
+expect_count 1 $'    Step::Sql("];"),\n];\n    Step::Sql(B),'
+if printf 'const STEPS: &[Step] = &[\n    Step::Sql(r"x"),\n];\n' | count_steps >/dev/null 2>&1; then
+    echo "$0 self-test: a raw string in STEPS must fail the scan" >&2
+    exit 1
+fi
+
+n=$(count_steps <"$schema")
 if [ "$n" -lt 1 ]; then
     echo "$schema: no entries found in STEPS (did its layout change? update $0)" >&2
     exit 1
