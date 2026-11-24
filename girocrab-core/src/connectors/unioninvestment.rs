@@ -84,8 +84,10 @@ fn positions(depot: &Value) -> CoreResult<Vec<Position>> {
         let price = number(item, "price")?;
         // value = shares x redemption price; the price is shown rounded to cents, so allow
         // 1 ct plus half a cent per share for that rounding
-        let expected = (quantity * price * 100.0).round() as i64;
-        if (value - expected).abs() > 1 + (quantity * 0.5).ceil() as i64 {
+        // i128: a product beyond i64 must be rejected, not overflow the difference
+        // i128: a product beyond i64 must be rejected, not overflow the difference
+        let expected = (quantity * price * 100.0).round() as i128;
+        if (value as i128 - expected).abs() > 1 + (quantity * 0.5).ceil() as i128 {
             return Err(invalid());
         }
         match out.iter_mut().find(|p| p.isin == isin) {
@@ -436,6 +438,16 @@ mod tests {
         let mut f = fixture();
         f["depots"][0]["items"] = json!([item("DE0000000001", 1.0, 10.0, 100.0, 0.0)]);
         f["depots"][0]["value"] = json!(100.0);
+        assert!(snapshot(&f.to_string()).is_err());
+    }
+
+    #[test]
+    fn rejects_out_of_range_products_without_overflow() {
+        // shares x price beyond i64 (in cents) against a value of -1 ct: the difference
+        // used to reach i64::MIN and pass (or panic) instead of being rejected
+        let mut f = fixture();
+        f["depots"][0]["items"] = json!([item("DE0000000001", 1.0e11, 1.0e11, -0.01, 0.0)]);
+        f["depots"][0]["value"] = json!(-0.01);
         assert!(snapshot(&f.to_string()).is_err());
     }
 
