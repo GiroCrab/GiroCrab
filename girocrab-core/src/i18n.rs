@@ -746,6 +746,20 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ connectors/fints
         "Bitte in der Banking-App freigeben" => "Approve in your banking app",
         "TAN eingeben" => "Enter TAN",
+        // TAN prompts during the fetch (#1730)
+        "TAN für {0}" => "TAN for {0}",
+        "{0} in der Banking-App freigeben" => "Approve {0} in your banking app",
+        "Saldo" => "balance",
+        "Umsätze" => "transactions",
+        "Kartenumsätze" => "card transactions",
+        "Depotbestand" => "holdings",
+        "Daueraufträge" => "standing orders",
+        "Kontoauszüge" => "statements",
+        "diesen Auftrag" => "this order",
+        "Die TAN-Eingabe für {0} wurde übersprungen." => "The TAN for {0} was skipped.",
+        "Die Bank hat die TAN für {0} nicht angenommen." => {
+            "The bank did not accept the TAN for {0}."
+        }
         "Dieses Konto oder diese Bank erlaubt keine Echtzeitüberweisungen per FinTS (HKIPZ). Bitte in der Banking-App überweisen." => {
             "This account or bank doesn’t allow instant transfers via FinTS (HKIPZ). Please make the transfer in your banking app."
         }
@@ -840,6 +854,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "{0}: Die Bank hat nur einen Teil des angeforderten Zeitraums geliefert (Rückmeldung 3997)." => {
             "{0}: the bank delivered only part of the requested period (return code 3997)."
+        }
+        "{0}: Die Umsatzliste war länger als 50 Seiten und wurde nicht vollständig gelesen." => {
+            "{0}: the transaction list was longer than 50 pages and was not read completely."
         }
         // ------------------------------------------------------------ connectors/fints RAH-10 (bank_keys.rs, keyfile.rs, rah10.rs)
         "Ungültige Bankleitzahl." => "Invalid bank code.",
@@ -1850,9 +1867,9 @@ fn english(de: &str) -> Option<&'static str> {
             "Merchant logo provider: off, duckduckgo or google. Logos are cached encrypted; only the merchant domain (e.g. lidl.de) is sent. Default: off."
         }
         "Händler-Logos" => "Merchant logos",
-        "Tage beim ersten Abruf" => "Days on first sync",
-        "Ältere Umsätze werden nur einmal abgefragt." => {
-            "Older transactions are only fetched once."
+        "Zeitraum beim ersten Abruf" => "Period of the first fetch",
+        "max = so weit Bank und Anbindung es zulassen, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze." => {
+            "max = as far back as the bank and the connection allow, otherwise a number of days. Applies to new logins and to accounts without transactions."
         }
         "Allgemein" => "General",
         // ------------------------------------------------------------ vault.rs settings (same in both languages)
@@ -1874,6 +1891,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Gutschrift" => "Credit",
         "Bestellung" => "Order",
         "Erstattung" => "Refund",
+        "Zahlung" => "Payment",
         "Überweisung" => "Transfer",
         "Buchung" => "Transaction",
         "Ordner nicht gefunden: {0}" => "Folder not found: {0}",

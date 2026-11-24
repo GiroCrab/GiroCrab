@@ -45,8 +45,15 @@ extension AppModel {
         }
         // also from the demo an empty vault shows on a new device
         useVault(v, demo: false)
-        syncNow()
+        // The restored state wins in the merge (#1090) and goes to the other
+        // devices with the next sync; say so instead of syncing silently, but
+        // only once that sync has started (it waits for one still running).
         toast = String(localized: "Tresor aus der Sicherung wiederhergestellt")
+        Task {
+            await syncRestoredVault { [weak self] in
+                self?.toast = String(localized: "Tresor aus der Sicherung wiederhergestellt. Der Stand wird mit Ihren anderen Geräten abgeglichen; das Ergebnis sehen Sie unter Einstellungen › iCloud Sync.")
+            }
+        }
         return true
     }
 }

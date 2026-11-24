@@ -37,10 +37,12 @@ Card {
     readonly property string holder: account ? (account.owner || "").trim() : ""
 
     // Header chart (#634): chart and HeaderChartControls below it; „Ausgeblendet“ folds only the
-    // chart. Depots and Sachwerte keep their own value chart without the controls (no pie).
-    readonly property bool showsChartArea: !compact && AppModel.showStatistics && AppModel.scope !== "Investments" && (!isDepot || isTangible)
+    // chart. The chart follows only „Diagramm anzeigen“, the KPIs follow „Auswertungen anzeigen“ (#1760).
+    // Depots and Sachwerte keep their own value chart without the controls (no pie).
+    readonly property bool showsChartArea: !compact && AppModel.scope !== "Investments" && (!isDepot || isTangible)
     readonly property bool hasChartControls: showsChartArea && !isDepot
     readonly property bool chartShown: showsChartArea && (isDepot || !BalanceChartPrefs.collapsed)
+    readonly property bool showsKpis: !isDepot && !compact && AppModel.showStatistics
     readonly property bool pie: !isDepot && BalanceChartPrefs.style === "pie"
 
     // ViewLayout.cardPadding / cardVerticalPadding(collapsed:) (#603)
@@ -218,7 +220,7 @@ Card {
         }
 
         RowLayout {
-            visible: !card.isDepot && !card.compact
+            visible: card.showsKpis
             Layout.fillWidth: true
             spacing: 10
             KPI { Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1
