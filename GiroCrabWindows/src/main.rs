@@ -883,6 +883,21 @@ fn commit_load(
     st.balances = balances;
     st.categories = cats;
     st.amount = amount;
+    // new rows: the next redraw reloads the refund card and sheet, even if a redraw between the
+    // start of this load and now already recorded the same booking and generation
+    REFUND_SHOWN.with(|k| k.set(None));
+}
+
+/// Clears the committed and the pending amount filter and its controls (e.g. before revealing a
+/// linked booking the filter could hide).
+pub(crate) fn clear_amount_filter(win: &MainWindow) {
+    PENDING_AMOUNT.with(|p| p.set(amount_filter::PendingAmount::NONE));
+    with_state(|st| st.amount = amount_filter::AmountFilter::default());
+    win.set_amount_from("".into());
+    win.set_amount_to("".into());
+    win.set_amount_direction(0);
+    win.set_amount_filter_open(false);
+    win.set_amount_filter_error("".into());
 }
 
 /// Like `reload`, but with a new amount filter that is committed only when the load succeeds.
@@ -1483,6 +1498,8 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
             st.vault = Arc::downgrade(vault);
             st.reveal_limit = 0;
             st.selected_booking = None;
+            // categories of the previous vault must not stand in for a failed read
+            st.categories.clear();
         });
         win.set_privacy(false);
         win.set_busy(false);

@@ -435,6 +435,11 @@ pub fn reset(win: &MainWindow) {
     win.set_rf_edit_pending(false);
     win.set_rf_loading(false);
     win.set_rf_can_undo(false);
+    // nothing of the locked vault stays in the dialog state (the language setting stays)
+    win.set_rf_status(SharedString::new());
+    win.set_rf_can_open(false);
+    win.set_rf_from_refund(false);
+    win.set_rf_part_index(0);
     clear(win);
 }
 
@@ -773,6 +778,8 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
                         return;
                     }
                     with_ui(|u| u.edit_failed(e, matches!(action, Edit::Restore(..))));
+                    // a cleared (stale) undo disappears at once, not only after the reload
+                    win.set_rf_can_undo(with_ui(|u| u.undo.is_some()));
                     refresh(&win, v);
                 }
             }
@@ -823,6 +830,8 @@ pub fn wire(win: &MainWindow, slot: Arc<Mutex<Option<Arc<Vault>>>>) {
                         win.set_range_index(0);
                         win.set_tag_index(0);
                         win.set_documents_only(false);
+                        // an amount filter could hide the linked booking (CodeRabbit #1855)
+                        crate::clear_amount_filter(&win);
                         crate::views_ui::select_reveal_target(
                             &win,
                             &v,
