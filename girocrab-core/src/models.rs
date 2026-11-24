@@ -562,7 +562,8 @@ pub struct Category {
     pub total_cents: i64,
     pub transaction_count: u32,
     pub budget_cents: Option<i64>,
-    /// Explicit financial role of this category (#931); `None` = inherit from parent.
+    /// Explicit financial role of this category (#931), or the newer one of a duplicate
+    /// combined into it on sync; `None` = inherit from parent.
     #[cfg_attr(feature = "serde", serde(default))]
     pub role: Option<CategoryRole>,
     /// Resolved financial role after inheriting down the category tree (root default: `Consumption`).

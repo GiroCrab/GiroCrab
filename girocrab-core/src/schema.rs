@@ -144,6 +144,9 @@ const STEPS: &[Step] = &[
 /// live ancestor (as `Vault::category_roles` walks them) got `investment`, `loan` or
 /// `neutral`, because `salary` there would stop the inheritance of that role.
 ///
+/// Only live categories: a deleted one did not count in v41, and a role on a duplicate
+/// combined into another would count for that one when reading (`Vault::explicit_roles`).
+///
 /// Deliberate exception: v41 looked at 32 categories from a booking's category upwards,
 /// `Vault::category_roles` at 33. A category 32 or more levels deep can therefore resolve
 /// differently than before (e.g. `Neutral` from an `Umbuchungen` root exactly 32 levels up);
@@ -156,18 +159,18 @@ fn category_roles(conn: &Connection) -> CoreResult<()> {
     }
     conn.execute_batch(
         "UPDATE categories SET role = 'investment'
-          WHERE role IS NULL AND role_ms = 0
+          WHERE role IS NULL AND role_ms = 0 AND deleted_ms IS NULL
             AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM categories WHERE deleted_ms IS NULL))
             AND builtin_role IN ('Sparen & Investieren', 'ETF-Sparpläne', 'Aktien');
          UPDATE categories SET role = 'loan'
-          WHERE role IS NULL AND role_ms = 0
+          WHERE role IS NULL AND role_ms = 0 AND deleted_ms IS NULL
             AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM categories WHERE deleted_ms IS NULL))
             AND builtin_role = 'Kredite & Darlehen';
          UPDATE categories SET role = 'neutral'
-          WHERE role IS NULL AND role_ms = 0
+          WHERE role IS NULL AND role_ms = 0 AND deleted_ms IS NULL
             AND builtin_role IN ('Umbuchungen', 'import:transfers');
          UPDATE categories SET role = 'income'
-          WHERE role IS NULL AND role_ms = 0
+          WHERE role IS NULL AND role_ms = 0 AND deleted_ms IS NULL
             AND (parent_id IS NULL OR parent_id NOT IN (SELECT id FROM categories WHERE deleted_ms IS NULL))
             AND builtin_role = 'Einnahmen';
          WITH RECURSIVE ancestors(id, ancestor, depth) AS (
@@ -179,7 +182,7 @@ fn category_roles(conn: &Connection) -> CoreResult<()> {
               WHERE a.depth < 32
          )
          UPDATE categories SET role = 'salary'
-          WHERE role IS NULL AND role_ms = 0
+          WHERE role IS NULL AND role_ms = 0 AND deleted_ms IS NULL
             AND builtin_role = 'Gehalt'
             AND id NOT IN (
                 SELECT a.id FROM ancestors a
@@ -1584,6 +1587,33 @@ mod tests {
             .query_row("SELECT count(*) FROM account_groups", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
+    }
+
+    /// A duplicate that a v41 sync combined into another category gets no role from step 42
+    /// (#931): when reading, its role would count for the survivor, and `Sparen & Investieren`
+    /// moved under a custom folder would become an investment.
+    #[test]
+    fn category_roles_leave_merged_duplicates_without_role() {
+        let mut conn = schema_at(41);
+        conn.execute_batch(
+            "INSERT INTO categories(id, parent_id, name, uuid, builtin_role) VALUES
+               (1, NULL, 'Eigener Ordner', 'u-folder', NULL),
+               (2, 1, 'Sparen & Investieren', 'u-live', 'Sparen & Investieren');
+             INSERT INTO categories(id, parent_id, name, uuid, builtin_role, deleted_ms, merged_into)
+             VALUES (3, NULL, 'Sparen & Investieren', 'u-dup', 'Sparen & Investieren', 5, 'u-live');",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let dup: (Option<String>, i64) = conn
+            .query_row(
+                "SELECT role, role_ms FROM categories WHERE id = 3",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(dup, (None, 0));
+        let roles = crate::vault::Vault::category_roles(&conn).unwrap();
+        assert_eq!(roles[&2], crate::models::CategoryRole::Consumption);
     }
 
     /// The deliberate exception of step 42 (#931): the old walk looked at 32 categories and

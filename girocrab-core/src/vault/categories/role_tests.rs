@@ -1205,10 +1205,10 @@ fn v41_gehalt_below_live_folder_under_transfers_inherits_neutral() {
 }
 
 /// Device A merges duplicate Y into X (`merged_into = X`) before seeing device B's
-/// newer role edit on Y: syncing must forward Y's newer role to survivor X, while
+/// newer role edit on Y: after the sync Y's newer role counts for survivor X, while
 /// ordinary deleted categories (`merged_into = NULL`) never alter live categories.
 #[test]
-fn merged_duplicate_tombstone_forwards_newer_role_to_survivor() {
+fn merged_duplicate_tombstone_role_counts_for_survivor() {
     let a_dir = crate::test_support::TempDir::new("roles-tombstone-a");
     let b_dir = crate::test_support::TempDir::new("roles-tombstone-b");
     let a = vault(&a_dir);
@@ -1283,6 +1283,51 @@ fn merged_duplicate_tombstone_forwards_newer_role_to_survivor() {
     assert_eq!(x.role, Some(CategoryRole::Neutral));
     assert_eq!(x.effective_role, CategoryRole::Neutral);
     assert_eq!(other.role, Some(CategoryRole::Consumption));
+}
+
+/// A role on a duplicate combined into a category counts for it when reading; setting the
+/// category's own role afterwards wins over it, even when the duplicate's stamp is ahead
+/// of the clock.
+#[test]
+fn own_role_change_beats_role_of_merged_duplicate() {
+    let dir = crate::test_support::TempDir::new("roles-merged-dup");
+    let v = vault(&dir);
+    let id = v
+        .create_category("Kaution".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let dup = v
+        .create_category("Kaution alt".into(), None, "tag".into(), "".into())
+        .unwrap();
+    let ahead = crate::dates::now_ms() + 60_000;
+    {
+        let db = v.db().unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'u-kaution' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE categories SET uuid = 'u-dup', deleted_ms = 1, merged_into = 'u-kaution',
+                    role = 'neutral', role_ms = ?2 WHERE id = ?1",
+            rusqlite::params![dup, ahead],
+        )
+        .unwrap();
+    }
+    let find = || {
+        v.list_categories(None, None)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap()
+    };
+    assert_eq!(find().role, Some(CategoryRole::Neutral));
+    assert_eq!(find().effective_role, CategoryRole::Neutral);
+
+    v.set_category_role(id, Some(CategoryRole::Loan)).unwrap();
+    assert_eq!(find().role, Some(CategoryRole::Loan));
+    v.set_category_role(id, None).unwrap();
+    assert_eq!(find().role, None);
+    assert_eq!(find().effective_role, CategoryRole::Consumption);
 }
 
 /// Clearing or editing a role stamps `role_ms` strictly above any stored ahead-of-clock

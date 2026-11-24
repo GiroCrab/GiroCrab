@@ -38,7 +38,7 @@ pub(crate) mod twins;
 
 pub(crate) use accounts::{merge_accounts, merge_connections};
 pub(crate) use bookings::merge_bookings;
-pub(crate) use categories::merge_categories;
+pub(crate) use categories::{RoleEntry, merge_categories, role_winners};
 pub(crate) use rules::merge_rules;
 
 /// Fixed namespace for the deterministic (v5) uuids.

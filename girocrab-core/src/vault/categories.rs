@@ -23,15 +23,13 @@ type CategoryRow = (
 impl Vault {
     fn category_rows(conn: &Connection) -> CoreResult<Vec<CategoryRow>> {
         let mut stmt = conn.prepare(
-            "SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role, role
+            "SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role
                FROM categories WHERE deleted_ms IS NULL",
         )?;
+        let explicit = Self::explicit_roles(conn)?;
         let rows = stmt
             .query_map([], |r| {
-                let role = r
-                    .get::<_, Option<String>>(8)?
-                    .as_deref()
-                    .and_then(CategoryRole::from_str);
+                let role = explicit.get(&r.get::<_, i64>(0)?).and_then(|e| e.0);
                 Ok((
                     r.get(0)?,
                     r.get(1)?,
@@ -50,18 +48,59 @@ impl Vault {
         Ok(rows)
     }
 
+    /// The explicit role of every live category (#931) with the stamp that decides it:
+    /// its own, or a newer one of a duplicate combined into it on sync
+    /// ([`crate::sync_merge::role_winners`]). `None` = inherit.
+    pub(crate) fn explicit_roles(
+        conn: &Connection,
+    ) -> CoreResult<HashMap<i64, (Option<CategoryRole>, i64)>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, uuid, deleted_ms IS NULL, merged_into, role, role_ms FROM categories",
+        )?;
+        type Row = (i64, String, bool, Option<String>, Option<String>, i64);
+        let rows: Vec<Row> = stmt
+            .query_map([], |r| {
+                let id: i64 = r.get(0)?;
+                // rows that never synced have no uuid yet; nothing can be merged into them
+                let uuid = r
+                    .get::<_, Option<String>>(1)?
+                    .unwrap_or_else(|| format!("#{id}"));
+                Ok((id, uuid, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })?
+            .collect::<Result<_, _>>()?;
+        let entries: Vec<crate::sync_merge::RoleEntry> = rows
+            .iter()
+            .map(
+                |(_, uuid, live, merged_into, role, role_ms)| crate::sync_merge::RoleEntry {
+                    uuid,
+                    live: *live,
+                    merged_into: merged_into.as_deref(),
+                    role: role.as_deref(),
+                    role_ms: *role_ms,
+                },
+            )
+            .collect();
+        let won = crate::sync_merge::role_winners(&entries);
+        Ok(rows
+            .iter()
+            .filter_map(|(id, uuid, ..)| {
+                let (role, ms) = won.get(uuid.as_str())?;
+                Some((*id, (role.and_then(CategoryRole::from_str), *ms)))
+            })
+            .collect())
+    }
+
     /// Effective financial role of every live category (#931): walks up `parent_id`
-    /// until the first explicit `role` is found, defaulting to `CategoryRole::Consumption`.
+    /// until the first explicit role ([`Self::explicit_roles`]) is found, defaulting to
+    /// `CategoryRole::Consumption`.
     pub(crate) fn category_roles(conn: &Connection) -> CoreResult<HashMap<i64, CategoryRole>> {
+        let explicit = Self::explicit_roles(conn)?;
         let mut stmt =
-            conn.prepare("SELECT id, parent_id, role FROM categories WHERE deleted_ms IS NULL")?;
+            conn.prepare("SELECT id, parent_id FROM categories WHERE deleted_ms IS NULL")?;
         let rows: HashMap<i64, (Option<i64>, Option<CategoryRole>)> = stmt
             .query_map([], |r| {
-                let role = r
-                    .get::<_, Option<String>>(2)?
-                    .as_deref()
-                    .and_then(CategoryRole::from_str);
-                Ok((r.get(0)?, (r.get(1)?, role)))
+                let id: i64 = r.get(0)?;
+                Ok((id, (r.get(1)?, explicit.get(&id).and_then(|e| e.0))))
             })?
             .collect::<Result<_, _>>()?;
         let mut out = HashMap::with_capacity(rows.len());
@@ -556,19 +595,25 @@ impl Vault {
     }
 
     /// Sets (or clears with `None`, to inherit from parent) the financial role
-    /// of a category (#931). Stamps `role_ms` for iCloud sync.
+    /// of a category (#931). Stamps `role_ms` for iCloud sync, above the stamp of any
+    /// role that counts for it so far.
     pub fn set_category_role(
         &self,
         category_id: i64,
         role: Option<CategoryRole>,
     ) -> Result<(), CoreError> {
         let db = self.db()?;
+        // Above the stamp that decides the role now, also one of a duplicate combined
+        // into this category (`explicit_roles`), so the change wins locally and on sync.
+        let decided_ms = Self::explicit_roles(&db)?
+            .get(&category_id)
+            .map_or(0, |e| e.1);
         let n = db.execute(
             "UPDATE categories SET role = ?1, role_ms = MAX(?3, role_ms + 1) WHERE id = ?2 AND deleted_ms IS NULL",
             params![
                 role.map(CategoryRole::as_str),
                 category_id,
-                crate::dates::now_ms()
+                crate::dates::now_ms().max(decided_ms + 1)
             ],
         )?;
         if n == 0 {
