@@ -32,6 +32,12 @@ pub(super) fn approval_pending(reply: &BankReply) -> bool {
 /// ask for one (#1828). Not a bank code; no bank message uses it.
 pub(super) const SCA_NOT_ASKED: &str = "SCA";
 
+/// The bank asks for a TAN (0030) or an app approval (3955, still open: 3956) in
+/// `reply`: what it answered is no acceptance (#1828).
+pub(super) fn demands_sca(reply: &BankReply) -> bool {
+    reply.has("0030") || reply.has("3955") || reply.has("3956")
+}
+
 /// `request` failed because the bank wanted a TAN (0030) or an app approval
 /// that was not given in time (3956): asking again sends the next one (#1083).
 /// Also when `request` did not send the job at all ([`SCA_NOT_ASKED`]).
@@ -662,7 +668,7 @@ impl FinTsConnector {
             payload.push(self.hktan_process4(4, seg_id));
         }
         let mut reply = self.send(ctx, payload, &sec, None).await?;
-        let wants_sca = reply.has("3955") || reply.has("3956") || reply.has("0030");
+        let wants_sca = demands_sca(&reply);
         // #1828: what the next automatic sync leaves out. After an approval in this dialog
         // (a later page, another job) a reply without SCA says nothing about the next sync.
         if wants_sca {

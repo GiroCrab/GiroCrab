@@ -2557,3 +2557,18 @@ async fn bookings_known_to_need_a_tan_are_left_out_of_an_automatic_fetch() {
     assert!(r.hints.is_empty(), "{:?}", r.hints);
     assert_eq!(r.balances_unknown, vec![IBAN_B.to_string()]);
 }
+
+#[tokio::test]
+async fn a_login_tan_the_bank_asks_again_for_does_not_approve_the_dialog() {
+    // #1828 (review of #1839): the answer to the TAN asks for a new one, so nothing
+    // was accepted; a later reply without SCA may still clear `sca_seen`
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKTAN": [6]}, "tan_required": {}});
+    for (answer, approved) in [(TAN_DEMANDED, false), (ACCEPT, true)] {
+        let (url, _seen) = mock_bank(vec![answer]);
+        let mut c = two_step_connector(&url, state.clone());
+        c.task_reference = Some("TASK1".into());
+        let tan = ChallengeResponse::Code(SecretString::new("123456".into()));
+        c.respond(&test_ctx(), tan).await.unwrap();
+        assert_eq!(c.sca_in_dialog, approved, "{answer}");
+    }
+}

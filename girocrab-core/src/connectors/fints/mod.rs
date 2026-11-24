@@ -70,8 +70,8 @@ use serde::{Deserialize, Serialize};
 
 use self::accounts::{account_label, kind_from_code};
 use self::dialog::{
-    approval_pending, has_so_prefix, is_comdirect, period_hint, tan_beyond_free_period,
-    tan_demanded,
+    approval_pending, demands_sca, has_so_prefix, is_comdirect, period_hint,
+    tan_beyond_free_period, tan_demanded,
 };
 use self::syntax::Segment;
 use super::{
@@ -517,17 +517,20 @@ impl BankConnector for FinTsConnector {
                     let c = self.challenge.clone().ok_or(CoreError::SessionClosed)?;
                     return Ok(Phase::Pending(c));
                 }
+                // accepted by the bank (a refusal returns below, a new TAN or approval
+                // demanded is none): this dialog is approved (#1828)
+                let accepted = !demands_sca(&reply);
                 let phase = self.after_approval(ctx, reply).await?;
-                // accepted by the bank (a refusal returned above): this dialog is approved (#1828)
-                self.sca_in_dialog = true;
+                self.sca_in_dialog |= accepted;
                 Ok(phase)
             }
             ChallengeResponse::Code(tan) => {
                 self.tan_for_next = None;
                 payload.push(self.hktan_with_tan(n, &task));
                 let reply = self.send(ctx, payload, &sec, Some(tan.expose())).await?;
+                let accepted = !demands_sca(&reply);
                 let phase = self.after_approval(ctx, reply).await?;
-                self.sca_in_dialog = true;
+                self.sca_in_dialog |= accepted;
                 Ok(phase)
             }
         }
