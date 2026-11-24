@@ -87,18 +87,16 @@ fn max_days(kind: ConnectorKind) -> i64 {
         | ConnectorKind::AmericanExpress
         | ConnectorKind::AmazonVisa => QUIET_MAX_DAYS,
         // The start date never reaches the bank: these read everything, or page
-        // back from the newest booking and stop there (FFB sends it, and the
-        // connector itself falls back to 2008).
+        // back from the newest booking and stop there.
         ConnectorKind::TradeRepublic
         | ConnectorKind::Bunq
         | ConnectorKind::HanseaticBank
         | ConnectorKind::Bhw
         | ConnectorKind::Uberspace
         | ConnectorKind::Ibkr
-        | ConnectorKind::ScalableCapital
-        | ConnectorKind::Ffb => LONGEST_DAYS,
-        // The start date goes to the bank; a refusal is tried again with 90
-        // days ([`retry_since`]).
+        | ConnectorKind::ScalableCapital => LONGEST_DAYS,
+        // The start date goes to the bank; a refusal in the full fetch is tried
+        // again with 90 days ([`retry_since`]).
         ConnectorKind::Comdirect | ConnectorKind::Kontist | ConnectorKind::VolkswagenBank => {
             LONGEST_DAYS
         }
@@ -107,7 +105,11 @@ fn max_days(kind: ConnectorKind) -> i64 {
         // The portal keeps two years and the connector stops there itself.
         // Opel and Ford Money: dates in a web form, where a refused start date
         // need not show as an error; the longest period that could be chosen before.
-        ConnectorKind::Easybank | ConnectorKind::OpelDirektbank | ConnectorKind::FordMoney => 730,
+        // FFB sends the start date (`datumVon`) and has no retry yet.
+        ConnectorKind::Easybank
+        | ConnectorKind::OpelDirektbank
+        | ConnectorKind::FordMoney
+        | ConnectorKind::Ffb => 730,
         // the start date is not used: the whole history or what the portal shows
         ConnectorKind::AlteLeipziger
         | ConnectorKind::Advanzia
@@ -125,18 +127,21 @@ fn max_days(kind: ConnectorKind) -> i64 {
 /// Start date of a second try after the bank answered a request from `since`
 /// with `err`: 90 days back, when `since` reached further and the bank refused
 /// the request (its answer, not a failed login, a rate limit, a failure on its
-/// side or an incomplete list). Otherwise `err` again. The first fetch of a
-/// login must not fail on its period.
-pub(crate) fn retry_since(since: &str, err: CoreError) -> CoreResult<String> {
+/// side or an incomplete list). Otherwise `err` again. A bare 200 says nothing
+/// about the failure (a GraphQL error without a status of its own). Only for
+/// the login's full fetch (`full_fetch`): the first fetch must not fail on its
+/// period, while an ordinary sync that fetched only the last 90 days would
+/// skip the bookings between its newest one and them for good.
+pub(crate) fn retry_since(since: &str, full_fetch: bool, err: CoreError) -> CoreResult<String> {
     let shorter = crate::dates::iso(crate::dates::today() - crate::dates::days(QUIET_MAX_DAYS));
     let refused = match &err {
-        // an HTTP status, or the bank's own code (a GraphQL error comes with 200)
-        CoreError::Bank { code, .. } => code
-            .parse::<u16>()
-            .map_or(true, |c| c < 500 && !matches!(c, 401 | 403 | 429)),
+        // a client error status, or the bank's own non-numeric code (VW `Status`)
+        CoreError::Bank { code, .. } => code.parse::<u16>().map_or(true, |c| {
+            (400..500).contains(&c) && !matches!(c, 401 | 403 | 429)
+        }),
         _ => false,
     };
-    if refused && since < shorter.as_str() {
+    if full_fetch && refused && since < shorter.as_str() {
         Ok(shorter)
     } else {
         Err(err)

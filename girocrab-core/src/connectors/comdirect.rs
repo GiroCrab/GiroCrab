@@ -526,7 +526,7 @@ impl BankConnector for ComdirectConnector {
                 Ok(booked) => booked,
                 // the bank refused the start date (#1043): once more with 90 days
                 Err(e) => {
-                    let since = super::history::retry_since(&ctx.since, e)?;
+                    let since = super::history::retry_since(&ctx.since, ctx.full_fetch, e)?;
                     let booked = self.booked(&id, &since).await?;
                     out.warnings.push(super::history::refused_warning(&id));
                     booked

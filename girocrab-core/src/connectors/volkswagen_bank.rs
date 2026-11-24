@@ -198,18 +198,11 @@ impl HttpPortal {
             });
         }
         if !status.is_success() {
-            let message = trf(
-                "Volkswagen Bank: Unerwartete Antwort (HTTP {0}).",
-                &[&status.as_u16()],
-            );
-            // a refused request: the booking list tries a shorter period (#1043)
-            return Err(if status.is_client_error() {
-                CoreError::Bank {
-                    code: status.as_u16().to_string(),
-                    message,
-                }
-            } else {
-                CoreError::Protocol { message }
+            return Err(CoreError::Protocol {
+                message: trf(
+                    "Volkswagen Bank: Unerwartete Antwort (HTTP {0}).",
+                    &[&status.as_u16()],
+                ),
             });
         }
         let raw = super::read_text_limited(resp).await?;
@@ -339,7 +332,7 @@ impl Portal for HttpPortal {
                     Ok(flow) => flow,
                     // the bank refused the start date (#1043): once more with 90 days
                     Err(e) => {
-                        let from = super::history::retry_since(from, e)?;
+                        let from = super::history::retry_since(from, ctx.full_fetch, e)?;
                         let flow = self.cash_flow(number, &from, today).await?;
                         out.warnings
                             .push(super::history::refused_warning(account_ref));
