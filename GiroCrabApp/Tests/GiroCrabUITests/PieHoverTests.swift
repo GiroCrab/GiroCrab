@@ -58,11 +58,11 @@ final class PieHoverTests: XCTestCase {
         XCTAssertFalse(HeaderPieSlices.Part(id: "cat", label: "Miete", cents: 500).personal)
     }
 
-    func testCompositionLegendOpacityPreservesRealSelectionDuringHover() {
-        XCTAssertEqual(CompositionLegend.entryOpacity(id: "a", selected: "a", hovered: "b"), 1.0)
-        XCTAssertEqual(CompositionLegend.entryOpacity(id: "b", selected: "a", hovered: "b"), 0.75)
-        XCTAssertEqual(CompositionLegend.entryOpacity(id: "c", selected: "a", hovered: "b"), 0.35)
-        XCTAssertEqual(CompositionLegend.entryOpacity(id: "b", selected: nil, hovered: "b"), 1.0)
-        XCTAssertEqual(CompositionLegend.entryOpacity(id: "a", selected: nil, hovered: "b"), 0.5)
+    func testCompositionLegendMarkerOpacityPreservesRealSelectionDuringHover() {
+        XCTAssertEqual(CompositionLegend.markerOpacity(id: "a", selected: "a", hovered: "b"), 1.0)
+        XCTAssertEqual(CompositionLegend.markerOpacity(id: "b", selected: "a", hovered: "b"), 0.75)
+        XCTAssertEqual(CompositionLegend.markerOpacity(id: "c", selected: "a", hovered: "b"), 0.35)
+        XCTAssertEqual(CompositionLegend.markerOpacity(id: "b", selected: nil, hovered: "b"), 1.0)
+        XCTAssertEqual(CompositionLegend.markerOpacity(id: "a", selected: nil, hovered: "b"), 0.5)
     }
 }

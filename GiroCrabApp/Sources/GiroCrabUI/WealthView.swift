@@ -467,8 +467,9 @@ struct WealthView: View {
                         // the tab and the property switch, so the chips split what is on screen
                         let accounts = model.allAccounts.filter(option.keeps)
                         let owned = WealthSummary(accounts: accounts, tangibleIds: Set(accounts.map(\.id).filter { model.isTangible($0) }))
-                        let net = WealthAssetSelection(summary: owned, assets: classified, hideDirectProperty: hideDirectProperty)
-                            .summary.scoped(to: scope).netCents(includingLiabilities: includeLiabilities)
+                        let selection = WealthAssetSelection(summary: owned, assets: classified, hideDirectProperty: hideDirectProperty)
+                        let total = selection.summary.scoped(to: scope).netCents(includingLiabilities: includeLiabilities)
+                        let propertyHidden = hideDirectProperty && selection.directPropertyCount > 0
                         Button { ownerFilter = option } label: {
                             VStack(alignment: .leading, spacing: 1) {
                                 Group {
@@ -479,7 +480,7 @@ struct WealthView: View {
                                     }
                                 }
                                 .appFont(.callout, weight: .semibold)
-                                Text(Money.format(net)).sensitive(.amounts)
+                                Text(Money.format(total)).sensitive(.amounts)
                                     .appFont(.caption).foregroundStyle(Theme.secondary).monospacedDigit()
                             }
                             .padding(.horizontal, 12).padding(.vertical, 7)
@@ -492,7 +493,7 @@ struct WealthView: View {
                             .contentShape(RoundedRectangle(cornerRadius: 9))
                         }
                         .buttonStyle(.plain)
-                        .help(scope == .all ? LocalizedStringKey(hideDirectProperty ? "Nettovermögen ohne Immobilien" : "Nettovermögen") : scope.title)
+                        .help(scope == .all ? totalLabel(propertyHidden: propertyHidden) : scope.title)
                         .accessibilityAddTraits(option == selected ? .isSelected : [])
                     }
                 }
@@ -518,6 +519,14 @@ struct WealthView: View {
 
     // MARK: summary (net worth + assets / liabilities bars)
 
+    private func totalLabel(propertyHidden: Bool) -> LocalizedStringKey {
+        guard scope == .all else { return scope.totalLabel }
+        if includeLiabilities {
+            return propertyHidden ? "Nettovermögen ohne Immobilien" : scope.totalLabel
+        }
+        return propertyHidden ? "Vermögenswerte ohne Immobilien" : "Vermögenswerte"
+    }
+
     private func summaryCard(_ s: WealthSummary, _ d: Derived) -> some View {
         let assets = max(s.grossCents, 0)
         let debts = -min(s.liabilitiesCents, 0)
@@ -531,7 +540,7 @@ struct WealthView: View {
         }
         let offerPropertySwitch = properties > 0 || (scope != .cash && scope != .securities && !fullSummary.tangibles.isEmpty)
         let propertyHidden = hideDirectProperty && properties > 0
-        let label = Text(scope == .all ? LocalizedStringKey(propertyHidden ? "Nettovermögen ohne Immobilien" : "Nettovermögen") : scope.totalLabel)
+        let label = Text(totalLabel(propertyHidden: propertyHidden))
             .appFont(.caption).foregroundStyle(Theme.secondary)
         let value = Text(Money.format(s.netCents(includingLiabilities: includeLiabilities)))
             .sensitive(.amounts)
@@ -608,11 +617,23 @@ struct WealthView: View {
     }
 
     private func bar(_ title: LocalizedStringKey, _ cents: Int64, _ fraction: Double, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title).appFont(.subheadline, weight: .medium)
-                Spacer()
-                Text(Money.format(cents)).sensitive(.amounts).appFont(.subheadline).monospacedDigit()
+        let label = Text(title).appFont(.subheadline, weight: .medium)
+        let amount = Text(Money.format(cents)).sensitive(.amounts)
+            .appFont(.subheadline, monospacedDigit: true).fixedSize()
+        return VStack(alignment: .leading, spacing: 4) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    label.fixedSize()
+                    Spacer(minLength: 0)
+                    amount
+                }
+                VStack(alignment: .trailing, spacing: 2) {
+                    label.frame(maxWidth: .infinity, alignment: .leading)
+                    ViewThatFits(in: .horizontal) {
+                        amount
+                        ScrollView(.horizontal) { amount }
+                    }
+                }
             }
             GeometryReader { g in
                 ZStack(alignment: .leading) {
