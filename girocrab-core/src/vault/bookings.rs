@@ -2286,6 +2286,66 @@ mod own_transfer_tests {
     }
 
     #[test]
+    fn security_custom_merchant_and_fallback_logo_are_preserved() {
+        use crate::merchants::{CustomSpec, MerchantSettings};
+
+        let (_dir, v, ids) = vault_with(&[
+            (
+                "Zorvexa GmbH",
+                -250_00,
+                "Unknown Fund 1 Stk",
+                Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage"),
+            ),
+        ]);
+        let db = v.db().unwrap();
+        let raw = || {
+            db.query_row(
+                &format!("SELECT {} {} WHERE t.id = ?1", booking_columns("0"), BOOKING_FROM_SQL),
+                [ids[0]],
+                booking_from_row,
+            )
+            .unwrap()
+            .1
+        };
+        let mut booking = raw();
+        let mut finisher = BookingFinisher::load(&db, MerchantRules::builtin().clone()).unwrap();
+        enrich(&mut booking, &finisher.merchants, false, "");
+        assert_eq!(booking.merchant.domain_source, "company");
+        finisher.finish(&mut booking, None);
+        assert_eq!(booking.flow, FlowKind::Investment);
+        assert_eq!(booking.merchant.name, "Unknown Fund");
+        assert_eq!(booking.merchant.sf_symbol, "chart.line.uptrend.xyaxis");
+        assert!(booking.merchant.domain.is_empty());
+        assert!(booking.merchant.domain_candidates.is_empty());
+        assert!(booking.merchant.domain_source.is_empty());
+        assert!(booking.merchant_domain.is_none());
+
+        let mut booking = raw();
+        enrich(&mut booking, &finisher.merchants, false, "");
+        finisher.overrides.insert(booking.merchant.key.clone(), "example.org".into());
+        finisher.finish(&mut booking, None);
+        assert_eq!(booking.merchant.domain, "example.org");
+        assert_eq!(booking.merchant.domain_source, "override");
+
+        let rules = MerchantRules::for_settings(MerchantSettings {
+            custom: vec![CustomSpec {
+                uuid: "test".into(),
+                name: "My custom fund".into(),
+                needles: vec!["zorvexa".into()],
+                based_on: String::new(),
+            }],
+            ..MerchantSettings::default()
+        });
+        let finisher = BookingFinisher::load(&db, rules).unwrap();
+        let mut booking = raw();
+        finisher.finish(&mut booking, None);
+        assert_eq!(booking.flow, FlowKind::Investment);
+        assert_eq!(booking.merchant.key, "u:test");
+        assert_eq!(booking.merchant.name, "My custom fund");
+        assert_eq!(booking.merchant_name, "My custom fund");
+    }
+
+    #[test]
     fn imported_security_sales_reduce_net_investment() {
         let (_dir, v, ids) = vault_with(&[
             (
