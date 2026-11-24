@@ -476,7 +476,15 @@ mod self_review {
         .unwrap();
         store::merge_folded(&db, &HashMap::from([(r, r), (old, next)])).unwrap();
         drop(db);
-        assert!(f.v.refund_links(r).unwrap().iter().all(|l| l.inactive));
+        // the old whole-booking link is still there (not merely "no active link"): it keeps
+        // the old booking id and the empty part key, inactive and with nothing allocated
+        let links = f.v.refund_links(r).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            (links[0].original_id, links[0].original_part.as_str()),
+            (old, "")
+        );
+        assert!(links[0].inactive && links[0].allocated_cents == 0);
     }
 
     #[test]
@@ -518,7 +526,15 @@ mod self_review {
         f.link(r, "", old, "");
         f.split(old, &[-60, -40]);
         store::fold_booking(&f.v.db().unwrap(), old, next, true, true).unwrap();
-        assert!(f.v.refund_links(r).unwrap().iter().all(|l| l.inactive));
+        // the old whole-booking link is still there (not merely "no active link"): it keeps
+        // the old booking id and the empty part key, inactive and with nothing allocated
+        let links = f.v.refund_links(r).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            (links[0].original_id, links[0].original_part.as_str()),
+            (old, "")
+        );
+        assert!(links[0].inactive && links[0].allocated_cents == 0);
     }
 
     #[test]

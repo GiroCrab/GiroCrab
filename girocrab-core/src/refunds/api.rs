@@ -121,11 +121,7 @@ impl Vault {
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
         let key = key(refund_id, refund_part, original_id, original_part);
-        let mut row = State::load(&tx)?
-            .rows
-            .into_iter()
-            .find(|r| r.key == key && r.deleted_ms.is_none())
-            .ok_or_else(invalid)?;
+        let mut row = super::store::live_row(&tx, &key)?.ok_or_else(invalid)?;
         if expected_changed_ms.is_some_and(|ms| ms != row.changed_ms) {
             return Err(invalid());
         }

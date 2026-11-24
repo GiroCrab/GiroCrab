@@ -3,12 +3,14 @@
 Gemeinsames Verhalten der Oberflächen unter macOS, Linux und Windows.
 
 Die Kernregeln und ihre Begründung stehen in
-[ADR 0002](adr/0003-refund-links.md).
+[ADR 0003](adr/0003-refund-links.md).
 
 ## Einstieg und Aufbau
 
-Unter macOS und Linux öffnet das Kontextmenü einer Buchung „Erstattung zuordnen …“.
-Unter Windows öffnet „Erstattung …“ im Inspector die Zuordnung. Das funktioniert
+Die Oberflächen kommen in eigenen Pull Requests (macOS, Linux, Windows); bis zu deren
+Merge beschreibt dieser Abschnitt den geplanten Stand. Unter macOS und Linux öffnet das
+Kontextmenü einer Buchung „Erstattung zuordnen …“, unter Windows „Erstattung …“ im
+Inspector. Das funktioniert
 für Eingänge, Ausgaben und aufgeteilte Buchungen mit einer Gesamtsumme von null.
 Die Buchungsliste kennzeichnet zugeordnete Erstattungen mit einem Rückpfeil.
 Bei einer teilweisen Zuordnung steht der zugeordnete Betrag daneben; bei
@@ -51,8 +53,10 @@ oder Auswertungen: Sie dokumentiert nur, welche Erstattung zu welcher Buchung ge
 Soll eine Erstattung eine Ausgabe in den Auswertungen ausgleichen, ordnet man ihr
 dieselbe Kategorie zu. Zuteilung und Kapazitäten berechnet ausschließlich der Kern.
 
-Das Kreuz unter macOS und Linux entfernt genau eine Verknüpfung. „Rückgängig“ im Blatt und der
-Widerrufen-Befehl verwenden das vom Kern gelieferte Lösch-Token. Eine neuere
+Das Kreuz unter macOS und Linux entfernt genau eine Verknüpfung. Unter macOS stellen
+„Rückgängig“ im Blatt und der Widerrufen-Befehl sie wieder her, unter Linux der
+Widerrufen-Befehl des Fensters (gemeinsamer UndoManager). Beide verwenden das vom
+Kern gelieferte Lösch-Token. Eine neuere
 Änderung kann damit nicht überschrieben werden; die ursprüngliche Position
 der Verknüpfung bleibt erhalten. Widerrufen gilt nur im selben Tresor.
 
@@ -122,7 +126,8 @@ und der durchsuchbaren Buchungsliste. Zugeordnete Beträge stehen in der Umsatzz
 
 Lesen und Schreiben laufen im Hintergrund. Suchanfragen und Ergebnisse sind an
 Anfragegeneration und Tresor gebunden. Ein Tresorwechsel schließt die Ansicht.
-Änderungen laden Umsätze, Kategorien, Kreisdiagramm, Cockpit und Planung neu.
+Eine Linkänderung lädt nur die Buchungsliste neu und meldet den Erstattungsansichten,
+dass sie sich aktualisieren; Kategorien, Diagramme, Cockpit und Planung bleiben.
 Datenschutzmasken schützen Namen, Beträge und Kategorien getrennt, auch in der
 geöffneten Teileauswahl. Banktexte werden als einfacher Text angezeigt.
 Aufheben und tokenbasiertes Rückgängig ändern keine Benutzersplits.

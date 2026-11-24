@@ -583,7 +583,7 @@ pub struct Booking {
     pub tags: Vec<crate::tags::BookingTag>,
     /// `none`, `refund`, `original`, or `both`, based on allocated endpoint roles.
     #[uniffi(default = "none")]
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default = "no_refund_marker"))]
     pub refund_marker: String,
     #[uniffi(default = 0)]
     #[cfg_attr(feature = "serde", serde(default))]
@@ -594,6 +594,12 @@ pub struct Booking {
     #[uniffi(default = 0)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub split_count: u32,
+}
+
+/// Serde default of `Booking::refund_marker` (JSON front ends): no refund link.
+#[cfg(feature = "serde")]
+fn no_refund_marker() -> String {
+    "none".into()
 }
 
 /// Dry-run result of a MoneyMoney import (nothing stored).
