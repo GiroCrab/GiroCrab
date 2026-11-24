@@ -316,6 +316,9 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     crate::position_history_ui::loading(win);
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
     let generation = with_ui(|u| {
+        // A tab or period change while loading must not re-render the previous depot
+        // (and put its CSV back into the export cache).
+        u.depot = None;
         u.generation += 1;
         u.generation
     });
@@ -461,6 +464,8 @@ fn clear_table(win: &MainWindow, empty: &str) {
     win.set_view_note(SharedString::new());
     // The next render_view restores both from the list it shows.
     with_ui(Ui::forget_shown_list);
+    // Load start, failed load and vault lock all pass here: no CSV of an earlier depot survives.
+    crate::depot_export_ui::forget();
     win.set_doc_unread_any(false);
 }
 
@@ -501,9 +506,20 @@ pub fn render_view(win: &MainWindow) {
             let cur = data.account.currency.clone();
             let cur_money = move |c: i64| eur_text(c, &cur, privacy);
             let period = Period::from_index(win.get_period_index());
-            let view =
-                portfolio::depot_view(&data, period, &portfolio::today_iso(), &cur_money, &date);
+            let today = portfolio::today_iso();
+            let view = portfolio::depot_view(&data, period, &today, &cur_money, &date);
             let tab = DepotTab::from_index(win.get_depot_tab());
+            // Unmasked rows of the active tab for "Als CSV exportieren …" (same order and period).
+            crate::depot_export_ui::remember(
+                portfolio::depot_csv(
+                    &data,
+                    tab,
+                    Period::from_index(win.get_period_index()),
+                    &today,
+                    &date,
+                ),
+                portfolio::depot_csv_file_name(tab, &today),
+            );
             win.set_view_title(mask(&view.title, privacy).into());
             win.set_view_total(view.total.clone().into());
             win.set_view_note(view.note.clone().into());

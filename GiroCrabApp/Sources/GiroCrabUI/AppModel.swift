@@ -197,7 +197,12 @@ public final class AppModel {
     /// title never stands over the old figures (#1396). Views read this; loads `sidebarSelection`.
     private(set) var shownSelection: SidebarItem? = .allAccounts {
         didSet {
-            mainColumn = MainColumn(shownSelection)
+            let column = MainColumn(shownSelection)
+            #if os(iOS)
+            // The detail sheet belongs to the list it was opened from (not a depot or Sachwerte view).
+            if !Self.keepsDetailSheet(from: mainColumn, to: column, presentation: presentation) { showBookingSheet = false }
+            #endif
+            mainColumn = column
             showsOverview = shownSelection == .allAccounts
             showsNewBookings = shownSelection == .newBookings
             // „Neue Umsätze“ orders the stream by account card (`visibleBookings`)
@@ -517,7 +522,9 @@ public final class AppModel {
     /// bookings: its row stays in place (shown as checked) until the user
     /// selects something else, instead of vanishing under the cursor.
     var lingeringBookingID: Booking.ID?
-    /// iPhone: set by a tap on a booking row, presents the detail sheet.
+    /// iOS: set by a tap on a row (booking, planned payment, mandate), presents the detail
+    /// sheet when the window has no room for the detail column; cleared when the column changes,
+    /// a depot or Sachwerte account is shown, or an editor opens from the sheet.
     var showBookingSheet = false
     var collapsedGroups: Set<Int64> = Set(AppDefaults.store.array(forKey: "sidebar.collapsedKindGroups") as? [Int64] ?? []) {
         didSet { AppDefaults.store.set(Array(collapsedGroups), forKey: "sidebar.collapsedKindGroups") }

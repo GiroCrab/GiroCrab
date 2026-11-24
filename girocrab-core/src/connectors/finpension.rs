@@ -525,11 +525,12 @@ fn parse_decimal(s: &str) -> CoreResult<f64> {
         (None, Some(_)) => t.replace(',', "."),
         _ => t,
     };
+    // Fixed text: the value comes from the export file and must not reach error texts or logs.
     normalized
         .parse::<f64>()
         .ok()
         .filter(|n| n.is_finite() && n.abs() < 1e12)
-        .ok_or_else(|| invalid(format!("invalid number '{s}'")))
+        .ok_or_else(|| invalid("invalid number".to_string()))
 }
 
 fn cents(x: f64) -> i64 {
@@ -541,7 +542,8 @@ fn currency(s: &str) -> CoreResult<String> {
     match c.to_ascii_uppercase().as_str() {
         "CHF" => Ok("CHF".into()),
         "EUR" => Ok("EUR".into()),
-        _ => Err(invalid(format!("unsupported currency '{c}'"))),
+        // Fixed text: the value comes from the export file and must not reach error texts or logs.
+        _ => Err(invalid("unsupported currency".to_string())),
     }
 }
 
@@ -564,14 +566,15 @@ fn build_holding(
     cur: &str,
 ) -> CoreResult<FinpensionHolding> {
     let isin = isin.to_ascii_uppercase();
+    // Fixed texts: the ISIN comes from the export file and must not reach error texts or logs.
     if !valid_isin(&isin) {
-        return Err(invalid(format!("invalid ISIN '{isin}'")));
+        return Err(invalid("invalid ISIN in a holding".to_string()));
     }
     if name.is_empty() {
-        return Err(invalid(format!("missing name for {isin}")));
+        return Err(invalid("missing name in a holding".to_string()));
     }
     if quantity < 0.0 || price < 0.0 || value < 0.0 {
-        return Err(invalid(format!("negative figures for {isin}")));
+        return Err(invalid("negative figures in a holding".to_string()));
     }
     Ok(FinpensionHolding {
         isin,
@@ -606,9 +609,10 @@ fn parse_date(s: &str) -> CoreResult<String> {
         .get(..10)
         .and_then(|p| jiff::civil::Date::strptime("%Y-%m-%d", p).ok())
         .or_else(|| jiff::civil::Date::strptime("%d.%m.%Y", s).ok());
+    // Fixed text: the value comes from the export file and must not reach error texts or logs.
     parsed
         .map(crate::dates::iso)
-        .ok_or_else(|| invalid(format!("invalid date '{s}'")))
+        .ok_or_else(|| invalid("invalid date".to_string()))
 }
 
 #[cfg(test)]
@@ -622,6 +626,34 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
     const TX_CSV: &str = "Datum,Beschreibung,Betrag,Währung,Referenz\n\
 15.03.2026,\"Einzahlung Säule 3a, März\",\"6'000.00\",CHF,R-1\n\
 2026-03-31,Verwaltungsgebühr,-12.34,CHF,R-2\n";
+
+    #[test]
+    fn value_errors_never_quote_file_content() {
+        // A colon plus a line break once let the Windows filter show the part after the colon.
+        let leak = "x:geheim\nrest";
+        let errors = [
+            currency(leak).err().unwrap().to_string(),
+            parse_date(leak).err().unwrap().to_string(),
+            build_holding(leak, "Fonds", 1.0, 1.0, 1.0, "CHF")
+                .err()
+                .unwrap()
+                .to_string(),
+            build_holding("CH0000000011", "Fonds", 1.0, 1.0, 1.0, leak)
+                .err()
+                .unwrap()
+                .to_string(),
+        ];
+        for e in &errors {
+            assert!(!e.contains("geheim") && !e.contains('\n'), "{e}");
+            assert!(!e.contains("x:"), "{e}");
+        }
+        assert!(errors[0].contains("unsupported currency"), "{}", errors[0]);
+        assert!(errors[1].contains("invalid date"), "{}", errors[1]);
+        assert!(errors[2].contains("invalid ISIN"), "{}", errors[2]);
+        // Supported currencies are unchanged.
+        assert_eq!(currency("").ok().as_deref(), Some("CHF"));
+        assert_eq!(currency("eur").ok().as_deref(), Some("EUR"));
+    }
 
     #[test]
     fn urls_accepted() {

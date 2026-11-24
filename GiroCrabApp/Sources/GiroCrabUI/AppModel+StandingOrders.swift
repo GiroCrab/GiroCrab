@@ -62,6 +62,9 @@ extension AppModel {
         standingDraft = draft
         standingLimits = nil
         transferError = nil
+        // iOS: the editor cannot present over the detail sheet it was opened from; the selection
+        // stays, so the detail returns with the same item. (Never set on macOS, so a no-op there.)
+        showBookingSheet = false
         showStandingSheet = true
         refreshStandingLimits()
     }

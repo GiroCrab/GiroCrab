@@ -339,17 +339,7 @@ pub fn position_row(
         let buy = native(h.native_purchase_price_cents, h.purchase_price_cents);
         price = format!("{price} (Kauf {buy})");
     }
-    let ids = [h.isin.as_str(), h.wkn.as_str()]
-        .iter()
-        .filter(|s| !s.is_empty())
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" / ");
-    let name = if ids.is_empty() {
-        h.name.clone()
-    } else {
-        format!("{} · {ids}", h.name)
-    };
+    let name = position_name(h);
     Cells {
         id,
         cells: [
@@ -713,6 +703,183 @@ pub struct DepotData {
     pub transactions: Vec<SecurityTransaction>,
 }
 
+/// Name cell of a position: name plus ISIN / WKN when known (table and CSV export).
+fn position_name(h: &Holding) -> String {
+    let ids = [h.isin.as_str(), h.wkn.as_str()]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" / ");
+    if ids.is_empty() {
+        h.name.clone()
+    } else {
+        format!("{} · {ids}", h.name)
+    }
+}
+
+/// Positions in table order: largest value first (stable sort, equal values keep their order).
+fn ordered_holdings(data: &DepotData) -> Vec<&Holding> {
+    let mut v: Vec<&Holding> = data.holdings.iter().map(|h| &h.0).collect();
+    v.sort_by_key(|h| std::cmp::Reverse(h.value_cents));
+    v
+}
+
+/// Activities in table order: newest booking first, then the newest id.
+fn order_activities(txs: &mut [&SecurityTransaction]) {
+    txs.sort_by(|a, b| b.booking_date.cmp(&a.booking_date).then(b.id.cmp(&a.id)));
+}
+
+/// One position as the CSV export writes it: raw numbers, never masked. The price stays in
+/// the trading currency; nothing is converted or summed (#569).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PositionLine {
+    pub name: String,
+    pub quantity: f64,
+    pub price_cents: i64,
+    pub price_currency: String,
+    pub value_cents: i64,
+    pub pl_cents: Option<i64>,
+}
+
+impl PositionLine {
+    fn from_holding(h: &Holding, account_currency: &str) -> Self {
+        // Same choice as the table's price cell (#625).
+        let (price_cents, price_currency) = match (h.native_price_cents, h.currency.is_empty()) {
+            (Some(c), false) => (c, h.currency.clone()),
+            _ => (h.current_price_cents, account_currency.to_string()),
+        };
+        Self {
+            name: position_name(h),
+            quantity: h.quantity,
+            price_cents,
+            price_currency,
+            value_cents: h.value_cents,
+            pl_cents: unrealized_pl(std::slice::from_ref(h)),
+        }
+    }
+}
+
+/// CSV amount like the booking export: decimal comma, no thousands separator, no symbol.
+pub(crate) fn csv_amount(cents: i64) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    let abs = cents.unsigned_abs();
+    format!("{sign}{},{:02}", abs / 100, abs % 100)
+}
+
+/// Quotes a field that holds the separator, a quote or a line break.
+fn csv_field(s: &str) -> String {
+    if s.contains([';', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// Free text (names, kinds): additionally guarded against spreadsheet formulas.
+fn csv_text(s: &str) -> String {
+    if s.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        csv_field(&format!("'{s}"))
+    } else {
+        csv_field(s)
+    }
+}
+
+/// UTF-8 BOM, `;` separator, CRLF line ends (dialect of the booking export).
+fn csv_document(header: &[String], rows: impl IntoIterator<Item = Vec<String>>) -> String {
+    let mut out = String::from("\u{feff}");
+    let head: Vec<String> = header.iter().map(|h| csv_field(h)).collect();
+    out.push_str(&head.join(";"));
+    out.push_str("\r\n");
+    for row in rows {
+        out.push_str(&row.join(";"));
+        out.push_str("\r\n");
+    }
+    out
+}
+
+pub(crate) fn positions_csv(lines: &[PositionLine], account_currency: &str) -> String {
+    let header = [
+        "Position".to_string(),
+        "Menge".into(),
+        "Kurs".into(),
+        "Handelswährung".into(),
+        format!("Wert ({account_currency})"),
+        format!("G/V ({account_currency})"),
+    ];
+    let rows = lines.iter().map(|l| {
+        vec![
+            csv_text(&l.name),
+            csv_field(&quantity_text(l.quantity)),
+            csv_amount(l.price_cents),
+            csv_field(&l.price_currency),
+            csv_amount(l.value_cents),
+            l.pl_cents.map(csv_amount).unwrap_or_default(),
+        ]
+    });
+    csv_document(&header, rows)
+}
+
+/// CSV of the active depot tab with the shown columns, order and period (never masked).
+pub fn depot_csv(
+    data: &DepotData,
+    tab: DepotTab,
+    period: Period,
+    today: &str,
+    date: &dyn Fn(&str) -> String,
+) -> String {
+    let cur = if data.account.currency.is_empty() {
+        "EUR".to_string()
+    } else {
+        data.account.currency.clone()
+    };
+    match tab {
+        DepotTab::Positions => {
+            let lines: Vec<PositionLine> = ordered_holdings(data)
+                .into_iter()
+                .map(|h| PositionLine::from_holding(h, &cur))
+                .collect();
+            positions_csv(&lines, &cur)
+        }
+        DepotTab::Activities => {
+            let start = period.start(today);
+            let mut txs: Vec<&SecurityTransaction> = data
+                .transactions
+                .iter()
+                .filter(|t| in_period(&t.booking_date, &start))
+                .collect();
+            order_activities(&mut txs);
+            let header =
+                ["Datum", "Art", "Wertpapier", "Menge", "Betrag", "Währung"].map(String::from);
+            let rows = txs.iter().map(|t| {
+                let c = activity_row(t, &csv_amount, date).cells;
+                vec![
+                    csv_field(&c[0]),
+                    csv_text(&c[1]),
+                    csv_text(&c[2]),
+                    csv_field(&c[3]),
+                    csv_field(&c[4]),
+                    csv_field(if t.currency.is_empty() {
+                        &cur
+                    } else {
+                        &t.currency
+                    }),
+                ]
+            });
+            csv_document(&header, rows)
+        }
+    }
+}
+
+/// File name without account name or depot number (also safe in privacy mode).
+pub fn depot_csv_file_name(tab: DepotTab, today: &str) -> String {
+    let kind = match tab {
+        DepotTab::Positions => "Positionen",
+        DepotTab::Activities => "Aktivitaeten",
+    };
+    format!("GiroCrab-Depot-{kind}-{today}.csv")
+}
+
 pub fn depot_view(
     data: &DepotData,
     period: Period,
@@ -738,10 +905,10 @@ pub fn depot_view(
         money,
     );
 
-    let positions = sorted_positions(data)
-        .iter()
+    let positions = ordered_holdings(data)
+        .into_iter()
         .enumerate()
-        .map(|(i, h)| position_row(i as i64, &h.0, money, date))
+        .map(|(i, h)| position_row(i as i64, h, money, date))
         .collect();
 
     let mut txs: Vec<&SecurityTransaction> = data
@@ -749,7 +916,7 @@ pub fn depot_view(
         .iter()
         .filter(|t| in_period(&t.booking_date, &start))
         .collect();
-    txs.sort_by(|a, b| b.booking_date.cmp(&a.booking_date).then(b.id.cmp(&a.id)));
+    order_activities(&mut txs);
     let activities = txs.iter().map(|t| activity_row(t, money, date)).collect();
 
     DepotView {
