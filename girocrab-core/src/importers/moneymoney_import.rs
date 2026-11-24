@@ -751,7 +751,9 @@ fn write_splits(
             note: split_note(s, preserve_notes),
         });
     }
-    crate::planning::store_splits(conn, id, &lines)
+    crate::planning::store_splits(conn, id, &lines)?;
+    // the same import on two devices gives the same part UUIDs (CodeRabbit #1853)
+    crate::planning::derive_split_uuids(conn, id)
 }
 
 fn split_note(s: &MmSplit, own_note: bool) -> String {

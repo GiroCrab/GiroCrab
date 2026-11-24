@@ -379,7 +379,8 @@ impl Vault {
                 )?;
                 if old.2 != format!("{counterparty}\u{1f}{purpose}") {
                     tx.execute(
-                        "UPDATE transactions SET counterparty = ?1, purpose = ?2, text_ms = ?4 WHERE id = ?3",
+                        // never below the stored stamp, also with a clock behind a peer's
+                        "UPDATE transactions SET counterparty = ?1, purpose = ?2, text_ms = MAX(text_ms + 1, ?4) WHERE id = ?3",
                         params![counterparty, purpose, id, ms],
                     )?;
                 }
@@ -403,7 +404,7 @@ impl Vault {
         if let Some(parts) = &splits {
             crate::planning::store_splits(&tx, id, parts)?;
         }
-        // amount and parts sync as one unit; the date syncs with the text (sync_merge/bookings.rs)
+        // amount and parts sync as one unit (`splits_ms`), the date on its own (`date_ms`)
         if amount_changed {
             tx.execute(
                 "UPDATE transactions SET splits_ms=MAX(splits_ms+1,?2) WHERE id=?1",
@@ -412,7 +413,7 @@ impl Vault {
         }
         if date_changed {
             tx.execute(
-                "UPDATE transactions SET text_ms=MAX(text_ms+1,?2) WHERE id=?1",
+                "UPDATE transactions SET date_ms=MAX(date_ms+1,?2) WHERE id=?1",
                 params![id, now_ms()],
             )?;
         }

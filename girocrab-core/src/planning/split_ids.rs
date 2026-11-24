@@ -52,10 +52,18 @@ fn backfill(conn: &Connection) -> CoreResult<()> {
     for (_, booking, ..) in &rows {
         if let std::collections::hash_map::Entry::Vacant(entry) = identities.entry(*booking) {
             let key = crate::sync_merge::booking_key(conn, *booking)?;
-            let discriminator: (String, String, String, String) = conn.query_row(
-                "SELECT a.external_ref,IFNULL(c.connector,''),IFNULL(c.login_name,''),IFNULL(c.bank_code,'') FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN bank_connections c ON c.id=a.connection_id WHERE t.id=?1",
-                [booking], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+            // the raw account reference (keeps the switch marker the sync key drops) and the
+            // connection as sync sees it (`connection_key`: one comdirect login over either route)
+            let (external_ref, connection): (String, Option<i64>) = conn.query_row(
+                "SELECT a.external_ref,a.connection_id FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.id=?1",
+                [booking],
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
+            let connection = match connection {
+                Some(id) => crate::sync_merge::connection_key(conn, id)?,
+                None => String::new(),
+            };
+            let discriminator = (external_ref, connection);
             entry.insert(
                 serde_json::to_string(&(key, discriminator)).expect("split booking identity"),
             );
@@ -210,6 +218,30 @@ mod tests {
         let alone = uuids(false);
         assert_eq!(alone.len(), 4);
         assert_eq!(alone, uuids(true));
+    }
+
+    /// CodeRabbit (#1851): one comdirect login fetched over its own API on one device and over
+    /// FinTS on another is one connection for sync, so its parts get the same UUIDs.
+    #[test]
+    fn backfill_identity_uses_the_sync_connection_key() {
+        let uuids = |connector: &str, bank: &str| {
+            let conn = legacy(false);
+            conn.execute(
+                "INSERT INTO bank_connections VALUES (1,?1,'1234567',?2)",
+                [connector, bank],
+            )
+            .unwrap();
+            conn.execute_batch("UPDATE accounts SET connection_id=1")
+                .unwrap();
+            migrate(&conn).unwrap();
+            conn.prepare("SELECT uuid FROM transaction_splits ORDER BY uuid")
+                .unwrap()
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(uuids("comdirect", ""), uuids("fints:20041111", "20041111"));
     }
 
     #[test]

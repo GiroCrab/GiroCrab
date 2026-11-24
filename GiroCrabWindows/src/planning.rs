@@ -500,6 +500,38 @@ mod tests {
         );
     }
 
+    /// Kept parts keep their UUID, also reordered and with equal amounts; new ones have none.
+    #[test]
+    fn split_drafts_keep_their_uuids() {
+        let with = |uuid: &str, amount: &str| SplitDraft {
+            uuid: Some(uuid.into()),
+            ..draft(0, amount)
+        };
+        let parts = build_splits(
+            &[
+                with("b", "-5"),
+                with("a", "-5"),
+                draft(0, "4"),
+                draft(0, "-4"),
+            ],
+            &[],
+            -1000,
+        )
+        .unwrap();
+        assert_eq!(
+            parts
+                .iter()
+                .map(|p| (p.uuid.as_deref(), p.amount_cents))
+                .collect::<Vec<_>>(),
+            [
+                (Some("b"), -500),
+                (Some("a"), -500),
+                (None, 400),
+                (None, -400)
+            ]
+        );
+    }
+
     #[test]
     fn budget_field() {
         assert_eq!(parse_budget(""), Ok(None));

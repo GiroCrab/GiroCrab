@@ -242,6 +242,13 @@ impl Vault {
                 what: trf("Buchung {0}", &[&transaction_id]),
             })?;
         validate_splits(amount, &splits)?;
+        // a 0-€ booking exists only through its parts: removing them all would leave an empty
+        // booking that no editor can save again (CodeRabbit #1851)
+        if amount == 0 && splits.is_empty() {
+            return Err(CoreError::invalid(tr(
+                "Eine Splitbuchung braucht mindestens zwei Teilbeträge ungleich 0.",
+            )));
+        }
         let tx = db.transaction()?;
         store_splits(&tx, transaction_id, &splits)?;
         tx.commit()?;
@@ -590,6 +597,37 @@ pub(crate) fn store_splits(
     Ok(())
 }
 
+/// Gives the parts of booking `id` UUIDs derived from the booking's sync key and each part's
+/// content (category, amount, note, occurrence), like the schema 39 backfill: an import that
+/// creates the same parts on two devices gives them the same identities. A UUID already taken
+/// elsewhere keeps the random one.
+pub(crate) fn derive_split_uuids(conn: &rusqlite::Connection, id: i64) -> Result<(), CoreError> {
+    let key = crate::sync_merge::booking_key(conn, id)?;
+    let parts: Vec<(String, i64, String, Option<String>)> = conn
+        .prepare_cached(
+            "SELECT s.uuid, s.amount_cents, s.note, c.uuid FROM transaction_splits s
+               LEFT JOIN categories c ON c.id = s.category_id
+              WHERE s.transaction_id = ?1 ORDER BY s.position, s.id",
+        )?
+        .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut occurrences = HashMap::new();
+    for (uuid, amount, note, category) in parts {
+        let content = (category, amount, note);
+        let occurrence = occurrences.entry(content.clone()).or_insert(0u64);
+        let identity =
+            serde_json::to_vec(&("girocrab.import-split.v1", &key, &content, *occurrence))
+                .expect("split identity");
+        *occurrence += 1;
+        let stable = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &identity).to_string();
+        conn.execute(
+            "UPDATE OR IGNORE transaction_splits SET uuid = ?2 WHERE transaction_id = ?1 AND uuid = ?3",
+            params![id, stable, uuid],
+        )?;
+    }
+    Ok(())
+}
+
 /// A booking turned into a split booking by an import keeps no category of its
 /// own (its splits carry them, #654), unless the user set it.
 pub(crate) fn clear_split_category(conn: &rusqlite::Connection, id: i64) -> Result<(), CoreError> {
@@ -718,6 +756,45 @@ mod tests {
         );
         v.set_transaction_splits(id, vec![]).unwrap();
         assert!(v.list_transaction_splits(id).unwrap().is_empty());
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// CodeRabbit (#1853): an import's parts get content-derived UUIDs, the same each time
+    /// the same parts are imported for the same booking.
+    #[test]
+    fn imported_parts_get_content_derived_uuids() {
+        let (v, dir) = vault();
+        let id = tx(&v, "import", "2025-01-01", -100, None);
+        let part = |amount, note: &str| TransactionSplitInput {
+            uuid: None,
+            category_id: None,
+            amount_cents: amount,
+            note: note.into(),
+        };
+        let lines = vec![part(-40, "a"), part(-40, "a"), part(-20, "b")];
+        let import = || {
+            let db = v.db().unwrap();
+            store_splits(&db, id, &lines).unwrap();
+            derive_split_uuids(&db, id).unwrap();
+            drop(db);
+            v.list_transaction_splits(id)
+                .unwrap()
+                .into_iter()
+                .map(|p| (p.amount_cents, p.uuid))
+                .collect::<Vec<_>>()
+        };
+        let first = import();
+        v.db()
+            .unwrap()
+            .execute("DELETE FROM transaction_splits", [])
+            .unwrap();
+        assert_eq!(import(), first);
+        assert!(
+            first
+                .iter()
+                .all(|(_, u)| uuid::Uuid::parse_str(u).unwrap().get_version_num() == 5)
+        );
         drop(v);
         let _ = std::fs::remove_dir_all(dir);
     }

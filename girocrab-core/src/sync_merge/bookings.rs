@@ -25,6 +25,8 @@ struct BookingFields {
     splits_ms: i64,
     manual_amount: Option<i64>,
     manual_dates: Option<(String, Option<String>)>,
+    /// edit stamp of `manual_dates` (#714): a date edit syncs on its own
+    dates_ms: i64,
     /// tag uuids, sorted (#228)
     tags: crate::tags::merge::TagSet,
     tags_ms: i64,
@@ -70,23 +72,21 @@ impl BookingFields {
         );
         // clean text beats text with U+FFFD or mojibake (unstamped text after
         // the migration: one device may hold the healed copy), then by value
-        // The date of a manual booking travels with its text (`text_ms`), not with the
-        // amount and splits: a date-only edit must not outrank a peer's split edit.
-        let mut text = (self.text.clone(), self.manual_dates.clone());
+        take_ranked(&mut self.text, &mut self.text_ms, &o.text, o.text_ms, |t| {
+            (
+                crate::text::is_clean(&t.0) && crate::text::is_clean(&t.1),
+                t.clone(),
+            )
+        });
+        // the date of a manual booking has its own stamp: neither a text edit nor an amount
+        // or split edit of a peer can replace a newer date with a stale one
         take_ranked(
-            &mut text,
-            &mut self.text_ms,
-            &(o.text.clone(), o.manual_dates.clone()),
-            o.text_ms,
-            |(t, dates)| {
-                (
-                    crate::text::is_clean(&t.0) && crate::text::is_clean(&t.1),
-                    t.clone(),
-                    dates.clone(),
-                )
-            },
+            &mut self.manual_dates,
+            &mut self.dates_ms,
+            &o.manual_dates,
+            o.dates_ms,
+            Clone::clone,
         );
-        (self.text, self.manual_dates) = text;
         // amount and parts of a manual booking stay one unit (`splits_ms`)
         let mut unit = (self.manual_amount, self.splits.clone());
         let other_unit = (o.manual_amount, o.splits.clone());
@@ -167,7 +167,8 @@ const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
         end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms,
-        external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM other.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan'))
+        external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM other.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan')),
+        date_ms
      FROM other.transactions ORDER BY account_id, external_id";
 
 /// The id both sides keep for one booking known under two ids: the bank's
@@ -266,7 +267,7 @@ pub(crate) fn merge_bookings(
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan')), value_date
+                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan')), value_date, date_ms
              FROM main.transactions ORDER BY id",
         )?;
         let mut rows = st.query([])?;
@@ -305,6 +306,7 @@ pub(crate) fn merge_bookings(
                         .get::<_, bool>(20)?
                         .then(|| Ok::<_, rusqlite::Error>((r.get(16)?, r.get(21)?)))
                         .transpose()?,
+                    dates_ms: r.get(22)?,
                     tags: local_tags.remove(&id).unwrap_or_default(),
                     tags_ms: r.get(19)?,
                     deleted_ms: r.get(15)?,
@@ -358,6 +360,7 @@ pub(crate) fn merge_bookings(
                         .get::<_, bool>(32)?
                         .then(|| Ok::<_, rusqlite::Error>((r.get(4)?, r.get(5)?)))
                         .transpose()?,
+                    dates_ms: r.get(33)?,
                     tags: Vec::new(),
                     tags_ms: r.get(31)?,
                     deleted_ms: r.get(26)?,
@@ -512,14 +515,15 @@ pub(crate) fn merge_bookings(
                 ]);
                 p.extend(o.sepa_refs.iter().cloned());
                 p.push(f.tags_ms.into());
+                p.push(f.dates_ms.into());
                 conn.execute(
                     "INSERT INTO transactions(account_id, external_id, import_fp,
                         booking_date, value_date, amount_cents, currency, counterparty_iban, booking_text,
                         imported_unix, purpose_code, gvc, salary_flag,
                         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
                         counterparty, purpose, text_ms, splits_ms, deleted_ms,
-                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31)",
+                        end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms, date_ms)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32)",
                     rusqlite::params_from_iter(p),
                 )?;
                 let id = conn.last_insert_rowid();
@@ -672,6 +676,10 @@ fn write_booking(
             "UPDATE transactions SET amount_cents=?2 WHERE id=?1",
             params![id, m.manual_amount],
         )?;
+        // rules can match amounts: a booking without a manual category is checked again
+        if m.cat.is_none() {
+            cleared.insert(id);
+        }
     }
     if m.cat != old.cat {
         if m.cat.is_some() {
@@ -699,7 +707,7 @@ fn write_booking(
     conn.execute(
         "UPDATE transactions SET category_ms = ?2, note = ?3, note_ms = ?4, checked = ?5,
             checked_ms = ?6, counterparty = ?7, purpose = ?8, text_ms = ?9, splits_ms = ?10,
-            deleted_ms = ?11, tags_ms = ?12
+            deleted_ms = ?11, tags_ms = ?12, date_ms = ?13
          WHERE id = ?1",
         params![
             id,
@@ -713,7 +721,8 @@ fn write_booking(
             m.text_ms,
             m.splits_ms,
             m.deleted_ms,
-            m.tags_ms
+            m.tags_ms,
+            m.dates_ms
         ],
     )?;
     Ok(())

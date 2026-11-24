@@ -1206,7 +1206,8 @@ pub struct TransactionSplitInput {
     /// Existing part to retain; `None` creates a new UUID. Exception: when the edit removes
     /// exactly one part of this signed amount, that part is referenced by a refund link and
     /// exactly one new part has the amount, the new part inherits the removed UUID (and so the
-    /// link). `None` is therefore no way to detach a refund.
+    /// link); `None` cannot force a new identity then. Without that inheritance (e.g. one part
+    /// split into two) the removed part's identity, and a link to it, are gone.
     pub uuid: Option<String>,
     pub category_id: Option<i64>,
     /// All parts must add up to the parent booking.

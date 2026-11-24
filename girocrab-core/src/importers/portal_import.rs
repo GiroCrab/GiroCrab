@@ -2348,7 +2348,7 @@ mod hold_tests {
     /// UUIDs, so a refund link to a part survives the sync of the split vector.
     #[test]
     fn imported_split_parts_get_the_same_uuids_on_every_device() {
-        let uuids = || {
+        let uuids = |reverse: bool| {
             let (v, _, _dir) = vault();
             let account = v
                 .create_offline_account(
@@ -2367,25 +2367,34 @@ mod hold_tests {
             .unwrap();
             db.execute_batch(&format!(
                 "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, purpose) VALUES
-                   ({account}, 'id:REF1234567---1', '2026-01-02', -1000, ''),
-                   ({account}, 'mm-1', '2026-01-02', -400, 'EREF: REF1234567'),
-                   ({account}, 'mm-2', '2026-01-02', -600, 'EREF: REF1234567');"
+                   ({account}, 'id:REF1234567---1', '2026-01-02', -1000, '');"
             ))
             .unwrap();
-            assert_eq!(merge_imported_split_parts(&db, account).unwrap(), 1);
-            let mut uuids: Vec<String> = db
-                .prepare("SELECT uuid FROM transaction_splits ORDER BY amount_cents")
-                .unwrap()
-                .query_map([], |r| r.get(0))
-                .unwrap()
-                .collect::<Result<_, _>>()
+            // the imported parts arrive in either order on the two devices
+            let mut parts = [("mm-1", -400), ("mm-2", -600)];
+            if reverse {
+                parts.reverse();
+            }
+            for (ext, cents) in parts {
+                db.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, purpose)
+                     VALUES (?1, ?2, '2026-01-02', ?3, 'EREF: REF1234567')",
+                    params![account, ext, cents],
+                )
                 .unwrap();
-            uuids.sort();
-            uuids
+            }
+            assert_eq!(merge_imported_split_parts(&db, account).unwrap(), 1);
+            // each amount keeps its UUID, whatever the order
+            db.prepare("SELECT amount_cents, uuid FROM transaction_splits ORDER BY amount_cents")
+                .unwrap()
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
         };
-        let first = uuids();
+        let first = uuids(false);
         assert_eq!(first.len(), 2);
-        assert_eq!(first, uuids());
+        assert_eq!(first, uuids(true));
     }
 
     fn sync(v: &Arc<Vault>, conn: i64, body: &str) -> Result<SyncSummary, CoreError> {

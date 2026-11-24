@@ -77,9 +77,22 @@ fn date_only_edit_does_not_outrank_a_peer_split_edit() {
             amount_cents: cents,
             note: String::new(),
         };
-        let date_edit = || {
-            a.save_manual_booking(account, Some(id), setup("2026-01-12", -1000, "Shop"))
+        let splits_ms = |v: &Vault, id: i64| -> i64 {
+            v.db()
                 .unwrap()
+                .query_row(
+                    "SELECT splits_ms FROM transactions WHERE id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let date_edit = || {
+            let before = splits_ms(&a, id);
+            a.save_manual_booking(account, Some(id), setup("2026-01-12", -1000, "Shop"))
+                .unwrap();
+            // a date-only edit leaves the amount/split unit's stamp alone
+            assert_eq!(splits_ms(&a, id), before);
         };
         let split_edit = || {
             b.set_transaction_splits(bid, vec![part(-400), part(-600)])
@@ -112,6 +125,81 @@ fn date_only_edit_does_not_outrank_a_peer_split_edit() {
             );
         }
     }
+}
+
+/// CodeRabbit (#1853): a newer date edit survives a peer's later text-only edit, and the text
+/// edit survives too (each has its own stamp).
+#[test]
+fn date_edit_and_peer_text_edit_both_survive() {
+    let a = vault("date-vs-text-a");
+    let b = vault("date-vs-text-b");
+    let account = a
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = a
+        .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    let (bid, bacc): (i64, i64) = b
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id, account_id FROM transactions WHERE counterparty='Shop'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    a.save_manual_booking(account, Some(id), setup("2026-01-12", -1000, "Shop"))
+        .unwrap();
+    b.save_manual_booking(bacc, Some(bid), setup("2026-01-10", -1000, "Shop GmbH"))
+        .unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    for (v, id) in [(&a, id), (&b, bid)] {
+        let got: (String, String) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT booking_date, counterparty FROM transactions WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(got, ("2026-01-12".into(), "Shop GmbH".into()));
+    }
+}
+
+/// CodeRabbit (#1855): the text stamp only ever grows, also when the stored stamp is ahead
+/// of this device's clock (set by a peer).
+#[test]
+fn text_stamp_advances_past_a_stamp_ahead_of_the_clock() {
+    let v = vault("text-stamp-ahead");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+        .unwrap();
+    let ahead = crate::dates::now_ms() + 86_400_000;
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET text_ms=?2, date_ms=?2 WHERE id=?1",
+            params![id, ahead],
+        )
+        .unwrap();
+    v.save_manual_booking(account, Some(id), setup("2026-01-11", -1000, "Shop GmbH"))
+        .unwrap();
+    let (text_ms, date_ms): (i64, i64) = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT text_ms, date_ms FROM transactions WHERE id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((text_ms, date_ms), (ahead + 1, ahead + 1));
 }
 
 #[test]
