@@ -89,11 +89,22 @@ counterpart booking.
 
 ### Existing vaults keep their classification
 
-Built-in categories start with the role their `builtin_role` stood for, as a role nobody
-chose (stamp `0`), so any user choice wins over it. `ETF-Sparpläne` and `Aktien` already
-moved to the top level start as `Investment`, as their names classified them before.
-From then on only roles count: a moved category keeps its explicit role, and one without
-inherits from its new parent. The schema step `category_roles` in
+Before, only the `builtin_role` of a booking's top-level category counted, plus whether any
+category on its way to the root was a transfer category. The update gives a category a role
+only where its `builtin_role` decided the classification this way:
+
+- Built-in categories at the top level start with the role their `builtin_role` stood for.
+- `Umbuchungen` and imported transfer categories start as `Neutral` at any depth.
+- `Gehalt` starts as `Salary` wherever it is, except below a transfer category.
+- `ETF-Sparpläne` and `Aktien` already moved to the top level start as `Investment`: before,
+  a keyword check on the top-level `builtin_role`, meant for imported category paths, matched
+  their keys.
+
+Every other category starts without a role and inherits from its parent. A built-in category
+moved elsewhere thus keeps the classification its position gave it; `Gehalt` under
+`Umbuchungen` stays `Neutral`. These roles are ones nobody chose (stamp `0`), so any user
+choice wins over them. From then on only roles count: a moved category keeps its explicit
+role, and one without inherits from its new parent. The schema step `category_roles` in
 [`schema.rs`](../../girocrab-core/src/schema.rs) implements this.
 
 ## Not covered
@@ -118,6 +129,10 @@ inherits from its new parent. The schema step `category_roles` in
   reach its children, and a copied role could not be told apart from a chosen one (driver 3).
 - **Every category starts as `Consumption`.** Simpler, but investments, loans and transfers of
   existing vaults would count as spending right after the update (driver 2).
+- **Every built-in category starts with its role, wherever it is.** Gives moved built-ins
+  their meaning back (driver 1), but changes the numbers of rearranged vaults on the update:
+  a moved `Sparen & Investieren` would turn spending into investments, `Gehalt` under
+  `Umbuchungen` transfers into income (driver 2).
 - **A per-booking transfer flag instead of `Neutral`.** Cannot exclude whole categories
   (deposits, outlays, imported hidden categories) and keeps `"Umbuchungen"` as a special name
   (#931).
@@ -126,12 +141,13 @@ inherits from its new parent. The schema step `category_roles` in
 
 - `Category` gains `role` and `effective_role` across UniFFI and serde JSON
   (`--features serde`).
+- Built-in categories moved before the update keep their old, position-dependent
+  classification until the user sets a role: `Sparen & Investieren` under a custom folder
+  stays `Consumption`. Here driver 2 wins over driver 1.
 - Deliberate exceptions to driver 2:
-  - Vaults that had moved `Sparen & Investieren` or `Kredite & Darlehen` under a custom folder
-    get `Investment` or `Loan` back for those bookings.
   - The next database import turns categories hidden from charts there into `Neutral`.
-  - Moving `ETF-Sparpläne` or `Aktien` to the top level after the migration gives `Consumption`
-    until the user sets a role; before, their names made them investments.
+  - Moving `ETF-Sparpläne` or `Aktien` to the top level after the update gives `Consumption`
+    until the user sets a role; before, the keyword check made them investments.
 - `Income` and `Salary` are stored, inherited and synced but change nothing yet. A role editor
   hides them or ships together with their effect.
 - Re-evaluate this ADR when roles are to beat the other heuristics, when split parts are
@@ -142,8 +158,10 @@ inherits from its new parent. The schema step `category_roles` in
 - `category_roles_backfill_from_builtin_role` in [`schema.rs`](../../girocrab-core/src/schema.rs)
   and the fixture vault of the new step (`cargo test -p girocrab-core --test schema_fixtures`).
 - [`role_tests.rs`](../../girocrab-core/src/vault/categories/role_tests.rs):
-  inheritance, sync merge, moved built-ins, and the comparison with the old classification
-  (KPIs and cash flow) on a demo vault and on the fixture of the previous schema version.
+  inheritance, sync merge (including a role edited on a category another device combined
+  into a duplicate), moved built-ins, rearranged trees of the previous schema version, and
+  the comparison with an independent copy of the old classification (KPIs and cash flow) on
+  a demo vault and on the fixture of the previous schema version.
 - Importer tests: `showInDiagrams = 0` becomes `Neutral`; an explicit "inherit" survives a
   re-import.
 - [`scripts/lint-serde-feature.sh`](../../scripts/lint-serde-feature.sh) (CI) for the new fields.
