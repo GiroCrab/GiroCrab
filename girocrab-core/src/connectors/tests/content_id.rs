@@ -48,7 +48,7 @@ fn since_is_per_account_with_a_common_floor() {
         ("B".to_string(), Some("2026-10-01".to_string())), // lagging behind
         ("C".to_string(), None),                           // no bookings (depot)
     ];
-    let (since, per) = since_window(d("2026-11-12"), 90, &newest);
+    let (since, per) = since_window(d("2026-11-12"), 90, &newest, None);
     assert_eq!(per["A"], "2026-10-22");
     assert_eq!(per["B"], "2026-09-21");
     assert_eq!(per["C"], "2026-08-14");
@@ -59,12 +59,13 @@ fn since_is_per_account_with_a_common_floor() {
         d("2026-11-12"),
         90,
         &[("A".to_string(), Some("2026-01-01".to_string()))],
+        None,
     );
     assert_eq!(
         (since.as_str(), per["A"].as_str()),
         ("2025-12-22", "2025-12-22")
     );
-    let (since, _) = since_window(d("2026-11-12"), 90, &[]);
+    let (since, _) = since_window(d("2026-11-12"), 90, &[], None);
     assert_eq!(since, "2026-08-14");
 }
 
