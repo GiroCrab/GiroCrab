@@ -74,7 +74,8 @@ fn rows_of_booking(conn: &Connection, id: i64) -> CoreResult<Vec<Row>> {
     load_rows_where(
         conn,
         "main",
-        "?1 IN (refund_id, original_id, moved_from_refund_id, moved_from_original_id)",
+        // one indexed term per column (an IN over columns would scan the table)
+        "refund_id = ?1 OR original_id = ?1 OR moved_from_refund_id = ?1 OR moved_from_original_id = ?1",
         [id],
     )
 }

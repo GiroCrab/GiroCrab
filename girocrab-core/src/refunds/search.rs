@@ -53,7 +53,11 @@ fn index<'a>(v: &Vault, db: &Connection, p: &'a Resolved) -> CoreResult<&'a Sear
 
 pub(super) fn reference_tokens(text: &str) -> HashSet<String> {
     text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '(' | ')' | '+'))
-        .filter(|w| !w.chars().all(|c| c.is_ascii_digit() || c == '.') && !is_date(w))
+        // plain numbers and real dates are no references; an impossible date-shaped value
+        // (31.04.2026) is
+        .filter(|w| {
+            !is_date(w) && (date_shaped(w) || !w.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        })
         .map(|w| {
             w.chars()
                 .filter(|c| c.is_alphanumeric())
@@ -66,14 +70,14 @@ pub(super) fn reference_tokens(text: &str) -> HashSet<String> {
         .collect()
 }
 
-/// A real calendar date (`YYYY-MM-DD`, `DD.MM.YYYY`, `DD/MM/YY` …): left out of the reference
-/// tokens. An impossible date-shaped value (`2026-42-17`, `2025-02-29`) stays a reference.
-fn is_date(word: &str) -> bool {
+/// `(year, month, day)` fields of a date-shaped word (`YYYY-MM-DD`, `DD.MM.YYYY`, `DD/MM/YY` …),
+/// valid or not.
+fn date_fields(word: &str) -> Option<(Option<i16>, Option<i16>, Option<i16>)> {
     let word = word.trim_matches(|c: char| !c.is_alphanumeric());
     let fields: Vec<_> = word.split(['-', '/', '.']).collect();
     let digits = |f: &str, n| f.len() == n && f.bytes().all(|b| b.is_ascii_digit());
     let num = |f: &str| f.parse::<i16>().ok();
-    let (year, month, day) = match fields.as_slice() {
+    Some(match fields.as_slice() {
         [a, b, c]
             if digits(a, 4) && (digits(b, 1) || digits(b, 2)) && (digits(c, 1) || digits(c, 2)) =>
         {
@@ -87,7 +91,19 @@ fn is_date(word: &str) -> bool {
             let year = num(c).map(|y| if c.len() == 2 { 2000 + y } else { y });
             (year, num(b), num(a))
         }
-        _ => return false,
+        _ => return None,
+    })
+}
+
+fn date_shaped(word: &str) -> bool {
+    date_fields(word).is_some()
+}
+
+/// A real calendar date: left out of the reference tokens. An impossible date-shaped value
+/// (`2026-42-17`, `31.04.2026`) stays a reference.
+fn is_date(word: &str) -> bool {
+    let Some((year, month, day)) = date_fields(word) else {
+        return false;
     };
     matches!((year, month, day), (Some(y), Some(m), Some(d))
         if i8::try_from(m).ok().zip(i8::try_from(d).ok())
@@ -313,5 +329,9 @@ mod date_tests {
         }
         assert!(reference_tokens("Ref 2026-42-17").contains("20264217"));
         assert!(reference_tokens("Ref 2026-04-17").is_empty());
+        // dotted: an impossible date stays, a real one and a plain number go
+        assert!(reference_tokens("Ref 31.04.2026").contains("31042026"));
+        assert!(reference_tokens("Ref 30.04.2026").is_empty());
+        assert!(reference_tokens("Betrag 1.234.567").is_empty());
     }
 }

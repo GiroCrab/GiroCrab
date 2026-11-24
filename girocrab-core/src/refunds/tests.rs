@@ -1104,8 +1104,9 @@ mod review_round3 {
         v.set_transaction_splits(r, vec![part(None, 1000), part(None, 1000)])
             .unwrap();
         let uuid = parts(&v, r)[0].0.clone();
-        v.link_refund(r, uuid.clone(), o, "".into()).unwrap();
-        v.link_refund(r, uuid.clone(), o, "".into()).unwrap();
+        // the first call creates the link, the repeat finds it (no second undo)
+        assert!(v.link_refund(r, uuid.clone(), o, "".into()).unwrap());
+        assert!(!v.link_refund(r, uuid.clone(), o, "".into()).unwrap());
         v.set_transaction_splits(r, vec![]).unwrap();
         assert!(v.link_refund(r, uuid, o, "".into()).is_err());
     }

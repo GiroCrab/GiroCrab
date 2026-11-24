@@ -17,6 +17,15 @@ mod tests;
 
 pub(crate) use store::{fold_booking, merge_attached, merge_folded, move_booking, move_endpoints};
 
+/// One stored link between a refund and an original (docs/adr/0003-refund-links.md).
+///
+/// An endpoint is a booking plus a part: `""` = the whole (unsplit) booking, otherwise the
+/// UUID of a split part. `refund_*`/`original_*` are the stored key, used for
+/// `unlink_refund(…, expected_changed_ms: changed_ms)` and `restore_refund(…, token)`;
+/// `resolved_*` are the endpoints as they are now (`None` when the part or booking is gone).
+/// `allocated_cents` is the amount this link covers (allocation order: `created_ms`),
+/// `*_open_cents` what is left on each endpoint. `inactive`: the link resolves to nothing
+/// (deleted part, sign or currency change) and covers nothing; it stays stored.
 #[derive(Debug, Clone, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RefundLink {
@@ -359,7 +368,17 @@ impl Vault {
         {
             return Ok(p);
         }
-        let p = Arc::new(Resolved::from_state(State::load(db)?)?);
+        // bookings, parts and links from one snapshot (a merge committing in between could
+        // otherwise pair new links with old bookings)
+        let state = if db.is_autocommit() {
+            let tx = db.unchecked_transaction()?;
+            let state = State::load(&tx)?;
+            tx.commit()?;
+            state
+        } else {
+            State::load(db)?
+        };
+        let p = Arc::new(Resolved::from_state(state)?);
         if db.is_autocommit() {
             self.refunds.put(stamp, p.clone());
         }
