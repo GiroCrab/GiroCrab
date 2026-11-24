@@ -2532,7 +2532,10 @@ pub(crate) fn adopt_account(
                 })
             });
             // a number that fits several imported cards, or a contested one: no
-            // guess at all, the fallback below would hand over an unrelated card
+            // guess at all, the fallback below would hand over an unrelated card.
+            // The known-state preference below deliberately does not apply here: two
+            // accounts with one number are duplicates of one card, and which of them is
+            // the card is not for the archive state to decide
             if contested || tie {
                 return Ok(None);
             }

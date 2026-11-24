@@ -4536,7 +4536,7 @@ fn a_known_card_with_an_iban_wins_over_a_reactivated_one_without() {
     assert_eq!(adopt(), Some(active));
 }
 
-/// A login with imported cards for the `adopt_account` tests: (vault, connection, card inserter).
+/// A login with imported cards for the `adopt_account` tests: (vault, connection id, credit card group id).
 fn cards_login() -> (Arc<Vault>, i64, i64) {
     let v = vault();
     let conn_id = v
