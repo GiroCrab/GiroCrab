@@ -1,7 +1,7 @@
 //! Pure logic and texts of the "Lastschriften & Mandate" dialog (`ui/mandates_dialog.slint`):
 //! form parsing, sequence texts, list lines and summaries. No window, no vault, unit-tested.
 
-use girocrab_core::batch_csv::{BatchCsvImport, BatchCsvRow};
+use girocrab_core::batch_csv::BatchCsvRow;
 use girocrab_core::connectors::fints::pain008::SequenceType;
 use girocrab_core::mandates::{
     CollectionItem, DebitFile, Mandate, MandateBooking, MandateCsvRow, MandateImportResult,
@@ -438,23 +438,6 @@ pub fn batch_line(r: &BatchCsvRow, eur: &dyn Fn(i64) -> String) -> Line {
     }
 }
 
-pub fn batch_summary(b: &BatchCsvImport, eur: &dyn Fn(i64) -> String) -> String {
-    let good: Vec<&BatchCsvRow> = b.rows.iter().filter(|r| r.errors.is_empty()).collect();
-    let total: i64 = good.iter().map(|r| r.amount_cents).sum();
-    let mut s = format!(
-        "{} Zeilen, {} fehlerfrei (Summe {}), {} fehlerhaft.",
-        b.rows.len(),
-        good.len(),
-        eur(total),
-        b.rows.len() - good.len()
-    );
-    for p in &b.problems {
-        s.push(' ');
-        s.push_str(p);
-    }
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,7 +640,6 @@ mod tests {
                 .into(),
         );
         assert_eq!(b.rows.len(), 2);
-        assert!(batch_summary(&b, &eur).contains("1 fehlerfrei (Summe 12,50 €)"));
         assert!(!batch_line(&b.rows[0], &eur).negative);
         assert!(batch_line(&b.rows[1], &eur).negative);
     }

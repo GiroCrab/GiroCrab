@@ -47,6 +47,8 @@ fn vault_now() -> Option<Arc<Vault>> {
     SLOT.with(|s| s.borrow().as_ref().and_then(|s| s.lock().unwrap().clone()))
 }
 
+mod batch_review;
+
 fn eur(c: i64) -> String {
     money(c, "EUR")
 }
@@ -77,6 +79,10 @@ fn names(items: Vec<String>) -> ModelRc<SharedString> {
 
 /// Closes the dialog and forgets its state when the vault locks.
 pub fn on_lock(win: &MainWindow) {
+    batch_review::clear();
+    let gs = win.global::<MandatesState>();
+    gs.set_batch_summary(SharedString::new());
+    gs.set_batch_rows(model(Vec::new()));
     win.global::<MandatesState>().set_open(false);
     with_ui(|u| *u = Ui::default());
 }
@@ -955,13 +961,38 @@ fn wire_batch(win: &MainWindow) {
                 Ok(parse_batch_csv(read_text(&path)?))
             },
             |win, imp| {
-                let gs = win.global::<MandatesState>();
-                gs.set_batch_summary(view::batch_summary(&imp, &eur).into());
-                gs.set_batch_rows(model(
-                    imp.rows.iter().map(|r| view::batch_line(r, &eur)).collect(),
-                ));
-                gs.set_status(SharedString::new());
+                batch_review::start(imp);
+                render_batch(win);
+                win.global::<MandatesState>()
+                    .set_status(SharedString::new());
             },
         );
     });
+    let weak = win.as_weak();
+    win.global::<MandatesState>().on_batch_toggle(move |i| {
+        let Some(win) = weak.upgrade() else { return };
+        if blocked(&win) || i < 0 {
+            return;
+        }
+        // Immer neu zeichnen: das CheckBox-Element einer nicht wählbaren Zeile
+        // hat sich beim Klick selbst umgeschaltet.
+        batch_review::toggle(i as usize);
+        render_batch(&win);
+    });
+}
+
+/// Zeigt Zusammenfassung und Zeilen; im Privatmodus verdeckt.
+fn render_batch(win: &MainWindow) {
+    let private = privacy_on(win);
+    let shown = batch_review::with(|r| {
+        (
+            batch_review::summary(r, private, &money),
+            batch_review::lines(r, private, &money),
+        )
+    });
+    if let Some((summary, rows)) = shown {
+        let gs = win.global::<MandatesState>();
+        gs.set_batch_summary(summary.into());
+        gs.set_batch_rows(model(rows));
+    }
 }
