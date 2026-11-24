@@ -1,7 +1,7 @@
 //! „Duplizieren“ im Kategorien-Dialog, Vorbild `AppModel+CategoryDuplicate.swift` (macOS):
 //! copies name, symbol and colour of a category and its sub-categories. Bookings, rules and
 //! budgets stay with the original: the copy is written only through `CategoryWriter`
-//! (`create_category` + `reorder_categories`).
+//! (`create_category`).
 
 use std::sync::Arc;
 
@@ -42,24 +42,9 @@ pub(super) struct CopyStep {
     pub color_hex: String,
 }
 
-/// „<Name> Kopie“; on a collision with a sibling „<Name> Kopie 2“, „… 3“ and so on.
-pub(super) fn copy_name(original: &str, siblings: &[&str]) -> String {
-    let taken = |name: &str| {
-        let name = name.to_lowercase();
-        siblings.iter().any(|s| s.trim().to_lowercase() == name)
-    };
-    let base = format!("{} Kopie", original.trim());
-    if !taken(&base) {
-        return base;
-    }
-    let mut n = 2;
-    loop {
-        let name = format!("{base} {n}");
-        if !taken(&name) {
-            return name;
-        }
-        n += 1;
-    }
+/// „<Name> Kopie“, like macOS (no collision check: a clash with a sibling is allowed there too).
+pub(super) fn copy_name(original: &str) -> String {
+    format!("{} Kopie", original.trim())
 }
 
 /// The original (renamed) and its sub-tree (names kept), `None` if `id` is gone.
@@ -72,12 +57,7 @@ pub(super) fn copy_plan(nodes: &[Node], id: i64) -> Option<Vec<CopyStep>> {
         sf_symbol: n.symbol.to_string(),
         color_hex: n.color.to_string(),
     };
-    let siblings: Vec<&str> = nodes
-        .iter()
-        .filter(|n| n.parent == root.parent)
-        .map(|n| n.name)
-        .collect();
-    let mut steps = vec![step(&root, None, copy_name(root.name, &siblings))];
+    let mut steps = vec![step(&root, None, copy_name(root.name))];
     let mut ids = vec![root.id];
     // Tree order: the sub-tree follows the original directly and ends at the first row whose
     // parent is not part of it.
@@ -91,23 +71,6 @@ pub(super) fn copy_plan(nodes: &[Node], id: i64) -> Option<Vec<CopyStep>> {
     Some(steps)
 }
 
-/// The original's siblings in their order with the copy right below the original.
-pub(super) fn order_with_copy(
-    nodes: &[Node],
-    original: i64,
-    copy: i64,
-) -> Option<(Option<i64>, Vec<i64>)> {
-    let parent = nodes.iter().find(|n| n.id == original)?.parent;
-    let mut ids: Vec<i64> = nodes
-        .iter()
-        .filter(|n| n.parent == parent && n.id != copy)
-        .map(|n| n.id)
-        .collect();
-    let at = ids.iter().position(|&i| i == original)? + 1;
-    ids.insert(at, copy);
-    Some((parent, ids))
-}
-
 /// Everything the copy writes. Rules, bookings and budgets have no entry here on purpose.
 pub(super) trait CategoryWriter {
     fn create(
@@ -117,7 +80,6 @@ pub(super) trait CategoryWriter {
         sf_symbol: String,
         color_hex: String,
     ) -> Result<i64, String>;
-    fn reorder(&self, parent: Option<i64>, ids: Vec<i64>) -> Result<(), String>;
 }
 
 impl CategoryWriter for Vault {
@@ -131,14 +93,10 @@ impl CategoryWriter for Vault {
         self.create_category(name, parent, sf_symbol, color_hex)
             .map_err(|e| e.to_string())
     }
-
-    fn reorder(&self, parent: Option<i64>, ids: Vec<i64>) -> Result<(), String> {
-        self.reorder_categories(parent, ids)
-            .map_err(|e| e.to_string())
-    }
 }
 
-/// Creates the copy of `id` with its sub-tree and moves it right below the original.
+/// Creates the copy of `id` with its sub-tree. Like macOS it lands at the end of the
+/// original's siblings (the core appends new categories), no reorder.
 pub(super) fn duplicate(w: &impl CategoryWriter, nodes: &[Node], id: i64) -> Result<i64, String> {
     let steps = copy_plan(nodes, id).ok_or("Die Kategorie gibt es nicht mehr.")?;
     let root_parent = nodes.iter().find(|n| n.id == id).and_then(|n| n.parent);
@@ -147,11 +105,7 @@ pub(super) fn duplicate(w: &impl CategoryWriter, nodes: &[Node], id: i64) -> Res
         let parent = s.parent.map_or(root_parent, |i| Some(created[i]));
         created.push(w.create(s.name, parent, s.sf_symbol, s.color_hex)?);
     }
-    let copy = created[0];
-    if let Some((parent, ids)) = order_with_copy(nodes, id, copy) {
-        w.reorder(parent, ids)?;
-    }
-    Ok(copy)
+    Ok(created[0])
 }
 
 /// Worker-thread entry: reads the current tree, so a sync since opening the dialog counts.
@@ -231,24 +185,13 @@ mod tests {
     }
 
     #[test]
-    fn copy_name_appends_kopie_and_numbers_collisions() {
-        assert_eq!(
-            copy_name("Lebensmittel", &["Lebensmittel"]),
-            "Lebensmittel Kopie"
-        );
-        assert_eq!(
-            copy_name(
-                "Lebensmittel",
-                &["Lebensmittel", "lebensmittel kopie", "Lebensmittel Kopie 2"]
-            ),
-            "Lebensmittel Kopie 3"
-        );
-        // Only an exact (case-insensitive) collision counts.
-        assert_eq!(copy_name(" Reisen ", &["Reisen Kopie 3"]), "Reisen Kopie");
+    fn copy_name_appends_kopie_without_numbering() {
+        assert_eq!(copy_name("Lebensmittel"), "Lebensmittel Kopie");
+        assert_eq!(copy_name(" Reisen "), "Reisen Kopie");
     }
 
     #[test]
-    fn plan_copies_sub_tree_and_checks_names_per_level() {
+    fn plan_copies_sub_tree_without_collision_check() {
         let nodes = [
             node(1, None, "Essen"),
             node(2, Some(1), "Restaurant"),
@@ -259,7 +202,7 @@ mod tests {
         let plan = copy_plan(&nodes, 1).unwrap();
         let shape: Vec<(Option<usize>, &str)> =
             plan.iter().map(|s| (s.parent, s.name.as_str())).collect();
-        // „Essen Kopie“ below „Essen“ is no sibling; „Haushalt“ is not part of the sub-tree.
+        // No numbering even though „Essen Kopie“ exists; „Haushalt“ is not part of the sub-tree.
         assert_eq!(
             shape,
             [
@@ -275,21 +218,6 @@ mod tests {
         );
         assert_eq!(copy_plan(&nodes, 2).unwrap().len(), 2);
         assert!(copy_plan(&nodes, 99).is_none());
-    }
-
-    #[test]
-    fn copy_goes_right_below_original() {
-        let nodes = [
-            node(1, None, "A"),
-            node(2, Some(1), "A1"),
-            node(3, Some(1), "A2"),
-            node(4, None, "B"),
-        ];
-        assert_eq!(order_with_copy(&nodes, 1, 9), Some((None, vec![1, 9, 4])));
-        assert_eq!(
-            order_with_copy(&nodes, 2, 9),
-            Some((Some(1), vec![2, 9, 3]))
-        );
     }
 
     #[derive(Default)]
@@ -313,13 +241,6 @@ mod tests {
                 .push(format!("create {name} {parent:?} {sf_symbol} {color_hex}"));
             Ok(id)
         }
-
-        fn reorder(&self, parent: Option<i64>, ids: Vec<i64>) -> Result<(), String> {
-            self.calls
-                .borrow_mut()
-                .push(format!("reorder {parent:?} {ids:?}"));
-            Ok(())
-        }
     }
 
     #[test]
@@ -336,17 +257,20 @@ mod tests {
             [
                 "create Essen Kopie None tag #112233",
                 "create Restaurant Some(100) tag #112233",
-                "reorder None [1, 100, 3]",
             ]
         );
         // A vanished category writes nothing.
         assert!(duplicate(&rec, &nodes, 42).is_err());
-        assert_eq!(rec.calls.borrow().len(), 3);
+        assert_eq!(rec.calls.borrow().len(), 2);
     }
 
-    struct FailsOnReorder(Recorder);
+    /// Creates succeed until the `fail_at`-th call (0-based), which fails.
+    struct FailsOnCreate {
+        inner: Recorder,
+        fail_at: usize,
+    }
 
-    impl CategoryWriter for FailsOnReorder {
+    impl CategoryWriter for FailsOnCreate {
         fn create(
             &self,
             name: String,
@@ -354,23 +278,25 @@ mod tests {
             sf_symbol: String,
             color_hex: String,
         ) -> Result<i64, String> {
-            self.0.create(name, parent, sf_symbol, color_hex)
-        }
-
-        fn reorder(&self, _parent: Option<i64>, _ids: Vec<i64>) -> Result<(), String> {
-            Err("Sortieren fehlgeschlagen".to_string())
+            if self.inner.calls.borrow().len() == self.fail_at {
+                return Err("Anlegen fehlgeschlagen".to_string());
+            }
+            self.inner.create(name, parent, sf_symbol, color_hex)
         }
     }
 
     #[test]
-    fn failed_reorder_reports_original_error_and_keeps_created_categories() {
+    fn failed_create_reports_error_and_keeps_created_categories() {
         let nodes = [node(1, None, "Essen"), node(2, Some(1), "Restaurant")];
-        let w = FailsOnReorder(Recorder::default());
+        let w = FailsOnCreate {
+            inner: Recorder::default(),
+            fail_at: 1,
+        };
         assert_eq!(
             duplicate(&w, &nodes, 1),
-            Err("Sortieren fehlgeschlagen".to_string())
+            Err("Anlegen fehlgeschlagen".to_string())
         );
-        // The creates are not rolled back: the UI has to refresh its list after the error.
-        assert_eq!(w.0.calls.borrow().len(), 2);
+        // The first create is not rolled back: the UI has to refresh its list after the error.
+        assert_eq!(w.inner.calls.borrow().len(), 1);
     }
 }

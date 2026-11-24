@@ -607,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn category_duplicate_copies_tree_below_original() {
+    fn category_duplicate_copies_tree_at_end_of_siblings() {
         let (v, path) = demo_vault("dup");
         let palette = girocrab_core::user_groups::account_color_palette();
         let orig = v
@@ -621,9 +621,9 @@ mod tests {
         let sub = v
             .create_category("Bahn".into(), Some(orig), "tram".into(), palette[3].clone())
             .unwrap();
-        let taken = v
+        let later = v
             .create_category(
-                "Testreise Kopie".into(),
+                "Testreise Später".into(),
                 None,
                 String::new(),
                 palette[0].clone(),
@@ -632,7 +632,8 @@ mod tests {
         let copy = super::category_copy::duplicate_in(&v, orig).unwrap();
         let cats = v.list_categories(None, None).unwrap();
         let c = cats.iter().find(|c| c.id == copy).unwrap();
-        assert_eq!(c.name, "Testreise Kopie 2");
+        // Same as macOS: always „<Name> Kopie“ (the core's unique name index rejects a clash).
+        assert_eq!(c.name, "Testreise Kopie");
         assert_eq!(c.sf_symbol, "airplane");
         assert!(c.color_hex.eq_ignore_ascii_case(&palette[2]));
         assert_eq!(c.parent_id, None);
@@ -643,8 +644,9 @@ mod tests {
             .map(|c| c.id)
             .collect();
         let pos = |id| top.iter().position(|&i| i == id).unwrap();
-        assert_eq!(pos(copy), pos(orig) + 1);
-        assert!(pos(taken) > pos(copy));
+        // No reorder: the copy is appended after every existing top-level category.
+        assert_eq!(pos(copy), top.len() - 1);
+        assert!(pos(later) > pos(orig));
         let child = cats.iter().find(|c| c.parent_id == Some(copy)).unwrap();
         assert_eq!(child.name, "Bahn");
         assert_eq!(child.sf_symbol, "tram");
