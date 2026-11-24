@@ -5168,6 +5168,18 @@ fn show_in_diagrams_zero_maps_to_neutral_role() {
     let outlay = find("Ausgelegt");
     assert_eq!(outlay.role, Some(crate::models::CategoryRole::Neutral));
     assert_eq!(outlay.effective_role, crate::models::CategoryRole::Neutral);
+    // No user choice: stamp 0 like a seeded role, so a choice made on another
+    // device wins on sync even when it is older than this import.
+    let role_ms: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT role_ms FROM categories WHERE id = ?1",
+            [outlay.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(role_ms, 0);
     let cinema = find("Kino");
     assert_eq!(cinema.role, None);
     assert_eq!(

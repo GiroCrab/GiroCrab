@@ -723,12 +723,13 @@ fn apply_category_colors(
 /// Marks categories hidden from MoneyMoney's diagrams (`showInDiagrams = 0`)
 /// as `CategoryRole::Neutral` (#931) – only where no role choice (including an
 /// explicit reset to inherit, which stamps `role_ms > 0`) was made in GiroCrab yet.
+/// The role keeps stamp 0 like the seeded ones: it is no user choice, so any
+/// choice on another device wins over it on sync.
 fn apply_category_roles(
     conn: &Connection,
     src: &Source,
     cache: &HashMap<String, i64>,
 ) -> CoreResult<()> {
-    let now = now_ms();
     for path in &src.categories.neutral_paths {
         let key: String = path
             .iter()
@@ -736,9 +737,9 @@ fn apply_category_roles(
             .collect();
         if let Some(id) = cache.get(&key) {
             conn.execute(
-                "UPDATE categories SET role = 'neutral', role_ms = ?2
+                "UPDATE categories SET role = 'neutral'
                  WHERE id = ?1 AND role IS NULL AND role_ms = 0 AND deleted_ms IS NULL",
-                params![id, now],
+                [id],
             )?;
         }
     }
