@@ -69,6 +69,17 @@ pub(super) fn live_row(conn: &Connection, key: &Key) -> CoreResult<Option<Row>> 
     .pop())
 }
 
+/// The stored row of `key`, live or deleted.
+fn row_at(conn: &Connection, key: &Key) -> CoreResult<Option<Row>> {
+    Ok(load_rows_where(
+        conn,
+        "main",
+        "refund_id=?1 AND refund_part=?2 AND original_id=?3 AND original_part=?4",
+        params![key.refund.0, key.refund.1, key.original.0, key.original.1],
+    )?
+    .pop())
+}
+
 /// The link rows that name booking `id` as an endpoint or as a move source.
 fn rows_of_booking(conn: &Connection, id: i64) -> CoreResult<Vec<Row>> {
     load_rows_where(
@@ -155,7 +166,9 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                     *target = old.clone();
                     continue;
                 }
-                if row.deleted_ms.is_none()
+                // a user unlink follows like a live link, so it still suppresses the bank's
+                // copy of that link on the survivor's part
+                if (row.deleted_ms.is_none() || !row.moved)
                     && old.0 != target.0
                     && let Some(part) = survivor_part(conn, "other", old, target.0, true)?
                 {
@@ -231,7 +244,9 @@ fn survivor_part(
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    if keep_exact && parts.iter().any(|(uuid, _)| *uuid == source.1) {
+    // an exact part UUID stays; a whole booking moves to a whole booking only with the same
+    // signed amount (a hold settled at another amount leaves the link inactive)
+    if keep_exact && !source.1.is_empty() && parts.iter().any(|(uuid, _)| *uuid == source.1) {
         return Ok(Some(source.1.clone()));
     }
     let amount: Option<i64> = if source.1.is_empty() {
@@ -291,8 +306,13 @@ pub(crate) fn move_booking(conn: &Connection, from: i64, to: i64) -> CoreResult<
                 if from != to && e.1.is_empty() && is_split(conn, "main", from)? {
                     continue;
                 }
-                let part =
-                    survivor_part(conn, "main", &e, to, true)?.unwrap_or_else(|| e.1.clone());
+                let part = match survivor_part(conn, "main", &e, to, true)? {
+                    Some(part) => part,
+                    // a whole booking without an equal counterpart (a hold settled at another
+                    // amount): the link stays on the old booking and goes inactive with it
+                    None if e.1.is_empty() => continue,
+                    None => e.1.clone(),
+                };
                 endpoints.insert(e, Endpoint(to, part));
             }
         }
@@ -457,12 +477,14 @@ fn merge_rows(conn: &Connection, rows: impl IntoIterator<Item = Row>) -> CoreRes
     if rows.peek().is_none() {
         return Ok(());
     }
-    let mut local: HashMap<_, _> = load_rows(conn, "main")?
-        .into_iter()
-        .map(|r| (r.key.clone(), r))
-        .collect();
+    // only the keys of this batch (a fold per booking must not read every link row)
+    let mut local: HashMap<Key, Option<Row>> = HashMap::new();
     for other in rows {
-        let wins = match local.get(&other.key) {
+        if !local.contains_key(&other.key) {
+            let current = row_at(conn, &other.key)?;
+            local.insert(other.key.clone(), current);
+        }
+        let wins = match local[&other.key].as_ref() {
             None => true,
             Some(current) => {
                 // equal rank: a row with provenance beats one without; two different
@@ -478,7 +500,7 @@ fn merge_rows(conn: &Connection, rows: impl IntoIterator<Item = Row>) -> CoreRes
         };
         if wins {
             write(conn, &other)?;
-            local.insert(other.key.clone(), other);
+            local.insert(other.key.clone(), Some(other));
         }
     }
     Ok(())

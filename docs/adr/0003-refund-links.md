@@ -121,7 +121,8 @@ bookings can therefore participate in either role through their parts.
 
 The allocation cache is bound to the vault data revision. Booking, split and link
 writes and snapshot merges invalidate derived state through revision tracking.
-Repeated reports reuse allocation instead of independently assigning cents.
+The booking row markers, the refund card and the assignment dialog reuse that allocation
+instead of independently assigning cents; no report reads it.
 
 ### Merge complete rows after exact identity mapping
 
@@ -171,8 +172,8 @@ stamps, including tombstones and rows whose current endpoints are unaffected.
 Physical cleanup clears provenance references without a surviving identity by FK.
 
 For a natural-key collision, choose the maximum complete row under the total rank
-`(changed_ms, deleted_ms.is_some(), created_ms, refund_cents, original_cents,
-deleted_ms, user-tombstone priority, moved_from key snapshot, unlink_id)`.
+`(changed_ms, deleted_ms.is_some(), user-tombstone priority, created_ms,
+refund_cents, original_cents, deleted_ms, moved_from key snapshot, unlink_id)`.
 Mapping availability does not participate in the rank. Already suppressed rows are
 not moved again, so a new move stamp cannot override an earlier user unlink.
 Equal logical rows retain mapped provenance when either copy has it.

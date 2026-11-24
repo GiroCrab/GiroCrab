@@ -100,15 +100,17 @@ struct Row {
 }
 
 impl Row {
-    fn rank(&self) -> (i64, bool, i64, i64, i64, Option<i64>, bool, &str, &str) {
+    /// An explicit unlink outranks a move marker of the same stamp (it must not be replaced
+    /// by the marker a fold writes at that stamp).
+    fn rank(&self) -> (i64, bool, bool, i64, i64, i64, Option<i64>, &str, &str) {
         (
             self.changed_ms,
             self.deleted_ms.is_some(),
+            !self.moved,
             self.created_ms,
             self.refund_cents,
             self.original_cents,
             self.deleted_ms,
-            !self.moved,
             &self.moved_from_key,
             &self.unlink_id,
         )
@@ -361,6 +363,39 @@ impl Resolved {
 }
 
 impl Vault {
+    /// What the booking rows show (markers, allocated cents, split counts). Without any link
+    /// row only the split counts are read, not the whole ledger after every write.
+    pub(crate) fn refund_markers(&self, db: &Connection) -> CoreResult<Arc<Resolved>> {
+        let any_link: bool =
+            db.query_row("SELECT EXISTS(SELECT 1 FROM refund_links)", [], |r| {
+                r.get(0)
+            })?;
+        if any_link {
+            return self.refund_projection(db);
+        }
+        let mut summaries = HashMap::new();
+        let mut stmt = db.prepare(
+            "SELECT transaction_id, count(*) FROM transaction_splits GROUP BY transaction_id",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            summaries.insert(
+                r.get::<_, i64>(0)?,
+                Summary {
+                    split_count: r.get::<_, i64>(1)?.try_into().unwrap_or(u32::MAX),
+                    ..Summary::default()
+                },
+            );
+        }
+        Ok(Arc::new(Resolved {
+            state: State::default(),
+            allocations: Vec::new(),
+            remaining: HashMap::new(),
+            summaries,
+            search: OnceLock::new(),
+        }))
+    }
+
     pub(crate) fn refund_projection(&self, db: &Connection) -> CoreResult<Arc<Resolved>> {
         let stamp = self.data_stamp(db);
         if db.is_autocommit()

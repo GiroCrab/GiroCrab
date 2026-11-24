@@ -487,6 +487,61 @@ mod self_review {
         assert!(links[0].inactive && links[0].allocated_cents == 0);
     }
 
+    /// CodeRabbit (#1853): a whole-booking link moves to a replacement only with the same signed
+    /// amount; a hold settled at another amount leaves it inactive.
+    #[test]
+    fn move_to_a_whole_booking_needs_the_same_amount() {
+        for (posted, moves) in [(-100, true), (-120, false)] {
+            let f = Fixture::new();
+            let r = f.add("refund", 100);
+            let hold = f.add("hold", -100);
+            let post = f.add("post", posted);
+            f.link(r, "", hold, "");
+            {
+                let db = f.v.db().unwrap();
+                store::move_booking(&db, hold, post).unwrap();
+                crate::sync_merge::soft_delete_booking(&db, hold).unwrap();
+            }
+            let links = f.v.refund_links(r).unwrap();
+            assert_eq!(
+                links.iter().any(|l| l.original_id == post && !l.inactive),
+                moves,
+                "{posted}"
+            );
+        }
+    }
+
+    /// CodeRabbit (#1852): a user unlink on the twin follows to the survivor's part, so it
+    /// suppresses the older bank copy of that link instead of staying on the whole booking.
+    #[test]
+    fn twin_unlink_follows_to_the_survivor_part() {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let bank = f.add("bank", -150);
+        let twin = f.add("twin", -100);
+        let parts = f.split(bank, &[-100, -50]);
+        f.link(r, "", bank, &parts[0]);
+        f.link(r, "", twin, "");
+        f.unlink(r, "", twin, "");
+        let db = f.v.db().unwrap();
+        db.execute_batch(&format!(
+            "ATTACH DATABASE ':memory:' AS other;
+            CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links WHERE original_id = {twin};
+            CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+            CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;
+            DELETE FROM main.refund_links WHERE original_id = {twin};"
+        ))
+        .unwrap();
+        store::merge_folded(&db, &HashMap::from([(r, r), (bank, bank), (twin, bank)])).unwrap();
+        drop(db);
+        assert!(
+            f.v.refund_links(r)
+                .unwrap()
+                .iter()
+                .all(|l| l.original_id != bank)
+        );
+    }
+
     #[test]
     fn staged_inactive_whole_endpoint_does_not_tombstone_a_direct_link() {
         let f = Fixture::new();
