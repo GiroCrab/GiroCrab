@@ -453,9 +453,15 @@ fn category_role_sync_merge_prefers_newest_edit() {
         dst.merge_other_vault(src_path.to_string_lossy().into(), vec![7; 32])
             .unwrap();
         let cats = dst.list_categories(None, None).unwrap();
-        let role_of = |name: &str| cats.iter().find(|c| c.name == name).unwrap().effective_role;
-        assert_eq!(role_of("Umbuchungen"), CategoryRole::Consumption);
-        assert_eq!(role_of("Freizeit"), CategoryRole::Neutral);
+        let find = |name: &str| cats.iter().find(|c| c.name == name).unwrap();
+        // The explicit `Consumption` itself survives, not just its effect at the root.
+        assert_eq!(find("Umbuchungen").role, Some(CategoryRole::Consumption));
+        assert_eq!(
+            find("Umbuchungen").effective_role,
+            CategoryRole::Consumption
+        );
+        assert_eq!(find("Freizeit").role, Some(CategoryRole::Neutral));
+        assert_eq!(find("Freizeit").effective_role, CategoryRole::Neutral);
         let _ = a_umb;
     }
 }
@@ -833,7 +839,7 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
     let nested_dir = crate::test_support::TempDir::new("roles-regression-v41-nested");
     let dst = nested_dir.join("vault-v41-nested.girocrab");
     std::fs::copy(&src, &dst).unwrap();
-    {
+    let (nested_cat_id, nested_tx) = {
         let conn = rusqlite::Connection::open(&dst).unwrap();
         conn.pragma_update(None, "key", format!("x'{}'", "47".repeat(32)))
             .unwrap();
@@ -853,16 +859,35 @@ fn category_roles_preserve_legacy_builtin_classification_and_kpis() {
             [nested],
         )
         .unwrap();
-    }
+        (
+            nested,
+            conn.query_row(
+                "SELECT MIN(id) FROM transactions WHERE deleted_ms IS NULL",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+        )
+    };
     let nested = Vault::open(dst.to_string_lossy().into(), vec![0x47; 32]).unwrap();
-    let nested_role = nested
+    let nested_cat = nested
         .list_categories(None, None)
         .unwrap()
         .into_iter()
         .find(|c| c.name == "Depotüberträge")
+        .unwrap();
+    assert_eq!(nested_cat.id, nested_cat_id);
+    assert_eq!(nested_cat.effective_role, CategoryRole::Neutral);
+    // The upgrade keeps the booking in the transfer category, so the comparison below
+    // really covers it (v41 made it a transfer, unless it is linked to a loan).
+    let moved = nested
+        .list_transactions(BookingFilter::default())
         .unwrap()
-        .effective_role;
-    assert_eq!(nested_role, CategoryRole::Neutral);
+        .transactions
+        .into_iter()
+        .find(|t| t.id == nested_tx)
+        .unwrap();
+    assert_eq!(moved.category_id, Some(nested_cat_id));
     verify_vault("migrated-v41-nested-transfer", &nested);
 }
 
