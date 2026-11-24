@@ -107,6 +107,10 @@ pub fn range_from(index: i32) -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub id: i64,
+    pub refund_linked: bool,
+    pub refund_cents: i64,
+    pub refunded_cents: i64,
+    pub split_count: u32,
     pub account_name: String,
     pub booking_date: String,
     pub value_date: String,
@@ -149,6 +153,10 @@ impl From<&Booking> for Row {
     fn from(b: &Booking) -> Self {
         Row {
             id: b.id,
+            refund_linked: matches!(b.refund_marker.as_str(), "refund" | "original" | "both"),
+            refund_cents: b.refund_cents,
+            refunded_cents: b.refunded_cents,
+            split_count: b.split_count,
             account_name: b.account_name.clone(),
             booking_date: b.booking_date.clone(),
             value_date: b.value_date.clone(),
@@ -698,6 +706,10 @@ mod tests {
     fn row(id: i64, who: &str, purpose: &str, cents: i64, cat: Option<i64>, checked: bool) -> Row {
         Row {
             id,
+            refund_linked: false,
+            refund_cents: 0,
+            refunded_cents: 0,
+            split_count: 0,
             account_name: "Giro".into(),
             booking_date: "2026-11-01".into(),
             value_date: String::new(),
