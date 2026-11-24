@@ -19,11 +19,15 @@ optionally, the **PDF documents** of the document list ("Meine Dokumente").
   lists: ISIN, name, quantity, price with its date, and value.
 - Quantity and value of the securities are the available and the blocked balance added up.
 - Share rights (Aktienrechte), i.e. claims to shares that are allotted later, appear as their own
-  position "Aktienrechte (noch nicht zugeteilt)" with the number the start page shows. The
+  position "<security name> (noch nicht zugeteilt)" (with several securities: "Aktienrechte (noch
+  nicht zugeteilt)") with the number the start page shows. The
   portal gives no ISIN or price for them. If the page lists exactly one security, the rights are
   valued at its price (assumption: one right becomes one share) and count towards the account
   total; with several securities they cannot be assigned and carry no value. Without such a
   section on the page, no position is created.
+- The switch "Nicht zugeteilte Aktienrechte abrufen" (browser window and connection settings,
+  default on) is stored with the connection. Switching it off removes the position at once and
+  reduces the account total by its value; later fetches leave the rights out.
 - The portal shows no purchase price, so no profit or loss is derived.
 - Only EUR is accepted; anything else is rejected rather than guessed.
 - Documents: every entry of the portal's document list (statements, transaction notices,

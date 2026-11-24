@@ -435,6 +435,7 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Mitarbeiteraktien" => "Employee shares",
         "Aktienrechte (noch nicht zugeteilt)" => "Share rights (not yet allotted)",
+        "noch nicht zugeteilt" => "not yet allotted",
         "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
             "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }

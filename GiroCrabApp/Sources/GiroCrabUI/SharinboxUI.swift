@@ -175,6 +175,8 @@ struct SharinboxWebSheet: View {
     @State private var ready = false
     @State private var running = false
     @State private var includeDocuments = true
+    /// "Nicht zugeteilte Aktienrechte abrufen": stored with the connection, also in its settings.
+    @State private var rightsOn = true
     /// "Dokumente abrufen" of the connection (bank connection dialog): off = no list, no PDFs.
     private var documentsOn: Bool { !model.documentsOffConnectionIDs.contains(connection.id) }
     @State private var progress = ""
@@ -199,6 +201,10 @@ struct SharinboxWebSheet: View {
             HStack {
                 Button("Schließen", role: .cancel) { task?.cancel(); close() }.keyboardShortcut(.cancelAction)
                 if documentsOn { Toggle("PDF-Postbox abrufen", isOn: $includeDocuments).disabled(running) }
+                Toggle("Nicht zugeteilte Aktienrechte abrufen", isOn: Binding(
+                    get: { rightsOn },
+                    set: { rightsOn = $0; model.setSharinboxRights(connection.id, $0) }
+                )).disabled(running)
                 Spacer()
                 Button("Bestand abrufen") { start() }.buttonStyle(.borderedProminent).disabled(!ready || running)
             }.padding(12)
@@ -206,6 +212,7 @@ struct SharinboxWebSheet: View {
         .webPageDialogs(uiDelegate)
         .task {
             browser.webView.uiDelegate = uiDelegate
+            rightsOn = model.sharinboxRightsEnabled(connection.id)
             while !Task.isCancelled {
                 let authenticated = (try? await browser.webView.evaluateJavaScript(SharinboxScripts.probe)) as? Bool ?? false
                 let ok = browser.onPortal && authenticated
