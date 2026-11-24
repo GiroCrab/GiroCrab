@@ -41,10 +41,10 @@ Dieses Dokument beschreibt den Stand des Branches `main`; ein externes Audit gab
 - **Weitere Schlüsselbund-Einträge (Apple):** das gespeicherte Passwort des Advanzia-Portals und der Stand der
   Sicherheitssperre, beide nur auf diesem Gerät.
 - **Sicherungen mit Passwort:** SQLCipher leitet den Schlüssel per PBKDF2 aus dem Passwort ab (mindestens 8 Zeichen). Die
-  Sicherung ist nur so stark wie das Passwort.
+  Sicherung ist nur so stark wie das Passwort. Beim Wiederherstellen werden gespeicherte PINs und FinTS-Adressen aus der
+  Sicherung nicht übernommen.
 - **Abgleich über iCloud Drive oder einen Ordner (Opt-in):** Die Kopien sind mit dem Tresorschlüssel verschlüsselt und
   enthalten den ganzen Tresor, also auch gespeicherte PINs.
-  Beim Wiederherstellen einer Sicherung werden gespeicherte PINs und FinTS-Adressen nicht übernommen.
 - **3DES:** nur zum Lesen externer FinTS-Schlüsseldateien (Profil RDH-10), nie für den Tresor
   ([#1796](https://github.com/GiroCrab/GiroCrab/issues/1796)).
 - **Android:** Der Alpha-Build öffnet noch keinen eigenen Tresor.
@@ -167,10 +167,9 @@ the `main` branch; there has been no external audit so far.
 - **Other keychain items (Apple):** the stored password of the Advanzia portal and the state of the security lock, both on
   this device only.
 - **Password backups:** SQLCipher derives the key from the password with PBKDF2 (at least 8 characters). A backup is only
-  as strong as its password.
+  as strong as its password. Restoring one does not take over its stored PINs and FinTS addresses.
 - **Sync through iCloud Drive or a folder (opt-in):** the copies are encrypted with the vault key and contain the whole
   vault, including stored PINs.
-  Restoring a backup does not take over stored PINs and FinTS addresses.
 - **3DES:** only for reading external FinTS key files (profile RDH-10), never for the vault
   ([#1796](https://github.com/GiroCrab/GiroCrab/issues/1796)).
 - **Android:** the alpha build does not open a vault of its own yet.
