@@ -12,7 +12,7 @@ Die Gruppen nach Kontoart und Liquidität sind bereits in `main`. Issue #998 bet
 | VER-1 | P1 | iPhone | Bei „Accessibility XL“ und ausgeklappter Zusammensetzung ragt die Vermögensansicht links und rechts aus dem sichtbaren Bereich. | Die gemeinsame Diagrammsteuerung stapelt die Bedienelemente bei knapper Breite. |
 | VER-2 | P1 | iPhone | Die Summenzeilen für Vermögenswerte und Verbindlichkeiten trennen Zahlen mitten im Betrag. | Beträge bleiben zusammen und erhalten bei Bedarf eine eigene Zeile. |
 | VER-3 | P1 | macOS, iPhone | Bei ausgeschaltetem Schuldenabzug steht die Bruttosumme unter „Nettovermögen“. | Die Summenbeschriftung und der Hilfetext zur Inhaberauswahl folgen dem Schuldenabzug. |
-| VER-4 | P2 | macOS | Weiterhin auswählbare Legendeneinträge verblassen bei aktivem Filter so weit, dass der Textkontrast abfällt. | Die Ringlegende dimmt die Farbpunkte. Text und Beträge behalten ihre Deckkraft. |
+| VER-4 | P2 | macOS | Weiterhin auswählbare Legendeneinträge verblassen bei aktivem Filter so weit, dass der Textkontrast abfällt. | Ringlegende und Rangliste dimmen Farbpunkte oder Balken. Text und Beträge behalten ihre Deckkraft. |
 
 ## VER-1 · Zusammensetzung verbreitert die Ansicht
 
@@ -30,13 +30,13 @@ Die Gruppen nach Kontoart und Liquidität sind bereits in `main`. Issue #998 bet
 
 **Befund.** Mit Demo-Daten sind es `414.214,84 €` nach Abzug von `192.009,91 €` Verbindlichkeiten. Wird „Kredite und Karten abziehen“ ausgeschaltet, steigt der Wert auf `606.224,75 €`. Die Beschriftung bleibt „Nettovermögen“.
 
-**Code und Prüfung.** `WealthView` verwendet `includeLiabilities` für Betrag, Beschriftung und Hilfetext der Inhaberauswahl. Bei aktivem Abzug steht „Nettovermögen“, bei ausgeschaltetem Abzug „Vermögenswerte“. Beide Bezeichnungen berücksichtigen auch ausgeblendete Immobilien. Belege `girocrab-vermoegen-mac-ohne-schulden.png` und `girocrab-vermoegen-iphone-ohne-schulden.png`.
+**Code und Prüfung.** `WealthView` zeigt bei aktivem Abzug „Nettovermögen“ und bei ausgeschaltetem Abzug „Vermögenswerte“. Beide Bezeichnungen berücksichtigen auch ausgeblendete Immobilien. Die Tooltips in der Inhaberauswahl folgen den globalen Schaltern und sind für alle Inhaber gleich. Qt verwendet dieselben Begriffe. Belege `girocrab-vermoegen-mac-ohne-schulden.png` und `girocrab-vermoegen-iphone-ohne-schulden.png`.
 
 ## VER-4 · Ein aktiver Filter senkt den Legendenkontrast
 
 **Befund.** Nach Auswahl von „Cash“ werden „Wertpapiere“ und „Sachwerte“ samt Beträgen stark abgeschwächt. Die Zeilen bleiben als nächster Filter auswählbar.
 
-**Code und Prüfung.** `CompositionLegend` setzte die Deckkraft solcher Zeilen auf `0,35`. Die Mischung von `Theme.secondary` und Kartenfläche ergab für sekundären Text modelliert etwa `1,7:1` in Hell und `2,1:1` in Dunkel. GiroCrab verlangt `4,5:1` für Text. Jetzt dimmt `markerOpacity` die Farbpunkte. Bezeichnung, Beträge und Prozente behalten die vollen Textfarben, die Auswahl ist zusätzlich halbfett. Belege `girocrab-vermoegen-mac-filter.png` und `girocrab-vermoegen-mac-filter-dunkel.png`.
+**Code und Prüfung.** `CompositionLegend` setzte die Deckkraft solcher Zeilen auf `0,35`. Die Mischung von `Theme.secondary` und Kartenfläche ergab für sekundären Text modelliert etwa `1,7:1` in Hell und `2,1:1` in Dunkel. GiroCrab verlangt `4,5:1` für Text. Jetzt dimmen nur die Farbpunkte der Ringlegende und die Balken der Rangliste. Bezeichnung, Beträge und Prozente behalten die vollen Textfarben, die Auswahl ist zusätzlich halbfett. Belege `girocrab-vermoegen-mac-filter.png` und `girocrab-vermoegen-mac-filter-dunkel.png`.
 
 ## Impeccable-Bewertung
 

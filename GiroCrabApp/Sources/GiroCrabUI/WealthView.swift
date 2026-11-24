@@ -190,9 +190,11 @@ enum WealthScope: CaseIterable, Identifiable {
         }
     }
     /// The label under the total in the header (the title on the left names the tab already).
-    var totalLabel: LocalizedStringKey {
+    func totalLabel(includingLiabilities: Bool, propertyHidden: Bool) -> LocalizedStringKey {
         switch self {
-        case .all: "Nettovermögen"
+        case .all where !includingLiabilities:
+            propertyHidden ? "Vermögenswerte ohne Immobilien" : "Vermögenswerte"
+        case .all: propertyHidden ? "Nettovermögen ohne Immobilien" : "Nettovermögen"
         case .cash: "Cash gesamt"
         case .securities: "Depotwert gesamt"
         case .tangibles: "Sachwert gesamt"
@@ -460,6 +462,10 @@ struct WealthView: View {
         let options = ownerOptions
         if !options.isEmpty {
             let selected = activeOwner
+            // Reflect the global switches in every tooltip, regardless of who holds real estate.
+            let help = scope == .all
+                ? scope.totalLabel(includingLiabilities: includeLiabilities, propertyHidden: hideDirectProperty)
+                : scope.title
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(options, id: \.self) { option in
@@ -467,9 +473,8 @@ struct WealthView: View {
                         // the tab and the property switch, so the chips split what is on screen
                         let accounts = model.allAccounts.filter(option.keeps)
                         let owned = WealthSummary(accounts: accounts, tangibleIds: Set(accounts.map(\.id).filter { model.isTangible($0) }))
-                        let selection = WealthAssetSelection(summary: owned, assets: classified, hideDirectProperty: hideDirectProperty)
-                        let total = selection.summary.scoped(to: scope).netCents(includingLiabilities: includeLiabilities)
-                        let propertyHidden = hideDirectProperty && selection.directPropertyCount > 0
+                        let total = WealthAssetSelection(summary: owned, assets: classified, hideDirectProperty: hideDirectProperty)
+                            .summary.scoped(to: scope).netCents(includingLiabilities: includeLiabilities)
                         Button { ownerFilter = option } label: {
                             VStack(alignment: .leading, spacing: 1) {
                                 Group {
@@ -493,7 +498,7 @@ struct WealthView: View {
                             .contentShape(RoundedRectangle(cornerRadius: 9))
                         }
                         .buttonStyle(.plain)
-                        .help(scope == .all ? totalLabel(propertyHidden: propertyHidden) : scope.title)
+                        .help(help)
                         .accessibilityAddTraits(option == selected ? .isSelected : [])
                     }
                 }
@@ -519,14 +524,6 @@ struct WealthView: View {
 
     // MARK: summary (net worth + assets / liabilities bars)
 
-    private func totalLabel(propertyHidden: Bool) -> LocalizedStringKey {
-        guard scope == .all else { return scope.totalLabel }
-        if includeLiabilities {
-            return propertyHidden ? "Nettovermögen ohne Immobilien" : scope.totalLabel
-        }
-        return propertyHidden ? "Vermögenswerte ohne Immobilien" : "Vermögenswerte"
-    }
-
     private func summaryCard(_ s: WealthSummary, _ d: Derived) -> some View {
         let assets = max(s.grossCents, 0)
         let debts = -min(s.liabilitiesCents, 0)
@@ -540,7 +537,7 @@ struct WealthView: View {
         }
         let offerPropertySwitch = properties > 0 || (scope != .cash && scope != .securities && !fullSummary.tangibles.isEmpty)
         let propertyHidden = hideDirectProperty && properties > 0
-        let label = Text(totalLabel(propertyHidden: propertyHidden))
+        let label = Text(scope.totalLabel(includingLiabilities: includeLiabilities, propertyHidden: propertyHidden))
             .appFont(.caption).foregroundStyle(Theme.secondary)
         let value = Text(Money.format(s.netCents(includingLiabilities: includeLiabilities)))
             .sensitive(.amounts)

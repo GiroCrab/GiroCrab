@@ -33,6 +33,20 @@ final class WealthSummaryTests: XCTestCase {
         XCTAssertEqual(s.netCents(includingLiabilities: true), s.netCents)
     }
 
+    func testOverallTotalLabelRespondsToBothSwitches() {
+        let scope = WealthScope.all
+        XCTAssertEqual(scope.totalLabel(includingLiabilities: true, propertyHidden: false), "Nettovermögen")
+        XCTAssertEqual(scope.totalLabel(includingLiabilities: true, propertyHidden: true), "Nettovermögen ohne Immobilien")
+        XCTAssertEqual(scope.totalLabel(includingLiabilities: false, propertyHidden: false), "Vermögenswerte")
+        XCTAssertEqual(scope.totalLabel(includingLiabilities: false, propertyHidden: true), "Vermögenswerte ohne Immobilien")
+    }
+
+    func testTabbedTotalsKeepTheirOwnLabelsWithOverallFilters() {
+        XCTAssertEqual(WealthScope.cash.totalLabel(includingLiabilities: false, propertyHidden: true), "Cash gesamt")
+        XCTAssertEqual(WealthScope.securities.totalLabel(includingLiabilities: false, propertyHidden: true), "Depotwert gesamt")
+        XCTAssertEqual(WealthScope.tangibles.totalLabel(includingLiabilities: false, propertyHidden: true), "Sachwert gesamt")
+    }
+
     func testDayChangeAndGainAreSummedOnlyWhereReported() {
         func h(_ v: Int64, prev: Int64?, gain: Int64?) -> Holding {
             Holding(isin: "A", wkn: "", name: "A", quantity: 1, currentPriceCents: 0, purchasePriceCents: 0, valueCents: v,
