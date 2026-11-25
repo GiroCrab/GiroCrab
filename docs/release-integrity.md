@@ -49,7 +49,8 @@ Release-Pakete für macOS werden **lokal** auf dem Rechner des Maintainers mit
 Developer ID signiert, notarisiert und geheftet (`scripts/notarize.sh --upload vX.Y.Z`);
 `release.yml` baut sie bewusst nicht in der Cloud. Updates prüft die App zusätzlich über die
 Sparkle-Signatur des Appcasts (`docs/auto-updates.md`). Die Windows- und Android-Pakete sind
-Alpha-Builds und nicht signiert bzw. notarisiert.
+Alpha-Builds: Das Windows-Paket ist nicht signiert, das Android-APK ist ein Debug-Build
+(`assembleDebug`) und nur mit dem Debug-Schlüssel signiert; notarisiert ist keines von beiden.
 
 Ob das Veröffentlichte noch dazu passt, prüft `scripts/verify-release-integrity.sh`
 (Abschnitt „Lokal ausführen“); der geplante Workflow ruft es alle 6 Stunden auf.
