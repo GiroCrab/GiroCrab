@@ -476,6 +476,18 @@ extension AppModel {
         (try? vault?.documentsFetchEnabled(connectionId: id)) ?? true
     }
 
+    /// Sharinbox: syncs read the not yet allotted share rights (default on).
+    func sharinboxRightsEnabled(_ id: Int64) -> Bool {
+        (try? vault?.sharinboxRightsEnabled(connectionId: id)) ?? true
+    }
+
+    /// Off removes the position of the rights at once; on adds it with the next fetch.
+    func setSharinboxRights(_ id: Int64, _ on: Bool) {
+        guard let vault else { return }
+        runCore { try vault.setSharinboxRights(connectionId: id, enabled: on) }
+        reloadAll()
+    }
+
     func setDocumentsFetch(_ id: Int64, _ on: Bool) {
         guard let vault else { return }
         runCore { try vault.setDocumentsFetch(connectionId: id, enabled: on) }

@@ -238,6 +238,10 @@ public final class CloudSyncManager {
                 return (r, w)
             }.value
             record(result, written)
+            if let note = Self.skippedWriteNote(mergeOnly: mergeOnly, wrote: written.wrote, merged: !result.stats.isEmpty) {
+                lastStats = note
+                defaults.set(note, forKey: K.stats)
+            }
             await refreshLegacyNotice()
             #if os(iOS)
             if location == .folder { repickFolderHint = ICloudFolderMigration.hasMovedMarker(in: dir) }
@@ -276,6 +280,22 @@ public final class CloudSyncManager {
         } else if !result.errors.isEmpty {
             lastError = result.errors.joined(separator: "\n")
         }
+    }
+
+    /// Text for a sync that merged nothing and wrote nothing: `SyncFolder.write`
+    /// skips a vault that never had an account, so the folder stays empty (#1703).
+    /// nil when something was written or merged, or for a merge-only run.
+    nonisolated static func skippedWriteNote(mergeOnly: Bool, wrote: Bool, merged: Bool) -> String? {
+        guard !mergeOnly, !wrote, !merged else { return nil }
+        return String(localized: "Noch nichts in iCloud gespeichert: Der Tresor wird erst synchronisiert, sobald er ein Konto enthält.")
+    }
+
+    /// Status after an automatic run whose poll went through `record`: a run
+    /// that neither wrote nor merged anything (key mismatch, unreadable peer)
+    /// keeps the previous text, e.g. the note from `skippedWriteNote`, instead
+    /// of claiming „aktualisiert“ (#1703).
+    nonisolated static func pollStats(previous: String?, recorded: String?, merged: Bool, wrote: Bool) -> String? {
+        merged || wrote ? recorded : previous
     }
 
     /// This installation's id in the sync folder's file names.
@@ -490,12 +510,25 @@ public final class CloudSyncManager {
             }
             lastSync = Date()
             defaults.set(lastSync, forKey: K.last)
+            // Ein erfolgreiches Schreiben ersetzt den Hinweis „Noch nichts in iCloud gespeichert“.
+            // Ein Merge im selben Lauf überschreibt den Text anschließend über `record`.
+            lastStats = Self.writtenText(location)
+            defaults.set(lastStats, forKey: K.stats)
         }
         if let error = outcome.error { lastError = error }
         if let merge = outcome.merge {
             autoState.merged(changes: merge.stats.reduce(UInt64(0)) { $0 + $1.changes })
             lastError = nil
+            let previousStats = lastStats
             record(merge)
+            let kept = Self.pollStats(
+                previous: previousStats, recorded: lastStats,
+                merged: !merge.stats.isEmpty, wrote: outcome.written.wrote
+            )
+            if kept != lastStats {
+                lastStats = kept
+                defaults.set(kept, forKey: K.stats)
+            }
             let changed = merge.stats.contains {
                 $0.accountsAdded + $0.categoriesAdded + $0.rulesAdded + $0.bookingsAdded + $0.bookingsUpdated + $0.groupsUpdated > 0
             }
@@ -520,7 +553,7 @@ public final class CloudSyncManager {
         #if os(macOS)
         let message = String(localized: "GiroCrab darf den Sync-Ordner „\(name)“ nicht lesen. Wählen Sie ihn mit „Ordner wählen …“ aus oder erlauben Sie den Zugriff in den Systemeinstellungen unter Datenschutz & Sicherheit › Dateien und Ordner (iCloud Drive).")
         #else
-        let message = String(localized: "GiroCrab kann den Sync-Ordner „\(name)“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter iCloud Sync neu aus.")
+        let message = String(localized: "GiroCrab kann den Sync-Ordner „\(name)“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter Sicherheit neu aus.")
         #endif
         return NSError(domain: "CloudSync", code: 4, userInfo: [NSLocalizedDescriptionKey: message, NSUnderlyingErrorKey: underlying])
     }
@@ -531,7 +564,12 @@ public final class CloudSyncManager {
     }
 
     nonisolated private static var keyMismatchError: NSError {
-        NSError(domain: "CloudSync", code: 3, userInfo: [NSLocalizedDescriptionKey: String(localized: "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › iCloud Sync).")])
+        #if os(iOS)
+        let message = String(localized: "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › Sicherheit).")
+        #else
+        let message = String(localized: "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › iCloud Sync).")
+        #endif
+        return NSError(domain: "CloudSync", code: 3, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func resolveBookmark() throws -> URL? {

@@ -23,15 +23,15 @@ Erster Pilot nach [`docs/ui-audit.md`](../ui-audit.md) (RFC #1673).
 | INS-1 | Checkliste | Barrierefreiheit | macOS | Betrag folgt der Schriftgröße nicht | Fix | behoben |
 | INS-2 | Checkliste | Barrierefreiheit | macOS | Feste Maße wachsen nicht mit; Kategorie-Kacheln brechen mitten im Wort um | Fix | behoben |
 | INS-3 | Checkliste | Datenschutz, Dichte | iOS | iPhone-Sheet ohne Titel und ohne „Fertig“ | Fix | behoben |
-| INS-4 | Checkliste, Impeccable | Hierarchie | beide | „Text bearbeiten …“ steht in einer eigenen Zeile über dem Inhalt | Issue | Issue anzulegen |
-| INS-5 | Checkliste, Impeccable | Konsistenz | beide | IBAN einmal gleichbreit, einmal proportional gesetzt | Issue | Issue anzulegen |
+| INS-4 | Checkliste, Impeccable | Hierarchie | beide | „Text bearbeiten …“ steht in einer eigenen Zeile über dem Inhalt | Fix | Stift neben dem Händlernamen |
+| INS-5 | Checkliste, Impeccable | Konsistenz | beide | IBAN einmal gleichbreit, einmal proportional gesetzt | Fix | IBAN in beiden Fällen gleichbreit |
 | INS-6 | Checkliste | Konsistenz | beide | Drei kleine Radien in einer Ansicht (8 / 7 / 5 pt) | Entscheidung | im RFC #1673 |
-| INS-7 | Checkliste | Doku | – | Keine Design-Seite für den Inspektor | Issue | Issue anzulegen |
+| INS-7 | Checkliste | Doku | – | Keine Design-Seite für den Inspektor | Fix | [Design-Seite](../INSPEKTOR_UI.md) ergänzt |
 | INS-8 | Checkliste | Datenschutz | beide | Händler-Domain bleibt in „Problem melden“ sichtbar | Verworfen | gewollt, siehe unten |
 | INS-9 | Checkliste | Barrierefreiheit | beide | Umordnen der Abschnitte federt auch mit „Bewegung reduzieren“ | Fix | behoben |
 | INS-10 | Impeccable | Barrierefreiheit | beide | Leeres Notizfeld ohne Platzhalter, Editor ohne VoiceOver-Label | Fix | behoben |
 | INS-11 | Impeccable | Texte | beide | Unterkategorien brechen schon bei Standardgröße im Wort um | Fix | behoben |
-| INS-12 | Impeccable | Hell und dunkel | beide | Gemischte Flächen (Theme-Slate auf Systemflächen); iPhone-Sheet dunkel im hellen Modus | Issue | Issue anzulegen |
+| INS-12 | Impeccable | Hell und dunkel | beide | Gemischte Flächen (Theme-Slate auf Systemflächen); iPhone-Sheet dunkel im hellen Modus | Fix, Rest offen | Kategorie-Kacheln und Vorschlagsbox auf Systemflächen. Sheet folgt der Hauptansicht. Der Streifen am Notizfeld ist noch sichtbar. |
 | INS-13 | Impeccable | Hierarchie | beide | Tag-Vorschläge und Kategorie-Raster überwiegen den Inhalt | Issue | Issue anzulegen |
 
 ## INS-1: Betrag folgt der Schriftgröße nicht
@@ -164,6 +164,13 @@ im Inspektor einzeln (kein Spaltenvergleich), `monospacedDigit` ist dort nicht n
   Titel als „•••“; dazu dunkel und Dynamic Type „Accessibility XL“. Zum Öffnen des Sheets ohne Antippen wurde
   `--pick` auf das Sheet erweitert (siehe `docs/ui-audit.md` › iPhone).
 - `swift test`: 1149 Tests (nach #1666), 0 Fehler; `lint-fonts`, `lint-report-dialogs`, `lint-vault-access`, `lint-ios-compat` grün.
+
+## Nachprüfung nach #1707
+
+- Auf `main` @ `91988771` blieb der Bearbeiten-Knopf über dem Beleg. Auf dem iPhone 18 Pro (iOS 27.2) blieb das Sheet beim Demo-Start dunkel, obwohl die Buchungsliste hell war.
+- Nach der Änderung steht der Stift neben dem Händlernamen. Die Demo-IBAN einer Überweisung war auf dem Mac und iPhone lesbar. In der geschwärzten Aufnahme waren Titel, Namen, IBAN und Betrag verdeckt.
+- Die Kategorie-Kacheln nutzen auf dem Mac im Dunkelmodus neutrale Systemflächen. Das iPhone-Sheet folgt dem Hell- und Dunkelmodus der Buchungsliste. Bei „Accessibility XL“ ist der Betrag in voller Sheet-Höhe sichtbar.
+- Offen bleiben der Streifen am Notizfeld (INS-12) und die Dichte von Tag-Vorschlägen und Kategorieauswahl (INS-13). Für INS-13 gemeinsam prüfen, wie schnell sich mehrere Buchungen mit Maus oder Tastatur kategorisieren lassen und wie früh die Händler-Historie sichtbar wird.
 
 ## Außerhalb des Bereichs bemerkt
 

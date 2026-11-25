@@ -362,6 +362,11 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
          CREATE TABLE other.transaction_tags AS SELECT * FROM main.transaction_tags
              WHERE transaction_id IN (SELECT id FROM other.transactions);"
     ))?;
+    // Transfer the twin's UUIDs through `other` without violating global uniqueness.
+    conn.execute(
+        "DELETE FROM main.transaction_splits WHERE transaction_id IN (SELECT id FROM other.transactions)",
+        [],
+    )?;
     // same vault: categories and rules map onto themselves
     let identity = |table: &str| -> CoreResult<HashMap<i64, i64>> {
         Ok(conn

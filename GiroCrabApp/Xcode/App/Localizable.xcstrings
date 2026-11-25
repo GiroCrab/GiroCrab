@@ -3471,6 +3471,17 @@
         }
       }
     },
+    "Aktienrechte, die erst später zugeteilt werden, erscheinen als eigene Position im Depot. Aus: die Position wird entfernt und nicht mehr abgerufen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share rights that are allotted later appear as their own position in the depot. Off: the position is removed and no longer fetched."
+          }
+        }
+      }
+    },
     "Aktion" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10757,6 +10768,17 @@
         }
       }
     },
+    "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › Sicherheit)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The iCloud vault uses a different key. Enable iCloud Keychain or paste the vault key from your other device (Settings › Security)."
+          }
+        }
+      }
+    },
     "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › iCloud Sync)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16330,13 +16352,13 @@
         }
       }
     },
-    "GiroCrab kann den Sync-Ordner „%@“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter iCloud Sync neu aus." : {
+    "GiroCrab kann den Sync-Ordner „%@“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter Sicherheit neu aus." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "GiroCrab can't read the sync folder “%@”. Choose the folder again in Settings › iCloud Sync."
+            "value" : "GiroCrab can't read the sync folder “%@”. Choose the folder again in Settings › Security."
           }
         }
       }
@@ -24471,6 +24493,17 @@
         }
       }
     },
+    "Nicht zugeteilte Aktienrechte abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch share rights not yet allotted"
+          }
+        }
+      }
+    },
     "Nicht übernommen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24796,6 +24829,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not checked yet"
+          }
+        }
+      }
+    },
+    "Noch nichts in iCloud gespeichert: Der Tresor wird erst synchronisiert, sobald er ein Konto enthält." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing saved to iCloud yet: the vault is only synced once it contains an account."
           }
         }
       }
@@ -25192,6 +25236,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Only the selected bookings. You don’t need accounts or a period here."
+          }
+        }
+      }
+    },
+    "Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip only this request. The rest of the fetch is stored."
           }
         }
       }
@@ -30331,6 +30386,17 @@
         }
       }
     },
+    "TAN auslassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip this TAN"
+          }
+        }
+      }
+    },
     "TAN-Medium" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32115,6 +32181,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total assets"
+          }
+        }
+      }
+    },
+    "Vermögenswerte ohne Immobilien" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total assets excluding property"
           }
         }
       }

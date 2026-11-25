@@ -158,7 +158,12 @@ private fun HoldingRow(h: Holding, masked: Boolean) {
             }
             Text(
                 "${if (masked) MASK else qtyText(h.quantity)} Stk. · " +
-                    "${money(h.priceCents, h.currency, masked)} (Kauf ${money(h.purchasePriceNativeCents, h.currency, masked)})",
+                    // Priced in the account's currency; the purchase price only when the core has a
+                    // native figure — otherwise the EUR amount would be dressed up as USD.
+                    money(h.priceCents, h.quoteCurrency, masked) +
+                        (h.nativePurchasePriceCents
+                            ?.let { " (Kauf ${money(it, h.nativeCurrency, masked)})" }
+                            ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

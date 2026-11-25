@@ -167,6 +167,25 @@ fun BookingStreamScreen(
                 onAccountSettings = onAccountSettings,
             )
         }
+        // Every page is read at unlock (#1429, 3.3). What is left is the page cap of
+        // BookingsPaging: saying so is the point, because a silently cut list looks like the
+        // vault holds no more than this.
+        if (data.bookingsTotal > data.bookings.size) {
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        "Es werden die ersten ${data.bookings.size} von ${data.bookingsTotal} Buchungen " +
+                            "angezeigt. Die vollständige Liste folgt mit dem Blättern.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(10.dp),
+                    )
+                }
+            }
+        }
         item {
             FilterBar(
                 compact = compact,
