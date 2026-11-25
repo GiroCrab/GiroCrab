@@ -24,8 +24,8 @@ extension AppModel {
     }
 
     /// Connections fed by an export file the user picks (no login, no sync).
-    func usesFileImport(_ c: BankConnection) -> Bool {
-        c.connector == .finpension && !isDemo && !Self.isMagicDemoLogin(c.loginName)
+    func usesFileImport(_: BankConnection) -> Bool {
+        false
     }
 
     func importFinpension(_ c: BankConnection, url: URL) {
