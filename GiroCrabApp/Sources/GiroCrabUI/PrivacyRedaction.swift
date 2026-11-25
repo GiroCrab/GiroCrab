@@ -27,6 +27,12 @@ public struct ReportRedaction: OptionSet, Sendable, Hashable {
         contains(.personal) ? union(.amounts) : self
     }
 
+    /// A whole booking contains original text, category labels and amounts.
+    var allowsWholeBookingCopy: Bool { isEmpty }
+
+    /// Sender, purpose and order-item text stay visible when only amounts are hidden.
+    var allowsBookingTextCopy: Bool { !contains(.personal) }
+
     /// Stands in for a hidden name inside a text, and for search text in
     /// the captured window.
     static let placeholder = "•••"
