@@ -771,10 +771,11 @@ impl PortalConnector {
     async fn investment_detail(
         &self,
         ctx: &ConnectContext,
-        account: &Value,
+        row: &Value,
         base_filter: &Value,
         number: &str,
     ) -> CoreResult<Value> {
+        let account = &row["depotOrCashAccount"];
         let Some(depot_id) = account
             .pointer("/depotOrCashAccountId/depotId")
             .filter(|v| v["id"].as_str().is_some_and(|s| !s.trim().is_empty()))
@@ -791,6 +792,17 @@ impl PortalConnector {
                 "Die Depotbestände",
             )
             .await?;
+        if inventory["resourceIsUnavailable"].as_bool() == Some(true)
+            || money_total(&inventory["totalInventoryValueAccountCurrency"])
+                != money_total(&row["depotInventorySumAccountCurrency"])
+        {
+            // The depot's data contradicts the overview (mid-sync valuation or
+            // a portal change): this account stays back for the next sync
+            // instead of making the whole fetch fail.
+            return Err(invalid(
+                "FNZ: Der Depotbestand stimmt nicht mit der Kontoübersicht überein.",
+            ));
+        }
         let mut orders_body = base_filter.clone();
         orders_body["depotId"] = depot_id.clone();
         orders_body["showTransactionsOnDepotLevel"] = json!(true);
@@ -824,6 +836,19 @@ impl PortalConnector {
             "historicalTransactions": historical.rows,
         }))
     }
+}
+
+/// A portal money object as `(cents, currency)`; `None` when unusable (an
+/// estimated value counts as unusable, like the snapshot parser rejects it).
+/// Both sides of the comparison parse the same way, so a mismatch here is a
+/// portal-side contradiction, not a parsing artifact.
+fn money_total(money: &Value) -> Option<(i64, String)> {
+    if money["estimatedValueFlag"].as_bool() == Some(true) {
+        return None;
+    }
+    let currency = money["currencyId"]["id"].as_str()?;
+    let cents = crate::money::json_number_to_cents(&money["value"]).ok()?;
+    Some((cents, currency.to_string()))
 }
 
 /// Safe, stable file name stem for a mailbox id (`FNZ_<id>.pdf`).
@@ -944,8 +969,7 @@ impl BankConnector for PortalConnector {
             let detail = if key == "cashAccounts" {
                 self.cash_detail(ctx, &base_filter, number).await
             } else if key == "investmentDepots" {
-                self.investment_detail(ctx, account, &base_filter, number)
-                    .await
+                self.investment_detail(ctx, row, &base_filter, number).await
             } else {
                 // Depot kinds whose detail endpoints are not yet live
                 // validated: totals and PDFs only, like the browser flow.

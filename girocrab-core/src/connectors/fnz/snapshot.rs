@@ -441,6 +441,9 @@ pub(super) fn snapshot(json: &str) -> CoreResult<FetchResult> {
     if details.len() != expected.len() {
         return Err(incomplete());
     }
+    // The complete open-order list removes stored order rows missing from it
+    // (`hold_prefix`): only when every cash account was read this round.
+    let mut orders_complete = true;
     for account in &mut result.accounts {
         let (kind, remote) = expected
             .get(account.external_ref.as_str())
@@ -475,7 +478,12 @@ pub(super) fn snapshot(json: &str) -> CoreResult<FetchResult> {
             // Account whose details the connector could not fetch (per-account
             // error isolation): the next sync fetches it again, nothing here
             // counts as completely fetched.
-            (_, "notFetched") => {}
+            (_, "notFetched") => {
+                if *kind == "cashAccounts" {
+                    // Its order rows were not read; the stored ones stay.
+                    orders_complete = false;
+                }
+            }
             _ => return Err(incomplete()),
         }
     }
@@ -485,7 +493,9 @@ pub(super) fn snapshot(json: &str) -> CoreResult<FetchResult> {
             return Err(incomplete());
         }
     }
-    result.hold_prefix = Some(ORDER_PREFIX.into());
+    if orders_complete {
+        result.hold_prefix = Some(ORDER_PREFIX.into());
+    }
     Ok(result)
 }
 

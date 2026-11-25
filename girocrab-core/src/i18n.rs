@@ -488,6 +488,9 @@ fn english(de: &str) -> Option<&'static str> {
             "FNZ: No account overview found. Please start the fetch again."
         }
         "FNZ: Konto ohne eindeutige Kennung." => "FNZ: Account without a unique identifier.",
+        "FNZ: Der Depotbestand stimmt nicht mit der Kontoübersicht überein." => {
+            "FNZ: The depot inventory does not match the account overview."
+        }
         "FNZ: Konto {0}: Angaben konnten nicht geladen werden – der nächste Abruf wiederholt es." => {
             "FNZ: Account {0}: details could not be loaded – the next fetch tries again."
         }
