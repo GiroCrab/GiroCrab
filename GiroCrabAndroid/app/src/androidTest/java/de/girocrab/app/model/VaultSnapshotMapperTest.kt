@@ -14,6 +14,7 @@ import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Mandate as CoreMandate
 import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
 import uniffi.girocrab_core.SelectionFlow as CoreFlow
+import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
 import java.security.SecureRandom
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -360,6 +361,53 @@ class VaultSnapshotMapperTest {
         assertTrue(m.oneOff)
         assertEquals("OOFF", m.nextSequence)
     }
+
+    /** 3.2b: a standing order carries the core's rhythm and both dates, no stored next date. */
+    @Test
+    fun standingOrderCarriesRhythmAndDates() {
+        val o = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            standingOrders = listOf(coreStandingOrder()),
+        ).standingOrders.single()
+
+        assertEquals("11", o.id)
+        assertEquals("4", o.accountId)
+        assertEquals("Hausverwaltung Berlin", o.recipient)
+        assertEquals("DE44500105175407324931", o.iban)
+        assertEquals(-98_000L, o.amountCents)
+        assertEquals("Miete", o.purpose)
+        assertEquals("M", o.unit)
+        assertEquals(3, o.every)
+        assertEquals(1, o.execDay)
+        assertEquals(LocalDate.of(2024, 1, 1), o.firstDate)
+        assertNull(o.lastDate)
+        assertEquals("vierteljährlich", o.rhythm)
+    }
+
+    private fun coreStandingOrder() = CoreStandingOrder(
+        id = 11,
+        accountId = 4,
+        accountName = "Girokonto",
+        orderId = "",
+        recipientName = "Hausverwaltung Berlin",
+        recipientIban = "DE44500105175407324931",
+        amountCents = -98_000,
+        purpose = "Miete",
+        firstDate = "2024-01-01",
+        lastDate = null,
+        timeUnit = "M",
+        interval = 3u,
+        execDay = 1u,
+        canChange = true,
+        canDelete = true,
+    )
 
     private fun coreMandate(
         lastCollected: String? = "2026-10-05",

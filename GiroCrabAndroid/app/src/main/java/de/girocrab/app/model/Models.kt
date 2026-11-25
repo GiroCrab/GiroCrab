@@ -112,18 +112,68 @@ data class Rule(
     }
 }
 
-enum class Interval { Weekly, Monthly, Quarterly, Yearly }
-
+/**
+ * A standing order as the core stores it. There is no "next date" field in the core: the dates are
+ * [firstDate], [lastDate], [execDay] plus [unit]/[every]. Everything shown as the next run is
+ * derived by [nextRun]/[after] and never stored, so a stale value cannot survive a bank fetch.
+ */
 data class StandingOrder(
     val id: String,
     val accountId: String,
     val recipient: String,
     val iban: String,
     val amountCents: Long,
-    val interval: Interval,
-    val nextDate: LocalDate,
     val purpose: String,
-)
+    /** `W` = weeks, `M` = months — the core's `time_unit`. */
+    val unit: String,
+    /** How many [unit]s lie between two runs (1 = monthly or weekly, 3 = quarterly). */
+    val every: Int,
+    /** Day of the month the bank executes on; 0 = the day of [firstDate]. */
+    val execDay: Int,
+    val firstDate: LocalDate,
+    /** Last execution the bank reported; `null` = open-ended. */
+    val lastDate: LocalDate?,
+) {
+    /** "wöchentlich", "monatlich", "alle 2 Monate", … */
+    val rhythm: String
+        get() = when {
+            unit == "W" && every == 1 -> "wöchentlich"
+            unit == "W" -> "alle $every Wochen"
+            every == 1 -> "monatlich"
+            every == 3 -> "vierteljährlich"
+            every == 12 -> "jährlich"
+            else -> "alle $every Monate"
+        }
+
+    /** First run on or after [today]; `null` once [lastDate] has passed. */
+    fun nextRun(today: LocalDate): LocalDate? = after(today.minusDays(1))
+
+    /** First run strictly after [date]; `null` at the end of the order. */
+    fun after(date: LocalDate): LocalDate? {
+        if (firstDate > date) return firstDate.takeIf { lastDate == null || it <= lastDate }
+        var k = 1
+        while (k <= 1200) {
+            val d = occurrence(k) ?: return null
+            if (d > date) return d
+            k++
+        }
+        return null
+    }
+
+    /**
+     * The k-th run, counted from [firstDate] — not iterated, so a clamped month end (31 → 28/30)
+     * cannot drift into every following month. [execDay] then sets the day within that month.
+     */
+    private fun occurrence(k: Int): LocalDate? {
+        val base = if (unit == "W") {
+            firstDate.plusWeeks(every.toLong() * k)
+        } else {
+            val m = firstDate.plusMonths(every.toLong() * k)
+            if (execDay in 1..31) m.withDayOfMonth(minOf(execDay, m.lengthOfMonth())) else m
+        }
+        return if (lastDate != null && base > lastDate) null else base
+    }
+}
 
 /** SEPA scheme of a mandate, as the core stores it (`MandateScheme`). */
 enum class MandateScheme(val label: String) { Core("CORE"), Cor1("COR1"), B2b("B2B") }

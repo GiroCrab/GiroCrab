@@ -17,6 +17,7 @@ import uniffi.girocrab_core.FlowKind as CoreFlowKind
 import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Mandate as CoreMandate
 import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
+import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -95,6 +96,7 @@ object VaultSnapshotMapper {
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
         mandates: List<CoreMandate> = emptyList(),
+        standingOrders: List<CoreStandingOrder> = emptyList(),
     ): VaultSnapshot {
         // Holdings come back in the currency of their account; that is the label for their prices.
         val quoteCurrencies = accounts.associate { it.id to it.currency.ifBlank { "EUR" } }
@@ -106,6 +108,7 @@ object VaultSnapshotMapper {
             categories = categories.map(::category),
             tags = tags.map(::tag),
             mandates = mandates.map(::mandate),
+            standingOrders = standingOrders.map(::standingOrder),
             holdings = holdingsByAccount.flatMap { (accountId, rows) ->
                 val quote = quoteCurrencies[accountId] ?: "EUR"
                 rows.map { holding(accountId, it, quote) }
@@ -184,6 +187,21 @@ object VaultSnapshotMapper {
      * `quantity * priceCents * fxRateToEur`. Instead of assuming a rate, the rate is derived, so the
      * app's own arithmetic lands on the core's value to the cent.
      */
+    /** One standing order. The core has no next date — only first/last, exec day and rhythm. */
+    private fun standingOrder(row: CoreStandingOrder): StandingOrder = StandingOrder(
+        id = row.id.toString(),
+        accountId = row.accountId.toString(),
+        recipient = row.recipientName,
+        iban = row.recipientIban,
+        amountCents = row.amountCents,
+        purpose = row.purpose,
+        unit = row.timeUnit,
+        every = row.interval.toInt(),
+        execDay = row.execDay.toInt(),
+        firstDate = LocalDate.parse(row.firstDate),
+        lastDate = row.lastDate?.let(LocalDate::parse),
+    )
+
     /**
      * One mandate. The debtor is the counterpart, `scheme`/`nextSequence` are what the core
      * reports; the creditor id belongs to the collecting account and is not part of the mandate.

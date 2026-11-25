@@ -110,33 +110,23 @@ data class RecurringContract(
     val next: LocalDate,
 )
 
-fun Interval.advance(d: LocalDate): LocalDate = when (this) {
-    Interval.Weekly -> d.plusWeeks(1)
-    Interval.Monthly -> d.plusMonths(1)
-    Interval.Quarterly -> d.plusMonths(3)
-    Interval.Yearly -> d.plusYears(1)
-}
-
-fun intervalLabel(i: Interval) = when (i) {
-    Interval.Weekly -> "wöchentlich"
-    Interval.Monthly -> "monatlich"
-    Interval.Quarterly -> "vierteljährlich"
-    Interval.Yearly -> "jährlich"
-}
-
-/** Expands standing orders into dated occurrences within [today, today + horizon]. */
+/**
+ * Expands standing orders into dated occurrences within [today, today + horizon]. The dates come
+ * from the core's fields through [StandingOrder.after]; nothing is stored, so a bank fetch that
+ * moves `first_date`/`last_date` changes the plan without a migration.
+ */
 fun expandStandingOrders(orders: List<StandingOrder>, today: LocalDate, horizon: PlannedHorizon): List<PlannedPayment> {
     val end = today.plusDays(horizon.days)
     val out = mutableListOf<PlannedPayment>()
     for (o in orders) {
-        var d = o.nextDate
+        var d = o.nextRun(today) ?: continue
         var guard = 0
         while (d <= end && guard++ < 400) {
-            if (d >= today) out += PlannedPayment(
+            out += PlannedPayment(
                 "so-${o.id}-$d", o.accountId, o.recipient, o.purpose, -abs(o.amountCents), d,
-                "Dauerauftrag · ${intervalLabel(o.interval)}",
+                "Dauerauftrag · ${o.rhythm}",
             )
-            d = o.interval.advance(d)
+            d = o.after(d) ?: break
         }
     }
     return out
@@ -362,7 +352,7 @@ fun PaymentsScreen(
                     }
                     when (tab) {
                         0 -> PlannedTab(state, today, masked)
-                        1 -> StandingOrdersTab(state, masked)
+                        1 -> StandingOrdersTab(state, today, masked)
                         else -> DirectDebitsTab(state, today, masked)
                     }
                 }
@@ -498,8 +488,8 @@ private fun TotalCell(label: String, cents: Long, masked: Boolean, modifier: Mod
 }
 
 @Composable
-private fun StandingOrdersTab(state: AppUiState, masked: Boolean) {
-    val orders = state.data.standingOrders.sortedBy { it.nextDate }
+private fun StandingOrdersTab(state: AppUiState, today: LocalDate, masked: Boolean) {
+    val orders = state.data.standingOrders.sortedBy { it.nextRun(today) ?: LocalDate.MAX }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (orders.isEmpty()) item { Text("Keine Daueraufträge vorhanden.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(orders, key = { it.id }) { o ->
@@ -512,8 +502,11 @@ private fun StandingOrdersTab(state: AppUiState, masked: Boolean) {
                     }
                     Text(if (masked) "••••" else formatIban(o.iban), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (o.purpose.isNotBlank() && !masked) Text(o.purpose, style = MaterialTheme.typography.bodySmall)
+                    val next = o.nextRun(today)
                     Text(
-                        "${intervalLabel(o.interval)} · nächste Ausführung ${o.nextDate.format(dateFmt)}${acc?.let { " · ${it.name}" }.orEmpty()}",
+                        "${o.rhythm} · seit ${o.firstDate.format(dateFmt)} · " +
+                            "nächste Ausführung ${next?.format(dateFmt) ?: "keine (beendet)"}" +
+                            acc?.let { " · ${it.name}" }.orEmpty(),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
                     )
                 }

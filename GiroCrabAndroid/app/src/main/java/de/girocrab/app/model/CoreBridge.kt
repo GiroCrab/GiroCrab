@@ -211,9 +211,9 @@ object DemoData {
             tags = tags,
             rules = rules,
             standingOrders = listOf(
-                StandingOrder("so1", "a_spk", "Hausverwaltung Berlin", "DE44500105175407324931", -98_000, Interval.Monthly, today.withDayOfMonth(1).plusMonths(1), "Miete"),
-                StandingOrder("so2", "a_cdi", "Trade Republic", "DE86100123456789012345", -50_000, Interval.Monthly, today.withDayOfMonth(15).plusMonths(if (today.dayOfMonth > 15) 1 else 0), "Sparplan"),
-                StandingOrder("so3", "a_cbk", "Allianz Versicherung", "DE23100400000123456789", -12_450, Interval.Quarterly, today.plusMonths(1), "Versicherung"),
+                StandingOrder("so1", "a_spk", "Hausverwaltung Berlin", "DE44500105175407324931", -98_000, "Miete", "M", 1, 1, today.minusYears(2).withDayOfMonth(1), null),
+                StandingOrder("so2", "a_cdi", "Trade Republic", "DE86100123456789012345", -50_000, "Sparplan", "M", 1, 15, today.minusYears(1).withDayOfMonth(15), null),
+                StandingOrder("so3", "a_cbk", "Allianz Versicherung", "DE23100400000123456789", -12_450, "Versicherung", "M", 3, 1, today.minusYears(3).withDayOfMonth(1), null),
             ),
             mandates = listOf(
                 DirectDebitMandate("m1", "a_spk", "Vattenfall Europe Sales", "DE12ZZZ00000012345", "VAT-2024-0042", today.minusYears(2), MandateScheme.Core, false, 8_900, "Abschlag Strom", "", true, today.withDayOfMonth(5), "RCUR"),
