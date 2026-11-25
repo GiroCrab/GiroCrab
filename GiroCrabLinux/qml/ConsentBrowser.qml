@@ -78,7 +78,8 @@ Rectangle {
         const u = request.url.toString()
         log(where + " navigate", u)
         if (redirect && matches(u)) { request.reject(); finish(u); return }
-        // ConsentRedirect.allowsMainFrame: https only in the main frame
+        // ConsentRedirect.allowsMainFrame: https only in the main frame; the host stays open
+        // (the consent page belongs to the user's bank), the redirect is matched above
         if (request.isMainFrame && u !== "about:blank" && !u.toLowerCase().startsWith("https:")) {
             log(where + " blocked non-https navigation", "")
             request.reject()

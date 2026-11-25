@@ -21,7 +21,9 @@ enum ConsentRedirect {
     }
 
     /// Main-frame pages of a consent or portal login: https only (the redirect is matched
-    /// before). Never http, file, javascript, data or app schemes.
+    /// before). Never http, file, javascript, data or app schemes. The host is deliberately
+    /// open: consent pages belong to the user's bank and portal logins may hand over to
+    /// bank SSO domains; data paths stay bound to the portal's domains (`PortalDomains`).
     static func allowsMainFrame(_ url: URL?) -> Bool {
         url?.absoluteString == "about:blank" || url?.scheme?.lowercased() == "https"
     }

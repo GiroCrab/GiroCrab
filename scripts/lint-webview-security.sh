@@ -18,6 +18,9 @@ err() { echo "lint-webview-security: $*" >&2; fail=1; }
 is_local() { local f; for f in "${LOCAL_ONLY[@]}"; do [[ "$f" == "$1" ]] && return 0; done; return 1; }
 
 # 1. Swift: a file creating a remote WKWebView must decide navigations (https only).
+#    Hosts are deliberately not checked here: consent pages belong to whichever bank the
+#    user picked and portal logins may hand over to bank SSO domains. Host binding is
+#    enforced on the data paths (check 4), not on main-frame navigation.
 for f in $(grep -lE 'WKWebView\(' "$SWIFT_DIR"/*.swift); do
     is_local "$f" && continue
     grep -q 'decidePolicyFor' "$f" || err "$f: WKWebView without decidePolicyFor navigation guard"
@@ -32,11 +35,25 @@ done
 hits=$(grep -nE 'navigationGuard: *false' "$QML_DIR"/*.qml || true)
 [[ -z "$hits" ]] || err "navigation guard switched off:"$'\n'"$hits"
 
-# 3. Scripts that look at a password field: origin/host gate in the same file, and no read of its value.
+# 3. Scripts that look at a password field: origin/host gate in the same file, and no read of its value
+#    (neither through a variable `pw`/`password…` nor straight from the selector,
+#    `querySelector('input[type=password]').value`). Writes stay allowed.
+PW_READ_RE='\b(pw|pwd|pass(word)?[A-Za-z]*)\.value\b|type=[^]]*password[^)]*\)\.value\b'
+pw_reads() { grep -E "$PW_READ_RE" | grep -vE '\.value *=[^=]' | grep -vE '\.value\)\.set' || true; }
+# self-test (fixtures): every read form must be flagged, permitted writes must not
+for bad in "var v = pw.value;" \
+           "var v = document.querySelector('input[type=password]').value;" \
+           "var v = document.querySelector('input[type=\"password\"]').value;"; do
+    [[ -n "$(pw_reads <<<"$bad")" ]] || err "self-test: password read not detected: $bad"
+done
+for ok in "pw.value = v;" \
+          "document.querySelector('input[type=password]').value = v;"; do
+    [[ -z "$(pw_reads <<<"$ok")" ]] || err "self-test: password write flagged: $ok"
+done
 for f in $(grep -lE "type *=== *'password'|input\[type=password\]|type=\"password\"" "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml 2>/dev/null); do
     grep -qE 'location\.(origin|hostname)' "$f" || err "$f: password field script without location.origin/hostname gate"
 done
-hits=$(grep -nE '\b(pw|pwd|pass(word)?[A-Za-z]*)\.value\b' "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml | grep -vE '\.value *=[^=]' | grep -vE '\.value\)\.set' || true)
+hits=$(grep -nE "$PW_READ_RE" "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml | pw_reads || true)
 [[ -z "$hits" ]] || err "script reads a password field value:"$'\n'"$hits"
 
 # 4. Data paths must stay bound to the portal's domains.
