@@ -118,7 +118,14 @@ fn max_days(kind: ConnectorKind) -> i64 {
         | ConnectorKind::Finpension
         | ConnectorKind::SchwaebischHall
         | ConnectorKind::AmazonOrders
-        | ConnectorKind::BitcoinCore => LONGEST_DAYS,
+        | ConnectorKind::BitcoinCore
+        | ConnectorKind::AxaShareplan
+        | ConnectorKind::UnionInvestment
+        | ConnectorKind::BerghausCie
+        | ConnectorKind::Edenred
+        | ConnectorKind::Bitcoin
+        | ConnectorKind::GoAndGrow
+        | ConnectorKind::AirPlus => LONGEST_DAYS,
     }
 }
 

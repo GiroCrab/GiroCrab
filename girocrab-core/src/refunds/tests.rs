@@ -1467,10 +1467,10 @@ mod review_round3 {
         } else {
             json!({})
         };
-        let response: Value = serde_json::from_str(&v.local_api_socket_request(
+        let (body, _changed) = v.local_api_socket_request(
             &json!({"v":1,"token":token,"method":method,"params":params}).to_string(),
-        ))
-        .unwrap();
+        );
+        let response: Value = serde_json::from_str(&body).unwrap();
         assert!(response.get("error").is_none(), "{response}");
         response["result"].clone()
     }
