@@ -1,6 +1,6 @@
 # GiroCrab – agent efficiency rules
 
-Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this dir (`app/`).
+Rust core (`girocrab-core`, UniFFI + serde) + native apps: `GiroCrabApp/` (macOS & iOS, SwiftUI), `GiroCrabLinux/` (Linux, Rust + Qt 6.6/QML), `GiroCrabWindows/` (Windows, Rust + Slint), `GiroCrabAndroid/` (Android, Kotlin + Jetpack Compose). Project skills live in `.claude/skills/`.
 
 ## File map (go here first; don't `find`/`grep` to locate code)
 - `girocrab-core/src/lib.rs` – crate root, UniFFI exports
@@ -11,7 +11,8 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `girocrab-core/src/connectors/` – `mod.rs` (submodule decls + shared HTTP helpers), `types.rs` (`BankConnector`
   trait + DTOs), `catalog.rs` (`descriptor`, `make_connector*`), `bank_directory.rs` (search routing + curated PSD2 catalog),
   `sync_session.rs` / `transfer_session.rs` (FFI state machines), `persist.rs` (`impl Vault`: `store_fetch`,
-  `begin_sync`/`begin_transfer`), `html.rs` (helpers for connectors that read web pages), tests in `connectors/tests/`; connector impls alongside: `fints/`, `comdirect.rs`,
+  `begin_sync`/`begin_transfer`), `history.rs` (how far back a sync reaches: `sync.days_back`, full fetch of a login, #1043),
+  `html.rs` (helpers for connectors that read web pages), tests in `connectors/tests/`; connector impls alongside: `fints/`, `comdirect.rs`,
   `trade_republic.rs`, `enable_banking.rs` (`needs_lean_request` 90d cap for Revolut/Spuerkeess/N26), `paypal.rs`
 - `girocrab-core/src/importers/` – one-off file/web-capture importers: `moneymoney_db.rs` (encrypted SQLCipher database import),
   `moneymoney_import.rs` (CSV/XML/CAMT/MT940 exports), `portal_import.rs` (Amex/Amazon Visa web + CSV/PDF import),
@@ -39,9 +40,19 @@ Rust core (`girocrab-core`, UniFFI) + SwiftUI app (`GiroCrabApp`). Root = this d
 - `GiroCrabApp/Sources/GiroCrabUI/RootView.swift` – top-level UI
 - `GiroCrabApp/Sources/GiroCrabUI/BookingListView.swift` – booking list
 - `GiroCrabApp/Sources/GiroCrabUI/ConnectionsUI.swift` – bank connections UI
+- `GiroCrabLinux/` – Linux desktop app (Rust + `cxx-qt` + QML); UI strings require English entries in `en-linux.json` (`python3 -I GiroCrabLinux/scripts/i18n-report.py`)
+- `GiroCrabWindows/` – Windows desktop app (Rust + Slint in `src/` and `ui/`); must compile on macOS/Linux/Windows (`cargo clippy --manifest-path GiroCrabWindows/Cargo.toml --all-targets -- -D warnings`)
+- `GiroCrabAndroid/` – Android app (`app/src/main/java/de/girocrab/app/`, Jetpack Compose + JNI bridge)
 
 Other UI files live in the same `GiroCrabUI/` dir. A view with its own design page (`docs/*_UI.md`) names it in a comment on its type; a new view gets one.
 Design context for reviews: `PRODUCT.md` (product, users, platforms), `DESIGN.md` (tokens and rules as they are today); UI audits follow `docs/ui-audit.md`, reports in `docs/ui-audits/`. Ignore `cashcrab-core/` and `CashCrabApp/` (legacy).
+
+## Surgical diffs & minimalism (Karpathy / Ponytail rules)
+- **Smallest viable diff:** Target **< 300 changed lines** and one single concern per PR so automated review does not hit `size L` / `hold`. Split multi-part work into stacked or sequential PRs.
+- **Reuse `girocrab-core` & stdlib first:** Before writing a helper, check existing `girocrab-core` modules. Never add a crate or Swift package unless strictly necessary (every dependency change requires `THIRD_PARTY_NOTICES.md`, lockfile sync, and `cargo audit`).
+- **No speculative scaffolding:** Touch only lines required by the issue. Do not add unrequested config flags, traits for single implementations, or dead fallback branches.
+- **Test behavior, not implementation:** Every behavioral fix or feature ships with focused unit tests covering the user-observable behavior and privacy/redaction edge cases.
+- **Repo skills (`.claude/skills/`):** Use `girocrab-preflight` before every commit/push, `girocrab-ui-parity` when porting features across macOS/Linux/Windows/Android, and `girocrab-connector` when adding or changing bank connectors.
 
 ## Builds
 - **Swift-only change** (only `GiroCrabApp/**/*.swift`): NEVER rebuild `girocrab-core` or run `./build-xcframework.sh`. Run only `swift build -q` (in `GiroCrabApp/`) or `xcodebuild -quiet`.

@@ -110,6 +110,46 @@ fn fresh_vault(tmp: &Tmp) -> String {
 }
 
 #[test]
+fn split_uuid_backfill_agrees_between_legacy_vaults() {
+    let tmp = Tmp::new("split-identities");
+    let mut results = Vec::new();
+    for reverse in [false, true] {
+        let path = tmp.path(if reverse { "b.girocrab" } else { "a.girocrab" });
+        std::fs::copy(fixtures().join("vault-v37.girocrab"), &path).unwrap();
+        let id = if reverse { 92001 } else { 91001 };
+        {
+            let db = raw(&path, &KEY);
+            db.execute("INSERT INTO accounts(id,group_id,external_ref,name) VALUES (?1,(SELECT id FROM account_groups LIMIT 1),'backfill-account','Backfill')",[id]).unwrap();
+            db.execute("INSERT INTO categories(id,name,uuid) VALUES (?1,'Backfill category','backfill-category')",[id]).unwrap();
+            db.execute("INSERT INTO transactions(id,account_id,external_id,booking_date,amount_cents) VALUES (?1,?1,'backfill-booking','2026-01-01',-100)",[id]).unwrap();
+            let mut parts = vec![
+                (Some(id), -20, "same"),
+                (None, -30, "none"),
+                (Some(id), -20, "same"),
+                (Some(id), -30, "other"),
+            ];
+            if reverse {
+                parts.reverse();
+            }
+            for (category, amount, note) in parts {
+                db.execute("INSERT INTO transaction_splits(transaction_id,category_id,amount_cents,note) VALUES (?1,?2,?3,?4)",rusqlite::params![id,category,amount,note]).unwrap();
+            }
+        }
+        let v = Vault::open(path, KEY.to_vec()).unwrap();
+        let mut identities: Vec<_> = v
+            .list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.category_id.is_some(), p.amount_cents, p.note, p.uuid))
+            .collect();
+        identities.sort();
+        assert_eq!(identities.len(), 4);
+        results.push(identities);
+    }
+    assert_eq!(results[0], results[1]);
+}
+
+#[test]
 fn fresh_vault_matches_golden_schema() {
     let tmp = Tmp::new("golden");
     let fresh = fresh_vault(&tmp);

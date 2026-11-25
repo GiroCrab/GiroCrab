@@ -4,7 +4,8 @@ import GiroCrabCore
 
 /// Chart controls in the row below the header chart (#634): hidden, line, bars or pie in one
 /// group, then the bar width. „Ausgeblendet“ folds only the chart (the row, balance, KPIs and
-/// filters stay) and keeps the chosen type for when the chart is shown again.
+/// filters stay) and keeps the chosen type for when the chart is shown again. The whole row
+/// hides only with a minimised header, not with „Auswertungen anzeigen“ (GitHub #1760).
 struct HeaderChartControls<Unit: View>: View {
     @Binding var collapsed: Bool
     @ViewBuilder var unitMenu: Unit

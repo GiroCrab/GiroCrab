@@ -24,7 +24,7 @@ struct NewBookingsCards: View {
                 .padding(.top, 14)
             ForEach(section.bookings) { b in
                 DayCardRow(booking: b, isLast: b.id == section.bookings.last?.id)
-                    .id(b.id)
+                    .id(StreamSlot.newBooking(b.id))
             }
         }
     }

@@ -102,7 +102,7 @@ ApplicationWindow {
             // RootView.swift › Toggle("Letzten Abruf anzeigen") (#815)
             Action { text: qsTr("Letzten Abruf anzeigen"); checkable: true; checked: LastFetch.shown; enabled: AppModel.isUnlocked
                      onToggled: { LastFetch.setShown(checked); checked = Qt.binding(() => LastFetch.shown) } }
-            // the header chart (#634): same switches as the row below it
+            // the header chart (#634, #1760): its own switch, independent of „Auswertungen anzeigen“
             Action { text: qsTr("Diagramm anzeigen"); checkable: true; checked: !BalanceChartPrefs.collapsed; enabled: AppModel.isUnlocked
                      onToggled: { BalanceChartPrefs.setCollapsed(!checked); checked = Qt.binding(() => !BalanceChartPrefs.collapsed) } }
             AppMenu {

@@ -26,7 +26,7 @@ Sheet {
         width: sheet.availableWidth
         spacing: 14
         Text { text: qsTr("Monatsbudget"); font.pixelSize: Theme.title3 + 1; font.weight: Font.Bold; color: Theme.text }
-        Text { text: sheet.category ? sheet.category.path : ""; font.pixelSize: Theme.body; color: Theme.secondary }
+        Text { text: sheet.category ? sheet.category.path : ""; font.pixelSize: Theme.body; color: Theme.secondary; Sensitive { labels: true } }
         RowLayout {
             TextField {
                 id: field

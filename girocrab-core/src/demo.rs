@@ -1663,6 +1663,11 @@ impl Vault {
             )?;
             acc_ids.insert(spec.external_ref, tx.last_insert_rowid());
         }
+        // One account fetched on its own a minute ago, so the header of a single fetch shows in the demo (#1716).
+        tx.execute(
+            "UPDATE accounts SET last_fetch_unix = strftime('%s','now') - 60 WHERE id = ?1",
+            [acc_ids["demo-giro"]],
+        )?;
         // Scheduled transfers for the "Geplant" page (#240): fictional, relative to today.
         for (n, (days, name, iban, cents, purpose)) in [
             (
@@ -3494,7 +3499,7 @@ mod tests {
         let days = s.iter().find(|e| e.key == "sync.days_back").unwrap();
         assert_eq!(days.group, "Allgemein");
         assert_eq!(days.group_title, "General");
-        assert_eq!(days.label, "Days on first sync");
+        assert_eq!(days.label, "Period of the first fetch");
         drop(v);
         let _ = std::fs::remove_file(&dir);
     }
