@@ -16812,13 +16812,13 @@
         }
       }
     },
-    "Großzügig zeigt Kontoname, Inhaber, neue Buchungen und Saldo in einer Zeile. Kompakt braucht weniger Breite und zeigt den Saldo unter dem Namen." : {
+    "Großzügig zeigt zusätzlich die Initialen des Kontoinhabers. Kompakt verwendet kleinere Kontosymbole." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Spacious shows account name, owner, new transactions and balance in one line. Compact needs less width and shows the balance below the name."
+            "value" : "Spacious also shows the account holder’s initials. Compact uses smaller account icons."
           }
         }
       }
