@@ -19808,6 +19808,17 @@
         }
       }
     },
+    "Kategorien und Tags ändern erlauben" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow changing categories and tags"
+          }
+        }
+      }
+    },
     "Kategorien übernehmen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28092,13 +28103,24 @@
         }
       }
     },
-    "Programme auf diesem Mac, die Sie einrichten, können ausgewählte Konten, Buchungen, Kategorien und Summen lesen. Sie können nichts ändern, keine Zahlungen auslösen und sehen keine Zugangsdaten. Der Zugriff besteht nur, solange GiroCrab läuft und der Tresor entsperrt ist." : {
+    "Programme auf diesem Mac, die Sie einrichten, können ausgewählte Konten, Buchungen, Kategorien und Summen lesen. Sie können nichts ändern (außer Kategorien und Tags, wenn Sie das unten erlauben), keine Zahlungen auslösen und sehen keine Zugangsdaten. Der Zugriff besteht nur, solange GiroCrab läuft und der Tresor entsperrt ist." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Programs on this Mac that you set up can read selected accounts, transactions, categories and totals. They cannot change anything, cannot initiate payments and never see login credentials. Access exists only while GiroCrab is running and the vault is unlocked."
+            "value" : "Programs on this Mac that you set up can read selected accounts, transactions, categories and totals. They cannot change anything (except categories and tags, if you allow it below), cannot initiate payments and never see login credentials. Access exists only while GiroCrab is running and the vault is unlocked."
+          }
+        }
+      }
+    },
+    "Programme können dann Buchungen der geteilten Konten eine Kategorie zuweisen und Tags hinzufügen oder entfernen, auch neue Tags anlegen. So gesetzte Kategorien gelten als von Ihnen gesetzt: Regeln ändern sie nicht mehr, außer Sie wenden eine Regel mit „Speichern & anwenden › Alle Buchungen“ an. Kategorien, die Sie selbst gesetzt haben, bleiben, außer das Programm verlangt ausdrücklich das Überschreiben. Beträge, Texte, Konten und Regeln bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Programs can then assign a category to transactions of the shared accounts and add or remove tags, including new ones. Categories set this way count as set by you: rules no longer change them, unless you apply a rule with “Save & Apply › All Transactions”. Categories you set yourself stay unless the program explicitly asks to overwrite them. Amounts, texts, accounts and rules stay unchanged."
           }
         }
       }
@@ -37702,6 +37724,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Review Change"
+          }
+        }
+      }
+    },
+    "Änderungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Changes"
           }
         }
       }

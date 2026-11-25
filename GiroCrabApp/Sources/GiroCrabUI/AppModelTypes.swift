@@ -800,6 +800,25 @@ struct RunningLocalApi {
     weak var servedVault: Vault?
 }
 
+/// Told by the socket server (on its thread) that a client changed categories or
+/// tags; the model reloads on the main actor if it still shows that vault.
+final class LocalApiChangeListener: LocalApiListener, @unchecked Sendable {
+    private weak var model: AppModel?
+    private weak var servedVault: Vault?
+
+    init(model: AppModel, servedVault: Vault) {
+        self.model = model
+        self.servedVault = servedVault
+    }
+
+    func bookingsChanged() {
+        Task { @MainActor [weak model, weak servedVault] in
+            guard let model, let servedVault else { return }
+            model.localApiChangedBookings(in: servedVault)
+        }
+    }
+}
+
 /// What Return in a tag field does with the typed text (#228).
 enum TagEntryIntent: Equatable {
     case none
