@@ -61,17 +61,43 @@ final class BookingListScrollTests: XCTestCase {
         XCTAssertEqual(unchanged, 30, "the list does not stand still", file: file, line: line)
     }
 
-    /// The main column's list is the widest one. Not the largest: on a small screen (CI) the window
-    /// shrinks, and the inspector next to it has more area.
+    /// The main column's list is the leftmost one, whatever the window and text size: the inspector
+    /// is to its right. The height leaves out the filter row of the header, which scrolls sideways.
     private func list() throws -> NSScrollView {
         func scrollViews(_ view: NSView) -> [NSScrollView] {
             (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
         }
-        let candidates = scrollViews(try XCTUnwrap(window.contentView)).filter { !($0.documentView is NSTableView) }
-        return try XCTUnwrap(candidates.max { $0.frame.width < $1.frame.width })
+        func left(_ view: NSView) -> CGFloat { view.convert(view.bounds, to: nil).minX }
+        let candidates = scrollViews(try XCTUnwrap(window.contentView))
+            .filter { !($0.documentView is NSTableView) && $0.frame.height > 60 }
+        return try XCTUnwrap(candidates.min { left($0) < left($1) })
     }
 
     private func offset() throws -> CGFloat { try list().contentView.bounds.minY }
+
+    /// What the list shows, as pixels.
+    private func picture() throws -> Data {
+        let view = try list()
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return try XCTUnwrap(rep.tiffRepresentation)
+    }
+
+    /// Whether the selected row is in the viewport: without the selection the list then looks different.
+    private func selectedRowIsVisible() async throws -> Bool {
+        let id = try XCTUnwrap(model.selectedBookingID)
+        let position = try offset(), selected = try picture()
+        model.selectedBookingID = nil
+        try await scrollSettles()
+        XCTAssertEqual(try offset(), position)
+        let unselected = try picture()
+        model.jumpSelectedBookingID = id // selects again without scrolling
+        model.selectedBookingID = id
+        try await scrollSettles()
+        XCTAssertEqual(try offset(), position)
+        XCTAssertEqual(try picture(), selected) // only the selection makes the difference
+        return selected != unselected
+    }
 
     func test_new_bookings_scroll_with_selection() async throws {
         try await show(.newBookings)
@@ -79,11 +105,22 @@ final class BookingListScrollTests: XCTestCase {
         XCTAssertEqual(try offset(), 0)
         model.moveSelection(.max)
         try await scrollSettles()
-        let end = try offset()
-        XCTAssertGreaterThan(end, 0)
+        XCTAssertGreaterThan(try offset(), 0)
+        var visible = try await selectedRowIsVisible()
+        XCTAssertTrue(visible, "last booking")
+
+        // selected without scrolling: off-screen, and the check says so
+        let first = try XCTUnwrap(model.visibleBookings.first).id
+        model.jumpSelectedBookingID = first
+        model.selectedBookingID = first
+        try await scrollSettles()
+        visible = try await selectedRowIsVisible()
+        XCTAssertFalse(visible, "first booking before scrolling")
+
         model.moveSelection(-.max)
         try await scrollSettles()
-        XCTAssertLessThan(try offset(), end / 2)
+        visible = try await selectedRowIsVisible()
+        XCTAssertTrue(visible, "first booking")
     }
 
     /// Key repeat: the list is where the selection is, not only once the key is released.
