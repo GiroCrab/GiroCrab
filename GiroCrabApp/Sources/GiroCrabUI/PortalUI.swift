@@ -741,27 +741,31 @@ final class PortalBrowser {
     func visaStatements(known: (String, String) async -> Set<String>?, since: String, limit: Int)
         async -> (card: String, number: String, statements: [PortalStatement], listed: Int, failed: Int) {
         guard onPortal, !onLoginPage else { return ("", "", [], 0, 0) }
-        // the captured response parsed: its entries and whether it is a statement
-        // list at all (also an empty one) — anything else (a balance summary that
-        // only carries "statement" in its URL) is unreadable, a failure
-        func listItems() -> (items: [(date: String, path: String)], readable: Bool) {
-            guard let list = statementList else { return ([], false) }
+        // the captured response parsed: its entries, whether it is a statement
+        // list at all (also an empty one) and how many entries carry a PDF
+        // without a usable date — anything else (a balance summary that only
+        // carries "statement" in its URL) is unreadable, a failure
+        func listItems() -> (items: [(date: String, path: String)], readable: Bool, rejected: Int) {
+            guard let list = statementList else { return ([], false, 0) }
             let parsed = parsePortalStatementListing(body: list.body)
-            return (parsed.items.map { ($0.date, $0.path) }, parsed.readable)
+            return (parsed.items.map { ($0.date, $0.path) }, parsed.readable, Int(parsed.rejected))
         }
         var parsed = listItems()
         var items = parsed.items
         var readable = parsed.readable
+        var rejected = parsed.rejected
         if items.isEmpty {
             // the statements tab loads its list (and its PDF links) — a captured
             // response that yields no entries (and is no real, empty list) does
-            // not stand in for the tab's own list
+            // not stand in for the tab's own list; even a readable empty list
+            // waits for the tab's own list to arrive
             _ = try? await webView.callAsyncJavaScript(Self.visaStatementsPageJS, contentWorld: .page)
-            for _ in 0..<40 where items.isEmpty && !readable {
+            for _ in 0..<40 where items.isEmpty {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 parsed = listItems()
                 items = parsed.items
                 readable = parsed.readable
+                rejected = parsed.rejected
             }
         }
         if items.isEmpty {
@@ -778,9 +782,11 @@ final class PortalBrowser {
         // a captured response nor visible PDF links (like Amex, a failure) is one
         guard readable || !items.isEmpty else { return ("", "", [], 0, 1) }
         let card = Self.cardKey(statementList?.token ?? "")
-        // visible links without a usable closing date: the statement exists but
-        // cannot be identified — a failure, while known or older ones count fine
-        let undated = items.filter { $0.date.count != 10 }.count
+        // visible links without a usable closing date, and captured entries
+        // whose PDF has none (the parser's `rejected`): each a statement that
+        // exists but cannot be identified — a failure, while known or older
+        // ones count fine
+        let undated = items.filter { $0.date.count != 10 }.count + rejected
         guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1 + undated) }
         let wanted = items
             .filter { $0.date.count == 10 && $0.date >= since && !knownDates.contains($0.date) }

@@ -173,7 +173,8 @@ fn portal_schema_dump(json_bodies: Vec<String>, dom_rows_json: String) -> String
 
 /// Closing dates and PDF links of a captured statements list of a card portal
 /// (schema-agnostic, see `parse_portal_statement_list`) together with its
-/// shape: a recognized (also empty) list reads, other responses fail.
+/// shape: a recognized (also empty) list reads, other responses fail, and
+/// `rejected` counts the captured entries whose PDF has no closing date.
 #[uniffi::export]
 fn parse_portal_statement_listing(
     body: String,

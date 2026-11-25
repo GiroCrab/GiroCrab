@@ -40,10 +40,15 @@ pub struct PortalStatementItem {
 /// PDF of the same entry, never with the link of a neighbour. Duplicate
 /// `(date, path)` pairs and entries without a complete pair are left out.
 pub fn parse_portal_statement_list(body: &str) -> Vec<PortalStatementItem> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .map(|v| parse_statement_entries(&v))
+        .unwrap_or_default()
+}
+
+/// The complete entries of an already-parsed response, once each.
+fn parse_statement_entries(v: &serde_json::Value) -> Vec<PortalStatementItem> {
     let mut out: Vec<(String, String)> = Vec::new();
-    if let Some(v) = serde_json::from_str::<serde_json::Value>(body).ok() {
-        collect(&v, &mut out);
-    }
+    collect(v, &mut out);
     out.into_iter()
         .map(|(date, path)| PortalStatementItem { date, path })
         .collect()
@@ -83,11 +88,7 @@ fn own_date(m: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
         let Some(date) = v.as_str().and_then(closing_date) else {
             continue;
         };
-        let name: String = k
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
+        let name = field_name(k);
         let Some(prio) = NAMED.iter().position(|n| *n == name) else {
             continue;
         };
@@ -140,43 +141,65 @@ fn entry(v: &serde_json::Value) -> Option<(String, String)> {
 /// `readable` is only true for a recognized statements list — including an
 /// empty one. An unreadable or unrelated response (a balance summary that
 /// only carries "statement" in its URL) is no list: the download must count
-/// it as a failure instead of "nothing new".
+/// it as a failure instead of "nothing new". `rejected` counts its entries
+/// that carry a PDF but no usable closing date — an incomplete retrieval,
+/// no "nothing new".
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PortalStatementListing {
     pub items: Vec<PortalStatementItem>,
     pub readable: bool,
+    pub rejected: u32,
 }
 
 /// `parse_portal_statement_list` plus the response's shape: `readable` tells
 /// a verifiably empty statement list (no failure) apart from an unrelated
-/// captured response (a failure).
+/// captured response (a failure), `rejected` counts the captured entries
+/// whose PDF has no closing date (failures, like undated visible links).
 pub fn parse_portal_statement_listing(body: &str) -> PortalStatementListing {
-    let items = parse_portal_statement_list(body);
-    if !items.is_empty() {
+    let Some(v) = serde_json::from_str::<serde_json::Value>(body).ok() else {
         return PortalStatementListing {
-            items,
-            readable: true,
+            items: Vec::new(),
+            readable: false,
+            rejected: 0,
         };
-    }
-    let readable = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .is_some_and(|v| looks_like_list(&v));
+    };
+    let items = parse_statement_entries(&v);
+    let readable = !items.is_empty() || looks_like_list(&v);
     PortalStatementListing {
-        items: Vec::new(),
+        items,
         readable,
+        // failures only for a recognized list: an unrelated response is one
+        // failure as a whole, its PDFs are no statements of ours
+        rejected: if readable {
+            rejected_entries(&v, false)
+        } else {
+            0
+        },
     }
 }
 
 /// A recognized statements list: an array whose items are all objects — empty
 /// (a real, empty list) or with an entry-shaped item (a statement-named field
 /// date, a PDF link). Other answers (balances, notifications, errors) are not.
+/// A bare empty array is a list only at the root or under a statement-named
+/// field (`statements`): `{"error": "session expired", "details": []}` is no
+/// list, no matter how empty.
 fn looks_like_list(v: &serde_json::Value) -> bool {
+    list_like(None, v)
+}
+
+fn list_like(field: Option<&str>, v: &serde_json::Value) -> bool {
     match v {
-        serde_json::Value::Object(m) => m.values().any(looks_like_list),
+        serde_json::Value::Object(m) => m
+            .iter()
+            .any(|(k, val)| list_like(Some(&field_name(k)), val)),
         serde_json::Value::Array(a) => {
             let all_objects = a.iter().all(|i| matches!(i, serde_json::Value::Object(_)));
-            let shaped = a.is_empty()
+            // a bare empty array is a list only at the root or under a
+            // statement-named field — elsewhere it is no statements list
+            let empty_list = a.is_empty() && field.is_none_or(|f| f.contains("statement"));
+            let shaped = empty_list
                 || a.iter().any(|i| match i {
                     serde_json::Value::Object(m) => {
                         own_date(m).is_some()
@@ -186,9 +209,43 @@ fn looks_like_list(v: &serde_json::Value) -> bool {
                     }
                     _ => false,
                 });
-            (all_objects && shaped) || a.iter().any(looks_like_list)
+            (all_objects && shaped) || a.iter().any(|i| list_like(None, i))
         }
         _ => false,
+    }
+}
+
+/// A field's name, alphanumerics kept, lower-cased (whole words within it
+/// decide, e.g. `visaStatements`).
+fn field_name(k: &str) -> String {
+    k.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// The entries of `v` that carry a PDF link but no usable closing date and are
+/// attributed to no enclosing entry (`covered`): each a statement that cannot
+/// be identified — a failure, like an undated visible link. A dated entry
+/// absorbs its nested file objects, and a rejected candidate swallows its own
+/// children (one PDF group, one rejection).
+fn rejected_entries(v: &serde_json::Value, covered: bool) -> u32 {
+    match v {
+        serde_json::Value::Object(m) => {
+            let dated = own_date(m).is_some();
+            let carries_pdf = m
+                .values()
+                .filter_map(|s| s.as_str())
+                .any(|s| pdf_link(s).is_some())
+                || m.values().find_map(pdf_in).is_some();
+            let candidate = !covered && !dated && carries_pdf;
+            candidate as u32
+                + m.values()
+                    .map(|val| rejected_entries(val, covered || dated || candidate))
+                    .sum::<u32>()
+        }
+        serde_json::Value::Array(a) => a.iter().map(|val| rejected_entries(val, covered)).sum(),
+        _ => 0,
     }
 }
 
@@ -623,6 +680,7 @@ mod statement_list_tests {
         for body in [
             r#"{"statements":[]}"#,
             r#"{"hasMore":false,"statements":[]}"#,
+            r#"{"visaStatements":[]}"#,
             "[]",
         ] {
             assert!(parse_portal_statement_listing(body).readable, "{body}");
@@ -636,6 +694,28 @@ mod statement_list_tests {
             let l = parse_portal_statement_listing(body);
             assert!(!l.readable && l.items.is_empty(), "{body}");
         }
+        // an empty array is a statements list only at the root or under a
+        // statement-named field: an error with an empty details list is none
+        let l = parse_portal_statement_listing(r#"{"error":"session expired","details":[]}"#);
+        assert!(
+            !l.readable && l.items.is_empty() && l.rejected == 0,
+            "{l:?}"
+        );
+        // entries whose PDF has no usable closing date: captured but cannot be
+        // identified — an incomplete retrieval, no "nothing new"
+        let l = parse_portal_statement_listing(r#"{"statements":[{"url":"/S1.pdf"}]}"#);
+        assert!(l.readable && l.items.is_empty() && l.rejected == 1, "{l:?}");
+        // a dated entry next to a rejected one: the one won, the other failed
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"date":"2026-10-15","url":"/a/1.pdf"},{"url":"/S2.pdf"}]}"#,
+        );
+        assert!(l.items.len() == 1 && l.rejected == 1, "{l:?}");
+        // a file object with only metadata belongs to its enclosing entry:
+        // its PDF is attributed to the entry's date, nothing rejected
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"date":"2026-10-15","files":[{"created":"2026-10-20","url":"/a/1.pdf"}]}]}"#,
+        );
+        assert!(l.items.len() == 1 && l.rejected == 0, "{l:?}");
     }
 
     /// The statement PDFs land with the card account of the visa login, once each.
