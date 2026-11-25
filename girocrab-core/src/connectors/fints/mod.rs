@@ -678,11 +678,9 @@ impl BankConnector for FinTsConnector {
                         depot_value_unknown = true;
                     }
                 }
-            } else if upd
-                .as_ref()
-                .is_some_and(|u| kind_from_code(u.kind_code) == AccountKind::Brokerage)
-            {
-                // a depot by its Kontoart: its value stays as it was, and the user is told (#1743).
+            } else if kind == AccountKind::Brokerage {
+                // a depot, by its Kontoart or its product name as it is stored: its value stays
+                // as it was, and the user is told (#1743).
                 // A hint, not a warning: there is nothing to fix, and a login with only this
                 // depot must not fail at every sync.
                 depot_value_unknown = true;

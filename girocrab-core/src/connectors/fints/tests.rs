@@ -2485,6 +2485,27 @@ async fn a_depot_without_hkwpd_does_not_take_the_closing_balance_of_its_bookings
 }
 
 #[tokio::test]
+async fn a_depot_known_only_by_its_product_name_keeps_its_value_without_hkwpd() {
+    // Kontoart 1 (comdirect style), the product says "Depot": stored as a depot, so its value
+    // is one too (#1743)
+    let (url, _) = mock_bank(vec![SAL_A]);
+    let mut c = depot_connector(&url, false);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd[0].allowed.insert("HKSAL".into());
+    c.upd[0].kind_code = 1;
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(r.accounts[0].kind, AccountKind::Brokerage);
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+    assert!(
+        r.hints
+            .iter()
+            .any(|h| h.contains("von der Bank nicht angeboten")),
+        "{:?}",
+        r.hints
+    );
+}
+
+#[tokio::test]
 async fn an_empty_depot_statement_is_a_finished_fetch_with_value_0() {
     let (url, _) = mock_bank(vec![WPD_WITH_DATA]);
     let r = depot_connector(&url, true)
