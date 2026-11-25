@@ -9,6 +9,7 @@ mod assets_loans;
 mod assets_loans_ui;
 mod bug_report_ui;
 mod cockpit;
+mod command_palette;
 mod daily;
 mod girocode;
 mod groups;
@@ -558,7 +559,18 @@ fn render_bookings(win: &MainWindow) {
         (days, insp, idx)
     });
     win.set_days(ModelRc::new(VecModel::from(days)));
-    win.set_marked_count(with_state(|st| st.marked.len()) as i32);
+    // Marks only ever cover bookings in the visible list: an account, filter or search change
+    // drops the rest, so the count, the sums and the batch actions use the same selection.
+    win.set_marked_count(with_state(|st| {
+        let visible: std::collections::HashSet<i64> = st
+            .shown
+            .iter()
+            .filter_map(|&i| st.rows.get(i))
+            .map(|r| r.id)
+            .collect();
+        prune_marked(&mut st.marked, &visible);
+        st.marked.len()
+    }) as i32);
     // Sums of the ticked bookings from the cached rows (#878): no new `list_transactions`.
     let summary = with_state(|st| {
         daily::selection_summary(st.rows.iter().filter(|r| st.marked.contains(&r.id)))
@@ -2697,6 +2709,32 @@ fn main() -> Result<(), slint::PlatformError> {
         open(true);
     }
     win.run()
+}
+
+/// Drops marks of bookings that are no longer visible (account, filter or search changed).
+fn prune_marked(
+    marked: &mut std::collections::HashSet<i64>,
+    visible: &std::collections::HashSet<i64>,
+) {
+    marked.retain(|id| visible.contains(id));
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod marked_tests {
+    use super::prune_marked;
+    use std::collections::HashSet;
+
+    #[test]
+    fn marks_outside_the_visible_rows_are_dropped() {
+        let mut marked: HashSet<i64> = [1, 2, 3].into_iter().collect();
+        let visible: HashSet<i64> = [2, 3, 4].into_iter().collect();
+        prune_marked(&mut marked, &visible);
+        assert_eq!(marked, [2, 3].into_iter().collect::<HashSet<i64>>());
+        // nothing visible (e.g. empty account): no stale marks stay for batch actions
+        prune_marked(&mut marked, &HashSet::new());
+        assert!(marked.is_empty());
+    }
 }
 
 type VaultEdit = Box<dyn Fn(&Vault, &[i64]) -> Result<(), String>>;

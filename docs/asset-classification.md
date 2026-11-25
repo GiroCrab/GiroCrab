@@ -25,9 +25,9 @@ ihre Anteile, damit die Auswahl im Verhältnis zum gesamten Vermögen sichtbar b
 Im Cash-Tab werden die Konten gezeigt; dort entfällt die Klassenumschaltung.
 Anlageklassen im Tab Wertpapiere beziehen sich ausschließlich auf Depotbestände,
 auch wenn etwa ein Geldmarkt-ETF zur Klasse Liquidität gehört.
-Auch der Summenblock oben links folgt dem Tab: Nettovermögen einschließlich der
-gewählten Kreditoption unter „Alles“, ansonsten der Gesamtwert der ausgewählten
-Kontoart ohne pauschalen Abzug anderer Konten oder Kredite.
+Auch der Summenblock folgt dem Tab. Unter „Alles“ zeigt er „Nettovermögen“ mit
+Schuldenabzug und „Vermögenswerte“ ohne Schuldenabzug. Die übrigen Tabs zeigen den
+Gesamtwert der gewählten Kontoart ohne pauschalen Abzug anderer Konten oder Kredite.
 
 **Direkt gehaltene Immobilien ausblenden** nimmt Positionen mit Anlageklasse
 Immobilien und Instrument Direktbesitz aus der gesamten Vermögensansicht heraus:
@@ -35,9 +35,10 @@ aus Kontosummen, Brutto- und Nettovermögen, Diagramm und Positionslisten. Die
 gespeicherten Daten bleiben erhalten. Immobilienfonds und Immobilienaktien werden
 dadurch nicht ausgeschlossen. Kredite werden keiner Immobilie automatisch
 zugeordnet und bleiben über **Kredite und Karten abziehen** unabhängig gesteuert.
-Sind die Immobilien ausgeblendet, heißt die Summe „Nettovermögen ohne Immobilien“;
-solange Kredite abgezogen werden, weist ein Hinweis darauf hin, dass die Kredite
-der ausgeblendeten Immobilien weiterhin enthalten sind. Der Schalter erscheint,
+Sind die Immobilien unter „Alles“ ausgeblendet, heißt die Summe mit Schuldenabzug
+„Nettovermögen ohne Immobilien“ und ohne Schuldenabzug „Vermögenswerte ohne Immobilien“.
+Bei aktivem Schuldenabzug weist ein Hinweis darauf hin, dass die Kredite der
+ausgeblendeten Immobilien weiterhin abgezogen werden. Der Schalter erscheint,
 wo er wirken kann: unter „Alles“ und „Sachwerte“, sobald Sachwerte vorhanden sind,
 im Tab Wertpapiere nur bei direkt gehaltenen Immobilien im Depot.
 Ohne passend klassifizierte Positionen weist die Ansicht auf die notwendige

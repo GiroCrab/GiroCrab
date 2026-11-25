@@ -462,7 +462,7 @@ fn tokenize(src: &str) -> Result<(Vec<Tok>, Option<&'static str>), SearchExprErr
 
 /// `name` in `name:` – lowercase letters and underscores only, so words like
 /// "Ref:123" or "https://…" stay plain words.
-fn is_field_name(s: &str) -> bool {
+pub(crate) fn is_field_name(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c == '_')
 }
 
