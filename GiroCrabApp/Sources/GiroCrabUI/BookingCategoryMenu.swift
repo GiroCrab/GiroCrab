@@ -87,3 +87,132 @@ private struct CategoryMenuItems: View {
         Button("Neue Kategorie …", systemImage: "plus") { create(parent) }
     }
 }
+
+#if os(macOS)
+/// The inline picker displays the sidebar's category order in one scroll view.
+struct BookingCategoryPicker: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.textScale) private var textScale
+    let booking: Booking
+    let dismiss: () -> Void
+
+    struct Row: Identifiable {
+        let category: GiroCrabCore.Category
+        let depth: Int
+        let isGroup: Bool
+        var id: Int64 { category.id }
+    }
+
+    static func rows(for nodes: [CategoryNode], depth: Int = 0) -> [Row] {
+        nodes.flatMap { node in
+            let row = Row(category: node.category, depth: depth, isGroup: node.children != nil)
+            return [row] + rows(for: node.children ?? [], depth: depth + 1)
+        }
+    }
+
+    private var suggestedCategory: GiroCrabCore.Category? {
+        guard booking.categoryId == nil, let suggestion = model.listSuggestions[booking.id] else { return nil }
+        return model.categories.first { $0.id == suggestion.categoryId }
+    }
+
+    var body: some View {
+        let rows = Self.rows(for: model.categoryTree)
+        let targets = model.categorizeTargets(for: booking)
+        let sharedCategory = targets.allSatisfy { $0.categoryId == booking.categoryId }
+        let suggestion = targets.count == 1 ? suggestedCategory : nil
+        let entryCount = rows.count + (suggestion == nil ? 1 : 2)
+        VStack(spacing: 0) {
+            if targets.count > 1 {
+                Text("\(targets.count) Buchungen ausgewählt")
+                    .appFont(.caption, weight: .medium)
+                    .foregroundStyle(Theme.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                Divider()
+            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        Button {
+                            choose(nil)
+                        } label: {
+                            option(title: model.uncategorizedLabel, symbol: "questionmark.folder",
+                                   color: Theme.warning, selected: sharedCategory && booking.categoryId == nil)
+                        }
+
+                        if let category = suggestion {
+                            Button {
+                                choose(category.id)
+                            } label: {
+                                option(title: String(localized: "Vorschlag übernehmen: \(category.name)"),
+                                       symbol: "clock.arrow.circlepath", color: Theme.secondary)
+                            }
+                            Divider()
+                        }
+
+                        ForEach(rows) { row in
+                            categoryRow(row, selected: sharedCategory && booking.categoryId == row.id)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(6)
+                }
+                .frame(height: min(360 * textScale, 12 + CGFloat(entryCount) * 26 * textScale))
+                .onAppear {
+                    if let id = booking.categoryId { proxy.scrollTo(id, anchor: .center) }
+                }
+            }
+        }
+        .frame(width: 238 * textScale)
+    }
+
+    @ViewBuilder
+    private func categoryRow(_ row: Row, selected: Bool) -> some View {
+        let category = row.category
+        let content = option(title: category.name, symbol: category.sfSymbol,
+                             color: Color.readable(hex: category.colorHex),
+                             selected: selected, depth: row.depth)
+        if row.isGroup {
+            content.accessibilityAddTraits(.isHeader)
+        } else {
+            Button { choose(row.id) } label: { content }
+        }
+    }
+
+    private func option(title: String, symbol: String, color: Color, selected: Bool = false,
+                        depth: Int = 0) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .frame(width: 16 * textScale)
+                .accessibilityHidden(true)
+            Text(title)
+                .foregroundStyle(color)
+                .sensitive(.labels)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if selected {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityHidden(true)
+            }
+        }
+        .appFont(.callout)
+        .padding(.leading, 6 + CGFloat(depth) * 12 * textScale)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
+        .background {
+            if selected {
+                RoundedRectangle(cornerRadius: 5).fill(Theme.accent.opacity(0.14))
+            }
+        }
+        .contentShape(Rectangle())
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func choose(_ id: Int64?) {
+        dismiss()
+        model.setCategoryFromPicker(id, for: booking)
+    }
+}
+#endif
