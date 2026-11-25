@@ -16066,13 +16066,13 @@
         }
       }
     },
-    "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Beim Entsperren fragt dann nur noch GiroCrab danach, nicht mehr der Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account." : {
+    "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Eine Abfrage beim Entsperren kommt dann nur noch von GiroCrab, nicht mehr vom Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "While shared, the key is not bound to Touch ID, Face ID or the device passcode: when unlocking, only GiroCrab asks for authentication, no longer the keychain. That makes a well-protected Apple Account all the more important."
+            "value" : "While shared, the key is not bound to Touch ID, Face ID or the device passcode: any prompt when unlocking then comes only from GiroCrab, no longer from the keychain. That makes a well-protected Apple Account all the more important."
           }
         }
       }

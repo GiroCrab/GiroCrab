@@ -1024,7 +1024,7 @@ enum KeychainSyncNote {
     /// Nil when it can neither be on nor be turned on in this build.
     static func tradeOff(available: Bool, shared: Bool, syncEnabled: Bool) -> String? {
         guard available || shared else { return nil }
-        let cost = String(localized: "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Beim Entsperren fragt dann nur noch GiroCrab danach, nicht mehr der Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account.")
+        let cost = String(localized: "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Eine Abfrage beim Entsperren kommt dann nur noch von GiroCrab, nicht mehr vom Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account.")
         if syncEnabled { return cost } // below the key's own switch
         let state = shared // turning the sync off does not unshare the key
             ? String(localized: "Der Tresor-Schlüssel wird weiterhin über den iCloud-Schlüsselbund geteilt.")
