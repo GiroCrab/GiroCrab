@@ -103,6 +103,7 @@ Sheet {
                 text: sheet.account ? sheet.account.name : ""
                 Layout.fillWidth: true; elide: Text.ElideRight
                 font.pixelSize: Theme.callout; color: Theme.secondary
+                Sensitive {}
             }
         }
 

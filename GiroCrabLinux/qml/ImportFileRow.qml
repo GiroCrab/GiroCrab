@@ -22,7 +22,8 @@ FormRow {
             text: row.name; color: Theme.text; font.pixelSize: Theme.body
             elide: Text.ElideMiddle; Layout.maximumWidth: 300
             HoverHandler { id: hover }
-            ToolTip.visible: hover.hovered && row.path !== ""; ToolTip.text: row.path; ToolTip.delay: 600
+            ToolTip.visible: hover.hovered && row.path !== ""; ToolTip.text: AppModel.masking(row.path); ToolTip.delay: 600
+            Sensitive {}   // file names often carry a name
         }
     }
     Button { text: row.name === "" ? qsTr("Auswählen …") : qsTr("Ändern …"); onClicked: row.choose() }
