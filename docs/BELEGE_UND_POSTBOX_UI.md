@@ -83,7 +83,8 @@ eine leere ID-Liste hieße im Core „alle“).
 
 Die Filter stehen untereinander ohne Beschriftungsspalte (die Auswahlfelder zeigen auf dem iPhone nur ihren Wert), die
 Filter „Nur …“ sind Schalter (iOS hat keine Ankreuzfelder), die Titel sind linksbündig und
-dürfen umbrechen. Ein Tipp auf eine Zeile öffnet die Vorschau als Blatt und markiert das Dokument als gelesen; die
+dürfen umbrechen. Überschrift, Filter und Aktionen sind die erste Zeile der Liste und scrollen mit ihr weg (#1526): Fest
+darüber ließen sie der Liste kaum Platz, bei großer Schrift keinen. Ein Tipp auf eine Zeile öffnet die Vorschau als Blatt und markiert das Dokument als gelesen; die
 Auswahl wird danach zurückgesetzt, damit dasselbe Dokument erneut geöffnet werden kann.
 
 ## Regeln für Änderungen

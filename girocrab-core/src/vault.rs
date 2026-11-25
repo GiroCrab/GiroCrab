@@ -213,6 +213,7 @@ pub struct Vault {
     pub(crate) suggestions: cache::ChangeCache<crate::suggestions::History>,
     /// Known recipients of the transfer form, kept until the data changes (#978).
     pub(crate) recipients: cache::ChangeCache<crate::recipients::Recipients>,
+    pub(crate) refunds: cache::ChangeCache<crate::refunds::Resolved>,
     /// Merchant recognition with the user's changes (#1373), kept while its tables stay
     /// the same (`Vault::merchant_rules`); holds the merchant cache of this vault.
     pub(crate) merchant_rules: Mutex<Arc<crate::merchants::MerchantRules>>,
@@ -540,6 +541,7 @@ impl Vault {
             key: Mutex::new(key),
             suggestions: Default::default(),
             recipients: Default::default(),
+            refunds: Default::default(),
             merchant_rules: Mutex::new(crate::merchants::MerchantRules::builtin().clone()),
             data_generation: AtomicU64::new(0),
             _open: OpenVault::new(),
@@ -797,5 +799,31 @@ mod poison_tests {
         }));
         assert!(res.is_err());
         assert_eq!(**v.kept_key(), [6u8; 32]);
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use super::*;
+
+    /// CodeRabbit (#1852): a commit through a second handle on the same file makes every
+    /// cache of the first one stale.
+    #[test]
+    fn data_stamp_moves_on_commits_of_another_connection() {
+        let dir = crate::test_support::TempDir::new("gc-stamp");
+        let path: String = dir.join("v.db").to_string_lossy().into();
+        let a = Vault::open(path.clone(), vec![5u8; 32]).unwrap();
+        let b = Vault::open(path, vec![5u8; 32]).unwrap();
+        let stamp = |v: &Vault| {
+            let db = v.db().unwrap();
+            v.data_stamp(&db)
+        };
+        let before = stamp(&a);
+        assert_eq!(before, stamp(&a));
+        b.db()
+            .unwrap()
+            .execute("INSERT INTO account_groups(name) VALUES ('G')", [])
+            .unwrap();
+        assert_ne!(before, stamp(&a));
     }
 }

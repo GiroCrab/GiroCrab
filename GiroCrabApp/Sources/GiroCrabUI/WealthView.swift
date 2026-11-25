@@ -463,8 +463,10 @@ struct WealthView: View {
         if !options.isEmpty {
             let selected = activeOwner
             // Reflect the global switches in every tooltip, regardless of who holds real estate.
+            let allOwned = WealthSummary(accounts: model.allAccounts, tangibleIds: Set(model.allAccounts.map(\.id).filter { model.isTangible($0) }))
+            let hasDirectProperty = WealthAssetSelection(summary: allOwned, assets: classified, hideDirectProperty: false).directPropertyCount > 0
             let help = scope == .all
-                ? scope.totalLabel(includingLiabilities: includeLiabilities, propertyHidden: hideDirectProperty)
+                ? scope.totalLabel(includingLiabilities: includeLiabilities, propertyHidden: hideDirectProperty && hasDirectProperty)
                 : scope.title
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {

@@ -20,6 +20,17 @@ Sheet {
     property bool showsOpeningBalance: false
     readonly property var openingCents: Fmt.parseCents(openingField.text)
     readonly property bool openingValid: openingField.text.trim() === "" || openingCents !== null
+    /// AccountGroupsModel.swift › BankLabelChoice (#1467): what the sidebar shows for the bank.
+    readonly property var bankChoices: [
+        { id: "standard", text: qsTr("Standard") },
+        { id: "custom", text: qsTr("Eigener Name") },
+        { id: "hidden", text: qsTr("Ausblenden") }
+    ]
+    readonly property string bankChoice: bankChoices[Math.max(0, bankChoiceBox.currentIndex)].id
+    /// BankLabelChoice.label(custom:): `null` the bank name, `""` none, else the trimmed text (blank = none).
+    function bankLabelValue() {
+        return bankChoice === "standard" ? null : bankChoice === "hidden" ? "" : bankLabelField.text.trim()
+    }
     readonly property bool canSave: nameField.text.trim() !== "" && (!showsOpeningBalance || openingValid)
     sheetWidth: 440
     onClosed: { accountID = null; if (AppModel.iconColorTarget && AppModel.iconColorTarget.host === "settings") AppModel.iconColorTarget = null }
@@ -35,6 +46,9 @@ Sheet {
         showsOpeningBalance = AppModel.canSetOpeningBalance(a)
         openingField.text = a.opening_balance_cents !== null && a.opening_balance_cents !== undefined ? Fmt.plain(a.opening_balance_cents) : ""
         noteField.text = a.note || ""
+        const label = a.bank_label === undefined ? null : a.bank_label
+        bankChoiceBox.currentIndex = label === null ? 0 : label === "" ? 2 : 1
+        bankLabelField.text = label || ""
         archivedBox.checked = a.archived_unix !== null
         open()
         nameField.forceActiveFocus()
@@ -49,10 +63,13 @@ Sheet {
         const owner = ownerField.text.trim()
         const kind = AppModel.accountKindChoices[kindBox.currentIndex].id
         const note = noteField.text.trim()
+        const bankLabel = bankLabelValue()
         if (newName !== a.name) { if (!AppModel.renameAccount(a.id, newName)) return; a.name = newName; original = Object.assign({}, a) }
         if (owner !== (a.owner || "")) { if (!AppModel.setAccountOwner(a.id, owner)) return; a.owner = owner; original = Object.assign({}, a) }
         if (kind !== a.kind && !offline) { if (!AppModel.setAccountKind(a.id, kind)) return; a.kind = kind; original = Object.assign({}, a) }
         if (note !== (a.note || "")) { if (!AppModel.setAccountNote(a.id, note)) return; a.note = note; original = Object.assign({}, a) }
+        const storedLabel = a.bank_label === undefined ? null : a.bank_label
+        if (bankLabel !== storedLabel) { if (!AppModel.setAccountBankLabel(a.id, bankLabel)) return; a.bank_label = bankLabel; original = Object.assign({}, a) }
         if (showsOpeningBalance) {
             const text = openingField.text.trim()
             const stored = a.opening_balance_cents === undefined ? null : a.opening_balance_cents
@@ -164,7 +181,23 @@ Sheet {
             FieldLabel { visible: ibanValue.text !== ""; text: qsTr("IBAN") }
             ReadOnlyValue { id: ibanValue; text: sheet.account ? sheet.account.iban || "" : "" }
             FieldLabel { visible: bankValue.text !== ""; text: qsTr("Bank") }
-            ReadOnlyValue { id: bankValue; text: sheet.account ? sheet.account.bank_name || "" : "" }
+            // a login's name follows its display name in Einstellungen › Banken (#1467)
+            ReadOnlyValue { id: bankValue
+                            text: !sheet.account || !sheet.account.bank_name ? ""
+                                : sheet.account.connection_id === null || sheet.account.connection_id === undefined ? sheet.account.bank_name
+                                : qsTr("%1 (vom Bankzugang)").arg(sheet.account.bank_name) }
+            // Bank in der Seitenleiste: Standard (the bank name), Eigener Name or Ausblenden (#1467)
+            FieldLabel { text: qsTr("Bank in der Seitenleiste") }
+            AppComboBox { id: bankChoiceBox; Layout.fillWidth: true; model: sheet.bankChoices; textRole: "text" }
+            FieldLabel { visible: sheet.bankChoice === "custom"; text: qsTr("Eigener Name") }
+            TextField {
+                id: bankLabelField
+                visible: sheet.bankChoice === "custom"
+                Layout.fillWidth: true
+                placeholderText: sheet.account && sheet.account.bank_name ? sheet.account.bank_name : qsTr("z. B. Haushalt")
+                onAccepted: sheet.save()
+                Sensitive {}
+            }
             // Konto-Notiz: the label next to the editor's top edge
             FieldLabel { text: qsTr("Konto-Notiz"); Layout.alignment: Qt.AlignRight | Qt.AlignTop; Layout.topMargin: 6 }
             ColumnLayout {

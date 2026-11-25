@@ -216,8 +216,10 @@ enum Money {
         plain(cents).replacingOccurrences(of: "−", with: "-")
     }
 
-    static func plain(_ cents: Int64) -> String {
-        (decimal.string(from: (Decimal(cents) / 100) as NSDecimalNumber) ?? "\(cents)").replacingOccurrences(of: "-", with: "−")
+    static func plain(_ cents: Int64) -> String { plainCents(Decimal(cents)) }
+
+    static func plainCents(_ cents: Decimal) -> String {
+        (decimal.string(from: (cents / 100) as NSDecimalNumber) ?? "\(cents)").replacingOccurrences(of: "-", with: "−")
     }
 
     /// User input -> cents ("1.234,56", "1,234.56", "1.500"), or nil when it
@@ -513,9 +515,13 @@ extension ConnectorKind {
         case .fnz: return "FNZ Bank"
         case .ibkr: return "Interactive Brokers (IBKR)"
         case .advanzia: return "Advanzia Bank"
+        case .edenred: return "Edenred"
         case .equatePlus: return "EquatePlus"
         case .quirion: return "quirion"
         case .sharinbox: return "Sharinbox (Société Générale)"
+        case .axaShareplan: return "AXA Mitarbeiter Shareplan"
+        case .unionInvestment: return "Union Investment"
+        case .berghausCie: return "Berghaus & Cie (Weindepot)"
         case .easybank: return "easybank"
         case .alteLeipziger: return "Alte Leipziger"
         case .volkswagenBank: return "Volkswagen Bank"
@@ -530,6 +536,9 @@ extension ConnectorKind {
         case .finpension: return "Finpension"
         case .kontist: return "Kontist"
         case .monefit: return "Monefit SmartSaver"
+        case .bitcoin: return "Bitcoin-Wallet (xpub)"
+        case .goAndGrow: return "Go & Grow"
+        case .airPlus: return "AirPlus"
         }
     }
 
@@ -551,9 +560,13 @@ extension ConnectorKind {
         case .fnz: return "#265B55"
         case .ibkr: return "#D81222"
         case .advanzia: return "#243B77"
+        case .edenred: return "#E5352D"
         case .equatePlus: return "#608B36"
         case .quirion: return "#D4005A"
         case .sharinbox: return "#E60028"
+        case .axaShareplan: return "#00008F"
+        case .unionInvestment: return "#003F7D"
+        case .berghausCie: return "#7B1E3A"
         case .easybank: return "#00AEEF"
         case .alteLeipziger: return "#BE0D3E"
         case .volkswagenBank: return "#001E50"
@@ -568,6 +581,9 @@ extension ConnectorKind {
         case .finpension: return "#00A68C"
         case .kontist: return "#2B2D73"
         case .monefit: return "#1F4E79"
+        case .bitcoin: return "#F7931A"
+        case .goAndGrow: return "#2E7D32"
+        case .airPlus: return "#003A70"
         }
     }
 
@@ -596,9 +612,13 @@ extension ConnectorKind {
         case .fnz: return "FNZ"
         case .ibkr: return "IB"
         case .advanzia: return "AD"
+        case .edenred: return "ER"
         case .equatePlus: return "EQ"
         case .quirion: return "Q"
         case .sharinbox: return "SG"
+        case .axaShareplan: return "AX"
+        case .unionInvestment: return "UI"
+        case .berghausCie: return "BC"
         case .easybank: return "EB"
         case .alteLeipziger: return "AL"
         case .volkswagenBank: return "VW"
@@ -613,6 +633,9 @@ extension ConnectorKind {
         case .finpension: return "FP"
         case .kontist: return "KT"
         case .monefit: return "MS"
+        case .bitcoin: return "BTC"
+        case .goAndGrow: return "GG"
+        case .airPlus: return "AP"
         }
     }
 }

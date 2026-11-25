@@ -70,8 +70,8 @@ use serde::{Deserialize, Serialize};
 
 use self::accounts::{account_label, kind_from_code};
 use self::dialog::{
-    approval_pending, has_so_prefix, is_comdirect, period_hint, tan_beyond_free_period,
-    tan_demanded,
+    approval_pending, demands_sca, has_so_prefix, is_comdirect, period_hint,
+    tan_beyond_free_period, tan_demanded,
 };
 use self::syntax::Segment;
 use super::{
@@ -105,6 +105,10 @@ struct FinTsState {
     versions: HashMap<String, Vec<u32>>,
     /// HKxxx -> TAN required (HIPINS).
     tan_required: HashMap<String, bool>,
+    /// Jobs the bank answered with a TAN demand (0030) or an app approval (3955/3956) the last time
+    /// they were sent outside an approved dialog (#1828). Automatic syncs leave them out.
+    #[serde(default)]
+    sca_seen: std::collections::BTreeSet<String>,
     /// camt descriptors from HICAZS, best first.
     #[serde(default)]
     camt_formats: Vec<String>,
@@ -296,6 +300,24 @@ pub struct FinTsConnector {
     /// A statement request still had pages left after the last one GiroCrab
     /// reads: the list is not complete (#1043).
     truncated_statements: bool,
+    /// A TAN or an approval the bank asked for in this dialog was given and accepted (not when
+    /// it was only asked, skipped or refused): a later reply without SCA (a further page,
+    /// another job) says nothing about the next sync (#1828).
+    sca_in_dialog: bool,
+    /// The user skipped the TAN for this account's bookings (#1828): the late HKSAL is not sent either.
+    tan_skipped: bool,
+    /// `sca_seen` changed during this connector's requests: a fetch that fails still hands the
+    /// state back (`state_after_failed_fetch`, #1828).
+    sca_seen_changed: bool,
+    /// Jobs that demanded a TAN or an approval during this connector's requests: another
+    /// account's reply without SCA does not forget them in the same fetch (#1828).
+    sca_asked: HashSet<String>,
+    /// Jobs whose TAN or app approval the bank accepted in this dialog (#1828): an automatic
+    /// sync sends their further pages; an approval for one job lets no other job through.
+    sca_approved: HashSet<String>,
+    /// The state as `begin` read it from storage: a failed fetch keeps only the receipt codes
+    /// found here (codes of dropped PDFs must not be stored, #1828).
+    stored: FinTsState,
     /// The order was handed to the bank: from here on, an unclear reply or a
     /// lost connection means "result unknown", never "not executed".
     order_submitted: bool,
@@ -379,6 +401,12 @@ impl FinTsConnector {
             tan_medium_override: String::new(),
             partial_statements: false,
             truncated_statements: false,
+            sca_in_dialog: false,
+            tan_skipped: false,
+            sca_seen_changed: false,
+            sca_asked: HashSet::new(),
+            sca_approved: HashSet::new(),
+            stored: FinTsState::default(),
             order_submitted: false,
             result: TransferResult::default(),
             order: None,
@@ -450,6 +478,7 @@ impl BankConnector for FinTsConnector {
             });
         }
         if let Ok(st) = ctx.state.decode::<FinTsState>() {
+            self.stored = st.clone();
             self.st = st;
         }
         // comdirect: log in under the bank code found last time (the address
@@ -508,13 +537,21 @@ impl BankConnector for FinTsConnector {
                     let c = self.challenge.clone().ok_or(CoreError::SessionClosed)?;
                     return Ok(Phase::Pending(c));
                 }
-                self.after_approval(ctx, reply).await
+                // accepted by the bank (a refusal returns below, a new TAN or approval
+                // demanded is none): this dialog is approved (#1828)
+                let accepted = !demands_sca(&reply);
+                let phase = self.after_approval(ctx, reply).await?;
+                self.sca_in_dialog |= accepted;
+                Ok(phase)
             }
             ChallengeResponse::Code(tan) => {
                 self.tan_for_next = None;
                 payload.push(self.hktan_with_tan(n, &task));
                 let reply = self.send(ctx, payload, &sec, Some(tan.expose())).await?;
-                self.after_approval(ctx, reply).await
+                let accepted = !demands_sca(&reply);
+                let phase = self.after_approval(ctx, reply).await?;
+                self.sca_in_dialog |= accepted;
+                Ok(phase)
             }
         }
     }
@@ -529,6 +566,8 @@ impl BankConnector for FinTsConnector {
             .collect();
         let mut result = FetchResult::default();
         let mut ok_any = false;
+        // what the bank does not offer: said, but no failure of the sync (#1743)
+        let mut not_offered: Vec<String> = Vec::new();
         // a TAN was demanded for more statements than banks serve without one (#1627)
         let mut period_too_long = false;
         // not yet booked entries ("vorgemerkt"), see `camt::HOLD_PREFIX`
@@ -605,19 +644,24 @@ impl BankConnector for FinTsConnector {
                 .unwrap_or_else(|| "EUR".into());
             let mut balance: Option<i64> = None;
             let mut balance_date = super::today();
+            // Holdings asked for and not read, or none offered: no other figure (HKSAL, the
+            // closing balance of the bookings) stands in for the value of a depot (#1743).
+            let mut depot_value_unknown = false;
 
             // --- Balance (HKSAL), only if the account allows it
-            if self.bank_supports("HKSAL") && allowed("HKSAL") {
-                match self.balance(ctx, acc).await {
-                    Ok(Some((b, cur, date))) => {
-                        balance = Some(b);
-                        currency = cur;
-                        balance_date = date;
-                        ok_any = true;
-                    }
-                    Ok(None) => {}
-                    Err(e) => errors.push(trf("{0}: Saldo – {1}", &[&label, &e])),
-                }
+            let hksal = self.bank_supports("HKSAL") && allowed("HKSAL");
+            // #1828: the bank wants a TAN for the balance: the bookings' closing balance may save it
+            let balance_late = hksal && self.st.sca_seen.contains("HKSAL");
+            if hksal && !balance_late {
+                apply_balance(
+                    self.balance(ctx, acc).await,
+                    label,
+                    &mut balance,
+                    &mut currency,
+                    &mut balance_date,
+                    &mut ok_any,
+                    &mut errors,
+                );
             }
 
             // --- Depot value (HKWPD / MT535), only for depots that allow it
@@ -668,10 +712,25 @@ impl BankConnector for FinTsConnector {
                             }
                         }
                     }
-                    Err(e) => errors.push(trf("{0}: Depotbestand (HKWPD) – {1}", &[&label, &e])),
+                    Err(e) => {
+                        errors.push(trf("{0}: Depotbestand (HKWPD) – {1}", &[&label, &e]));
+                        depot_value_unknown = true;
+                    }
                 }
+            } else if kind == AccountKind::Brokerage {
+                // a depot, by its Kontoart or its product name as it is stored: its value stays
+                // as it was, and the user is told (#1743).
+                // A hint, not a warning: there is nothing to fix, and a login with only this
+                // depot must not fail at every sync.
+                depot_value_unknown = true;
+                not_offered.push(trf(
+                    "{0}: Depotbestand (HKWPD) – von der Bank nicht angeboten",
+                    &[&label],
+                ));
             }
 
+            // only a TAN skipped for the bookings leaves out the late HKSAL (#1828)
+            self.tan_skipped = false;
             // --- Statements: camt (HKCAZ) first, MT940 (HKKAZ) as fallback. Loans are
             // included only when HIUPD permits it (or lists nothing); every request is
             // its own FinTS message, so a 9050 on one loan is just collected in `errors`.
@@ -783,6 +842,17 @@ impl BankConnector for FinTsConnector {
                     .for_each(super::comdirect::fill_card_merchant);
             }
             result.transactions.extend(txs);
+            if balance_late && balance.is_none() && !self.tan_skipped {
+                apply_balance(
+                    self.balance(ctx, acc).await,
+                    label,
+                    &mut balance,
+                    &mut currency,
+                    &mut balance_date,
+                    &mut ok_any,
+                    &mut errors,
+                );
+            }
 
             // --- Standing orders (HKCDB), read-only. Sent right after the statements,
             // in the same dialog: a bank that wants SCA for it usually accepts the
@@ -820,6 +890,9 @@ impl BankConnector for FinTsConnector {
                     }
                 }
             }
+            if depot_value_unknown {
+                balance = None;
+            }
             // Not read this time (#1083): the stored balance stays instead of
             // becoming 0. Cards without one get theirs derived when storing.
             if balance.is_none() && kind != AccountKind::CreditCard {
@@ -854,6 +927,7 @@ impl BankConnector for FinTsConnector {
         let hints: Vec<String> = period_too_long
             .then(|| period_hint().into())
             .into_iter()
+            .chain(not_offered)
             .collect();
         if !ok_any && !errors.is_empty() {
             errors.extend(hints);
@@ -876,6 +950,20 @@ impl BankConnector for FinTsConnector {
     async fn finish(&mut self, ctx: &ConnectContext) {
         let sec = self.sec();
         self.end_dialog(ctx, &sec).await;
+    }
+
+    /// A bank that wants a TAN for every job fails the whole fetch (nothing was read), and the
+    /// next automatic sync would send the same jobs again: the jobs this fetch found out about
+    /// are kept (#1828). Receipt codes that are new since `begin` are dropped: their statements'
+    /// PDFs went with the error, so they must never be acknowledged (HKQTG).
+    fn state_after_failed_fetch(&self) -> Option<SecretJson> {
+        if !self.sca_seen_changed {
+            return None;
+        }
+        let mut kept = self.st.clone();
+        kept.pending_receipts
+            .retain(|code| self.stored.pending_receipts.contains(code));
+        SecretJson::encode(&kept).ok()
     }
 
     async fn send_transfer(
@@ -946,5 +1034,92 @@ impl BankConnector for FinTsConnector {
 
 #[cfg(test)]
 mod invariant_tests;
+/// Takes the answer of an `HKSAL` request into the account's balance, or its error into `errors`.
+#[allow(clippy::too_many_arguments)]
+fn apply_balance(
+    read: CoreResult<Option<(i64, String, String)>>,
+    label: &str,
+    balance: &mut Option<i64>,
+    currency: &mut String,
+    date: &mut String,
+    ok_any: &mut bool,
+    errors: &mut Vec<String>,
+) {
+    match read {
+        Ok(Some((b, cur, d))) => {
+            *balance = Some(b);
+            *currency = cur;
+            *date = d;
+            *ok_any = true;
+        }
+        Ok(None) => {}
+        Err(e) => errors.push(trf("{0}: Saldo – {1}", &[&label, &e])),
+    }
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod sca_seen_tests {
+    use super::*;
+
+    fn reply(codes: &[&str]) -> BankReply {
+        BankReply {
+            segments: Vec::new(),
+            codes: codes
+                .iter()
+                .map(|c| (c.to_string(), Some(3), String::new(), Vec::new()))
+                .collect(),
+            sent: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_failed_fetch_keeps_the_learned_tan_jobs_but_no_new_receipt_codes() {
+        let mut c = FinTsConnector::new("12345678");
+        c.stored.pending_receipts = vec!["aa".into()];
+        c.st = c.stored.clone();
+        // a PDF page read before the error: its receipt code went into the state
+        c.st.pending_receipts.push("bb".into());
+        assert!(c.learn_sca("HKCAZ", &reply(&["0030"])));
+        let kept: FinTsState = c
+            .state_after_failed_fetch()
+            .expect("sca_seen changed")
+            .decode::<FinTsState>()
+            .unwrap();
+        assert!(kept.sca_seen.contains("HKCAZ"));
+        assert_eq!(kept.pending_receipts, vec!["aa".to_string()]);
+    }
+
+    #[test]
+    fn a_failed_fetch_that_learned_nothing_stores_nothing() {
+        let c = FinTsConnector::new("12345678");
+        assert!(c.state_after_failed_fetch().is_none());
+    }
+
+    #[test]
+    fn a_reply_without_sca_forgets_a_job_from_an_earlier_fetch() {
+        let mut c = FinTsConnector::new("12345678");
+        c.st.sca_seen.insert("HKSAL".into());
+        assert!(!c.learn_sca("HKSAL", &reply(&["0020"])));
+        assert!(!c.st.sca_seen.contains("HKSAL"));
+        assert!(c.sca_seen_changed);
+    }
+
+    #[test]
+    fn another_account_without_sca_does_not_forget_a_job_that_asked_in_this_fetch() {
+        let mut c = FinTsConnector::new("12345678");
+        assert!(c.learn_sca("HKCAZ", &reply(&["0030"])));
+        assert!(!c.learn_sca("HKCAZ", &reply(&["0020"])));
+        assert!(c.st.sca_seen.contains("HKCAZ"));
+    }
+
+    #[test]
+    fn a_status_reply_that_asks_for_a_tan_again_is_no_approval() {
+        // ends the polling (not pending) but must not mark the dialog approved
+        let r = reply(&["0010", "0030"]);
+        assert!(!dialog::approval_pending(&r));
+        assert!(dialog::demands_sca(&r));
+    }
+}
