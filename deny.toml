@@ -1,0 +1,49 @@
+# cargo-deny policy (#1800). Run: `cargo deny check` (CI job `deny`).
+# Advisory exceptions mirror `.cargo/audit.toml`; keep both in sync.
+
+[graph]
+# Run with `--workspace`: the root is a package too, without it only that one is checked.
+# (Linux/Windows front ends have their own lockfiles and are not covered.)
+all-features = true
+
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = [
+    # basic-toml: unmaintained, only pulled in by askama_derive (UniFFI build-time codegen).
+    # Same reason as in `.cargo/audit.toml`; remove with it.
+    "RUSTSEC-2026-0374",
+]
+
+[licenses]
+# GPL-3.0-or-later project: only permissive licenses (compatible with GPL-3.0) are allowed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "GPL-3.0-or-later",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0", # webpki-roots (CA list data)
+    "MPL-2.0",             # uniffi (file-level copyleft, GPL-3.0 compatible via MPL-2.0 §3.3)
+    "WTFPL",               # sqlcipher-src (bundled libtomcrypt)
+    "blessing",            # sqlcipher-src (SQLite public-domain blessing)
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between workspace members carry a version or are private.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -118,6 +118,22 @@ jobs:
       - name: cargo audit
         run: cargo audit --deny warnings
 
+  # Licenses, bans and sources of all dependencies (`deny.toml`, #1800). Advisory exceptions
+  # there mirror `.cargo/audit.toml`. `--workspace`: the root is a package itself.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: cargo deny
+        run: cargo deny --workspace check
+
   # `rust` and `swift` deliberately run in parallel and independently: a red
   # fmt/Clippy/Rust test run must not hide the Swift build, and vice versa.
   # The job names stay unchanged so existing required checks keep matching.
