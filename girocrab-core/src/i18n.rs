@@ -434,6 +434,8 @@ fn english(de: &str) -> Option<&'static str> {
             "Sharinbox: document {0} rejected, field {1} invalid."
         }
         "Mitarbeiteraktien" => "Employee shares",
+        "Aktienrechte (noch nicht zugeteilt)" => "Share rights (not yet allotted)",
+        "noch nicht zugeteilt" => "not yet allotted",
         "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
             "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }
@@ -1726,6 +1728,12 @@ fn english(de: &str) -> Option<&'static str> {
             "A split booking needs at least two non-zero parts."
         }
         "Die Teilbeträge sind zu groß." => "The split amounts are too large.",
+        "Die Teilbuchung existiert nicht oder wurde mehrfach angegeben." => {
+            "The split part does not exist or was specified more than once."
+        }
+        "Bitte passen Sie die Aufteilung zusammen mit dem Buchungsbetrag an." => {
+            "Please update the split together with the booking amount."
+        }
         "Die Teilbeträge ({0} ¢) ergeben nicht den Buchungsbetrag ({1} ¢)." => {
             "The parts ({0} ¢) do not add up to the booking amount ({1} ¢)."
         }

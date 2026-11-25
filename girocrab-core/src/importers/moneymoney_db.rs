@@ -1544,7 +1544,7 @@ fn read_categories(conn: &Connection, have: &HashSet<String>) -> CoreResult<SrcC
         if !rules.is_empty() {
             let restricted = !apply_to_account.trim().is_empty();
             cats.rules
-                .push((path.clone(), rules.to_string(), restricted));
+                .push((path.clone(), uppercase_operators(rules), restricted));
         }
         if let Some(color) = color {
             cats.colors.push((path.clone(), color));
@@ -2958,6 +2958,73 @@ fn import_document(
         res.documents_existing += 1;
     }
     Ok(())
+}
+
+/// MoneyMoney also accepts `or` / `and` / `not` in lowercase; GiroCrab's search
+/// reads only the uppercase operators (a lowercase one is an ordinary word there).
+/// Turns each standalone operator word into uppercase so the imported rule keeps
+/// its meaning. Quoted phrases, `/regex/` and `field:` values stay as they are.
+fn uppercase_operators(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut out = String::with_capacity(expr.len());
+    let mut i = 0;
+    // Copies a `"phrase"` or `/regex/` starting at `i` (a `\/` does not end a regex).
+    let copy_delimited = |i: &mut usize, out: &mut String| {
+        let end = chars[*i];
+        out.push(end);
+        *i += 1;
+        while *i < chars.len() {
+            let c = chars[*i];
+            out.push(c);
+            *i += 1;
+            if c == '\\' && end == '/' && chars.get(*i) == Some(&'/') {
+                out.push(chars[*i]);
+                *i += 1;
+            } else if c == end {
+                break;
+            }
+        }
+    };
+    let is_break = |c: char| c.is_whitespace() || matches!(c, '(' | ')');
+    while i < chars.len() {
+        let c = chars[i];
+        if is_break(c) {
+            out.push(c);
+            i += 1;
+        } else if c == '"' || c == '/' {
+            copy_delimited(&mut i, &mut out);
+        } else {
+            let start = i;
+            while i < chars.len() && !is_break(chars[i]) && chars[i] != ':' {
+                i += 1;
+            }
+            let head: String = chars[start..i].iter().collect();
+            if i < chars.len() && chars[i] == ':' && crate::search_expr::is_field_name(&head) {
+                out.push_str(&head);
+                out.push(':');
+                i += 1;
+                if matches!(chars.get(i), Some('"' | '/')) {
+                    copy_delimited(&mut i, &mut out);
+                } else {
+                    while i < chars.len() && !is_break(chars[i]) {
+                        out.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+            // not a field: the colon belongs to the word
+            while i < chars.len() && !is_break(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            match word.as_str() {
+                "and" | "or" | "not" => out.push_str(&word.to_uppercase()),
+                _ => out.push_str(&word),
+            }
+        }
+    }
+    out
 }
 
 /// Priority of the first imported category rule: after GiroCrab's own rules
