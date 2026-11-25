@@ -1072,8 +1072,16 @@ pub(crate) fn store_fetch(
         if let Some(state) = &data.state {
             crate::vault::connections::store_state(&tx, connection_id, state)?;
         }
-        // one account: the others are as old as before (automatic sync, freshness)
-        if !data.single_account {
+        // one account: the others are as old as before (automatic sync, freshness);
+        // the account itself notes its own time (#1716)
+        if data.single_account {
+            for id in account_ids.values() {
+                tx.execute(
+                    "UPDATE accounts SET last_fetch_unix = strftime('%s','now') WHERE id = ?1",
+                    [id],
+                )?;
+            }
+        } else {
             tx.execute(
                 "UPDATE bank_connections SET last_sync_unix = strftime('%s','now') WHERE id = ?1",
                 [connection_id],
@@ -1773,6 +1781,7 @@ impl Vault {
             state,
             since,
             since_by_account,
+            full_fetch: history.is_some(),
             documents,
             skipped_accounts: skipped.into_iter().collect(),
             only_account,

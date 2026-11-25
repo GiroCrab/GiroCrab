@@ -441,6 +441,9 @@ enum StreamItem: Identifiable {
 enum StreamSlot: Hashable {
     case header(Int)
     case row(Int)
+    /// A row of „Neue Umsätze“. A type of its own: a bare booking id could be the id of an
+    /// account's card there.
+    case newBooking(Booking.ID)
 }
 
 /// Where a day's header and each booking sit in the stream: `ScrollViewProxy` targets.

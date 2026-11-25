@@ -560,8 +560,14 @@ Rectangle {
         ColumnLayout {
             width: parent.width; spacing: 14
             Text {
-                text: wv.scope === "all" ? (sc.propertyHidden ? qsTr("Nettovermögen ohne Immobilien") : qsTr("Nettovermögen"))
-                    : wv.scope === "cash" ? qsTr("Cash") : wv.scope === "securities" ? qsTr("Wertpapiere") : qsTr("Sachwerte")
+                text: {
+                    if (wv.scope === "all") {
+                        if (prefs.includeLiabilities)
+                            return sc.propertyHidden ? qsTr("Nettovermögen ohne Immobilien") : qsTr("Nettovermögen")
+                        return sc.propertyHidden ? qsTr("Vermögenswerte ohne Immobilien") : qsTr("Vermögenswerte")
+                    }
+                    return wv.scope === "cash" ? qsTr("Cash") : wv.scope === "securities" ? qsTr("Wertpapiere") : qsTr("Sachwerte")
+                }
                 font.pixelSize: Theme.caption; color: Theme.secondary
             }
             Text {
