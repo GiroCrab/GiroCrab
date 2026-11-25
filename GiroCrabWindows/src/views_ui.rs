@@ -27,6 +27,7 @@ use crate::{
     KpiTile, MainWindow, RuleItem, ShareBar, SideRow, TableRow, german_date, hex_color, money,
     privacy_on, with_state,
 };
+pub(crate) mod doc_connections;
 
 type VaultSlot = Arc<Mutex<Option<Arc<Vault>>>>;
 
@@ -74,6 +75,8 @@ struct Ui {
     /// Unread document ids of the shown Belege list ("Alle als gelesen markieren").
     doc_unread: Vec<i64>,
     selected_doc: Option<i64>,
+    /// The bank connection filter was reset in this session (false again after lock).
+    doc_filter_set: bool,
     link_ids: Vec<i64>,
     rules: Vec<Rule>,
     rule_categories: Vec<Category>,
@@ -89,6 +92,7 @@ impl Ui {
     }
 
     fn reset_for_lock(&mut self) {
+        doc_connections::clear();
         let model = self.side_model.take();
         let generation = self.generation.wrapping_add(1);
         let lock_generation = self.lock_generation.wrapping_add(1);
@@ -315,6 +319,9 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     // dialog stays, so a refresh of the same depot can reload it (`prepare(Some(..))`).
     crate::position_history_ui::loading(win);
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
+    // Documents: session epoch and load number are taken before the worker starts, so a lock
+    // or a newer load in between drops this load's connection cache.
+    let doc_ticket = matches!(target, Target::Documents).then(doc_connections::begin_load);
     let generation = with_ui(|u| {
         // A tab or period change while loading must not re-render the previous depot
         // (and put its CSV back into the export cache).
@@ -324,7 +331,7 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     });
     let (weak, v) = (win.as_weak(), vault.clone());
     std::thread::spawn(move || {
-        let loaded = load(&v, target, &accounts, &tangible);
+        let loaded = load(&v, target, &accounts, &tangible, doc_ticket);
         let _ = weak.upgrade_in_event_loop(move |win| {
             if with_ui(|u| u.generation) != generation {
                 return;
@@ -384,6 +391,7 @@ fn load(
     target: Target,
     accounts: &[Account],
     tangible: &[i64],
+    doc_ticket: Option<doc_connections::LoadTicket>,
 ) -> Result<Loaded, String> {
     let e = |e: girocrab_core::CoreError| e.to_string();
     match target {
@@ -422,10 +430,16 @@ fn load(
             .map(Loaded::Planned)
             .map_err(e),
         Target::Mandates => vault.list_mandates(None).map(Loaded::Mandates).map_err(e),
-        Target::Documents => vault
-            .list_all_documents(DocumentFilter::default())
-            .map(Loaded::Documents)
-            .map_err(e),
+        Target::Documents => {
+            // Taken on the UI thread before the worker started (`apply_view`): a lock or a newer
+            // load during this one must not let `refresh` store its data.
+            let ticket = doc_ticket.ok_or("Keine Ansicht für diese Auswahl.")?;
+            let docs = vault
+                .list_all_documents(DocumentFilter::default())
+                .map_err(e)?;
+            doc_connections::refresh(vault, ticket)?;
+            Ok(Loaded::Documents(docs))
+        }
         _ => Err("Keine Ansicht für diese Auswahl.".into()),
     }
 }
@@ -599,9 +613,39 @@ pub fn render_view(win: &MainWindow) {
         }
         MODE_DOCUMENTS => {
             win.set_view_title("Belege & Postbox".into());
+            if !with_ui(|u| std::mem::replace(&mut u.doc_filter_set, true)) {
+                win.set_doc_connection_index(0);
+            }
+            let view = doc_connections::view(win.get_doc_connection_index().max(0) as usize);
+            let last = view.names.len().saturating_sub(1);
+            let conn_names: Vec<SharedString> = view
+                .names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    if i == 0 || i == last {
+                        SharedString::from(n.as_str())
+                    } else {
+                        SharedString::from(mask(n, privacy))
+                    }
+                })
+                .collect();
+            win.set_doc_connections(ModelRc::new(VecModel::from(conn_names)));
+            win.set_doc_connection_index(view.index as i32);
+            win.set_doc_fetch_shown(view.toggle.is_some());
+            win.set_doc_fetch_on(view.toggle.unwrap_or(false));
             let (rows, accounts) = with_ui(|u| {
+                let shown: HashSet<i64> = u
+                    .docs
+                    .iter()
+                    .filter(|d| view.keeps(d.id, d.account_id.is_some()))
+                    .map(|d| d.id)
+                    .collect();
                 (
-                    lists::document_rows(&u.docs, &date),
+                    lists::document_rows(&u.docs, &date)
+                        .into_iter()
+                        .filter(|r| shown.contains(&r.id))
+                        .collect::<Vec<_>>(),
                     u.accounts
                         .iter()
                         .filter(|a| a.archived_unix.is_none())
@@ -750,6 +794,12 @@ pub fn on_lock(win: &MainWindow) {
     win.set_selected_fetched(SharedString::new());
     win.set_link_open(false);
     win.set_rules_open(false);
+    // Documents view: forget the bank-login names of the filter and the fetch switch, too
+    // (`doc_connections::clear()` only empties the cached state behind them).
+    win.set_doc_connections(ModelRc::default());
+    win.set_doc_connection_index(0);
+    win.set_doc_fetch_shown(false);
+    win.set_doc_fetch_on(false);
     crate::tags_ui::on_lock(win);
     crate::groups_ui::on_lock(win);
     crate::assets_loans_ui::on_lock(win);
@@ -1448,9 +1498,12 @@ mod tests {
             Target::Mandates,
             Target::Documents,
         ] {
-            assert!(load(&vault, target, &accounts, &tangible).is_ok());
+            let ticket = Some(doc_connections::begin_load());
+            assert!(load(&vault, target, &accounts, &tangible, ticket).is_ok());
         }
-        match load(&vault, Target::Wealth, &accounts, &tangible).unwrap() {
+        // Documents without a ticket from the UI thread is refused, not loaded unguarded.
+        assert!(load(&vault, Target::Documents, &accounts, &tangible, None).is_err());
+        match load(&vault, Target::Wealth, &accounts, &tangible, None).unwrap() {
             Loaded::Wealth(w) => {
                 let v = portfolio::wealth_view(&w, WealthTab::All, &eur);
                 assert!(!v.net_worth.is_empty());
@@ -1463,7 +1516,7 @@ mod tests {
             .filter(|a| a.kind == AccountKind::Brokerage || tangible.contains(&a.id))
             .collect();
         for a in depots {
-            match load(&vault, Target::Account(a.id), &accounts, &tangible).unwrap() {
+            match load(&vault, Target::Account(a.id), &accounts, &tangible, None).unwrap() {
                 Loaded::Depot(d) => {
                     let v = portfolio::depot_view(&d, Period::All, "2026-11-16", &eur, &date);
                     assert_eq!(v.kpis.len(), 4);
@@ -1471,7 +1524,7 @@ mod tests {
                 _ => panic!("depot expected"),
             }
         }
-        assert!(load(&vault, Target::Account(-5), &accounts, &tangible).is_err());
+        assert!(load(&vault, Target::Account(-5), &accounts, &tangible, None).is_err());
         let _ = std::fs::remove_file(&path);
     }
 
