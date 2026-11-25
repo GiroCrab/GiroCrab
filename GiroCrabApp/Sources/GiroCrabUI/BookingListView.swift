@@ -1,5 +1,8 @@
 import SwiftUI
 import GiroCrabCore
+#if os(macOS)
+import AppKit
+#endif
 
 /// Column 2: calm booking stream. Fills the space between sidebar and
 /// inspector, bookings grouped into flat day sections separated by
@@ -551,7 +554,14 @@ struct DayCardRow: View {
     var body: some View {
         let b = booking
         VStack(spacing: 0) {
-                BookingRow(booking: b, compactDetailsCollapsed: compactDetailsCollapsed, balance: balance)
+                BookingRow(booking: b, compactDetailsCollapsed: compactDetailsCollapsed, balance: balance) {
+                    selectRow(togglesDetails: false)
+                }
+                    #if os(macOS)
+                    .modifier(BookingNoteDoubleClick { model.editNote(for: b) })
+                    #else
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.editNote(for: b) })
+                    #endif
                     .dropDestination(for: URL.self) { urls, _ in
                         guard model.attach(urls, to: b) else { return false }
                         model.selectedBookingID = b.id
@@ -561,32 +571,17 @@ struct DayCardRow: View {
                     .onTapGesture {
                         #if os(macOS)
                         // Finder-style: ⌘-click adds/removes, ⇧-click selects a range.
+                        guard !ClickModifiers.bookingTextHandledMouseDown else { return }
                         let flags = ClickModifiers.atLastMouseDown
-                        if density == .compact, model.selectedBookingID == b.id,
-                           !flags.contains(.command), !flags.contains(.shift) {
-                            compactDetailsCollapsed.toggle()
-                        } else {
-                            compactDetailsCollapsed = false
-                        }
-                        model.selectBooking(b.id, toggle: flags.contains(.command), extend: flags.contains(.shift),
-                                            fromListClick: true)
+                        selectRow(toggle: flags.contains(.command), extend: flags.contains(.shift))
                         #else
-                        if density == .compact, model.selectedBookingID == b.id {
-                            compactDetailsCollapsed.toggle()
-                        } else {
-                            compactDetailsCollapsed = false
-                        }
-                        model.selectBooking(b.id)
+                        selectRow()
                         #endif
-                        model.showBookingSheet = true
                     }
                     .modifier(RowSelectionTraits(id: b.id))
-                    // simultaneous, so single clicks keep selecting without the double-click delay
-                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.editNote(for: b) })
                     .contextMenu { rowMenu(b) }
                     #if os(macOS)
-                    // onto a sidebar category (#366) or into another app (BookingDragItem);
-                    // the payload is read when the drag starts
+                    // The payload is read when a row drag starts outside the selectable text.
                     .onDrag { model.dragItem(for: b).itemProvider() }
                     #endif
             if !isLast || density == .compact {
@@ -600,6 +595,19 @@ struct DayCardRow: View {
         }
         // the row is reused for another booking (positional identity, `StreamItem`)
         .onChange(of: booking.id) { compactDetailsCollapsed = false }
+    }
+
+    private func selectRow(toggle: Bool = false, extend: Bool = false, togglesDetails: Bool = true) {
+        if density == .compact, model.selectedBookingID == booking.id, !toggle, !extend {
+            if togglesDetails { compactDetailsCollapsed.toggle() }
+        } else {
+            compactDetailsCollapsed = false
+        }
+        model.selectBooking(booking.id, toggle: toggle, extend: extend, fromListClick: true)
+        model.showBookingSheet = true
+        #if os(macOS)
+        model.focusListToken &+= 1
+        #endif
     }
 
     @ViewBuilder
@@ -770,6 +778,7 @@ struct BookingRow: View {
     let booking: Booking
     var compactDetailsCollapsed = false
     var balance: RunningBalance?
+    var onTextSingleClick: (() -> Void)?
     /// Amazon orders: drill-down of all items (and the refunded order's items)
     /// below the row; collapsed rows keep the uniform list height.
     @State private var amazonExpanded = false
@@ -810,6 +819,7 @@ struct BookingRow: View {
                     .foregroundStyle(Theme.secondary)
                     .lineLimit(1)
                     .fixedSize()
+                    .bookingNoteOccupied()
                     .frame(width: 80 * textScale, alignment: .leading)
             }
             MerchantSignet(merchant: booking.merchant, categorySymbol: booking.categorySymbol, size: isSingleLine ? 26 : 36, showNewDot: !booking.checked)
@@ -821,13 +831,11 @@ struct BookingRow: View {
                             .strokeBorder(Theme.secondary, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                     }
                 }
+                .bookingNoteOccupied()
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    Text(booking.merchant.name.isEmpty ? booking.bookingText : booking.merchant.name)
-                        .sensitive()
-                        .appFont(.body, weight: .semibold)
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(showsDetails ? nil : 1)
+                    BookingRowText(booking.merchant.name.isEmpty ? booking.bookingText : booking.merchant.name,
+                                   prominent: true, wraps: showsDetails, onSingleClick: onTextSingleClick)
                         .fixedSize(horizontal: false, vertical: true)
                         .layoutPriority(1)
                     if booking.documentCount > 0 {
@@ -861,14 +869,11 @@ struct BookingRow: View {
                         .layoutPriority(-1)
                     }
                     if isSingleLine, !visiblePurpose.isEmpty {
-                        Text(visiblePurpose)
-                            .sensitive()
-                            .appFont(.callout)
-                            .foregroundStyle(Theme.secondary)
-                            .lineLimit(1)
+                        BookingRowText(visiblePurpose, onSingleClick: onTextSingleClick)
                             .layoutPriority(-2)
                     }
                 }
+                .bookingNoteOccupied()
                 if !showsDetails && !isSingleLine {
                     HStack(spacing: 6) {
                         #if !os(iOS)
@@ -892,11 +897,7 @@ struct BookingRow: View {
                             let itemsText = refundSource.map { "· \($0.items)  ↩" }
                                 ?? (ref.items.isEmpty ? nil : "· \(ref.items)")
                             if let itemsText {
-                                Text(itemsText)
-                                    .sensitive()
-                                    .appFont(.callout)
-                                    .foregroundStyle(Theme.secondary)
-                                    .lineLimit(1)
+                                BookingRowText(itemsText, onSingleClick: onTextSingleClick)
                                     .layoutPriority(-1)
                                     .help(ref.isRefund
                                           ? "Erstattung für Bestellung #\(ref.code)"
@@ -937,11 +938,7 @@ struct BookingRow: View {
                                 .accessibilityLabel(amazonExpanded ? Text("Artikel einklappen") : Text("Alle Artikel anzeigen"))
                             }
                         } else if density == .compact, !density.purpose(for: booking).isEmpty {
-                            Text(density.purpose(for: booking))
-                                .sensitive()
-                                .appFont(.callout)
-                                .foregroundStyle(Theme.secondary)
-                                .lineLimit(1)
+                            BookingRowText(density.purpose(for: booking), onSingleClick: onTextSingleClick)
                                 .layoutPriority(-1)
                         } else if let counter = model.counterAccount(for: booking) {
                             Text("· ⇄ \(counter.name)")
@@ -958,6 +955,7 @@ struct BookingRow: View {
                                 .layoutPriority(-1)
                         }
                     }
+                    .bookingNoteOccupied()
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .clipped()
                 }
@@ -967,6 +965,7 @@ struct BookingRow: View {
             Spacer(minLength: isSingleLine ? 0 : 8)
             HStack(spacing: 4) {
                 BookingNoteIndicator(booking: booking)
+                    .bookingNoteOccupied()
                 // Reserve both slots so the note stays beside the checkmark even on unchecked rows.
                 ZStack {
                     if booking.checked, model.lingeringBookingID != booking.id {
@@ -1024,18 +1023,16 @@ struct BookingRow: View {
                         .accessibilityLabel(Text(verbatim: "\(String(localized: "Saldo")): \(redaction.masking(balance.text, .amounts))"))
                 }
             }
+            .bookingNoteOccupied()
         }
         if (showsDetails || density == .standard), amazonRef == nil, !visiblePurpose.isEmpty {
-            Text(visiblePurpose)
-                .sensitive()
-                .appFont(.callout)
-                .foregroundStyle(Theme.secondary)
-                .lineLimit(showsDetails ? nil : 1)
+            BookingRowText(visiblePurpose, wraps: showsDetails, onSingleClick: onTextSingleClick)
                 .fixedSize(horizontal: false, vertical: true)
+                .bookingNoteOccupied()
                 .padding(.leading, detailInset)
         }
         if showsDetails {
-            BookingInlineDetails(booking: booking)
+            BookingInlineDetails(booking: booking, showsCategoryDropdown: showsCategoryChip, onTextSingleClick: onTextSingleClick)
                 .padding(.top, 4)
                 .padding(.leading, detailInset)
         }
@@ -1055,6 +1052,7 @@ struct BookingRow: View {
                     }
                 }
             }
+            .bookingNoteOccupied()
             .padding(.leading, detailInset)
             .padding(.bottom, 4)
         }
@@ -1205,24 +1203,50 @@ private struct SelectionScroller: View {
 /// ("Ohne Kategorie" like the sidebar entry, in the warning colour).
 struct BookingCategoryLabel: View {
     let booking: Booking
+    var showsPath = false
     @Environment(AppModel.self) private var model
+    #if os(macOS)
+    @State private var showsPicker = false
+    #endif
 
     var body: some View {
         let none = booking.categoryName.isEmpty
         let color = none ? Theme.warning : Color.readable(hex: booking.categoryColorHex)
         HStack(spacing: 3) {
+            #if os(macOS)
+            Button { showsPicker = true } label: {
+                HStack(spacing: 3) {
+                    label(none: none)
+                    Image(systemName: "chevron.down").appFont(.caption2).accessibilityHidden(true)
+                }
+                .foregroundStyle(color)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .capturablePopover(isPresented: $showsPicker, arrowEdge: .bottom) {
+                BookingCategoryPicker(booking: booking) { showsPicker = false }
+                    .environment(model)
+            }
+            .onChange(of: booking.id) { showsPicker = false }
+            #else
+            label(none: none).foregroundStyle(color)
+            #endif
+            if none { BookingSuggestionHint(booking: booking) }
+        }
+    }
+
+    private func label(none: Bool) -> some View {
+        HStack(spacing: 3) {
             Image(systemName: none
                 ? "questionmark.folder"
                 : (booking.categorySymbol.isEmpty ? SymbolCatalog.defaultCategorySymbol : booking.categorySymbol))
                 .appFont(.caption)
-            Text(none ? model.uncategorizedLabel : booking.categoryName)
+            let name = showsPath && !booking.categoryPath.isEmpty ? booking.categoryPath : booking.categoryName
+            Text(none ? model.uncategorizedLabel : name)
                 .sensitive(.labels)
                 .appFont(.callout, weight: .medium)
                 .lineLimit(1)
-                .foregroundStyle(color)
-            if none { BookingSuggestionHint(booking: booking) }
         }
-        .foregroundStyle(color)
     }
 }
 
@@ -1602,11 +1626,20 @@ private struct LockToolbarButton: View {
 @MainActor
 enum ClickModifiers {
     private(set) static var atLastMouseDown: NSEvent.ModifierFlags = []
+    private(set) static var bookingTextHandledMouseDown = false
+    private(set) static var bookingTextInClickSequence = false
     private static var monitor: Any?
+
+    static func handledBookingTextMouseDown() {
+        bookingTextHandledMouseDown = true
+        bookingTextInClickSequence = true
+    }
 
     static func install() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { event in
+            bookingTextHandledMouseDown = false
+            if event.clickCount <= 1 { bookingTextInClickSequence = false }
             atLastMouseDown = event.modifierFlags.intersection([.command, .shift, .option, .control])
             return event
         }

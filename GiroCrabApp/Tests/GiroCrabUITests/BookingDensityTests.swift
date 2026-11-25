@@ -82,6 +82,18 @@ final class BookingDensityTests: XCTestCase {
         XCTAssertTrue(fields.allSatisfy { !$0.value.isEmpty })
     }
 
+    func testExpandedRowHasCategoryControlForUncategorizedBooking() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        var booking = try XCTUnwrap(model.bookings.first)
+        booking.categoryId = nil
+        booking.categoryName = ""
+        booking.categoryPath = ""
+        let field = BookingInlineDetails.fields(for: booking, includesUncategorized: true)
+            .first { $0.id == "category" }
+        XCTAssertEqual(field?.value, String(localized: "Ohne Kategorie"))
+        XCTAssertEqual(field?.redaction, .labels)
+    }
+
     func testFullPurposePreservesOriginalCardTextAndMovesOnlyTaggedReferences() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         var booking = try XCTUnwrap(model.bookings.first)
@@ -92,6 +104,18 @@ final class BookingDensityTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testNoteDoubleClickOnlyOpensOutsideOccupiedAreasAndTextSequences() {
+        let text = CGRect(x: 12, y: 4, width: 120, height: 18)
+        let amount = CGRect(x: 320, y: 4, width: 60, height: 18)
+        let occupied = [text, amount]
+        let gap = CGPoint(x: 200, y: 12)
+
+        XCTAssertFalse(BookingNoteDoubleClick.opensNote(at: CGPoint(x: 20, y: 12), occupied: occupied, textClick: false))
+        XCTAssertFalse(BookingNoteDoubleClick.opensNote(at: CGPoint(x: 330, y: 12), occupied: occupied, textClick: false))
+        XCTAssertTrue(BookingNoteDoubleClick.opensNote(at: gap, occupied: occupied, textClick: false))
+        XCTAssertFalse(BookingNoteDoubleClick.opensNote(at: gap, occupied: occupied, textClick: true))
+    }
+
     /// Exercises real SwiftUI layout with narrow widths, long text and large type.
     /// Optional local QA images contain only the fictional fixture below.
     func testNarrowRowsGrowForDetailsAndLargeText() throws {
