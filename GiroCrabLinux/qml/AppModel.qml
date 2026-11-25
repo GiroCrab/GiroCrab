@@ -2172,11 +2172,21 @@ QtObject {
         sessionPollsInFlight++
         coreAsync("session_poll", { session: id }, step => {
             sessionPollsInFlight--
-            if (activeSession !== id) return   // skipped / cancelled meanwhile
+            if (activeSession !== id) { settleForeignPoll(); return }   // skipped / cancelled meanwhile
             // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with Finished
             if (activeChallenge && activeChallenge.busy && !step.Finished) return
             handleStep(step, connection)
-        }, err => { sessionPollsInFlight--; if (activeSession === id) finishSync(err, connection) })
+        }, err => {
+            sessionPollsInFlight--
+            if (activeSession === id) finishSync(err, connection)
+            else settleForeignPoll()
+        })
+    }
+    /// A poll of a skipped or cancelled session has come back: the challenge shown now (maybe of
+    /// the next session, built while that poll was out) must not keep „TAN auslassen“ locked.
+    function settleForeignPoll() {
+        if (activeChallenge && activeChallenge.polling && sessionPollsInFlight === 0)
+            activeChallenge = Object.assign({}, activeChallenge, { polling: false })
     }
     function submitCode(code) {
         if (activeTransfer !== null && activeChallenge) { submitTransferCode(code); return }
