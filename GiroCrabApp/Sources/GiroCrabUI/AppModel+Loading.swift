@@ -728,7 +728,11 @@ extension AppModel {
     /// the background (the menu closes at once, the old list stays until the new one is in);
     /// set from code it stays synchronous, callers read the list right after.
     func reloadAfterFilterChange() {
-        if loadsFilterInBackground, vault != nil {
+        let inBackground = loadsFilterInBackground && vault != nil
+        // rows chosen in the previous list would stay selected without being shown, like a
+        // sidebar or period change (#1696); a ⌘A pressed before waits for the new list
+        dropMultiSelection(keepingPendingSelectAll: inBackground)
+        if inBackground {
             startSelectionLoad(keepingShown: true)
         } else {
             reloadBookings()
@@ -739,6 +743,8 @@ extension AppModel {
     /// The search text only narrows the list: the KPIs, history and merchant data do not
     /// depend on it, so just the page reloads, in the background.
     func reloadListInBackground() {
+        // another search: same rule as a status change (#1696)
+        dropMultiSelection(keepingPendingSelectAll: true)
         if selectionLoadTask != nil { startSelectionLoad() } else { reloadScopeBookings() }
     }
 

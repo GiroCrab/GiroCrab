@@ -90,6 +90,15 @@ extension AppModel {
     /// Bearbeiten › Alles auswählen (⌘A) in the booking list: every booking matching the
     /// filter, not only the loaded pages (#1696). The rest loads in the background first,
     /// so count, sum and every action on the selection cover all of them.
+    ///
+    /// State of a pending ⌘A:
+    /// - `isSelectingAllBookings`: the rest of the shown list is loading (`appendBookings`);
+    ///   its completion selects. Cleared by `dropPendingPage` (any full reload), a newer
+    ///   selection (`selectedBookingID` / `selectedBookingIDs` observers) and `dropMultiSelection`.
+    /// - `selectAllAfterReload`: ⌘A came while a new list loads (`isReloadingList`); `publish`
+    ///   runs `selectAllShownBookings` on that list. Cleared by a newer selection and by
+    ///   `dropMultiSelection` (kept for a status/search change, which narrows the same view).
+    /// Never both at once: the completion turns the first into the second when a reload started.
     func selectAllBookings() {
         // the previous list may still show while the new one loads: never select its rows,
         // select the new one's as soon as it is published
@@ -140,11 +149,17 @@ extension AppModel {
     /// Another account, group, category or period: a multiple selection made in the previous
     /// list ends (like a folder change in Finder). Kept, it would cover only the rows of the
     /// new list's first page that happen to be in both – neither „all“ nor what was chosen (#1696).
-    func dropMultiSelection() {
+    /// `keepingPendingSelectAll`: a status or search change narrows the same view, so a ⌘A
+    /// pressed before it selects the new list once it is published (only for a background reload).
+    func dropMultiSelection(keepingPendingSelectAll: Bool = false) {
+        let pending = keepingPendingSelectAll && (isSelectingAllBookings || selectAllAfterReload)
         isSelectingAllBookings = false
         selectAllAfterReload = false
-        guard isMultiSelection else { return }
-        selectedBookingIDs = selectedBookingID.map { [$0] } ?? []
+        if isMultiSelection {
+            selectedBookingIDs = selectedBookingID.map { [$0] } ?? []
+        }
+        // set after the selection change: its observer clears a pending ⌘A
+        if pending { selectAllAfterReload = true }
     }
 
     private func selectLoadedBookings() {
