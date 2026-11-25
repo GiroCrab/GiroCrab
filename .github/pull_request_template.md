@@ -13,6 +13,12 @@
      What ran, with its result (tests, measurements, a --redact screenshot); e.g. the table of scripts/verify-fast.sh.
      Name what did not run as "not run". -->
 
+## Zahlungspfad / Payment path
+
+<!-- Nur nötig, wenn TransferSheetView.swift, payment_input.rs, connectors/fints/sepa.rs oder connectors/fints/transfer.rs geändert werden (scripts/lint-transfer-integrity.sh).
+     Only needed when one of those files changes. -->
+- [ ] Zahlungspfad geprüft / payment path reviewed: IBAN-/Betragsprüfung, Bestätigung und TAN-Ablauf unverändert oder getestet, keine Umgehung, keine echten Kontodaten
+
 <!-- Nur bei KI-Unterstützung behalten und ausfüllen (docs/ai-transparency.md), sonst löschen.
      Only with AI help: keep and fill in (docs/ai-transparency.md), otherwise delete. -->
 ### 🤖 AI Process Reflection

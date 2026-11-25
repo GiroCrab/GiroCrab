@@ -181,6 +181,10 @@ jobs:
         run: scripts/lint-ffi-exports.sh
       - name: Every schema step is described in schema.rs and docs/ARCHITECTURE.md
         run: scripts/lint-schema-docs.sh
+      - name: Payment path files exist, are in CODEOWNERS, no bypass; PR checklist ticked
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: scripts/lint-transfer-integrity.sh
       - name: No unsafe outside sys.rs, no processes, hidden includes or encoded data in the payment path
         run: scripts/lint-no-obfuscation.sh
       - if: needs.changes.outputs.rust == 'true'

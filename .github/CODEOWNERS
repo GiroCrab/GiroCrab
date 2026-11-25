@@ -1,0 +1,16 @@
+# Security-critical paths need a review by the maintainer (#1799, #946).
+# scripts/lint-transfer-integrity.sh checks that the payment path stays covered.
+/girocrab-core/src/vault*                                  @dr-prinz
+/girocrab-core/src/secret*                                 @dr-prinz
+/girocrab-core/src/sys.rs                                  @dr-prinz
+/girocrab-core/src/sepa.rs                                 @dr-prinz
+/girocrab-core/src/payment_input.rs                        @dr-prinz
+/girocrab-core/src/connectors/                             @dr-prinz
+/girocrab-core/src/local_api/                              @dr-prinz
+/GiroCrabApp/Sources/GiroCrabUI/VaultKeyManager.swift      @dr-prinz
+/GiroCrabApp/Sources/GiroCrabUI/PrivacyRedaction.swift     @dr-prinz
+/GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift        @dr-prinz
+/GiroCrabApp/Sources/GiroCrabUI/TransferSheetView.swift    @dr-prinz
+/.github/workflows/                                        @dr-prinz
+/scripts/                                                  @dr-prinz
+/policy/                                                   @dr-prinz
