@@ -34803,13 +34803,13 @@
         }
       }
     },
-    "Wähle erkannte wiederkehrende Buchungen aus oder lege ein Abo von Hand an. Mehrere Verträge beim selben Anbieter erscheinen als eigene Einträge, sofern die Beträge verschieden sind." : {
+    "Wähle erkannte wiederkehrende Buchungen aus oder lege ein Abo von Hand an. Verträge beim selben Anbieter erscheinen nur dann als eigene Einträge, wenn sich ihre Beträge deutlich unterscheiden." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pick detected recurring bookings or create a subscription by hand. Several contracts with the same provider appear as separate entries as long as their amounts differ."
+            "value" : "Pick detected recurring bookings or create a subscription by hand. Contracts with the same provider only appear as separate entries when their amounts differ clearly."
           }
         }
       }

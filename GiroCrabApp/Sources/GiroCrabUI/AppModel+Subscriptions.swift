@@ -6,17 +6,47 @@ import GiroCrabCore
 /// in-app subscriptions) are separate series as long as their amounts differ. Manual entries are
 /// stored next to them. All of it is one JSON setting in the vault: no schema step.
 extension AppModel {
-    func loadSubscriptionData() {
-        let current = ((try? vault?.getSetting(key: SubscriptionStore.settingKey)) ?? nil)
-        let legacy = current == nil ? ((try? vault?.getSetting(key: SubscriptionStore.legacySettingKey)) ?? nil) : nil
-        let loaded = SubscriptionStore.decode(current, legacy: legacy)
-        if loaded != subscriptionData { subscriptionData = loaded }
+    /// Nothing of the previous vault stays (demo ↔ own vault, lock): data, bookings, selection, waiting reloads.
+    func resetSubscriptionState() {
+        subscriptionReloadTask?.cancel()
+        subscriptionReloadTask = nil
+        pendingSubscriptionReload = nil
+        reloadsAllSubscriptionAccounts = false
+        subscriptionDataLoaded = false
+        subscriptionData = SubscriptionData()
+        subscriptionBookings = [:]
+        selectedSubscriptionID = nil
     }
 
-    private func storeSubscriptionData(_ value: SubscriptionData) {
+    /// A failed read keeps what is there and blocks writing: an unreadable setting must never be
+    /// replaced by an empty snapshot that the next edit would then store over the real contracts.
+    func loadSubscriptionData() {
         guard let vault else { return }
-        runCore { try vault.setSetting(key: SubscriptionStore.settingKey, value: SubscriptionStore.encode(value)) }
+        do {
+            let current = try vault.getSetting(key: SubscriptionStore.settingKey)
+            let legacy = current == nil ? try vault.getSetting(key: SubscriptionStore.legacySettingKey) : nil
+            let loaded = SubscriptionStore.decode(current, legacy: legacy)
+            if loaded != subscriptionData { subscriptionData = loaded }
+            subscriptionDataLoaded = true
+        } catch {
+            errorMessage = describe(error)
+        }
+    }
+
+    /// Publishes the new value only after it is stored; false when nothing was written.
+    @discardableResult
+    private func storeSubscriptionData(_ value: SubscriptionData) -> Bool {
+        guard let vault else { return false }
+        if !subscriptionDataLoaded { loadSubscriptionData() }
+        guard subscriptionDataLoaded else { return false }
+        do {
+            try vault.setSetting(key: SubscriptionStore.settingKey, value: SubscriptionStore.encode(value))
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
         subscriptionData = value
+        return true
     }
 
     func isSubscription(_ s: RecurringSeries) -> Bool { subscriptionData.entries[s.seriesKey] != nil }
@@ -79,8 +109,12 @@ extension AppModel {
                 .min(by: { abs($0.amountCents - old.amountCents) < abs($1.amountCents - old.amountCents) }),
               now.seriesKey != old.seriesKey else { return }
         var data = subscriptionData
-        data.entries[old.seriesKey] = nil
-        data.entries[now.seriesKey] = data.entries[now.seriesKey] ?? details
+        // Two contracts of one payee can merge into one series when a rhythm changes: if the target is
+        // already marked, the old entry stays where it is (not shown, but its fields are not lost).
+        if data.entries[now.seriesKey] == nil {
+            data.entries[old.seriesKey] = nil
+            data.entries[now.seriesKey] = details
+        }
         storeSubscriptionData(data)
         if selectedSubscriptionID == old.seriesKey { selectedSubscriptionID = now.seriesKey }
         scheduleSubscriptionBookingsReload(accounts: [now.accountId])
@@ -161,12 +195,18 @@ extension AppModel {
     /// Runs one reload after the other: clicking "Hinzufügen" several times in a row must not start a
     /// query per click (each holds the vault for its whole run). Only the running one and the last one execute.
     func scheduleSubscriptionBookingsReload(accounts: Set<Int64>? = nil) {
+        // requests that wait collect their accounts: a cancelled one must not take its account with it
+        if let accounts { pendingSubscriptionReload = (pendingSubscriptionReload ?? []).union(accounts) }
+        else { reloadsAllSubscriptionAccounts = true }
         let previous = subscriptionReloadTask
         previous?.cancel()
         subscriptionReloadTask = Task { [weak self] in
             _ = await previous?.value
             guard !Task.isCancelled, let self else { return }
-            await reloadSubscriptionBookings(accounts: accounts)
+            let scope = reloadsAllSubscriptionAccounts ? nil : pendingSubscriptionReload
+            pendingSubscriptionReload = nil
+            reloadsAllSubscriptionAccounts = false
+            await reloadSubscriptionBookings(accounts: scope)
         }
     }
 

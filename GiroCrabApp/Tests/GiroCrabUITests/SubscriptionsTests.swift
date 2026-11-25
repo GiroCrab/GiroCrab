@@ -1,3 +1,4 @@
+// test: serial-defaults
 import XCTest
 import GiroCrabCore
 @testable import GiroCrabUI
@@ -409,6 +410,13 @@ final class SubscriptionsTests: XCTestCase {
         XCTAssertFalse(make(1).isEnded, "runs until tomorrow")
         XCTAssertEqual(make(-1).status?.ended, true)
         XCTAssertEqual(make(1).status?.daysToEnd, 1)
+    }
+
+    func testCurrencyOrderIsConsistentInBothDirections() {
+        let eur = item("e", cents: -100), cad = item("c", cents: -100, currency: "CAD"), chf = item("h", cents: -100, currency: "CHF")
+        let sorted = SubscriptionSort.yearlyAmount.sorted([chf, cad, eur])
+        XCTAssertEqual(sorted.map(\.id), ["e", "c", "h"], "EUR first, the others by code")
+        XCTAssertEqual(SubscriptionSort.yearlyAmount.sorted([eur, cad, chf]).map(\.id), ["e", "c", "h"])
     }
 
     func testLateCancellationRunsAnotherTerm() throws {

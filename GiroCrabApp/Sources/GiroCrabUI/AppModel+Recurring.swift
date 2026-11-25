@@ -70,6 +70,7 @@ extension AppModel {
             directionFilter = .all
             statusFilter = .all
             tagFilter = BookingTagFilter()
+            amountFilter = AmountFilter()
             searchText = ""
         } else if booking(withID: id) == nil {
             sidebarSelection = .allAccounts

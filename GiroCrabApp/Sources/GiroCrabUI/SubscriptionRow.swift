@@ -128,6 +128,8 @@ struct SubscriptionRow: View {
     var body: some View {
         let attention = item.attention
         VStack(alignment: .leading, spacing: 0) {
+            // a button, so the keyboard can reach and select the row
+            Button { model.selectedSubscriptionID = item.id } label: {
             HStack(alignment: .top, spacing: 12) {
                 SubscriptionIcon(item: item).opacity(item.isEnded ? 0.5 : 1)
                 VStack(alignment: .leading, spacing: 3) {
@@ -159,7 +161,8 @@ struct SubscriptionRow: View {
                 }
             }
             .contentShape(Rectangle())
-            .onTapGesture { model.selectedSubscriptionID = item.id }
+            }
+            .buttonStyle(.plain)
             Divider()
         }
         .accessibilityElement(children: .combine)

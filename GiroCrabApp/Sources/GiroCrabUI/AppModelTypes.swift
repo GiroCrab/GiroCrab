@@ -352,6 +352,9 @@ struct MerchantFocusReturn {
     let direction: BookingDirection
     let search: String
     let tags: BookingTagFilter
+    /// Set when the list was switched to all periods for the merchant list (a subscription's bookings).
+    var period: Period?
+    var amount: AmountFilter?
 }
 
 /// Tag filter of the booking list (#228): bookings carrying every tag in `tagIDs`,

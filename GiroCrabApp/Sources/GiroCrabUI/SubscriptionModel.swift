@@ -434,7 +434,7 @@ enum SubscriptionSort: String, CaseIterable, Identifiable {
             case .name: return byName(a, b)
             case .yearlyAmount:
                 // currencies are never compared: the amounts of one currency decide, EUR first
-                if a.currency != b.currency { return a.currency == "EUR" ? true : a.currency < b.currency }
+                if a.currency != b.currency { return a.currency == "EUR" ? true : (b.currency == "EUR" ? false : a.currency < b.currency) }
                 let x = abs(a.yearlyCents), y = abs(b.yearlyCents)
                 return x != y ? x > y : byName(a, b)
             case .nextPayment:

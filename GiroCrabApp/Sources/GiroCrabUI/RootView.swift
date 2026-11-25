@@ -712,6 +712,7 @@ struct MainSplitView: View {
         case .bookings: model.selectedBookingID != nil
         case .planned: model.selectedPlannedID != nil
         case .directDebits: model.selectedMandateID != nil
+        case .subscriptions: model.selectedSubscriptionID != nil
         case .documents, .wealth: false
         }
     }

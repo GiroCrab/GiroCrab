@@ -27,13 +27,18 @@ struct SubscriptionAddSheet: View {
     private var candidates: [RecurringSeries] {
         let q = search.trimmingCharacters(in: .whitespaces)
         let all = model.subscriptionCandidates.filter {
-            (accountFilter == nil || $0.accountId == accountFilter) && (q.isEmpty || $0.name.localizedCaseInsensitiveContains(q))
+            (shownAccount == nil || $0.accountId == shownAccount) && (q.isEmpty || $0.name.localizedCaseInsensitiveContains(q))
         }
         switch sortBy {
         case .name: return all.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         case .amount: return all.sorted { abs($0.amountCents) > abs($1.amountCents) }
         case .lastDate: return all.sorted { $0.lastDate > $1.lastDate }
         }
+    }
+
+    /// The chosen account while it still has candidates (else the list is not narrowed by a hidden filter).
+    private var shownAccount: Int64? {
+        accountFilter.flatMap { id in candidateAccounts.contains { $0.id == id } ? id : nil }
     }
 
     /// Accounts that have at least one detected series left.
@@ -75,11 +80,11 @@ struct SubscriptionAddSheet: View {
                 .background(Theme.card, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 HStack(spacing: 10) {
                     if candidateAccounts.count > 1 {
-                        Picker("Konto", selection: $accountFilter) {
+                        Picker("Konto", selection: Binding(get: { shownAccount }, set: { accountFilter = $0 })) {
                             Text("Alle Konten").tag(Int64?.none)
                             ForEach(candidateAccounts, id: \.id) { Text($0.name).tag(Int64?.some($0.id)) }
                         }
-                        .pickerStyle(.menu).fixedSize()
+                        .pickerStyle(.menu).fixedSize().sensitive()
                     }
                     Picker("Sortieren", selection: $sortBy) {
                         ForEach(Order.allCases) { Text($0.title).tag($0) }
@@ -121,7 +126,7 @@ struct SubscriptionAddSheet: View {
                     .appFont(.caption).foregroundStyle(Theme.secondary)
             }
             Spacer()
-            Text(Money.format(s.amountCents)).monospacedDigit().foregroundStyle(amountStyle.ink(s.amountCents)).sensitive(.amounts)
+            Text(Money.format(s.amountCents, currency: model.allAccounts.first { $0.id == s.accountId }?.currency ?? "EUR")).monospacedDigit().foregroundStyle(amountStyle.ink(s.amountCents)).sensitive(.amounts)
             Button("Hinzufügen") { model.setSubscription(s, marked: true) }
                 .buttonStyle(.borderless)
         }
@@ -167,6 +172,7 @@ private struct ManualSubscriptionForm: View {
                     HStack(spacing: 6) {
                         TextField("Betrag pro Zahlung", text: $amountText, prompt: Text("0,00"))
                             .textFieldStyle(.roundedBorder).labelsHidden().frame(width: 110).multilineTextAlignment(.trailing)
+                            .sensitive(.amounts)
                             .onChange(of: amountText) { _, t in if t.contains("-") { amountText = t.replacingOccurrences(of: "-", with: "") } }
                         Picker("Währung", selection: $currency) {
                             ForEach(currencies, id: \.self) { Text($0).tag($0) }

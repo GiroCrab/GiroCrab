@@ -51,7 +51,7 @@ struct SubscriptionsView: View {
                 ContentUnavailableView {
                     Label("Keine Abos", systemImage: "repeat.circle")
                 } description: {
-                    Text("Wähle erkannte wiederkehrende Buchungen aus oder lege ein Abo von Hand an. Mehrere Verträge beim selben Anbieter erscheinen als eigene Einträge, sofern die Beträge verschieden sind.")
+                    Text("Wähle erkannte wiederkehrende Buchungen aus oder lege ein Abo von Hand an. Verträge beim selben Anbieter erscheinen nur dann als eigene Einträge, wenn sich ihre Beträge deutlich unterscheiden.")
                 } actions: {
                     Button("Abo hinzufügen …") { showAdd = true }
                 }

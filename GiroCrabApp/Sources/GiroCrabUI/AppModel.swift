@@ -362,6 +362,11 @@ public final class AppModel {
     /// Bookings of the marked series by `seriesKey` (newest first), for the icon and the booking list.
     var subscriptionBookings: [String: [Booking]] = [:]
     @ObservationIgnored var subscriptionReloadTask: Task<Void, Never>?
+    /// The subscription setting was read at least once; until then nothing is written over it.
+    @ObservationIgnored var subscriptionDataLoaded = false
+    /// Accounts whose subscription bookings wait for the next reload (all of them when the flag is set).
+    @ObservationIgnored var pendingSubscriptionReload: Set<Int64>?
+    @ObservationIgnored var reloadsAllSubscriptionAccounts = false
     var showAddBank = false
     /// Series hidden with "Nicht wiederkehrend" (can be shown again).
     var recurringHidden: [IgnoredRecurring] = []
@@ -1715,6 +1720,7 @@ public final class AppModel {
         // Without a vault the selection reset loads nothing: its `didSet` would
         // otherwise scan the bookings synchronously, before the load below.
         vault = nil
+        resetSubscriptionState()
         selectedBookingID = nil
         sidebarSelection = .allAccounts
         vault = v
@@ -1745,6 +1751,7 @@ public final class AppModel {
     }
 
     func useVault(_ v: Vault, demo: Bool) {
+        resetSubscriptionState()
         vault = v
         demoActive = demo
         // The accounts loaded so far are the previous vault's (demo ↔ own): a waiting link
@@ -1865,6 +1872,7 @@ public final class AppModel {
         ownVault = nil
         demoActive = false
         vault = nil
+        resetSubscriptionState()
         accountsLoaded = false
         groups = []; userGroups = []; accountsByID = [:]; accountMarkers = [:]; bookings = []; categories = []; categoryTree = []; rules = []; tags = []; tagFilter = BookingTagFilter(); showTagFilter = false; showTagManager = false; tagDraft = TagDraft(); connections = []; settings = []
         page = nil; listBalances = ListBalances(); dashboard = nil; merchantStats = nil; merchantAccountStats = nil; categorySuggestion = nil; listSuggestions = [:]; logoCache = [:]

@@ -30,7 +30,7 @@ private struct SubscriptionDetailView: View {
     @State private var manual: ManualSubscription?
     @State private var amountText: String
     @State private var saveTask: Task<Void, Never>?
-    @State private var pending: (() -> Void)?
+    @State private var pending = false
     @State private var showAllBookings = false
     @State private var confirmRemove = false
 
@@ -68,13 +68,11 @@ private struct SubscriptionDetailView: View {
             Divider()
             actions.flatSection(vertical: 10)
         }
-        .onChange(of: draft) { _, new in
+        .onChange(of: draft) { old, new in
             // text is saved after a pause, switches and pickers at once
-            scheduleSave(delay: new.note == item.details.note ? 0 : 400) { model.setSubscriptionDetails(item, new) }
+            scheduleSave(delay: old.note == new.note ? 0 : 400)
         }
-        .onChange(of: manual) { _, new in
-            if let new { scheduleSave { model.updateManualSubscription(new) } }
-        }
+        .onChange(of: manual) { _, _ in scheduleSave(delay: 400) }
         .onAppear {
             // an older cancellation without an end: fix the assumed end (the next payment) so it stops moving
             if draft.cancelled, draft.contractEnd == nil, let due = item.nextDue { draft.contractEnd = due }
@@ -91,8 +89,8 @@ private struct SubscriptionDetailView: View {
     // MARK: saving
 
     /// Saved shortly after the last change, and when the inspector switches to another subscription.
-    private func scheduleSave(delay: Int = 400, _ work: @escaping () -> Void) {
-        pending = work
+    private func scheduleSave(delay: Int = 400) {
+        pending = true
         saveTask?.cancel()
         if delay == 0 { flush(); return }
         saveTask = Task { @MainActor in
@@ -102,10 +100,22 @@ private struct SubscriptionDetailView: View {
         }
     }
 
+    /// One snapshot of both drafts (fields and contract details), so a pending save of one never
+    /// replaces or reverts the other.
+    private func commit() {
+        if var m = manual {
+            m.details = draft
+            model.updateManualSubscription(m)
+        } else {
+            model.setSubscriptionDetails(item, draft)
+        }
+    }
+
     private func flush() {
         saveTask?.cancel()
-        pending?()
-        pending = nil
+        guard pending else { return }
+        pending = false
+        commit()
     }
 
     // MARK: header
@@ -164,6 +174,7 @@ private struct SubscriptionDetailView: View {
                 HStack(spacing: 6) {
                     TextField("0,00", text: $amountText)
                         .textFieldStyle(.roundedBorder).frame(width: 100).multilineTextAlignment(.trailing)
+                        .sensitive(.amounts)
                         .onChange(of: amountText) { _, t in
                             if t.contains("-") { amountText = t.replacingOccurrences(of: "-", with: ""); return }
                             if let c = Money.parseCents(t), c > 0 { manual?.amountCents = (manual?.amountCents ?? -1) > 0 ? c : -c }
@@ -189,8 +200,9 @@ private struct SubscriptionDetailView: View {
         fieldRow("Turnus") {
             if let s = item.series {
                 Picker("Turnus", selection: Binding(
-                    get: { s.interval == .custom ? RecurrenceInterval.monthly : s.interval },
-                    set: { model.changeSubscriptionRhythm(s, to: $0) })) {
+                    get: { s.interval },
+                    set: { if $0 != .custom { model.changeSubscriptionRhythm(s, to: $0) } })) {
+                    if s.interval == .custom { Text(RecurrenceInterval.custom.label).tag(RecurrenceInterval.custom) }
                     ForEach(RecurrenceInterval.fixed, id: \.self) { Text($0.label).tag($0) }
                 }
                 .labelsHidden().pickerStyle(.menu).fixedSize()

@@ -8,7 +8,7 @@ Sidebar › Zahlungen › **Abos & Verträge** (`SubscriptionsView`, `SidebarIte
   hinzufügen“ oder „Als Abo markieren“ im Fixkosten-Dialog), und **manuell angelegte** Einträge (Name, Art, Betrag,
   Turnus, ein Zahlungsdatum). Nichts wird automatisch als Abo eingestuft.
 - **Eine Serie = ein Abo.** Markierung und Felder hängen am `seriesKey`, nicht am Empfänger. Zwei Verträge beim selben
-  Anbieter (zwei Streaming-Tarife, mehrere In-App-Abos) sind getrennte Serien, solange ihre Beträge verschieden sind
+  Anbieter (zwei Streaming-Tarife, mehrere In-App-Abos) sind nur dann getrennte Serien, wenn sich ihre Beträge deutlich unterscheiden (die Erkennung fasst ähnliche Beträge zusammen)
   (`amountSpecific`).
 - Der Betrag trägt sein Vorzeichen: negativ = Ausgabe, positiv = Einnahme.
 
