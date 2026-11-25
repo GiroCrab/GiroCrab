@@ -85,11 +85,12 @@ extension AppModel {
         }
     }
 
-    /// Amex: statement PDFs of the card the portal shows, the ones not stored yet, downloaded
-    /// in the signed-in page: at most 24 from the last two years, or with `all` every one the
-    /// portal offers. Returns how many were added and how many could not be fetched or
-    /// stored (`failed` > 0 also when the statement list itself could not be read).
-    func importAmexStatements(_ c: BankConnection, browser: PortalBrowser, all: Bool = false)
+    /// Amex / Amazon Visa: statement PDFs of the card the portal shows, the ones not stored
+    /// yet, downloaded in the signed-in page: at most 24 from the last two years, or with
+    /// `all` every one the portal offers. Returns how many were added and how many could
+    /// not be fetched or stored (`failed` > 0 also when the statement list itself could
+    /// not be read).
+    func importPortalStatementPDFs(_ c: BankConnection, browser: PortalBrowser, all: Bool = false)
         async -> (added: Int, failed: Int) {
         // one vault for the whole job: a vault switched meanwhile gets nothing
         guard let pin = pinVault() else { return (0, 0) }
@@ -100,7 +101,9 @@ extension AppModel {
             (try? await pin.run { try $0.portalStatementDates(connectionId: id, cardKey: card, cardNumber: number) })
                 .map(Set.init)
         }
-        let fetched = await browser.amexStatements(known: known, since: since, limit: all ? Int.max : 24)
+        let fetched = c.connector == .americanExpress
+            ? await browser.amexStatements(known: known, since: since, limit: all ? .max : 24)
+            : await browser.visaStatements(known: known, since: since, limit: all ? .max : 24)
         AppModel.debugLog("portal statements: listed=\(fetched.listed) new=\(fetched.statements.count) failed=\(fetched.failed)")
         guard !fetched.statements.isEmpty else { return (0, fetched.failed) }
         let card = fetched.card, number = fetched.number, statements = fetched.statements
@@ -229,18 +232,22 @@ func clearPortalSession(_ kind: ConnectorKind) async {
 /// (`kunden.openbankpay.com` matches `openbankpay.com`, `openbankpay.com.evil.io` does not).
 struct PortalDomains: Sendable {
     let domains: [String]
+    /// The portal kind behind the domains, when derived from a connection:
+    /// gates the portal's own statement handling (Amex / Amazon Visa).
+    let kind: ConnectorKind?
 
-    init(_ hosts: [String], includeBaseDomains: Bool = true) {
+    init(_ hosts: [String], includeBaseDomains: Bool = true, kind: ConnectorKind? = nil) {
         var all = Set<String>()
         for h in hosts.map({ $0.lowercased() }) where !h.isEmpty {
             all.insert(h)
             if includeBaseDomains { all.insert(Self.baseDomain(h)) }
         }
         domains = all.sorted()
+        self.kind = kind
     }
 
     init(kind: ConnectorKind) {
-        self.init(kind.portalHosts + [kind.portalURL?.host].compactMap { $0 })
+        self.init(kind.portalHosts + [kind.portalURL?.host].compactMap { $0 }, kind: kind)
     }
 
     /// Last two labels ("portal.fnz.de" -> "fnz.de"); enough for the portals' TLDs.
@@ -433,11 +440,17 @@ final class PortalBrowser {
     }
 
     /// Amex: the latest statement list (`documents/info/statements`) and the card token of
-    /// its request; kept in memory only, for `amexStatements`.
+    /// its request; Amazon Visa: the last captured response whose URL names a statement
+    /// (its list page loads it; schema-agnostic, `parsePortalStatementList`). Both are
+    /// kept in memory only, for the statement download while the session is open.
     @ObservationIgnored private(set) var statementList: (body: String, token: String)?
 
     func captured(_ body: String, url: String, card: String = "") {
-        if url.lowercased().contains("documents/info/statements") {
+        let lower = url.lowercased()
+        if lower.contains("documents/info/statements") {
+            statementList = (body, card)
+        } else if domains.kind == .amazonVisa,
+                  lower.contains("statement") || lower.contains("abrechnung"), !Self.isBookingList(url) {
             statementList = (body, card)
         }
         let path = Self.maskedPath(url)
@@ -650,6 +663,107 @@ final class PortalBrowser {
             out.append(PortalStatement(date: s.date, bytes: data))
         }
         return (card, number, out, items.count, failed)
+    }
+
+    /// The statements tab of the Open-Bank portal (Amazon Visa); it mirrors the
+    /// booking page's route. The portal opens as `…/amazon/transactions`, so the
+    /// relative form stays right even for other card sections.
+    static let visaStatementsPageJS =
+        "location.href = location.origin + '/amazon/statements'; return true;"
+
+    /// PDF links of the visible page with a closing date from their row
+    /// (`href`, and the date out of the link's or its list entry's text).
+    static let pdfLinksJS = """
+    (function(){
+      var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      var date = function(t) {
+        var m = t.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
+        if (m) return m[0];
+        m = t.match(/(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})/);
+        return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : '';
+      };
+      var out = [];
+      document.querySelectorAll('a[href]').forEach(function(a) {
+        var href = a.getAttribute('href') || '';
+        if (/\\.pdf(\\?|#|$)/i.test(href) === false || !vis(a)) return;
+        var scope = a.closest('tr, li, article') || a;
+        out.push({ href: href, date: date(a.innerText || '') || date(scope.innerText || '') });
+      });
+      return JSON.stringify(out);
+    })()
+    """
+
+    /// Amazon Visa (Open Bank): statement PDFs of the signed-in portal. The list is
+    /// schema-agnostic — either a captured response whose URL names a statement, or
+    /// the visible PDF links of the page; the closing date decides, the portal's own
+    /// ids change with every login. Statements that cannot be reached (foreign host,
+    /// no date) are failures, like for Amex. `failed` counts them, or 1 when neither
+    /// list nor visible links appear (e.g. the portal shows no statements page).
+    func visaStatements(known: (String, String) async -> Set<String>?, since: String, limit: Int)
+        async -> (card: String, number: String, statements: [PortalStatement], listed: Int, failed: Int) {
+        guard onPortal, !onLoginPage else { return ("", "", [], 0, 0) }
+        if statementList == nil {
+            // the statements tab loads its list (and its PDF links)
+            _ = try? await webView.callAsyncJavaScript(Self.visaStatementsPageJS, contentWorld: .page)
+            for _ in 0..<40 where statementList == nil { try? await Task.sleep(nanoseconds: 500_000_000) }
+        }
+        var items: [(date: String, path: String)] = []
+        if let list = statementList {
+            items = parsePortalStatementList(body: list.body).map { ($0.date, $0.path) }
+        }
+        if items.isEmpty {
+            let rows = (try? await webView.callAsyncJavaScript(Self.pdfLinksJS, contentWorld: .page) as? String) ?? "[]"
+            items = (try? JSONSerialization.jsonObject(with: Data(rows.utf8)) as? [[String: Any]] ?? [])?
+                .compactMap { r in
+                    guard let path = r["href"] as? String, let date = r["date"] as? String else { return nil }
+                    return (date, path)
+                } ?? []
+        }
+        guard onPortal, !onLoginPage, !items.isEmpty else {
+            return ("", "", [], items.count, 0)
+        }
+        let card = Self.cardKey(statementList?.token ?? "")
+        guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1) }
+        let wanted = items
+            .filter { $0.date.count == 10 && $0.date >= since && !knownDates.contains($0.date) }
+            .map { (date: $0.date, path: $0.path) }
+            .sorted { $0.date > $1.date }
+        let todo = Array(wanted.prefix(limit))
+        guard !todo.isEmpty, onPortal, !onLoginPage, let keyHost = currentURL?.host else {
+            return (card, "", [], items.count, 0)
+        }
+        let download = """
+        try {
+          if (location.protocol !== 'https:' || location.host !== host) return '';
+          var u = new URL(path, location.origin);
+          if (u.host !== host) return '';
+          var r = await fetch(u.toString(), {credentials: 'include'});
+          if (!r.ok) return '';
+          var blob = await r.blob();
+          return await new Promise(function(done) {
+            var f = new FileReader();
+            f.onload = function() { done(String(f.result).split(',')[1] || ''); };
+            f.onerror = function() { done(''); };
+            f.readAsDataURL(blob);
+          });
+        } catch (e) { return ''; }
+        """
+        var out: [PortalStatement] = []
+        var failed = 0
+        for (n, s) in todo.enumerated() {
+            guard onPortal, !onLoginPage, currentURL?.host == keyHost else {
+                failed += todo.count - n
+                break
+            }
+            let b64 = (try? await webView.callAsyncJavaScript(download, arguments: ["path": s.path, "host": keyHost],
+                                                             contentWorld: .page) as? String) ?? ""
+            guard let data = Data(base64Encoded: b64), data.starts(with: Array("%PDF".utf8)) else {
+                failed += 1
+                continue
+            }
+            out.append(PortalStatement(date: s.date, bytes: data))
+        }
+        return (card, "", out, items.count, failed)
     }
 
     static func maskedPath(_ url: String) -> String {
@@ -892,7 +1006,8 @@ struct PortalWebSheet: View {
                     .help("Lässt dieses Fenster offen, damit Sie im Portal frühere Abrechnungszeiträume öffnen können.")
                 }
                 Button { importing = true } label: { Label("CSV- oder PDF-Kontoauszug importieren …", systemImage: "doc.badge.plus") }
-                if connection.connector == .americanExpress, !browser.onLoginPage, browser.onPortal {
+                if connection.connector == .americanExpress || connection.connector == .amazonVisa,
+                   !browser.onLoginPage, browser.onPortal {
                     Button {
                         statementsLoadedByHand = true
                         Task { await loadStatements(all: true) }
@@ -1037,11 +1152,11 @@ struct PortalWebSheet: View {
         return true
     }
 
-    /// Amex: downloads the new statement PDFs while the portal session is open; `all`
-    /// without the two-year limit (button), else the recent ones before closing. A download
-    /// already running is waited for, so closing never cuts it off.
+    /// Amex / Amazon Visa: downloads the new statement PDFs while the portal session is
+    /// open; `all` without the two-year limit (button), else the recent ones before
+    /// closing. A download already running is waited for, so closing never cuts it off.
     private func loadStatements(all: Bool = false) async {
-        guard connection.connector == .americanExpress else { return }
+        guard connection.connector == .americanExpress || connection.connector == .amazonVisa else { return }
         guard !loadingStatements else {
             while loadingStatements {
                 // the sheet went away: stop waiting
@@ -1051,7 +1166,7 @@ struct PortalWebSheet: View {
         }
         loadingStatements = true
         defer { loadingStatements = false }
-        let r = await model.importAmexStatements(connection, browser: browser, all: all)
+        let r = await model.importPortalStatementPDFs(connection, browser: browser, all: all)
         var notes: [String] = []
         if r.added > 0 { notes.append(String(localized: "\(r.added) neue Kontoauszüge")) }
         if r.failed > 0 { notes.append(String(localized: "\(r.failed) Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.")) }
@@ -1065,7 +1180,8 @@ struct PortalWebSheet: View {
     private func requestClose() {
         guard openHolds.isEmpty else { confirmDiscard = true; return }
         // a running statement download finishes first
-        if loadingStatements || (importedCount > 0 && connection.connector == .americanExpress) {
+        let cardPortal = connection.connector == .americanExpress || connection.connector == .amazonVisa
+        if loadingStatements || (importedCount > 0 && cardPortal) {
             Task { await loadStatements(); close() }
         } else {
             close()
@@ -1082,22 +1198,62 @@ struct PortalWebSheet: View {
             + String(localized: "„Vorerst behalten“ lässt sie als Vormerkung stehen; beim nächsten Abruf wird erneut gesucht.")
     }
 
+    /// What to do with the stored portal login on this poll. `.retry` keeps the poll
+    /// running (the vault has not answered: at app start it opens for a moment;
+    /// treating that as "nothing stored" latched the autofill off for one test run
+    /// and the login form stayed empty after a restart).
+    enum StoredLoginStep {
+        case fill(user: String, password: String)
+        case retry
+        case done
+    }
+
+    static func storedLoginStep(autofillDisabled: Bool, vaultAnswered: Bool,
+                                storedUser: String, password: String,
+                                connectionLogin: String, connectionIsAmazonVisa: Bool) -> StoredLoginStep {
+        if autofillDisabled { return .done }
+        guard vaultAnswered else { return .retry }
+        // Amazon Visa already stores the email as the connection login; use it when
+        // no separate user name was stored.
+        let user = storedUser.isEmpty && connectionIsAmazonVisa ? connectionLogin : storedUser
+        // nothing stored (or only a user name that was never given): stop polling
+        guard !user.isEmpty else { return .done }
+        return .fill(user: user, password: password)
+    }
+
     /// Fills the stored user name and password into the portal's login form. True once
     /// done, or when nothing is stored; false while the form is not there yet.
     private func fillStoredLogin() async -> Bool {
         let id = connection.id
-        guard !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)) else { return true }
-        let stored = try? await model.vaultOffMain {
-            (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+        var answered = true
+        var storedUser = "", password = ""
+        do {
+            let stored: (String, String)? = try await model.vaultOffMain {
+                (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+            }
+            if let stored {
+                (storedUser, password) = stored
+            } else {
+                answered = false
+            }
+        } catch {
+            answered = false
         }
-        guard let (storedUser, password) = stored, !password.isEmpty else { return true }
-        // Amazon Visa already stores the email as the connection login; copy it to
-        // the encrypted portal-login secret when the user opts into saving credentials.
-        let user = storedUser.isEmpty && connection.connector == .amazonVisa ? connection.loginName : storedUser
-        guard !user.isEmpty else { return true }
-        let filled = await browser.fillLogin(user: user, password: password)
-        if filled { AppModel.debugLog("portal: stored login filled in") }
-        return filled
+        let step = Self.storedLoginStep(
+            autofillDisabled: AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)),
+            vaultAnswered: answered, storedUser: storedUser, password: password,
+            connectionLogin: connection.loginName, connectionIsAmazonVisa: connection.connector == .amazonVisa)
+        switch step {
+        case .done:
+            return true
+        case .retry:
+            AppModel.debugLog("portal: vault busy – stored login read again")
+            return false
+        case let .fill(user, password):
+            let filled = await browser.fillLogin(user: user, password: password)
+            if filled { AppModel.debugLog("portal: stored login filled in (password \(password.isEmpty ? "no" : "yes"))") }
+            return filled
+        }
     }
 
     /// Amex: switches the portal to the next card not seen yet. Returns true while
