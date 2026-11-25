@@ -319,6 +319,9 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     // dialog stays, so a refresh of the same depot can reload it (`prepare(Some(..))`).
     crate::position_history_ui::loading(win);
     let (accounts, tangible) = with_ui(|u| (u.accounts.clone(), u.tangible_ids.clone()));
+    // Documents: session epoch and load number are taken before the worker starts, so a lock
+    // or a newer load in between drops this load's connection cache.
+    let doc_ticket = matches!(target, Target::Documents).then(doc_connections::begin_load);
     let generation = with_ui(|u| {
         // A tab or period change while loading must not re-render the previous depot
         // (and put its CSV back into the export cache).
@@ -328,7 +331,7 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     });
     let (weak, v) = (win.as_weak(), vault.clone());
     std::thread::spawn(move || {
-        let loaded = load(&v, target, &accounts, &tangible);
+        let loaded = load(&v, target, &accounts, &tangible, doc_ticket);
         let _ = weak.upgrade_in_event_loop(move |win| {
             if with_ui(|u| u.generation) != generation {
                 return;
@@ -388,6 +391,7 @@ fn load(
     target: Target,
     accounts: &[Account],
     tangible: &[i64],
+    doc_ticket: Option<doc_connections::LoadTicket>,
 ) -> Result<Loaded, String> {
     let e = |e: girocrab_core::CoreError| e.to_string();
     match target {
@@ -427,12 +431,13 @@ fn load(
             .map_err(e),
         Target::Mandates => vault.list_mandates(None).map(Loaded::Mandates).map_err(e),
         Target::Documents => {
-            // Before any reading: a lock during the load must not let `refresh` store old data.
-            let epoch = doc_connections::epoch();
+            // Taken on the UI thread before the worker started (`apply_view`): a lock or a newer
+            // load during this one must not let `refresh` store its data.
+            let ticket = doc_ticket.ok_or("Keine Ansicht für diese Auswahl.")?;
             let docs = vault
                 .list_all_documents(DocumentFilter::default())
                 .map_err(e)?;
-            doc_connections::refresh(vault, epoch)?;
+            doc_connections::refresh(vault, ticket)?;
             Ok(Loaded::Documents(docs))
         }
         _ => Err("Keine Ansicht für diese Auswahl.".into()),
@@ -1484,9 +1489,12 @@ mod tests {
             Target::Mandates,
             Target::Documents,
         ] {
-            assert!(load(&vault, target, &accounts, &tangible).is_ok());
+            let ticket = Some(doc_connections::begin_load());
+            assert!(load(&vault, target, &accounts, &tangible, ticket).is_ok());
         }
-        match load(&vault, Target::Wealth, &accounts, &tangible).unwrap() {
+        // Documents without a ticket from the UI thread is refused, not loaded unguarded.
+        assert!(load(&vault, Target::Documents, &accounts, &tangible, None).is_err());
+        match load(&vault, Target::Wealth, &accounts, &tangible, None).unwrap() {
             Loaded::Wealth(w) => {
                 let v = portfolio::wealth_view(&w, WealthTab::All, &eur);
                 assert!(!v.net_worth.is_empty());
@@ -1499,7 +1507,7 @@ mod tests {
             .filter(|a| a.kind == AccountKind::Brokerage || tangible.contains(&a.id))
             .collect();
         for a in depots {
-            match load(&vault, Target::Account(a.id), &accounts, &tangible).unwrap() {
+            match load(&vault, Target::Account(a.id), &accounts, &tangible, None).unwrap() {
                 Loaded::Depot(d) => {
                     let v = portfolio::depot_view(&d, Period::All, "2026-11-16", &eur, &date);
                     assert_eq!(v.kpis.len(), 4);
@@ -1507,7 +1515,7 @@ mod tests {
                 _ => panic!("depot expected"),
             }
         }
-        assert!(load(&vault, Target::Account(-5), &accounts, &tangible).is_err());
+        assert!(load(&vault, Target::Account(-5), &accounts, &tangible, None).is_err());
         let _ = std::fs::remove_file(&path);
     }
 

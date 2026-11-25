@@ -114,9 +114,34 @@ pub(crate) fn epoch() -> u64 {
     lock().epoch
 }
 
-/// Worker side: reads the connections, their switch state and document ids. `epoch` is the value
-/// of [`epoch`] from before the load started; after a lock the result is dropped.
-pub(crate) fn refresh(vault: &Vault, epoch: u64) -> Result<(), String> {
+/// Number of the latest started Documents load. Lock order: `LOADS` before the state lock.
+static LOADS: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+
+/// Session and order of one Documents load; taken on the UI thread before its worker starts.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LoadTicket {
+    epoch: u64,
+    seq: u64,
+}
+
+/// UI side: starts a Documents load. Every older load still running is superseded by it.
+pub(crate) fn begin_load() -> LoadTicket {
+    let mut latest = LOADS.lock().unwrap();
+    *latest += 1;
+    LoadTicket {
+        epoch: epoch(),
+        seq: *latest,
+    }
+}
+
+/// Only the latest started load may publish; an older one finishing late is dropped.
+fn is_latest(ticket: LoadTicket, latest: u64) -> bool {
+    ticket.seq == latest
+}
+
+/// Worker side: reads the connections, their switch state and document ids. `ticket` comes from
+/// [`begin_load`] before the load started; after a lock or a newer load the result is dropped.
+pub(crate) fn refresh(vault: &Vault, ticket: LoadTicket) -> Result<(), String> {
     // before the first read: a switch saved from here on is newer than this snapshot
     let saves = lock().saves;
     let accounts = vault.list_accounts().map_err(|e| e.to_string())?;
@@ -138,8 +163,26 @@ pub(crate) fn refresh(vault: &Vault, epoch: u64) -> Result<(), String> {
             name: c.display_name,
         });
     }
-    store(epoch, saves, conns);
+    // Held across `store`: no newer load can start between the check and the publication.
+    let latest = LOADS.lock().unwrap();
+    if is_latest(ticket, *latest) {
+        store(ticket.epoch, saves, conns);
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod load_ticket_tests {
+    use super::*;
+
+    #[test]
+    fn a_newer_load_supersedes_an_older_one() {
+        let older = begin_load();
+        let newer = begin_load();
+        assert!(newer.seq > older.seq);
+        assert!(!is_latest(older, newer.seq));
+        assert!(is_latest(newer, newer.seq));
+    }
 }
 
 /// Publishes a load. After a lock (`epoch` changed) it is dropped; if a switch was saved

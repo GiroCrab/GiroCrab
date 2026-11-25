@@ -284,6 +284,11 @@ fn wire_open(win: &MainWindow) {
         };
         // Show the stored state until the vault confirmed the change.
         win.set_doc_fetch_on(!on);
+        // Privacy mode locks changes like the other actions of the Belege view.
+        if crate::privacy_on(&win) {
+            win.set_view_status("Im Privatmodus nicht möglich.".into());
+            return;
+        }
         let target = crate::views_ui::doc_connections::toggle_target();
         let (Some(id), Some(v)) = (target, vault_now()) else {
             return;

@@ -1838,7 +1838,7 @@ export component MainWindow inherits Window {
                     }
                     if root.doc-fetch-shown: CheckBox {
                         text: "Dokumente abrufen";
-                        enabled: !root.busy && !SettingsImportState.busy;
+                        enabled: !root.busy && !SettingsImportState.busy && !root.privacy;
                         checked <=> root.doc-fetch-on;
                         toggled => { root.doc-fetch-toggled(self.checked); }
                     }
