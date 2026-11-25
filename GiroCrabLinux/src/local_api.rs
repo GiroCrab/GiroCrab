@@ -165,7 +165,8 @@ fn reconcile(target: &Arc<Vault>) -> Option<ShareScope> {
     }
     s.start_error = None;
     let started = socket_path().and_then(|p| {
-        LocalApiServer::start(target.clone(), p.display().to_string()).map_err(|e| describe(&e))
+        LocalApiServer::start(target.clone(), p.display().to_string(), None)
+            .map_err(|e| describe(&e))
     });
     match started {
         Ok(server) => {
