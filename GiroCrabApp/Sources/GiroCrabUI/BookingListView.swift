@@ -179,7 +179,8 @@ struct BookingStreamView: View {
         .focusEffectDisabled()
         .focused($focused)
         .onAppear {
-            focused = model.options.screenshotPath == nil
+            // also runs when a sidebar selection brings the list back, e.g. after a depot
+            if model.listMayTakeFocusOnAppear { focused = true }
             #if os(macOS)
             ClickModifiers.install()
             #endif

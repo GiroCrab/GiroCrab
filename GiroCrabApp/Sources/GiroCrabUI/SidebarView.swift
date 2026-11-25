@@ -640,6 +640,9 @@ private struct AccountRowHeight: ViewModifier {
 /// so they stay as they are and only the selection highlight moves.
 private struct SidebarSelectionList<Content: View>: View {
     @Environment(AppModel.self) private var model
+    #if os(macOS)
+    @FocusState private var focused: Bool
+    #endif
     let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -658,6 +661,10 @@ private struct SidebarSelectionList<Content: View>: View {
             content
         }
         .contentMargins(.top, 14, for: .scrollContent)
+        .focused($focused)
+        .onChange(of: focused) { _, focused in model.sidebarHasKeyboardFocus = focused }
+        // locked: the state goes with the view, without a change
+        .onDisappear { model.sidebarHasKeyboardFocus = false }
         #else
         @Bindable var model = model
         List(selection: $model.interactiveSidebarSelection) { content }
