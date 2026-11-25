@@ -117,48 +117,61 @@ struct BookingCategoryPicker: View {
 
     var body: some View {
         let rows = Self.rows(for: model.categoryTree)
-        let suggestion = suggestedCategory
+        let targets = model.categorizeTargets(for: booking)
+        let sharedCategory = targets.allSatisfy { $0.categoryId == booking.categoryId }
+        let suggestion = targets.count == 1 ? suggestedCategory : nil
         let entryCount = rows.count + (suggestion == nil ? 1 : 2)
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    Button {
-                        choose(nil)
-                    } label: {
-                        option(title: model.uncategorizedLabel, symbol: "questionmark.folder",
-                               color: Theme.warning, selected: booking.categoryId == nil)
-                    }
-
-                    if let category = suggestion {
-                        Button {
-                            choose(category.id)
-                        } label: {
-                            option(title: String(localized: "Vorschlag übernehmen: \(category.name)"),
-                                   symbol: "clock.arrow.circlepath", color: Theme.secondary)
-                        }
-                        Divider()
-                    }
-
-                    ForEach(rows) { row in
-                        categoryRow(row)
-                    }
-                }
-                .buttonStyle(.plain)
-                .padding(6)
+        VStack(spacing: 0) {
+            if targets.count > 1 {
+                Text("\(targets.count) Buchungen ausgewählt")
+                    .appFont(.caption, weight: .medium)
+                    .foregroundStyle(Theme.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                Divider()
             }
-            .frame(width: 238 * textScale, height: min(360 * textScale, 12 + CGFloat(entryCount) * 26 * textScale))
-            .onAppear {
-                if let id = booking.categoryId { proxy.scrollTo(id, anchor: .center) }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        Button {
+                            choose(nil)
+                        } label: {
+                            option(title: model.uncategorizedLabel, symbol: "questionmark.folder",
+                                   color: Theme.warning, selected: sharedCategory && booking.categoryId == nil)
+                        }
+
+                        if let category = suggestion {
+                            Button {
+                                choose(category.id)
+                            } label: {
+                                option(title: String(localized: "Vorschlag übernehmen: \(category.name)"),
+                                       symbol: "clock.arrow.circlepath", color: Theme.secondary)
+                            }
+                            Divider()
+                        }
+
+                        ForEach(rows) { row in
+                            categoryRow(row, selected: sharedCategory && booking.categoryId == row.id)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(6)
+                }
+                .frame(height: min(360 * textScale, 12 + CGFloat(entryCount) * 26 * textScale))
+                .onAppear {
+                    if let id = booking.categoryId { proxy.scrollTo(id, anchor: .center) }
+                }
             }
         }
+        .frame(width: 238 * textScale)
     }
 
     @ViewBuilder
-    private func categoryRow(_ row: Row) -> some View {
+    private func categoryRow(_ row: Row, selected: Bool) -> some View {
         let category = row.category
         let content = option(title: category.name, symbol: category.sfSymbol,
                              color: Color.readable(hex: category.colorHex),
-                             selected: booking.categoryId == row.id, depth: row.depth)
+                             selected: selected, depth: row.depth)
         if row.isGroup {
             content.accessibilityAddTraits(.isHeader)
         } else {
@@ -199,7 +212,7 @@ struct BookingCategoryPicker: View {
 
     private func choose(_ id: Int64?) {
         dismiss()
-        if id != booking.categoryId { model.setCategory(id, for: booking) }
+        model.setCategoryFromPicker(id, for: booking)
     }
 }
 #endif

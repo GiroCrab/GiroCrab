@@ -18,6 +18,12 @@ extension AppModel {
         return selectedBookingIDs.compactMap(self.booking(withID:))
     }
 
+    /// Keep a booking's category source intact when it already has the chosen category.
+    func setCategoryFromPicker(_ categoryID: Int64?, for booking: Booking) {
+        let changed = categorizeTargets(for: booking).filter { $0.categoryId != categoryID }
+        setCategory(categoryID, for: changed)
+    }
+
     /// Bookings dragged onto a sidebar category (#366); false when `items`
     /// carry no loaded booking.
     func dropBookings(_ items: [String], onCategory categoryID: Int64) -> Bool {

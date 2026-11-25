@@ -557,27 +557,21 @@ struct DayCardRow: View {
                 BookingRow(booking: b, compactDetailsCollapsed: compactDetailsCollapsed, balance: balance) {
                     selectRow(togglesDetails: false)
                 }
-                    #if os(macOS)
-                    .modifier(BookingNoteDoubleClick { model.editNote(for: b) })
-                    #else
-                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.editNote(for: b) })
-                    #endif
                     .dropDestination(for: URL.self) { urls, _ in
                         guard model.attach(urls, to: b) else { return false }
                         model.selectedBookingID = b.id
                         return true
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        #if os(macOS)
+                    #if os(macOS)
+                    .modifier(BookingRowClicks(selectRow: { flags in
                         // Finder-style: ⌘-click adds/removes, ⇧-click selects a range.
-                        guard !ClickModifiers.bookingTextHandledMouseDown else { return }
-                        let flags = ClickModifiers.atLastMouseDown
                         selectRow(toggle: flags.contains(.command), extend: flags.contains(.shift))
-                        #else
-                        selectRow()
-                        #endif
-                    }
+                    }, openNote: { model.editNote(for: b) }))
+                    #else
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectRow() }
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.editNote(for: b) })
+                    #endif
                     .modifier(RowSelectionTraits(id: b.id))
                     .contextMenu { rowMenu(b) }
                     #if os(macOS)
@@ -1223,6 +1217,7 @@ struct BookingCategoryLabel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .bookingCategoryTriggerBounds()
             .capturablePopover(isPresented: $showsPicker, arrowEdge: .bottom) {
                 BookingCategoryPicker(booking: booking) { showsPicker = false }
                     .environment(model)

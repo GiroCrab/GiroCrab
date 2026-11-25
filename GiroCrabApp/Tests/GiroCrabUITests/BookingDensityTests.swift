@@ -105,15 +105,25 @@ final class BookingDensityTests: XCTestCase {
 
     #if os(macOS)
     func testNoteDoubleClickOnlyOpensOutsideOccupiedAreasAndTextSequences() {
-        let text = CGRect(x: 12, y: 4, width: 120, height: 18)
-        let amount = CGRect(x: 320, y: 4, width: 60, height: 18)
-        let occupied = [text, amount]
+        let text = BookingRowClickRect(bounds: CGRect(x: 12, y: 4, width: 120, height: 18), region: .occupied)
+        let amount = BookingRowClickRect(bounds: CGRect(x: 320, y: 4, width: 60, height: 18), region: .occupied)
+        let regions = [text, amount]
         let gap = CGPoint(x: 200, y: 12)
 
-        XCTAssertFalse(BookingNoteDoubleClick.opensNote(at: CGPoint(x: 20, y: 12), occupied: occupied, textClick: false))
-        XCTAssertFalse(BookingNoteDoubleClick.opensNote(at: CGPoint(x: 330, y: 12), occupied: occupied, textClick: false))
-        XCTAssertTrue(BookingNoteDoubleClick.opensNote(at: gap, occupied: occupied, textClick: false))
-        XCTAssertFalse(BookingNoteDoubleClick.opensNote(at: gap, occupied: occupied, textClick: true))
+        XCTAssertFalse(BookingRowClicks.opensNote(at: CGPoint(x: 20, y: 12), regions: regions, textClick: false))
+        XCTAssertFalse(BookingRowClicks.opensNote(at: CGPoint(x: 330, y: 12), regions: regions, textClick: false))
+        XCTAssertTrue(BookingRowClicks.opensNote(at: gap, regions: regions, textClick: false))
+        XCTAssertFalse(BookingRowClicks.opensNote(at: gap, regions: regions, textClick: true))
+    }
+
+    func testCategoryTriggerDoesNotSelectOrDoubleClickBookingRow() {
+        let category = BookingRowClickRect(bounds: CGRect(x: 30, y: 4, width: 60, height: 18), region: .category)
+        let click = CGPoint(x: 50, y: 12)
+        let gap = CGPoint(x: 100, y: 12)
+
+        XCTAssertFalse(BookingRowClicks.selectsRow(at: click, regions: [category], textClick: false))
+        XCTAssertFalse(BookingRowClicks.opensNote(at: click, regions: [category], textClick: false))
+        XCTAssertTrue(BookingRowClicks.selectsRow(at: gap, regions: [category], textClick: false))
     }
 
     /// Exercises real SwiftUI layout with narrow widths, long text and large type.

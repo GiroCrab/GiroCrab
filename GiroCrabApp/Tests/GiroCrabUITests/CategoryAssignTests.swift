@@ -78,6 +78,23 @@ final class CategoryAssignTests: XCTestCase {
     }
     #endif
 
+    func testPickerAppliesCategoryToSelectionWhenClickedBookingAlreadyHasIt() throws {
+        let clicked = try XCTUnwrap(model.bookings.first { $0.categoryId != nil })
+        let category = try XCTUnwrap(clicked.categoryId)
+        let others = model.bookings.filter { $0.categoryId == nil }
+        let selected = try XCTUnwrap(others.first)
+        let outside = try XCTUnwrap(others.dropFirst().first)
+        model.selectedBookingID = clicked.id
+        model.selectedBookingIDs = [clicked.id, selected.id]
+
+        model.setCategoryFromPicker(category, for: clicked)
+
+        XCTAssertEqual(model.bookings.first { $0.id == clicked.id }?.categorySource, clicked.categorySource)
+        XCTAssertEqual(model.bookings.first { $0.id == selected.id }?.categoryId, category)
+        XCTAssertNil(model.bookings.first { $0.id == outside.id }?.categoryId)
+        XCTAssertEqual(model.selectedBookingIDs, [clicked.id, selected.id])
+    }
+
     func testAssignmentShowsAtOnceAndRefreshesInBackground() async throws {
         let (b, c) = try uncategorizedBooking()
         let before = derived()

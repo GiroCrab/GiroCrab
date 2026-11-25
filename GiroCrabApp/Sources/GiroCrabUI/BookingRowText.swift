@@ -24,11 +24,12 @@ struct BookingRowText: View {
     }
 
     private var style: Font.TextStyle { prominent ? .body : .callout }
+    private var weight: Font.Weight? { prominent ? .semibold : nil }
     private var color: Color { prominent ? Theme.text : Theme.secondary }
 
     var body: some View {
         let text = Text(value)
-            .appFont(style, weight: prominent ? .semibold : nil)
+            .appFont(style, weight: weight)
             .foregroundStyle(color)
             .lineLimit(wraps ? nil : 1)
         Group {
@@ -37,7 +38,7 @@ struct BookingRowText: View {
                 text.hidden().overlay {
                     SelectableBookingText(
                         value: value, wraps: wraps,
-                        font: .systemFont(ofSize: style.macSize(scale: scale), weight: prominent ? .semibold : .regular),
+                        font: style.appKitFont(scale: scale, weight: weight),
                         color: NSColor(color), onSingleClick: onSingleClick
                     )
                 }
@@ -139,48 +140,78 @@ extension View {
     /// Excludes a visible label or control from the macOS row's note shortcut.
     func bookingNoteOccupied() -> some View {
         #if os(macOS)
-        anchorPreference(key: BookingNoteOccupiedBounds.self, value: .bounds) { [$0] }
+        transformAnchorPreference(key: BookingRowClickAnchors.self, value: .bounds) { $0.append(($1, .occupied)) }
         #else
         self
         #endif
     }
+
+    #if os(macOS)
+    /// A click on the category picker must leave the row selection and density intact.
+    func bookingCategoryTriggerBounds() -> some View {
+        transformAnchorPreference(key: BookingRowClickAnchors.self, value: .bounds) { $0.append(($1, .category)) }
+    }
+    #endif
 }
 
 #if os(macOS)
-private struct BookingNoteOccupiedBounds: PreferenceKey {
-    static let defaultValue: [Anchor<CGRect>] = []
-    static func reduce(value: inout [Anchor<CGRect>], nextValue: () -> [Anchor<CGRect>]) {
+enum BookingRowClickRegion: Equatable {
+    case occupied
+    case category
+}
+
+private struct BookingRowClickAnchors: PreferenceKey {
+    static let defaultValue: [(Anchor<CGRect>, BookingRowClickRegion)] = []
+    static func reduce(value: inout [(Anchor<CGRect>, BookingRowClickRegion)],
+                       nextValue: () -> [(Anchor<CGRect>, BookingRowClickRegion)]) {
         value.append(contentsOf: nextValue())
     }
 }
 
-private struct BookingNoteOccupiedRects: PreferenceKey {
-    static let defaultValue: [CGRect] = []
-    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+struct BookingRowClickRect: Equatable {
+    let bounds: CGRect
+    let region: BookingRowClickRegion
+}
+
+private struct BookingRowClickRects: PreferenceKey {
+    static let defaultValue: [BookingRowClickRect] = []
+    static func reduce(value: inout [BookingRowClickRect], nextValue: () -> [BookingRowClickRect]) {
         value.append(contentsOf: nextValue())
     }
 }
 
-struct BookingNoteDoubleClick: ViewModifier {
+struct BookingRowClicks: ViewModifier {
+    let selectRow: (NSEvent.ModifierFlags) -> Void
     let openNote: () -> Void
-    @State private var occupied: [CGRect] = []
+    @State private var regions: [BookingRowClickRect] = []
 
-    static func opensNote(at point: CGPoint, occupied: [CGRect], textClick: Bool) -> Bool {
-        !textClick && !occupied.contains { $0.contains(point) }
+    static func selectsRow(at point: CGPoint, regions: [BookingRowClickRect], textClick: Bool) -> Bool {
+        !textClick && !regions.contains { $0.region == .category && $0.bounds.contains(point) }
+    }
+
+    static func opensNote(at point: CGPoint, regions: [BookingRowClickRect], textClick: Bool) -> Bool {
+        !textClick && !regions.contains { $0.bounds.contains(point) }
     }
 
     func body(content: Content) -> some View {
         content
-            .backgroundPreferenceValue(BookingNoteOccupiedBounds.self) { anchors in
+            .backgroundPreferenceValue(BookingRowClickAnchors.self) { anchors in
                 GeometryReader { proxy in
-                    Color.clear.preference(key: BookingNoteOccupiedRects.self, value: anchors.map { proxy[$0] })
+                    Color.clear.preference(key: BookingRowClickRects.self, value: anchors.map {
+                        BookingRowClickRect(bounds: proxy[$0.0], region: $0.1)
+                    })
                 }
                 .allowsHitTesting(false)
             }
-            .onPreferenceChange(BookingNoteOccupiedRects.self) { occupied = $0 }
+            .onPreferenceChange(BookingRowClickRects.self) { regions = $0 }
             .contentShape(Rectangle())
+            .simultaneousGesture(SpatialTapGesture().onEnded { tap in
+                if Self.selectsRow(at: tap.location, regions: regions, textClick: ClickModifiers.bookingTextHandledMouseDown) {
+                    selectRow(ClickModifiers.atLastMouseDown)
+                }
+            })
             .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { tap in
-                if Self.opensNote(at: tap.location, occupied: occupied, textClick: ClickModifiers.bookingTextInClickSequence) {
+                if Self.opensNote(at: tap.location, regions: regions, textClick: ClickModifiers.bookingTextInClickSequence) {
                     openNote()
                 }
             })
