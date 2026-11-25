@@ -1,34 +1,31 @@
 # Übersicht der UI-Audits
 
-Letzter Abgleich der Übersicht am 25.11.2026, SwiftUI auf macOS, iPhone und iPad, `main` @ `09f11987`. Jede Zeile benennt den
-Umfang für einen eigenen Bericht nach der [Audit-Anleitung](../ui-audit.md). Die Reihenfolge startet mit
-häufig genutzten Ansichten und Abläufen, bei denen Schriftgröße, Fokus oder Schwärzung besonders wichtig sind.
+Letzter Abgleich am 25.11.2026. Die 14 Hauptansichten auf macOS, iPhone und iPad sind in fünf Themenberichten
+dokumentiert. Jede Ansicht hat dort ihren eigenen Prüfstand und Prüfnachweis. Die [Audit-Anleitung](../ui-audit.md)
+beschreibt den Ablauf.
 
-## Begonnene Audits
+## Hauptansichten
 
-| Bericht | Stand | Nächste Prüfung |
-|---|---|---|
-| [Buchungsinspektor](buchungs-inspektor.md) | Neun Befunde behoben. INS-12 und INS-13 offen, INS-6 ist eine gemeinsame Designentscheidung. | Notizfeld im Dunkelmodus, Zugriff auf Händler-Historie und Kategorisieren mehrerer Buchungen per Maus und Tastatur. |
-| [Vermögen](vermoegen.md) | VER-1 bis VER-4 über [#1861](https://github.com/GiroCrab/GiroCrab/pull/1861) behoben. VER-5 und VER-6 betreffen Ringdiagramm und Legende bei großer Schrift. | Ringsumme und Legendenbeträge nachprüfen. Dieselbe Komponente in Depot und Sachwerte-Konto prüfen. [#998](https://github.com/GiroCrab/GiroCrab/issues/998) bleibt für den dort beschriebenen Datenfall offen. |
-| [Buchungsliste](buchungsliste.md) | BUC-1 bis BUC-3 dokumentiert. Betrifft Kategorienamen, Direktwahl und Kontrast. | Tastaturfokus und Kategorie-Popover auf dem Mac prüfen. |
+| Ansicht und Prüfnachweis | Stand und nächste Prüfung |
+|---|---|
+| [Seitenleiste](seitenleiste.md#seitenleiste) | SEI-1 und SEI-2 offen. Kontonamen und Symbolabstände bei großer Schrift prüfen. Pfeiltasten-Fokus in [#1883](https://github.com/GiroCrab/GiroCrab/pull/1883). |
+| [Buchungsliste](buchungen.md#buchungsliste) | BUC-1 bis BUC-3 offen. Kategorienamen, Direktwahl und Kontrast prüfen. Tastaturfokus und Kategorie-Popover auf dem Mac stehen aus. |
+| [Buchungsinspektor](buchungen.md#buchungsinspektor) | Neun Befunde behoben. INS-12 und INS-13 offen. INS-6 ist eine gemeinsame Designentscheidung. |
+| [Buchungssuche und Filter](buchungen.md#buchungssuche-und-filter) | SUC-1 offen. Weitere Filter bei großer Schrift auffindbar machen. |
+| [Kontoübersicht und Kennzahlen](buchungen.md#kontoübersicht-und-kennzahlen) | KON-1 bis KON-3 offen. Beträge und Achsenwerte bei großer Schrift prüfen. |
+| [Neue Umsätze](buchungen.md#neue-umsätze) | NEU-1 offen. Kontogruppen bei großer Schrift unterscheidbar machen. |
+| [Belege & Postbox](belege-und-postbox.md#belege--postbox) | BEL-1 nach [#1895](https://github.com/GiroCrab/GiroCrab/pull/1895) als `fixed` bestätigt. BEL-2 zu Titel und Datum in den Dokumentzeilen ist offen. |
+| [Geplant](zahlungen-und-vertraege.md#geplant) | GPL-1 und GPL-2 offen. Filter, Summen und Detailtitel auf dem iPhone prüfen. |
+| [Lastschriften](zahlungen-und-vertraege.md#lastschriften) | LAS-1 offen. Mandatsliste bei großer Schrift erreichbar halten. Der Detailtitel ist in GPL-2 erfasst. |
+| [Abos & Verträge](zahlungen-und-vertraege.md#abos--verträge) | ABO-1 und ABO-2 offen. iPhone-Breite und Öffnen des Vertragsdetails prüfen. |
+| [Vermögen](anlagen.md#vermögen) | VER-1 bis VER-4 über [#1861](https://github.com/GiroCrab/GiroCrab/pull/1861) behoben. VER-5 und VER-6 offen. Ringsumme und Legende bei großer Schrift prüfen. |
+| [Sparpläne & Perks](anlagen.md#sparpläne--perks) | SPA-1 offen. Planraster bei großer Schrift lesbar halten. Für Saveback und Round up fehlt ein Demo-Fall. |
+| [Einzeldepot](anlagen.md#einzeldepot) | DEP-1 offen. Kopf und Wertverlauf bei großer Schrift zusammen mit SAC-1 prüfen. |
+| [Sachwerte-Konto](anlagen.md#sachwerte-konto) | SAC-1 offen. Gemeinsames Layout mit dem Depot prüfen. |
 
-## Fehlende Berichte für die Hauptansichten
+## Weitere Audit-Kandidaten
 
-| Ansicht | Einstieg in `GiroCrabUI/` | Umfang |
-|---|---|---|
-| Seitenleiste | `SidebarView.swift`, `AllAccountsRoot.swift` | Konten- und Kategorienbaum, Salden, kompakte Darstellung und Navigation per Tastatur. Fokus-Fix in [#1883](https://github.com/GiroCrab/GiroCrab/pull/1883). |
-| Buchungssuche und Filter | `BookingListView.swift`, `BalanceHeaderView.swift`, `TagFilterUI.swift` | Suche, Zeitraum, Betrag, Tags und der Zustand ohne Treffer. |
-| Kontoübersicht und Kennzahlen | `BalanceHeaderView.swift`, `BookingListView.swift` | „Alle Konten“, Kontenkopf, Kennzahl-Leiste und Saldoverlauf. Beträge in schmalen Fenstern und mit großer Schrift prüfen. |
-| Neue Umsätze | `NewBookingsView.swift` | Gruppierung, Leerzustand und Abarbeiten ungelesener Buchungen. |
-| Sparpläne & Perks | `InvestmentDashboardView.swift`, `BookingListView.swift` | Gruppierung der Anlagebuchungen, Kennzahlen und Navigation zu Buchungen. |
-| Belege & Postbox | `DocumentsUI.swift`, `AccountDocumentsUI.swift` | Liste, Vorschau und Schwärzung von Dokumenten. iPhone-Layout-Fix in [#1895](https://github.com/GiroCrab/GiroCrab/pull/1895). |
-| Geplant | `PlannedPaymentsView.swift` | Liste und Detail für vorgemerkte Zahlungen und Daueraufträge. |
-| Lastschriften | `DirectDebitsView.swift`, `MandateInspector.swift` | Mandatsliste, Status und Details. |
-| Abos & Verträge | `SubscriptionsView.swift`, `SubscriptionInspector.swift` | Liste, Filter, Vertragsdetails und Bearbeitung. Die Beschreibung steht in [ABOS_UI.md](../ABOS_UI.md). |
-| Einzeldepot | `DepotDetailView.swift`, `DepotPositionsTable.swift` | Positionen, Historie, Aktivitäten und Sparpläne. Diagrammsteuerung aus VER-1 mitprüfen. |
-| Sachwerte-Konto | `TangibleAccountDetailView.swift`, `TangibleAssetsUI.swift` | Positionen, Werte, Mengen und gemeinsame Diagrammsteuerung aus VER-1. |
-
-## Fehlende Berichte für Dialoge und Einstellungen
+Dialoge und Einstellungen für spätere Durchgänge.
 
 | Ansicht | Einstieg in `GiroCrabUI/` | Umfang |
 |---|---|---|

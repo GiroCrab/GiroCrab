@@ -2,8 +2,8 @@
 
 Ein UI-Audit prüft **eine** Ansicht und macht daraus wenige, gut abgrenzbare Aufgaben. Ziel ist nicht, die ganze
 App auf einmal zu bewerten, sondern Schritt für Schritt nachvollziehbare Verbesserungen zu sammeln. Hintergrund
-und Diskussion: RFC #1673; erster Pilot: [`docs/ui-audits/buchungs-inspektor.md`](ui-audits/buchungs-inspektor.md).
-Laufende Nachprüfungen und fehlende Ansichten stehen in der [Audit-Übersicht](ui-audits/README.md).
+und Diskussion: RFC #1673; erster Pilot: [Buchungsinspektor](ui-audits/buchungen.md#buchungsinspektor).
+Prüfstand und offene Nachprüfungen stehen in der [Audit-Übersicht](ui-audits/README.md).
 
 Werkzeug ist [Impeccable](#mit-impeccable). Maßstab sind [`PRODUCT.md`](../PRODUCT.md) (wofür und für wen) und
 [`DESIGN.md`](../DESIGN.md) (wie es heute aussieht, mit den GiroCrab-Regeln unter „Do's and Don'ts“); Impeccable
@@ -11,14 +11,13 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
 
 ## Ablauf
 
-1. **Ansicht und Stand festlegen.** Pro Bericht eine Ansicht, ihren Einstieg in der App und die Hauptdateien
+1. **Ansicht und Stand festlegen.** Pro Audit eine Ansicht, ihren Einstieg in der App und die Hauptdateien
    festhalten. In der [Audit-Übersicht](ui-audits/README.md) und auf GitHub nach dem Namen der Ansicht sowie
    nach `[UI-Audit]` in Issues und PRs suchen. Vorhandene Berichte fortschreiben. Den geprüften Commit mit
    `git rev-parse --short HEAD` erfassen und lokale Patches angeben, falls die Prüfung sie braucht.
 2. **Demo-Fall festlegen.** Startargumente, Konto oder Buchung, Klickfolge und Vergleichszustände vor dem
    Durchgang festhalten. Bei relativen Zeiträumen auch das Datum der Aufnahme nennen. Bei einem Sheet den
-   Elternbildschirm und den Auslöser nennen. Für Dialoge oder
-   Fehlermeldungen simulierte Fälle mit Demo-Daten verwenden. Die [Prüfmatrix](#prüfmatrix) durchgehen und
+   Elternbildschirm und den Auslöser nennen. Für Dialoge und Fehlermeldungen simulierte Fälle mit Demo-Daten verwenden. Die [Prüfmatrix](#prüfmatrix) durchgehen und
    pro Plattform Betriebssystem, Gerät und Abweichungen festhalten.
 3. **Impeccable ausführen.** Native `critique` und `audit` auf die Hauptdatei der Ansicht anwenden, mit
    `PRODUCT.md` und `DESIGN.md` als Kontext. Dazu die [GiroCrab-Regeln](#was-impeccable-nicht-kennt) prüfen.
@@ -27,9 +26,11 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
    prüfen, sofern die Ansicht dort verfügbar ist. Für iPad-spezifische Befunde das passende Gerät ergänzen.
    Im Bericht die Startargumente, Interaktionen sowie erwartetes und beobachtetes
    Ergebnis nennen. Fälle ohne Nachweis als ausstehende Prüfung in die Übersicht aufnehmen.
-5. **Bericht schreiben.** Die [Vorlage](#vorlage-für-den-bericht) nach `docs/ui-audits/<bereich>.md` kopieren.
-   Jeder bestätigte Befund bekommt eine bleibende ID aus Kürzel und Nummer, z. B. `INS-1`. Neue Befunde
-   bekommen die nächste freie Nummer. Für bestehende Berichte gilt [Stand und Wiederholungen](#stand-und-wiederholungen).
+5. **Bericht schreiben.** Einen vorhandenen Themenbericht in `docs/ui-audits/` ergänzen, wenn die Ansicht
+   denselben Arbeitsablauf oder wichtige Komponenten teilt. Für einen neuen Bereich die
+   [Vorlage](#vorlage-für-den-bericht) verwenden. Jede Ansicht erhält eine eigene Zeile in der Bewertung
+   und einen gleichnamigen Abschnitt im Prüfnachweis. Jeder bestätigte Befund bekommt eine bleibende ID
+   aus Ansichtskürzel und Nummer, z. B. `INS-1`. Neue Befunde bekommen die nächste freie Nummer.
    Die Tabelle fasst jeden Befund in einer Zeile zusammen. Unter „Prüfnachweis“ reichen die Schritte,
    die speziell für diese Ansicht gelten. Die allgemeine Prüfmatrix steht hier in der Anleitung.
 6. **Sortieren.** Jeder Befund bekommt genau einen Weg:
@@ -53,20 +54,20 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
 
 ## Stand und Wiederholungen
 
-- **Berichtskopf „Datum / Stand“.** Das Prüfdatum (`TT.MM.JJJJ`) und der geprüfte App-Commit gehören zum
-  Erstaudit oder zum letzten vollständigen Audit der Ansicht. Datum und Commit beziehen sich auf den
-  Durchgang, aus dem die Scores stammen. Textkorrekturen, Links und reine Statuspflege lassen beide Angaben bestehen.
+- **„Datum / Stand“ je Ansicht.** Die Bewertungszeile enthält das Prüfdatum (`TT.MM.JJJJ`) und den geprüften
+  App-Commit des Erstaudits oder letzten vollständigen Audits. Datum und Commit gehören zu den Scores
+  dieser Zeile. Textkorrekturen, Links und reine Statuspflege lassen beide Angaben bestehen.
 - **Gezielte Nachprüfung.** Nach einem Fix, einem Verdacht auf Regression oder einer kleinen Änderung
   die betroffenen Demo-Fälle auf dem aktuellen Stand wiederholen. Unter „Prüfnachweis“ eine Zeile mit Datum,
   geprüftem Commit, Befund-IDs und Plattformen ergänzen. Ergebnis und Beleg den geprüften IDs zuordnen.
-  Wenn der neue Durchgang dieselben Fälle abdeckt, den bisherigen Nachweis ersetzen. Berichtskopf und Scores
+  Wenn der neue Durchgang dieselben Fälle abdeckt, den bisherigen Nachweis ersetzen. Datum und Scores
   gelten weiter für den vollständigen Durchgang. Tritt ein behobener Befund erneut auf, seine ID mit `open` wieder öffnen.
 - **Vollständiges Audit wiederholen.** Wenn sich Aufgabe, Aufbau, Bedienung, Plattformverhalten oder
   gemeinsame Komponenten so ändern, dass mehrere Prüffälle betroffen sind oder die Bewertung fraglich wird,
   den [Ablauf](#ablauf) am aktuellen `main` vollständig durchlaufen. Die bisherigen Demo-Fälle aus der
-  Prüfmatrix wiederholen und die neuen Zustände ergänzen. Im selben Bericht Kopf, Scores und Nachweis
-  aktualisieren. Bestehende Befund-IDs erhalten und neue fortlaufend ergänzen. Frühere Bewertungen bleiben
-  in der Git-Historie nachvollziehbar.
+  Prüfmatrix wiederholen und die neuen Zustände ergänzen. Im selben Bericht Bewertungszeile und
+  Prüfnachweis dieser Ansicht aktualisieren. Bestehende Befund-IDs erhalten und neue fortlaufend ergänzen.
+  Frühere Bewertungen bleiben in der Git-Historie nachvollziehbar.
 
 Eine fällige Nachprüfung mit Anlass in der [Audit-Übersicht](ui-audits/README.md) vormerken. Das Datum in
 ihrem Kopf bezeichnet den letzten Abgleich der Übersicht mit der App. Eine neue Version allein löst
@@ -223,9 +224,8 @@ herstellen und die genaue Folge im Bericht notieren.
 ## Vorlage für den Bericht
 
 ```markdown
-# UI-Audit: <Bereich>
+# UI-Audit: <Themenbereich>
 
-- **Datum / Stand:** <Prüfdatum des vollständigen Audits>, `main` @ <Commit>
 - **Ansicht:** <was genau, auf welchen Plattformen>
 - **Dateien:** `GiroCrabApp/Sources/GiroCrabUI/<Datei>.swift`
 - **Werkzeug:** Impeccable `critique` und `audit` (nativ), dazu GiroCrab-Regeln von Hand
@@ -242,9 +242,13 @@ herstellen und die genaue Folge im Bericht notieren.
 
 ## Impeccable-Bewertung
 
-**Critique <n>/<max> · Technisches Audit <n>/20.** <Wichtigstes Ergebnis in einem Satz>
+| Ansicht | Datum / Stand | Critique | Technisches Audit | Kurzbewertung |
+|---|---|---|---|---|
+| Beispielansicht | 25.11.2026, `main` @ `09f11987` | 25/36 | 14/20 | <Wichtigstes Ergebnis> |
 
 ## Prüfnachweis
+
+### Beispielansicht
 
 - **Nachprüfung:** <Datum, Commit, IDs, Plattformen, Ergebnis und Beleg, falls vorhanden>
 - **Umgebung:** <Plattformen, Versionen, Geräte, Sprache, geprüfte Varianten und Abweichungen von der Prüfmatrix>
