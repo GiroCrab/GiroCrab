@@ -8,6 +8,42 @@ use crate::models::{AccountKind, BookingFilter, BookingScope, ConnectorKind, Sep
 use crate::vault::Vault;
 
 #[test]
+fn dkb_offers_fints_and_one_psd2_access_with_or_without_live_catalog() {
+    use super::bank_directory::{BankAccessMode, Psd2Bank, search_banks};
+
+    let live_dkb = Psd2Bank {
+        name: "DKB".into(),
+        country: "DE".into(),
+        aspsp: "DKB".into(),
+        connector: None,
+        live: true,
+        tested: String::new(),
+    };
+    for live_catalog in [vec![], vec![live_dkb]] {
+        let banks = search_banks("DKB".into(), live_catalog, 10);
+        let fints = banks
+            .iter()
+            .find(|bank| bank.mode == BankAccessMode::FinTs && bank.blz == "12030000")
+            .expect("existing DKB FinTS access");
+        let psd2: Vec<_> = banks
+            .iter()
+            .filter(|bank| bank.mode == BankAccessMode::Psd2)
+            .collect();
+        assert_eq!(psd2.len(), 1);
+        let bank = psd2[0];
+        assert_eq!(bank.name, fints.name);
+        assert_eq!(bank.id, "psd2:DE:DKB");
+        assert_eq!(bank.aspsp, "DKB");
+        assert_eq!(bank.country, "DE");
+        assert_eq!(bank.connector, None);
+        assert!(bank.tested.is_empty());
+    }
+    // The assistant searches again using the selected FinTS entry's full name.
+    let banks = search_banks("DKB (Deutsche Kreditbank)".into(), vec![], 10);
+    assert!(banks.iter().any(|bank| bank.id == "psd2:DE:DKB"));
+}
+
+#[test]
 fn errors_after_submit_leave_outcome_unknown() {
     use super::{CoreError, error_leaves_outcome_unknown as unknown};
     assert!(unknown(&CoreError::Network {
