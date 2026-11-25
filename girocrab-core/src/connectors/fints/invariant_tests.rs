@@ -336,6 +336,12 @@ const VARIANTS: &[Variant] = &[
         date: None,
     },
     Variant {
+        seg_id: "HKCCS",
+        version: PainVersion::V03Dk,
+        instant: false,
+        date: None,
+    },
+    Variant {
         seg_id: "HKCSE",
         version: PainVersion::V03,
         instant: false,
@@ -518,7 +524,7 @@ fn payment(i: usize) -> BatchPayment {
 
 #[test]
 fn batch_transfers_keep_every_payment_in_order_and_the_sum_in_the_segment() {
-    for version in [PainVersion::V03, PainVersion::V09] {
+    for version in [PainVersion::V03, PainVersion::V03Dk, PainVersion::V09] {
         for batch_booking in [true, false] {
             for count in [1usize, 2, 7, 25] {
                 let payments: Vec<BatchPayment> = (0..count).map(payment).collect();
