@@ -190,9 +190,11 @@ enum WealthScope: CaseIterable, Identifiable {
         }
     }
     /// The label under the total in the header (the title on the left names the tab already).
-    var totalLabel: LocalizedStringKey {
+    func totalLabel(includingLiabilities: Bool, propertyHidden: Bool) -> LocalizedStringKey {
         switch self {
-        case .all: "Nettovermögen"
+        case .all where !includingLiabilities:
+            propertyHidden ? "Vermögenswerte ohne Immobilien" : "Vermögenswerte"
+        case .all: propertyHidden ? "Nettovermögen ohne Immobilien" : "Nettovermögen"
         case .cash: "Cash gesamt"
         case .securities: "Depotwert gesamt"
         case .tangibles: "Sachwert gesamt"
@@ -372,7 +374,7 @@ struct WealthView: View {
                     // after the classes where cash and property are listed too
                     if sharedHoldingsScope { figureTiles(d) }
                     HStack {
-                        Text(LocalizedStringKey(grouping == .instrument ? "Instrumente · Vermögenswerte (brutto)" : "Anlageklassen · Vermögenswerte (brutto)"))
+                        Text(classHeading)
                             .appFont(.subheadline, weight: .semibold)
                         Spacer()
                         Text(Money.format(d.classRows.reduce(0) { $0 + $1.cents })).sensitive(.amounts).monospacedDigit()
@@ -416,9 +418,7 @@ struct WealthView: View {
                 let debtAccounts = classMode ? s.liabilities.filter { $0.balanceCents < 0 } : s.liabilities
                 if scope == .all && !debtAccounts.isEmpty {
                     if classMode {
-                        Text(includeLiabilities
-                             ? String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben.")
-                             : String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen."))
+                        Text(grossNote)
                             .appFont(.caption).foregroundStyle(Theme.secondary)
                     }
                     listCard(Text("Verbindlichkeiten"), total: debtAccounts.reduce(0) { $0 + $1.balanceCents }, accounts: debtAccounts, tint: Theme.negative)
@@ -462,6 +462,10 @@ struct WealthView: View {
         let options = ownerOptions
         if !options.isEmpty {
             let selected = activeOwner
+            // Reflect the global switches in every tooltip, regardless of who holds real estate.
+            let help = scope == .all
+                ? scope.totalLabel(includingLiabilities: includeLiabilities, propertyHidden: hideDirectProperty)
+                : scope.title
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(options, id: \.self) { option in
@@ -469,7 +473,7 @@ struct WealthView: View {
                         // the tab and the property switch, so the chips split what is on screen
                         let accounts = model.allAccounts.filter(option.keeps)
                         let owned = WealthSummary(accounts: accounts, tangibleIds: Set(accounts.map(\.id).filter { model.isTangible($0) }))
-                        let net = WealthAssetSelection(summary: owned, assets: classified, hideDirectProperty: hideDirectProperty)
+                        let total = WealthAssetSelection(summary: owned, assets: classified, hideDirectProperty: hideDirectProperty)
                             .summary.scoped(to: scope).netCents(includingLiabilities: includeLiabilities)
                         Button { ownerFilter = option } label: {
                             VStack(alignment: .leading, spacing: 1) {
@@ -481,7 +485,7 @@ struct WealthView: View {
                                     }
                                 }
                                 .appFont(.callout, weight: .semibold)
-                                Text(Money.format(net)).sensitive(.amounts)
+                                Text(Money.format(total)).sensitive(.amounts)
                                     .appFont(.caption).foregroundStyle(Theme.secondary).monospacedDigit()
                             }
                             .padding(.horizontal, 12).padding(.vertical, 7)
@@ -494,7 +498,7 @@ struct WealthView: View {
                             .contentShape(RoundedRectangle(cornerRadius: 9))
                         }
                         .buttonStyle(.plain)
-                        .help(scope == .all ? LocalizedStringKey(hideDirectProperty ? "Nettovermögen ohne Immobilien" : "Nettovermögen") : scope.title)
+                        .help(help)
                         .accessibilityAddTraits(option == selected ? .isSelected : [])
                     }
                 }
@@ -533,7 +537,7 @@ struct WealthView: View {
         }
         let offerPropertySwitch = properties > 0 || (scope != .cash && scope != .securities && !fullSummary.tangibles.isEmpty)
         let propertyHidden = hideDirectProperty && properties > 0
-        let label = Text(scope == .all ? LocalizedStringKey(propertyHidden ? "Nettovermögen ohne Immobilien" : "Nettovermögen") : scope.totalLabel)
+        let label = Text(scope.totalLabel(includingLiabilities: includeLiabilities, propertyHidden: propertyHidden))
             .appFont(.caption).foregroundStyle(Theme.secondary)
         let value = Text(Money.format(s.netCents(includingLiabilities: includeLiabilities)))
             .sensitive(.amounts)
@@ -610,11 +614,23 @@ struct WealthView: View {
     }
 
     private func bar(_ title: LocalizedStringKey, _ cents: Int64, _ fraction: Double, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title).appFont(.subheadline, weight: .medium)
-                Spacer()
-                Text(Money.format(cents)).sensitive(.amounts).appFont(.subheadline).monospacedDigit()
+        let label = Text(title).appFont(.subheadline, weight: .medium)
+        let amount = Text(Money.format(cents)).sensitive(.amounts)
+            .appFont(.subheadline, monospacedDigit: true).fixedSize()
+        return VStack(alignment: .leading, spacing: 4) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    label.fixedSize()
+                    Spacer(minLength: 0)
+                    amount
+                }
+                VStack(alignment: .trailing, spacing: 2) {
+                    label.frame(maxWidth: .infinity, alignment: .leading)
+                    ViewThatFits(in: .horizontal) {
+                        amount
+                        ScrollView(.horizontal) { amount }
+                    }
+                }
             }
             GeometryReader { g in
                 ZStack(alignment: .leading) {
@@ -913,7 +929,7 @@ struct WealthView: View {
         Binding(
             get: {
                 switch grouping {
-                case .account, .accountKind: .position
+                case .account, .accountKind, .liquidity: .position
                 case .assetClass: .assetClass
                 case .instrument: .instrument
                 }
@@ -1056,6 +1072,23 @@ struct WealthView: View {
     static func gainText(cents: Int64, percent: Double) -> String {
         let sign = cents > 0 ? "+" : ""
         return "\(sign)\(Money.format(cents)) (\(sign)\(percent.formatted(.number.precision(.fractionLength(2)))) %)"
+    }
+
+    private var classHeading: LocalizedStringKey {
+        switch grouping {
+        case .instrument: "Instrumente · Vermögenswerte (brutto)"
+        case .liquidity: "Liquiditätsgrade · Vermögenswerte (brutto)"
+        case .account, .assetClass, .accountKind: "Anlageklassen · Vermögenswerte (brutto)"
+        }
+    }
+    /// Under the grouped cards: they add up the assets, the debts follow in their own card.
+    private var grossNote: String {
+        switch (grouping == .liquidity, includeLiabilities) {
+        case (true, true): String(localized: "Die Liquiditätsgrade zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben.")
+        case (true, false): String(localized: "Die Liquiditätsgrade zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen.")
+        case (false, true): String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben.")
+        case (false, false): String(localized: "Die Anlageklassen zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen.")
+        }
     }
 
     private func classCards(_ d: Derived) -> some View {
