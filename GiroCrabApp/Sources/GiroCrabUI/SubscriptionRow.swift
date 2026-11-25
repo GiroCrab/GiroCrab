@@ -129,7 +129,12 @@ struct SubscriptionRow: View {
         let attention = item.attention
         VStack(alignment: .leading, spacing: 0) {
             // a button, so the keyboard can reach and select the row
-            Button { model.selectedSubscriptionID = item.id } label: {
+            Button {
+                model.selectedSubscriptionID = item.id
+                #if os(iOS)
+                model.showBookingSheet = true
+                #endif
+            } label: {
             HStack(alignment: .top, spacing: 12) {
                 SubscriptionIcon(item: item).opacity(item.isEnded ? 0.5 : 1)
                 VStack(alignment: .leading, spacing: 3) {

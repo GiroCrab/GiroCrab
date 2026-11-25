@@ -18,9 +18,11 @@ extension AppModel {
         selectedSubscriptionID = nil
     }
 
+    /// Only the write path reports a failed read (`reportsFailure`): `refreshRecurring` loads on every reload,
+    /// and an alert in views that have nothing to do with subscriptions would be wrong.
     /// A failed read keeps what is there and blocks writing: an unreadable setting must never be
     /// replaced by an empty snapshot that the next edit would then store over the real contracts.
-    func loadSubscriptionData() {
+    func loadSubscriptionData(reportsFailure: Bool = false) {
         guard let vault else { return }
         do {
             let current = try vault.getSetting(key: SubscriptionStore.settingKey)
@@ -29,7 +31,7 @@ extension AppModel {
                 // stored but unreadable: keep what is shown and block writing, else the next edit would
                 // replace the real contracts by an empty snapshot
                 subscriptionDataLoaded = false
-                errorMessage = String(localized: "Die gespeicherten Abo-Daten sind nicht lesbar. Änderungen werden nicht gespeichert.")
+                if reportsFailure { errorMessage = String(localized: "Die gespeicherten Abo-Daten sind nicht lesbar. Änderungen werden nicht gespeichert.") }
                 return
             }
             if loaded != subscriptionData { subscriptionData = loaded }
@@ -38,13 +40,13 @@ extension AppModel {
             // an unreadable setting blocks writing, even when an earlier read had worked:
             // the snapshot in memory may be older than what is stored
             subscriptionDataLoaded = false
-            errorMessage = describe(error)
+            if reportsFailure { errorMessage = describe(error) }
         }
     }
 
     /// Mutations copy `subscriptionData` first, so it must be loaded before that copy is taken.
     private func ensureSubscriptionDataLoaded() -> Bool {
-        if !subscriptionDataLoaded { loadSubscriptionData() }
+        if !subscriptionDataLoaded { loadSubscriptionData(reportsFailure: true) }
         return subscriptionDataLoaded
     }
 
@@ -63,10 +65,14 @@ extension AppModel {
         return true
     }
 
-    private static func remember(_ s: RecurringSeries, in d: inout SubscriptionDetails) {
+    private func remember(_ s: RecurringSeries, in d: inout SubscriptionDetails) {
         d.baseKey = s.baseKey
         d.lastAmountCents = s.amountCents
         d.accountId = s.accountId
+        // taken once: a successor of this series (price rise) shows up next to it too, and must stay a candidate
+        if d.siblingKeys == nil {
+            d.siblingKeys = recurring.filter { $0.baseKey == s.baseKey && $0.seriesKey != s.seriesKey }.map(\.seriesKey)
+        }
     }
 
     /// The base key an entry belongs to: stored, else the series key without its amount suffix (`…#1299`).
@@ -90,6 +96,7 @@ extension AppModel {
             let base = Self.baseKey(of: key, d)
             let free = recurring.filter {
                 $0.baseKey == base && data.entries[$0.seriesKey] == nil
+                    && !(d.siblingKeys ?? []).contains($0.seriesKey)
                     && (d.accountId == nil || d.accountId == $0.accountId)
             }
             // Never by payee alone: a contract that ended must not hand its fields to another, never marked
@@ -102,7 +109,8 @@ extension AppModel {
             }
             guard let target else { continue }
             var moved = d
-            Self.remember(target, in: &moved)
+            moved.siblingKeys = nil
+            remember(target, in: &moved)
             data.entries[key] = nil
             data.entries[target.seriesKey] = moved
             if selectedSubscriptionID == key { selectedSubscriptionID = target.seriesKey }
@@ -110,7 +118,7 @@ extension AppModel {
         for s in recurring {
             guard var d = data.entries[s.seriesKey] else { continue }
             let before = d
-            Self.remember(s, in: &d)
+            remember(s, in: &d)
             if d != before { data.entries[s.seriesKey] = d }
         }
         guard data != subscriptionData else { return }
@@ -130,7 +138,7 @@ extension AppModel {
         var data = subscriptionData
         if marked {
             var d = data.entries[s.seriesKey] ?? SubscriptionDetails()
-            Self.remember(s, in: &d)
+            remember(s, in: &d)
             data.entries[s.seriesKey] = d
         } else { data.entries[s.seriesKey] = nil }
         storeSubscriptionData(data)

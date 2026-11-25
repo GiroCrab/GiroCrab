@@ -97,6 +97,9 @@ struct SubscriptionDetails: Codable, Equatable {
     var baseKey: String?
     var lastAmountCents: Int64?
     var accountId: Int64?
+    /// Keys of the series of the same payee that already existed next to this one. A series that appears
+    /// later is a successor (price rise), one of these is another contract and never takes this entry over.
+    var siblingKeys: [String]?
 
     init() {}
 
@@ -113,10 +116,11 @@ struct SubscriptionDetails: Codable, Equatable {
         baseKey = try c.decodeIfPresent(String.self, forKey: .baseKey)
         lastAmountCents = try c.decodeIfPresent(Int64.self, forKey: .lastAmountCents)
         accountId = try c.decodeIfPresent(Int64.self, forKey: .accountId)
+        siblingKeys = try c.decodeIfPresent([String].self, forKey: .siblingKeys)
     }
 
     private enum Keys: String, CodingKey {
-        case note, noticeValue, noticeUnit, contractEnd, renewalMonths, cancelled, cancelledOn, trialEnd, baseKey, lastAmountCents, accountId
+        case note, noticeValue, noticeUnit, contractEnd, renewalMonths, cancelled, cancelledOn, trialEnd, baseKey, lastAmountCents, accountId, siblingKeys
     }
 }
 
@@ -274,12 +278,14 @@ enum SubscriptionContract {
         if d.cancelled {
             // Cancelled after the deadline: the term runs on, the cancellation counts for the next one.
             var missed: Date?
+            let firstEnd = end
             if let onText = d.cancelledOn, let on = DateText.parseISODay(onText), let months = d.renewalMonths, months > 0 {
                 var n = 0
                 while n < 1200, let dl = deadline(end: end, details: d), dl < on {
                     missed = missed ?? dl
-                    end = cal.date(byAdding: .month, value: months, to: end) ?? end.addingTimeInterval(86_400 * 30)
                     n += 1
+                    // from the first end, not the previous one: 31 Jan + 1 month must not drift to the 28th for good
+                    end = cal.date(byAdding: .month, value: months * n, to: firstEnd) ?? end.addingTimeInterval(86_400 * 30)
                 }
             }
             let dl = deadline(end: end, details: d)
@@ -289,11 +295,12 @@ enum SubscriptionContract {
         }
         if let months = d.renewalMonths, months > 0 {
             var guardCount = 0
+            let firstEnd = end
             while guardCount < 1200 {
                 let dl = deadline(end: end, details: d)
                 guard end < now || (dl.map { $0 < now } ?? false) else { break }
-                end = cal.date(byAdding: .month, value: months, to: end) ?? end.addingTimeInterval(86_400 * 30)
                 guardCount += 1
+                end = cal.date(byAdding: .month, value: months * guardCount, to: firstEnd) ?? end.addingTimeInterval(86_400 * 30)
             }
         } else if end < now {
             expired = true

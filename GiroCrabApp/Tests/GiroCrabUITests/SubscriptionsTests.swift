@@ -329,6 +329,36 @@ final class SubscriptionsTests: XCTestCase {
     }
 
     @MainActor
+    func testSeriesThatAlreadyExistedNextToTheEntryIsNeverItsSuccessor() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let s = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        // a second contract of the payee with a similar amount is already there when the first one is marked
+        var sibling = s
+        sibling.seriesKey = s.baseKey + "#9"; sibling.amountCents = s.amountCents * 12 / 10
+        model.recurring.append(sibling)
+        model.setSubscription(s, marked: true)
+
+        model.recurring = model.recurring.filter { $0.seriesKey != s.seriesKey }
+        model.reconcileSubscriptionKeys()
+        XCTAssertNil(model.subscriptionData.entries[sibling.seriesKey], "the other contract stays unmarked")
+        XCTAssertNotNil(model.subscriptionData.entries[s.seriesKey])
+    }
+
+    @MainActor
+    func testUnreadableSettingIsOnlyReportedWhenWriting() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let vault = try XCTUnwrap(model.vault)
+        try vault.setSetting(key: SubscriptionStore.settingKey, value: "kaputt {")
+        model.resetSubscriptionState()
+        model.errorMessage = nil
+        model.refreshRecurring() // loads on every reload, also in views without subscriptions
+        XCTAssertNil(model.errorMessage)
+        model.addManualSubscription(name: "Verein", amountCents: -500, group: .monthly, currency: "EUR", startDate: "2026-01-01")
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    @MainActor
     func testAmbiguousSeriesAreNotMatchedByGuessing() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         model.refreshRecurring()
@@ -517,6 +547,13 @@ final class SubscriptionsTests: XCTestCase {
         XCTAssertFalse(make(1).isEnded, "runs until tomorrow")
         XCTAssertEqual(make(-1).status?.ended, true)
         XCTAssertEqual(make(1).status?.daysToEnd, 1)
+    }
+
+    func testRollingForwardKeepsTheEndOfMonth() throws {
+        var d = SubscriptionDetails()
+        d.contractEnd = "2026-01-31"; d.renewalMonths = 1
+        let status = try XCTUnwrap(SubscriptionContract.status(d, today: day("2026-04-10")))
+        XCTAssertEqual(DateText.iso(status.end), "2026-04-30", "not the 28th of the first short month, for good")
     }
 
     func testCurrencyOrderIsConsistentInBothDirections() {
