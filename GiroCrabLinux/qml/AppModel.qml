@@ -4412,6 +4412,8 @@ QtObject {
         if (account) {
             sidebarSelection = "account:" + account.id
             selectedBookingID = null
+            // --depot-tab activities: a securities depot on its activities tab (#564)
+            if (launchValue("--depot-tab") === "activities") DepotState.depotTab = "activities"
         }
         switch (launchValue("--demo-filter")) {
         case "income": directionFilter = "Income"; break
