@@ -58,6 +58,7 @@ pub fn handles(method: &str) -> bool {
             | "import_quirion_document"
             | "import_sharinbox_snapshot"
             | "import_axashareplan_snapshot"
+            | "import_berghauscie_snapshot"
             | "pending_sharinbox_documents"
             | "import_sharinbox_document"
             | "import_unioninvestment_snapshot"
@@ -238,6 +239,9 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
             .map_err(err)?),
         "import_axashareplan_snapshot" => ok(vault()?
             .import_axashareplan_snapshot(id()?, arg(a, "snapshot_json")?)
+            .map_err(err)?),
+        "import_berghauscie_snapshot" => ok(vault()?
+            .import_berghauscie_snapshot(id()?, arg(a, "snapshot_json")?)
             .map_err(err)?),
         "import_sharinbox_snapshot" => ok(vault()?
             .import_sharinbox_snapshot(id()?, arg(a, "snapshot_json")?)

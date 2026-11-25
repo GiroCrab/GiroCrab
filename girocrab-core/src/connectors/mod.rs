@@ -21,6 +21,7 @@ pub mod airplus;
 pub mod amazon_documents;
 pub mod axashareplan;
 pub mod bank_directory;
+pub mod berghauscie;
 pub mod bhw;
 pub mod bitcoin;
 pub mod bitcoin_core;

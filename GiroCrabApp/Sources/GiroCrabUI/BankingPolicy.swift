@@ -174,6 +174,7 @@ public struct BankingGate: Equatable, Sendable {
         case "axashareplan": base = "AXA Mitarbeiter Shareplan"
         case "unioninvestment": base = "Union Investment"
         case "airplus": base = "AirPlus"
+        case "berghauscie": base = "Berghaus & Cie (Weindepot)"
         case "easybank": base = "easybank"
         case "fin4u": base = "Alte Leipziger"
         case "volkswagenbank": base = "Volkswagen Bank"

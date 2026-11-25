@@ -13,7 +13,7 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, [.advanzia, .airPlus, .amazonOrders, .fnz, .quirion, .sharinbox, .axaShareplan, .unionInvestment, .schwaebischHall, .equatePlus, .edenred].contains(c.connector) { return true }
+        if !isDemo, [.advanzia, .airPlus, .amazonOrders, .fnz, .quirion, .sharinbox, .axaShareplan, .unionInvestment, .berghausCie, .schwaebischHall, .equatePlus, .edenred].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         // the card's own application (#824) or the default one
         let app = connectionEnableBankingApp(c.id)
@@ -183,6 +183,7 @@ extension ConnectorKind {
         case .axaShareplan: return URL(string: "https://espace-salarie.axa-mon-epargne-entreprises.com/")
         case .unionInvestment: return URL(string: "https://anlegen.meindepot.union-investment.de/dashboard/super")
         case .airPlus: return URL(string: AirPlusScripts.origin + "/")
+        case .berghausCie: return URL(string: "https://my.berghauscie.de/")
         case .schwaebischHall: return SchwaebischHallScripts.loginURL
         case .fnz: return URL(string: "https://portal.fnz.de/")
         case .edenred: return URL(string: "https://nutzer.edenred.de/")
@@ -218,6 +219,8 @@ extension ConnectorKind {
         // sign-in (Keycloak) and API run on service.*; the captcha on frcapi.com is a sub-resource
         case .unionInvestment: return ["anlegen.meindepot.union-investment.de", "service.meindepot.union-investment.de"]
         case .airPlus: return ["businesstravelportal.airplus.com", "sso.service.airplus.com"]
+        // the portal page and its GraphQL service (sign-in and data)
+        case .berghausCie: return ["my.berghauscie.de", "bc-cms.herokuapp.com"]
         case .schwaebischHall: return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         default: return []
         }

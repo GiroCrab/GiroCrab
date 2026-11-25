@@ -113,6 +113,7 @@ CONNECTOR_DOCS = {
     "sharinbox": ("Sharinbox (Société Générale)", "Sharinbox (Société Générale)"),
     "axashareplan": ("AXA Mitarbeiter Shareplan", "AXA"),
     "unioninvestment": ("Union Investment", "Union Investment"),
+    "berghauscie": ("Berghaus & Cie (Weindepot)", "Berghaus & Cie (Weindepot)"),
     "uberspace": ("Uberspace", "Uberspace"),
     "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),
     "kontist": ("Kontist", "Kontist"),

@@ -263,6 +263,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "union investment unioninvest uniondepot union depot fonds meindepot genossenschaftliche",
         ),
         (
+            ConnectorKind::BerghausCie,
+            "Berghaus & Cie (Weindepot)",
+            "berghaus berghauscie cie wein weine weindepot weininvestment wine fine wine",
+        ),
+        (
             ConnectorKind::SchwaebischHall,
             "Schwäbisch Hall",
             "schwaebisch bsh bausparvertrag bauspar",

@@ -7932,6 +7932,28 @@
         }
       }
     },
+    "Berghaus & Cie: %u Depot aktualisiert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Berghaus & Cie: %u depot updated."
+          }
+        }
+      }
+    },
+    "Berghaus & Cie: Die Portalantwort konnte nicht gelesen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Berghaus & Cie: The portal response could not be read."
+          }
+        }
+      }
+    },
     "Bernstein" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23390,6 +23412,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sign in to Amazon (password, captcha, 2FA as usual)."
+          }
+        }
+      }
+    },
+    "Melden Sie sich bei Berghaus & Cie an (E-Mail und Passwort)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in to Berghaus & Cie (e-mail and password)."
           }
         }
       }

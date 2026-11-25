@@ -46,6 +46,8 @@ pub enum ConnectorKind {
     AxaShareplan,
     /// Union Investment customer portal (UnionDepot), authenticated inside the embedded browser.
     UnionInvestment,
+    /// Berghaus & Cie wine investment portal, authenticated inside the embedded browser.
+    BerghausCie,
     /// easybank (formerly Barclays Deutschland) credit cards and statements, see #209.
     Easybank,
     /// Alte Leipziger (Bauspar) via the fin4u customer portal API
@@ -118,6 +120,7 @@ impl ConnectorKind {
             ConnectorKind::Sharinbox => "sharinbox",
             ConnectorKind::AxaShareplan => "axashareplan",
             ConnectorKind::UnionInvestment => "unioninvestment",
+            ConnectorKind::BerghausCie => "berghauscie",
             ConnectorKind::Easybank => "easybank",
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
@@ -190,6 +193,7 @@ impl ConnectorKind {
             ConnectorKind::Sharinbox,
             ConnectorKind::AxaShareplan,
             ConnectorKind::UnionInvestment,
+            ConnectorKind::BerghausCie,
             ConnectorKind::Easybank,
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,
