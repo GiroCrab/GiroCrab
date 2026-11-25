@@ -177,6 +177,12 @@ fn layout(version: PainVersion) -> Layout {
             other_bic: "BICFI",
             date_in_dt: false,
         },
+        PainVersion::V03Dk => Layout {
+            namespace: "urn:iso:std:iso:20022:tech:xsd:pain.001.003.03",
+            bic: "BIC",
+            other_bic: "BICFI",
+            date_in_dt: false,
+        },
         PainVersion::V09 => Layout {
             namespace: "urn:iso:std:iso:20022:tech:xsd:pain.001.001.09",
             bic: "BICFI",
@@ -326,6 +332,12 @@ const VARIANTS: &[Variant] = &[
     Variant {
         seg_id: "HKCCS",
         version: PainVersion::V09,
+        instant: false,
+        date: None,
+    },
+    Variant {
+        seg_id: "HKCCS",
+        version: PainVersion::V03Dk,
         instant: false,
         date: None,
     },
@@ -512,7 +524,7 @@ fn payment(i: usize) -> BatchPayment {
 
 #[test]
 fn batch_transfers_keep_every_payment_in_order_and_the_sum_in_the_segment() {
-    for version in [PainVersion::V03, PainVersion::V09] {
+    for version in [PainVersion::V03, PainVersion::V03Dk, PainVersion::V09] {
         for batch_booking in [true, false] {
             for count in [1usize, 2, 7, 25] {
                 let payments: Vec<BatchPayment> = (0..count).map(payment).collect();

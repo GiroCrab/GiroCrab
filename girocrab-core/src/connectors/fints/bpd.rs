@@ -219,8 +219,12 @@ impl FinTsConnector {
         // .09 whenever offered: banks that still list .03 may refuse it
         // (comdirect: "Sepa-Format nicht mehr gültig").
         let has = |suffix: &str| formats.is_some_and(|l| l.iter().any(|f| f.ends_with(suffix)));
+        // comdirect lists only the DK profile `.003.03` for HKCCS and rejects `.001.03`
+        // as not valid any more (#1792): use what the bank lists.
         Some(if has(".001.09") {
             sepa::PainVersion::V09
+        } else if !has(".001.03") && has(".003.03") {
+            sepa::PainVersion::V03Dk
         } else {
             sepa::PainVersion::V03
         })
