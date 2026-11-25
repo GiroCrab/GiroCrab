@@ -346,7 +346,15 @@ extension AppModel {
             : String(localized: "\(n) neue Postbox-Dokumente")
     }
 
-    /// Toast suffix: new bookings the bank delivered for archived accounts (not stored).
+    /// Shown after a sync that left history for the next one.
+    static func historyNote(_ s: SyncSummary) -> String {
+        guard s.historyIncomplete else { return "" }
+        let progress = HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal)).text
+        return " · " + String(localized: "Historie noch nicht vollständig – bitte noch einmal abrufen")
+            + (progress.isEmpty ? "" : " (\(progress))")
+    }
+
+    /// Toast suffix for bookings the bank delivered for archived accounts.
     static func skippedArchivedNote(_ s: SyncSummary) -> String {
         s.transactionsSkippedArchived == 0 ? "" : " · " + String(localized: "\(s.transactionsSkippedArchived) Buchungen archivierter Konten übersprungen")
     }
@@ -412,6 +420,7 @@ extension AppModel {
         let quiet = quietSyncConnectionID == connection.id
         syncingConnectionID = connection.id
         syncingAccountID = statementsFor ?? accountOnly
+        syncVaultRevision = vaultRevision
         syncGeneration &+= 1
         Task {
             var started: SyncSession?
@@ -433,6 +442,10 @@ extension AppModel {
                 self.activeSession = session
                 let step = try await session.start()
                 guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
+                // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with .finished
+                if self.activeChallenge?.busy == true {
+                    guard case .finished = step else { return }
+                }
                 self.handle(step, connection: connection)
             } catch {
                 if let started, self.activeSession !== started { return }
@@ -465,13 +478,17 @@ extension AppModel {
         }
         switch step {
         case .needsChallenge(let c):
-            activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: false)
+            activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: false,
+                                              canSkipOrder: activeSession?.isFetching() ?? false)
             if c.kind == .decoupledPush || c.kind == .progress { schedulePoll(connection: connection, interval: c.pollIntervalSeconds) }
         case .stillWaiting(let c):
             if activeChallenge == nil {
-                activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: true)
+                activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: true,
+                                                  canSkipOrder: activeSession?.isFetching() ?? false)
             } else {
                 activeChallenge?.challenge = c  // progress steps bring a new text
+                activeChallenge?.canSkipOrder = activeSession?.isFetching() ?? false
+                activeChallenge?.polling = false
                 activeChallenge?.waiting = true
                 activeChallenge?.busy = false
             }
@@ -482,10 +499,17 @@ extension AppModel {
             // what the bank would not give is no success (#1627)
             logSync(connectionID: connection.id, source: syncLogSource(for: connection.id),
                     outcome: s.warnings.isEmpty ? .ok : .partial,
-                    message: (s.warnings + s.hints).joined(separator: " / "), imported: Int(s.transactionsImported))
+                    message: connection.connector == .tradeRepublic ? Self.syncLogMessage(s) : (s.warnings + s.hints).joined(separator: " / "),
+                    imported: Int(s.transactionsImported))
             activeChallenge = nil
             syncingConnectionID = nil
             activeSession = nil
+            // Only a sync of the whole login in this vault tells the history's state: one account
+            // ("<Konto> abrufen", statements) leaves the history and its documents for later.
+            if syncingAccountID == nil, syncVaultRevision == vaultRevision {
+                historyIncomplete[connection.id] = s.historyIncomplete
+                    ? HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal)) : nil
+            }
             let statementsFetch = statementsAccountID != nil
             if let accountID = statementsAccountID {
                 statementsAccountID = nil
@@ -520,7 +544,7 @@ extension AppModel {
                 // scheduled syncs only speak up when something changed
                 if !quiet || s.transactionsImported > 0 || !s.newAccounts.isEmpty || !s.revokedAccounts.isEmpty
                     || !s.warnings.isEmpty {
-                    var note = syncNotice(connection, s) + Self.skippedArchivedNote(s)
+                    var note = syncNotice(connection, s) + Self.skippedArchivedNote(s) + Self.historyNote(s)
                     if let n = s.postboxDocuments, n > 0 { note += " · " + Self.postboxNote(s, connection) }
                     toast = note
                 }
@@ -557,9 +581,14 @@ extension AppModel {
                 return
             }
             guard let session = self.activeSession else { return }
+            if self.activeChallenge?.canSkipOrder == true { self.activeChallenge?.polling = true }
             do {
                 let step = try await session.poll()
                 guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
+                if self.activeChallenge?.busy == true {
+                    // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with .finished
+                    guard case .finished = step else { return }
+                }
                 self.handle(step, connection: connection)
             } catch {
                 guard self.activeSession === session else { return }
@@ -599,6 +628,25 @@ extension AppModel {
             do {
                 let step = try await session.submitCode(code: code)
                 // "Überspringen" while the code was on its way: drop the late answer
+                guard self.activeSession === session else { return }
+                self.handle(step, connection: ch.connection)
+            } catch {
+                guard self.activeSession === session else { return }
+                self.finishSync(error: error)
+            }
+        }
+    }
+
+    /// "TAN auslassen" (#1730): leaves out the order the bank wants a TAN for during the
+    /// fetch; the sync goes on with the rest and reports the order as a warning.
+    func skipOrder() {
+        guard let session = activeSession, let ch = activeChallenge, ch.canSkipOrder, !ch.busy else { return }
+        pollTask?.cancel()
+        activeChallenge?.busy = true
+        activeChallenge?.error = nil
+        Task {
+            do {
+                let step = try await session.skip()
                 guard self.activeSession === session else { return }
                 self.handle(step, connection: ch.connection)
             } catch {
@@ -687,14 +735,27 @@ extension AppModel {
         syncingConnectionID = nil
         // Trade Republic or Kontist on its stored session alone (no PIN given, none stored) whose
         // session expired (#1128): the core asks for the PIN/password, which only the PIN sheet
-        // takes (for Trade Republic it also offers the browser login). One typed there that fails
-        // stays an error.
-        if let ce = error as? CoreError, case .Authentication = ce, retrySecret?.isEmpty ?? true,
-           let conn = connections.first(where: { $0.id == syncingConnectionIDBeforeError }),
-           [.tradeRepublic, .kontist].contains(conn.connector), connectionStatus(conn.id)?.hasPin != true {
-            toast = describe(error)
-            pendingLogin = PendingLogin(connection: conn)
-            return
+        // takes (for Trade Republic it also offers the browser login). FNZ: a failed direct
+        // login with a saved PIN — rejected sign-in or changed portal — gets the same sheet
+        // with the browser fallback (#1863), otherwise no window could reach it again.
+        if let ce = error as? CoreError, retrySecret?.isEmpty ?? true,
+           let conn = connections.first(where: { $0.id == syncingConnectionIDBeforeError }) {
+            if [.tradeRepublic, .kontist].contains(conn.connector),
+               case .Authentication = ce, connectionStatus(conn.id)?.hasPin != true {
+                toast = describe(error)
+                pendingLogin = PendingLogin(connection: conn)
+                return
+            }
+            if conn.connector == .fnz {
+                var fallback = false
+                if case .Authentication = ce { fallback = true }
+                if case .Protocol = ce { fallback = true }
+                if fallback {
+                    toast = describe(error)
+                    pendingLogin = PendingLogin(connection: conn)
+                    return
+                }
+            }
         }
         // "Alle abrufen" (#1041): an error ends only this login. Its alert shows right away;
         // the batch goes on once it is closed ("Überspringen"), retries this login, or ends.

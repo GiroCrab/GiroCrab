@@ -1,4 +1,4 @@
-# FNZ Bank browser connector
+# FNZ Bank connector (direct login and browser window)
 
 <!-- sync:connector-note:start -->
 > **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur FNZ Bank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
@@ -8,9 +8,36 @@
 ## Scope and setup
 
 The FNZ Bank / ebase / finvesto connector uses the authenticated FNZ web portal.
-Sign in to `https://portal.fnz.de/` in GiroCrab's browser window, approve with
-FNZsecure, and choose **Konten und Depot abrufen**. Cookies and credentials stay
-inside the web view; the generic portal traffic recorder is disabled for FNZ.
+
+**Direct login (default).** Since the 2026-12 build the connector signs in on its
+own, the way the portal's own login form works and comparable tools do it:
+enter the **Zugangsnummer** and the **PIN** of the portal login (PIN sheet or the
+connection's edit sheet, with "PIN im Tresor speichern"). GiroCrab then
+
+1. opens `https://portal.fnz.de/finvesto`, follows the same-host redirects only,
+2. submits the portal's own login form (Zugangsnummer + PIN),
+3. verifies the session with the read-only overview call below, and reports a
+   decoupled **FNZsecure** challenge (poll every 5 s) while the approval is still
+   missing. The approval cannot be driven by GiroCrab — confirm it in the
+   FNZsecure app; a typed code is rejected.
+4. runs the same validated REST requests as the browser flow and maps them
+   through the same snapshot parser, then downloads pending mailbox PDFs.
+
+Both the browser import below and the direct login produce exactly the same
+accounts, transactions, holdings and documents. Without a stored PIN the PIN
+sheet opens; it offers the browser window as a fallback ("Im Browser-Fenster
+anmelden …"), as does a rejected direct login.
+
+**Browser window (fallback).** Sign in to `https://portal.fnz.de/` in GiroCrab's
+browser window, approve with FNZsecure, and choose **Konten und Depot abrufen**.
+Cookies and credentials stay inside the web view; the generic portal traffic
+recorder is disabled for FNZ.
+
+**Security of the direct login.** Credentials, cookies and the session prefix
+stay in the connector process for the duration of one sync; only
+`https://portal.fnz.de` ever receives them (the client refuses to follow
+redirects to other hosts, and the session prefix is never persisted or logged).
+The PIN is stored only in the vault (SQLCipher). The requests are read-only.
 
 The import covers all owner groups, with separate cash accounts and depots:
 
@@ -38,9 +65,13 @@ repeated fetches use stable transaction IDs and do not duplicate bookings.
 
 ## Portal requests
 
-All API paths below are relative to the current authenticated page's
-`location.origin + location.pathname + 'eox/rest/'`. Its session prefix must never
-be hardcoded or persisted. Requests include cookies, `X-EOX-Session`,
+Both variants speak the same REST API. In the browser variant all API paths are
+relative to the current authenticated page's
+`location.origin + location.pathname + 'eox/rest/'`; in the direct login the
+connector derives the same base from the URL reached after the login form
+(session prefix from the redirect target; trailing file name or `/login` route
+dropped, then `eox/rest/` appended — never guessed, never hardcoded or
+persisted). Requests include cookies, `X-EOX-Session`,
 `X-EOX-CLIENT-VERSION` (currently `26.4.01`) and a fresh `X-Context-ID`.
 POST requests below only read data; no orders or document statuses are changed.
 
@@ -53,7 +84,8 @@ POST requests below only read data; no orders or document statuses are changed.
 | POST | `order-transaction/getMigratedAabTransactionOverview` | Migrated AAB history |
 | POST | `postbox/getCustomerPostboxForCustomer` | Mailbox and archive |
 
-PDFs use the current session prefix followed by
+PDFs use the session prefix (path before `EOY`, as the browser script and the
+direct login build it) followed by
 `p/postkorb.aspx?docId=…&download=true`. Content type and `%PDF-` are validated.
 
 History requests cover 2000-01-01 through today, in pages of 100. Cash and depot
@@ -129,4 +161,4 @@ acquisition prices, malformed snapshots, atomic validation, repeat imports,
 empty inventories, mailbox/archive pagination and expired sessions.
 
 Sources: `GiroCrabApp/Sources/GiroCrabUI/FnzUI.swift`,
-`girocrab-core/src/connectors/fnz.rs` and its `snapshot` module.
+`girocrab-core/src/connectors/fnz.rs` and its `snapshot` and `portal` modules.

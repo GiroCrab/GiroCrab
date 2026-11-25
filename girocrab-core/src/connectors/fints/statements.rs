@@ -486,6 +486,8 @@ impl FinTsConnector {
         let reply_id = format!("HI{}", &tx[2..]);
         let mut docs = Vec::new();
         let mut touchdown: Option<String> = None;
+        // a failing page drops the PDFs read so far: their receipt codes go with them
+        let receipts_before = self.st.pending_receipts.len();
         for _page in 0..12 {
             // HKEKA: account, format 3 (PDF), number, year, max entries.
             // HKEKP: account, number, year, max entries (always PDF).
@@ -497,7 +499,13 @@ impl FinTsConnector {
             if let Some(t) = &touchdown {
                 b = b.de(&[t]);
             }
-            let r = self.request(ctx, tx, b.build()).await?;
+            let r = match self.request(ctx, tx, b.build()).await {
+                Ok(r) => r,
+                Err(e) => {
+                    self.st.pending_receipts.truncate(receipts_before);
+                    return Err(e);
+                }
+            };
             for s in r.all(&reply_id) {
                 crate::depot_debug::log(&format!(
                     "statements: {reply_id} v{} layout: {}",

@@ -1651,6 +1651,41 @@ fn bank_label_syncs_both_ways() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// #1716: the time of a single fetch travels with the account; the later one
+/// wins on both devices and a missing one never overwrites a set one.
+#[test]
+fn last_fetch_of_an_account_syncs_by_the_later_time() {
+    let dir = temp_dir("last-fetch-sync");
+    let a = open(&dir, "a.db");
+    let b = open(&dir, "b.db");
+    let ia = seed(&a);
+    let ib = seed(&b);
+    let set = |v: &Vault, id: i64, ts: Option<i64>| {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET last_fetch_unix = ?2 WHERE id = ?1",
+                params![id, ts],
+            )
+            .unwrap();
+    };
+    let fetch = |v: &Vault, name: &str| account(v, name).last_fetch_unix;
+    assert_eq!(fetch(&a, "Giro"), None);
+    set(&a, ia[0], Some(2_000));
+    set(&b, ib[0], Some(1_000));
+    set(&b, ib[1], Some(3_000));
+    tick();
+    sync_both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(fetch(v, "Giro"), Some(2_000));
+        assert_eq!(fetch(v, "Depot"), Some(3_000));
+    }
+    // merging again changes nothing
+    let st = a.merge_other_vault(b.file_path(), vec![7u8; 32]).unwrap();
+    assert_eq!(st.groups_updated, 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// #1467 review: two devices that chose differently under the same stamp end
 /// up with the same choice (a fixed order: bank name, hidden, then the text).
 #[test]

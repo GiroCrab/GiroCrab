@@ -21,9 +21,9 @@ QtObject {
     }
     readonly property var selectedSecuritiesDepot: presentation === "securities" ? AppModel.selectedAccount : null
 
-    /// AppModel.depotTab: the depot's inventory (Strg+1).
+    /// AppModel.depotTab: inventory or activities (toolbar).
     property string depotTab: "positions"
-    readonly property var depotTabs: [{ id: "positions", title: qsTr("Positionen") }]
+    readonly property var depotTabs: [{ id: "positions", title: qsTr("Positionen") }, { id: "activities", title: qsTr("Aktivitäten") }]
 
     /// `.searchable` of AssetAccountFrame: the holdings views have their own search, never the booking search.
     /// One per view (DepotDetailView keeps `@State query`): cleared on every new account.

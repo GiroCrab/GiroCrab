@@ -38,7 +38,8 @@ Sheet {
             ColumnLayout { spacing: 2; Layout.fillWidth: true
                 Text { text: sheet.titles[sheet.matchResult] || ""; font.pixelSize: Theme.title3 + 2; font.weight: Font.Bold; color: Theme.text }
                 Text { text: qsTr("Empfängerüberprüfung · %1").arg(sheet.pending ? sheet.pending.connection.display_name : "")
-                       font.pixelSize: Theme.caption; color: Theme.secondary } }
+                       font.pixelSize: Theme.caption; color: Theme.secondary
+                       Sensitive {} } }   // the user's own name for the connection
         }
         Card {
             Layout.fillWidth: true
@@ -91,6 +92,6 @@ Sheet {
         property string value
         Layout.fillWidth: true
         Text { Layout.preferredWidth: 110; Layout.alignment: Qt.AlignTop; text: parent.key; color: Theme.secondary; font.pixelSize: Theme.body }
-        TextEdit { Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: Text.WordWrap; text: parent.value; color: Theme.text; font.pixelSize: Theme.body }
+        TextEdit { Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: Text.WordWrap; text: parent.value; color: Theme.text; font.pixelSize: Theme.body; Sensitive {} }
     }
 }

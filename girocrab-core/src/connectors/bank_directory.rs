@@ -118,6 +118,7 @@ pub fn psd2_catalog() -> Vec<Psd2Bank> {
         psd2("Hanseatic Bank", "DE", "Hanseatic Bank", None),
         psd2("Santander", "DE", "Santander", None),
         psd2("Commerzbank", "DE", "Commerzbank", None),
+        psd2("DKB (Deutsche Kreditbank)", "DE", "DKB", None),
         psd2("ING Business", "DE", "ING Business", None),
         psd2("Trade Republic", "DE", "Trade Republic", None),
         psd2("Raiffeisen Bank (Österreich)", "AT", "Raiffeisen", None),
@@ -139,6 +140,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "advanzia mein.advanzia.com mastercard kreditkarte",
         ),
         (ConnectorKind::Comdirect, "comdirect", "comdirect"),
+        (
+            ConnectorKind::Edenred,
+            "Edenred",
+            "edenred ticket plus city card benefits essenszuschuss sachbezug gutschein",
+        ),
         (
             ConnectorKind::TradeRepublic,
             "Trade Republic",
@@ -167,6 +173,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "ford money fordmoney fordbank tagesgeld festgeld",
         ),
         (
+            ConnectorKind::AirPlus,
+            "AirPlus Corporate Card",
+            "airplus air plus corporate card firmenkreditkarte kreditkarte business travel",
+        ),
+        (
             ConnectorKind::HanseaticBank,
             "Hanseatic Bank",
             "hanseatic hanseaticbank hanseatic bank genialcard goldcard kreditkarte sparbrief tagesgeld festgeld",
@@ -187,6 +198,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "opel direktbank opelbank opel-direktbank stellantis tagesgeld festgeld",
         ),
         (
+            ConnectorKind::Bitcoin,
+            "Bitcoin-Wallet (xpub)",
+            "bitcoin btc krypto crypto kryptowährung wallet xpub ypub zpub hardware wallet mempool",
+        ),
+        (
             ConnectorKind::Finpension,
             "Finpension",
             "finpension saeule 3a säule 3a freizuegigkeit freizügigkeit 1e schweiz vorsorge",
@@ -205,6 +221,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             ConnectorKind::Monefit,
             "Monefit SmartSaver",
             "monefit smartsaver creditstar sparkonto tagesgeld",
+        ),
+        (
+            ConnectorKind::GoAndGrow,
+            "Go & Grow",
+            "go and grow goandgrow bondora sparkonto tagesgeld",
         ),
         (
             ConnectorKind::Uberspace,
@@ -230,6 +251,21 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             ConnectorKind::Sharinbox,
             "Sharinbox (Société Générale)",
             "sharinbox societe generale société générale sgmarkets mitarbeiteraktien employee shares aktien arbeitgeber",
+        ),
+        (
+            ConnectorKind::AxaShareplan,
+            "AXA Mitarbeiter Shareplan",
+            "axa shareplan mitarbeiter mitarbeiteraktien peeg employee savings plan",
+        ),
+        (
+            ConnectorKind::UnionInvestment,
+            "Union Investment",
+            "union investment unioninvest uniondepot union depot fonds meindepot genossenschaftliche",
+        ),
+        (
+            ConnectorKind::BerghausCie,
+            "Berghaus & Cie (Weindepot)",
+            "berghaus berghauscie cie wein weine weindepot weininvestment wine fine wine",
         ),
         (
             ConnectorKind::SchwaebischHall,

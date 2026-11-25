@@ -173,11 +173,201 @@ QtObject {
             return compareNames(a, b)
         })
     }
+    /// Only the positions behind a clicked slice; a stale filter (judged against the whole inventory) is ignored.
+    function filteredByKeys(items, keys, inventory) {
+        if (!keys) return items
+        const base = inventory || items
+        if (!base.some(p => keys.indexOf(compositionKey(p.holding)) >= 0)) return items
+        return items.filter(p => keys.indexOf(compositionKey(p.holding)) >= 0)
+    }
     function filteredByQuery(items, query) {
         return items.filter(p => matches(query, [p.holding.name, p.holding.isin, p.holding.wkn]))
     }
+    /// Two key sets (memberKeys) hold the same keys.
+    function sameKeys(a, b) {
+        if (!a || !b || a.length !== b.length) return false
+        return a.every(k => b.indexOf(k) >= 0)
+    }
 
-    // MARK: activities (SecurityActivityTotals)
+    // MARK: DepotColors – FNV-1a of the business key into the palette; colliding keys step to the next free one
+    readonly property var palette: [
+        Theme.c("#2F6FDB", "#6EA0F5"), Theme.c("#1F7A5C", "#5EC79F"), Theme.c("#D98A00", "#F5B94A"), Theme.c("#8E4FC4", "#B98AE6"),
+        Theme.c("#D1495B", "#F27F8E"), Theme.c("#0E8FA8", "#5CC6DB"), Theme.c("#7C9A2D", "#A9C95C"), Theme.c("#B0568F", "#DB8FC0"),
+        Theme.c("#7A5C2E", "#C9A66B"), Theme.c("#C95A86", "#F2A3C0"), Theme.c("#4A5A9A", "#8FA0E0"), Theme.c("#2E8B8B", "#6FD0D0"),
+        Theme.c("#9C4F2E", "#E0936B"), Theme.c("#6B8F3A", "#B5D56B"), Theme.c("#8A8A3A", "#D6D68A"), Theme.c("#5F5F7A", "#A9A9C4")]
+    /// WealthPalette.color(i) / WealthPalette.rest
+    function wealthColor(i) { return palette[i % 8] }
+    readonly property color restColor: Theme.c("#B4BEC8", "#6B7785")
+    function utf8(s) {
+        const out = []
+        for (const ch of String(s)) {
+            let c = ch.codePointAt(0)
+            if (c < 0x80) out.push(c)
+            else if (c < 0x800) out.push(0xC0 | c >> 6, 0x80 | c & 63)
+            else if (c < 0x10000) out.push(0xE0 | c >> 12, 0x80 | c >> 6 & 63, 0x80 | c & 63)
+            else out.push(0xF0 | c >> 18, 0x80 | c >> 12 & 63, 0x80 | c >> 6 & 63, 0x80 | c & 63)
+        }
+        return out
+    }
+    /// hash % 16 only needs the low 16 bits of the 64-bit FNV-1a hash (16 divides 2^64, and the
+    /// low bits of a product depend only on the low bits of its factors).
+    function startIndex(key) {
+        let h = 0x2325   // 0xcbf29ce484222325 mod 2^16
+        for (const b of utf8(key)) h = ((h ^ b) * 0x1b3) & 0xffff   // prime 0x100000001b3 mod 2^16
+        return h % palette.length
+    }
+    function colorIndices(keys) {
+        const unique = Array.from(new Set(keys)).sort()
+        const taken = {}, out = Object.create(null)
+        let count = 0
+        for (const key of unique) {
+            let i = startIndex(key)
+            if (count < palette.length) {
+                while (taken[i]) i = (i + 1) % palette.length
+                taken[i] = true; count++
+            }
+            out[key] = i
+        }
+        return out
+    }
+
+    // MARK: DepotComposition
+    readonly property string restID: "rest"
+    readonly property int maxPositionSlices: 7
+    readonly property int maxRankedSlices: 10
+    readonly property int maxTiles: 12
+    function compositionKey(h) { return h.isin !== "" ? h.isin : (h.wkn !== "" ? h.wkn : h.name) }
+    function drawable(assets) { return assets.filter(a => a.holding.value_cents > 0) }
+    function excludedCount(assets) { return assets.length - drawable(assets).length }
+    /// DepotSlice { id, label, cents, count, color, unclassified, personal, memberKeys }, largest first.
+    function compositionGroups(assets, mode) {
+        const items = drawable(assets)
+        if (mode === "position") {
+            const cents = Object.create(null), labels = Object.create(null), own = Object.create(null)
+            const idx = colorIndices(items.map(a => compositionKey(a.holding)))
+            for (const a of items) {
+                const h = a.holding, k = compositionKey(h)
+                cents[k] = (cents[k] || 0) + h.value_cents
+                if (labels[k] === undefined) labels[k] = displayName(h)
+                if (has(a.asset_item_id)) own[k] = true
+            }
+            return Object.keys(cents).sort((x, y) => cents[x] !== cents[y] ? cents[y] - cents[x] : (x < y ? -1 : x > y ? 1 : 0)).map(k => ({
+                id: k, label: labels[k] || k, cents: cents[k], count: 1, color: palette[idx[k]], unclassified: false,
+                personal: !!own[k], memberKeys: [k] }))
+        }
+        const by = Object.create(null)
+        for (const a of items) {
+            const c = a.classification
+            const key = mode === "assetClass" ? c.asset_class : c.instrument
+            const g = by[key] || (by[key] = {
+                id: key, label: mode === "assetClass" ? AssetClassification.classTitle(key) : AssetClassification.instrumentTitle(key),
+                order: mode === "assetClass" ? AssetClassification.classIndex(key) : AssetClassification.instrumentIndex(key),
+                cents: 0, count: 0, unclassified: key === "unclassified", personal: false, memberKeys: [] })
+            g.cents += a.holding.value_cents
+            g.count += 1
+            const k = compositionKey(a.holding)
+            if (g.memberKeys.indexOf(k) < 0) g.memberKeys.push(k)
+        }
+        return Object.values(by).map(g => Object.assign(g, { color: g.unclassified ? Theme.secondary : wealthColor(g.order) }))
+            .sort((a, b) => a.cents !== b.cents ? b.cents - a.cents : a.label.localeCompare(b.label))
+    }
+    /// The `keep` largest slices and one "Weitere (n)" slice with the rest; one remaining slice is no rest.
+    function foldSlices(slices, keep) {
+        if (slices.length <= keep + 1) return slices
+        const rest = slices.slice(keep)
+        const n = rest.reduce((t, s) => t + s.count, 0)
+        const keys = []
+        for (const s of rest) for (const k of s.memberKeys) if (keys.indexOf(k) < 0) keys.push(k)
+        return slices.slice(0, keep).concat([{ id: restID, label: qsTr("Weitere (%1)").arg(n), cents: rest.reduce((t, s) => t + s.cents, 0),
+                                               count: n, color: restColor, unclassified: false, personal: false, memberKeys: keys }])
+    }
+    function ranked(slices, keep) {
+        const folded = foldSlices(slices, keep)
+        const rest = folded.length && folded[folded.length - 1].id === restID ? folded[folded.length - 1] : null
+        return { shown: folded.filter(s => s.id !== restID), rest: rest }
+    }
+
+    // MARK: Treemap (squarified)
+    function treemap(values, rw, rh, preferredAspect) {
+        if (preferredAspect && rh > 0 && rw > rh * preferredAspect) {
+            const vw = rh * preferredAspect, factor = rw / vw
+            return treemap(values, vw, rh, 0).map(r => r.w === 0 && r.h === 0 ? r : { x: r.x * factor, y: r.y, w: r.w * factor, h: r.h })
+        }
+        const positive = values.map(v => isFinite(v) ? Math.max(v, 0) : 0)
+        const total = positive.reduce((t, v) => t + v, 0)
+        const out = values.map(() => ({ x: 0, y: 0, w: 0, h: 0 }))
+        if (!(total > 0) || rw <= 0 || rh <= 0) return out
+        const scale = rw * rh / total
+        const areas = positive.map(v => v * scale)
+        let free = { x: 0, y: 0, w: rw, h: rh }
+        let row = []
+        const worst = (idx, side) => {
+            const sum = idx.reduce((t, i) => t + areas[i], 0)
+            const vals = idx.map(i => areas[i])
+            const mx = Math.max(...vals), mn = Math.min(...vals)
+            if (!(sum > 0) || !(side > 0) || !(mn > 0)) return Infinity
+            return Math.max(side * side * mx / (sum * sum), sum * sum / (side * side * mn))
+        }
+        const place = () => {
+            const sum = row.reduce((t, i) => t + areas[i], 0)
+            if (!(sum > 0)) { row = []; return }
+            if (free.w >= free.h) {
+                const w = sum / free.h
+                let y = free.y
+                for (const i of row) { const h = areas[i] / w; out[i] = { x: free.x, y: y, w: w, h: h }; y += h }
+                free = { x: free.x + w, y: free.y, w: Math.max(free.w - w, 0), h: free.h }
+            } else {
+                const h = sum / free.w
+                let x = free.x
+                for (const i of row) { const w = areas[i] / h; out[i] = { x: x, y: free.y, w: w, h: h }; x += w }
+                free = { x: free.x, y: free.y + h, w: free.w, h: Math.max(free.h - h, 0) }
+            }
+            row = []
+        }
+        let i = 0
+        while (i < values.length) {
+            if (!(areas[i] > 0)) { i++; continue }
+            const side = Math.min(free.w, free.h)
+            if (row.length === 0 || worst(row.concat([i]), side) <= worst(row, side)) { row.push(i); i++ }
+            else place()
+        }
+        place()
+        return out
+    }
+    /// TileInk: near-black on light fills, white on dark ones (WCAG relative luminance).
+    function tileInk(c) {
+        const ch = v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+        const l = 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+        return l > 0.4 ? Qt.rgba(0.11, 0.11, 0.12, 1) : "white"
+    }
+
+    // MARK: activities (DepotActivityFilter, DepotActivities, SecurityActivityTotals)
+    readonly property var activityFilters: [
+        { id: "all", title: qsTr("Alle") }, { id: "buys", title: qsTr("Käufe") }, { id: "sells", title: qsTr("Verkäufe") },
+        { id: "distributions", title: qsTr("Ausschüttungen") }, { id: "costs", title: qsTr("Kosten") }]
+    function keepsActivity(filter, t) {
+        switch (filter) {
+        case "buys": return t.direction === "Buy"
+        case "sells": return t.direction === "Sell"
+        case "distributions": return t.direction === "Dividend"
+        // own fee/tax lines and every activity that carries fees or taxes
+        case "costs": return t.direction === "Fee" || t.direction === "Tax" || t.fees_cents !== 0 || t.taxes_cents !== 0
+        default: return true
+        }
+    }
+    /// The bank's free text never serves as the kind (it can carry personal data).
+    function kindTitle(t) {
+        switch (t.direction) {
+        case "Buy": return qsTr("Kauf")
+        case "Sell": return qsTr("Verkauf")
+        case "Dividend": return qsTr("Ausschüttung")
+        case "Fee": return qsTr("Gebühr")
+        case "Tax": return qsTr("Steuer")
+        default: return qsTr("Sonstige")
+        }
+    }
+    function feeCents(t) { return t.direction === "Fee" ? Math.abs(t.value_cents !== 0 ? t.value_cents : t.fees_cents) : t.fees_cents }
+    function taxCents(t) { return t.direction === "Tax" ? Math.abs(t.value_cents !== 0 ? t.value_cents : t.taxes_cents) : t.taxes_cents }
     /// ISO dates compare as strings; an open end is null.
     function inPeriod(date, from, to) {
         if (from === null && to === null) return true
@@ -185,6 +375,10 @@ QtObject {
         if (from !== null && date < from) return false
         if (to !== null && date > to) return false
         return true
+    }
+    function filteredActivities(all, accountId, filter, query, from, to) {
+        return all.filter(t => t.account_id === accountId && inPeriod(t.booking_date, from, to) && keepsActivity(filter, t)
+                               && matches(query, [t.name, t.isin, t.wkn]))
     }
     function activityTotals(transactions, currency, from, to) {
         const r = { distributionsCents: 0, distributionCount: 0, feesCents: 0, taxesCents: 0, count: 0, otherCurrencyCount: 0 }

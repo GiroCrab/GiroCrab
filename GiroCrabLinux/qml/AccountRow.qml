@@ -17,9 +17,10 @@ SidebarRow {
     signal contextMenuRequested()
     readonly property var repaid: account.kind === "Loan" && account.initial_balance_cents > 0
         ? Math.max(0, Math.min(1, 1 - (-account.balance_cents) / account.initial_balance_cents)) : null
-    /// Bank name and the account note (#679), e.g. "Bargeld" without a bank shows just its note;
-    /// between them what tells accounts of the same name apart (owner or end of the IBAN, #954).
-    readonly property string baseSubtitle: [account.bank_name, AppModel.accountDistinction(account), (account.note || "").replace(/\n/g, " ")]
+    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld"
+    /// without a bank shows just its note; between them what tells accounts of the same name apart
+    /// (owner or end of the IBAN, #954).
+    readonly property string baseSubtitle: [AppModel.sidebarBankName(account), AppModel.accountDistinction(account), (account.note || "").replace(/\n/g, " ")]
         .filter(t => t !== "").join(" · ")
     /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
     readonly property string searchAwareSubtitle: {
@@ -114,7 +115,9 @@ SidebarRow {
                     HoverHandler { id: archivedHover; enabled: row.archived }
                     ToolTip.visible: row.archived && archivedHover.hovered; ToolTip.delay: 600
                     ToolTip.text: qsTr("Archiviert – wird nicht mehr abgerufen")
-                    Sensitive { when: !row.archived && row.searchAwareSubtitle !== row.account.bank_name }   // owner / IBAN hits
+                    // owner / IBAN hits, own bank label (#1467)
+                    Sensitive { when: !row.archived && (row.searchAwareSubtitle !== row.account.bank_name
+                                                         || (row.account.bank_label !== null && row.account.bank_label !== undefined)) }
                 }
                 // archived accounts show no balance (#667); the subtitle truncates, never the balance
                 Text {

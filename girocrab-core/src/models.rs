@@ -42,6 +42,12 @@ pub enum ConnectorKind {
     Quirion,
     /// Sharinbox (Société Générale employee share plans), authenticated inside the embedded browser.
     Sharinbox,
+    /// AXA employee share plan portal, authenticated inside the embedded browser.
+    AxaShareplan,
+    /// Union Investment customer portal (UnionDepot), authenticated inside the embedded browser.
+    UnionInvestment,
+    /// Berghaus & Cie wine investment portal, authenticated inside the embedded browser.
+    BerghausCie,
     /// easybank (formerly Barclays Deutschland) credit cards and statements, see #209.
     Easybank,
     /// Alte Leipziger (Bauspar) via the fin4u customer portal API
@@ -54,6 +60,9 @@ pub enum ConnectorKind {
     BitcoinCore,
     /// Advanzia credit card via an authenticated WebKit session.
     Advanzia,
+    /// Edenred benefit cards (nutzer.edenred.de) via the embedded portal
+    /// browser: balance and card transactions.
+    Edenred,
     /// Bausparkasse Schwäbisch Hall (Bausparverträge, postbox PDFs) via the
     /// "Mein Konto" portal, authenticated inside the embedded browser (#290).
     SchwaebischHall,
@@ -79,6 +88,15 @@ pub enum ConnectorKind {
     HanseaticBank,
     /// Monefit SmartSaver savings account via the web app's JSON API (unofficial).
     Monefit,
+    /// Bitcoin wallet, watch-only from an extended public key (xpub / ypub /
+    /// zpub) via an Esplora server (mempool.space or the user's own).
+    Bitcoin,
+    /// Go & Grow (formerly Bondora Go & Grow) via the investor web app's JSON API
+    /// behind its Keycloak login (unofficial).
+    GoAndGrow,
+    /// AirPlus Corporate Card (#1143): booked card bookings via the business travel portal,
+    /// authenticated inside the embedded browser (SMS TAN).
+    AirPlus,
 }
 
 impl ConnectorKind {
@@ -100,12 +118,16 @@ impl ConnectorKind {
             ConnectorKind::Ibkr => "ibkr",
             ConnectorKind::Quirion => "quirion",
             ConnectorKind::Sharinbox => "sharinbox",
+            ConnectorKind::AxaShareplan => "axashareplan",
+            ConnectorKind::UnionInvestment => "unioninvestment",
+            ConnectorKind::BerghausCie => "berghauscie",
             ConnectorKind::Easybank => "easybank",
             ConnectorKind::AlteLeipziger => "fin4u",
             ConnectorKind::VolkswagenBank => "volkswagenbank",
             ConnectorKind::Uberspace => "uberspace",
             ConnectorKind::BitcoinCore => "bitcoincore",
             ConnectorKind::Advanzia => "advanzia",
+            ConnectorKind::Edenred => "edenred",
             ConnectorKind::SchwaebischHall => "schwaebischhall",
             ConnectorKind::EquatePlus => "equateplus",
             ConnectorKind::Ffb => "ffb",
@@ -114,8 +136,11 @@ impl ConnectorKind {
             ConnectorKind::Bhw => "bhw",
             ConnectorKind::Finpension => "finpension",
             ConnectorKind::Kontist => "kontist",
+            ConnectorKind::Bitcoin => "bitcoin",
             ConnectorKind::HanseaticBank => "hanseatic",
             ConnectorKind::Monefit => "monefit",
+            ConnectorKind::GoAndGrow => "goandgrow",
+            ConnectorKind::AirPlus => "airplus",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -166,12 +191,16 @@ impl ConnectorKind {
             ConnectorKind::Ibkr,
             ConnectorKind::Quirion,
             ConnectorKind::Sharinbox,
+            ConnectorKind::AxaShareplan,
+            ConnectorKind::UnionInvestment,
+            ConnectorKind::BerghausCie,
             ConnectorKind::Easybank,
             ConnectorKind::AlteLeipziger,
             ConnectorKind::VolkswagenBank,
             ConnectorKind::Uberspace,
             ConnectorKind::BitcoinCore,
             ConnectorKind::Advanzia,
+            ConnectorKind::Edenred,
             ConnectorKind::SchwaebischHall,
             ConnectorKind::EquatePlus,
             ConnectorKind::Ffb,
@@ -182,6 +211,9 @@ impl ConnectorKind {
             ConnectorKind::Finpension,
             ConnectorKind::Kontist,
             ConnectorKind::Monefit,
+            ConnectorKind::Bitcoin,
+            ConnectorKind::GoAndGrow,
+            ConnectorKind::AirPlus,
         ]
     }
 }
@@ -441,6 +473,12 @@ pub struct Account {
     #[uniffi(default = None)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub bank_label: Option<String>,
+    /// When this account was last fetched on its own (#1716), Unix seconds;
+    /// `None` = never. The login's last sync counts for it as well: the later
+    /// of the two is the account's last fetch. Merged by the later value.
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub last_fetch_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -581,6 +619,25 @@ pub struct Booking {
     #[uniffi(default)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub tags: Vec<crate::tags::BookingTag>,
+    /// `none`, `refund`, `original`, or `both`, based on allocated endpoint roles.
+    #[uniffi(default = "none")]
+    #[cfg_attr(feature = "serde", serde(default = "no_refund_marker"))]
+    pub refund_marker: String,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub refund_cents: i64,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub refunded_cents: i64,
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub split_count: u32,
+}
+
+/// Serde default of `Booking::refund_marker` (JSON front ends): no refund link.
+#[cfg(feature = "serde")]
+fn no_refund_marker() -> String {
+    "none".into()
 }
 
 /// Dry-run result of a MoneyMoney import (nothing stored).

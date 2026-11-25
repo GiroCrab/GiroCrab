@@ -486,13 +486,16 @@ fn wire_splits(win: &MainWindow, slot: &VaultSlot) {
             return;
         }
         win.set_sp_status(SharedString::new());
-        let weak = win.as_weak();
+        let (weak, slot) = (win.as_weak(), s.clone());
         std::thread::spawn(move || {
             let splits = v
                 .list_transaction_splits(booking)
                 .map_err(|e| e.to_string());
             let cats = v.list_categories(None, None).map_err(|e| e.to_string());
             let _ = weak.upgrade_in_event_loop(move |win| match (splits, cats) {
+                // locked, another vault or privacy mode on while loading: the dialog stays closed
+                _ if blocked(&win) || !vault_of(&slot).is_some_and(|cur| Arc::ptr_eq(&cur, &v)) => {
+                }
                 (Ok(splits), Ok(cats)) => {
                     let mut drafts: Vec<SplitDraft> = splits
                         .iter()
@@ -565,14 +568,26 @@ fn wire_splits(win: &MainWindow, slot: &VaultSlot) {
     let weak = win.as_weak();
     win.on_split_fill(move |i| {
         if let Some(win) = weak.upgrade() {
-            with_ui(|u| {
+            let fitted = with_ui(|u| {
                 let cents = u.split_booking.map_or(0, |b| b.1);
                 let rest = planning::split_remaining(cents, &u.drafts);
-                if let Some(d) = u.drafts.get_mut(i.max(0) as usize) {
-                    let own = planning::parse_cents(&d.amount).unwrap_or(0);
-                    d.amount = planning::format_plain(own + rest);
+                let Some(d) = u.drafts.get_mut(i.max(0) as usize) else {
+                    return true;
+                };
+                let own = planning::parse_cents(&d.amount).unwrap_or(0);
+                match planning::split_fill(own, rest) {
+                    Some(sum) => {
+                        d.amount = planning::format_plain(sum);
+                        true
+                    }
+                    None => false,
                 }
             });
+            if !fitted {
+                win.set_sp_status(
+                    "Der Ausgleichsbetrag liegt außerhalb des gültigen Bereichs.".into(),
+                );
+            }
             render_splits(&win);
         }
     });
@@ -582,6 +597,10 @@ fn wire_splits(win: &MainWindow, slot: &VaultSlot) {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&s)) else {
             return;
         };
+        // privacy mode locks edits, as everywhere else
+        if blocked(&win) {
+            return;
+        }
         let built = with_ui(|u| {
             planning::build_splits(
                 &u.drafts,
@@ -596,7 +615,10 @@ fn wire_splits(win: &MainWindow, slot: &VaultSlot) {
     });
     let (weak, s) = (win.as_weak(), slot.clone());
     win.on_split_clear(move || {
-        if let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&s)) {
+        let (Some(win), Some(v)) = (weak.upgrade(), vault_of(&s)) else {
+            return;
+        };
+        if !blocked(&win) {
             split_job(&win, &v, Vec::new());
         }
     });

@@ -64,3 +64,5 @@ comdirect-PostBox-Belege ohne Ablagekonto werden nur übernommen, wenn im
 Tresor genau ein comdirect-Zugang aufgezeichnet ist. Ein früherer, gelöschter Zugang
 zählt mit. FNZ und Quirion übernehmen die gemeinsamen Titelregeln für
 PostBox-Dokumente.
+
+Zum fortsetzbaren Abruf der Belege und Buchungen siehe [Trade Republic](trade-republic-connector.md).

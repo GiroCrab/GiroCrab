@@ -494,7 +494,7 @@ impl Vault {
                     a.initial_balance_cents, g.uuid, {in_total},
                     a.color_hex, IFNULL(c.connector, ''), IFNULL(c.bank_code, ''), IFNULL(c.login_name, ''), a.external_ref,
                     a.archived_unix, a.access_revoked,
-                    o.opening_cents, IFNULL(o.opening_date, ''), {derived}, a.note, a.include_in_total, a.bank_label
+                    o.opening_cents, IFNULL(o.opening_date, ''), {derived}, a.note, a.include_in_total, a.bank_label, a.last_fetch_unix
              FROM accounts a LEFT JOIN bank_connections c ON c.id = a.connection_id
              LEFT JOIN user_groups g ON g.uuid = a.user_group_uuid AND g.deleted_ms IS NULL
              LEFT JOIN opening_balances o ON o.account_id = a.id
@@ -556,6 +556,7 @@ impl Vault {
                 balance_derived: r.get(30)?,
                 note: r.get(31)?,
                 bank_label: r.get(33)?,
+                last_fetch_unix: r.get(34)?,
             })
         })?;
         let mut accounts = rows.collect::<Result<Vec<_>, _>>()?;
@@ -576,8 +577,9 @@ impl Vault {
         // (unless a Startsaldo drives the balance; bank-synced cards ignore one).
         for a in accounts.iter_mut().filter(|a| {
             a.kind == AccountKind::CreditCard
-                // Advanzia imports require a checked bank balance, including genuine zero.
-                && a.connector != Some(ConnectorKind::Advanzia)
+                // Advanzia imports require a checked bank balance, including genuine zero;
+                // AirPlus reports the used limit, a read 0 is a genuine 0 (#1143).
+                && !matches!(a.connector, Some(ConnectorKind::Advanzia | ConnectorKind::AirPlus))
                 && a.balance_cents == 0
                 && a.transaction_count > 0
                 && !(a.balance_derived && a.opening_balance_cents.is_some())

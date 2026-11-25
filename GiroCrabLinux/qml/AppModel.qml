@@ -55,12 +55,12 @@ QtObject {
     /// more with fresh arguments when it is back, so fast clicking queues nothing.
     /// The demo vault (small, launch options and screenshots expect its data at once)
     /// loads synchronously.
-    function loadOffMain(channel, request, apply, failed) {
+    function loadOffMain(channel, request, apply, failed, forceAsync) {
         if (!vaultLoaded) return
         const l = loads[channel] || (loads[channel] = { gen: 0, busy: false, again: false })
         l.gen++
         l.request = request; l.apply = apply; l.failed = failed || null
-        if (demoActive) {
+        if (demoActive && !forceAsync) {
             const req = loadRequest(request)
             if (!req) return
             let results
@@ -493,6 +493,12 @@ QtObject {
     /// A different vault is in front (or none): answers still on their way belong to the old one.
     function vaultSwitched() {
         vaultGeneration++
+        revealTimer.stop()
+        revealTimer.request++
+        cancelLoad("revealBooking")
+        refundBooking = null
+        refundEditing = false
+        UndoManager.busy = false
         dropPendingPage()   // a "load more" page of the previous vault must not land in this list
         vaultLoaded = true
         afterAccountsQueue = []
@@ -580,6 +586,7 @@ QtObject {
     /// Everything of the vault on screen. The accounts come first: `then` runs as soon as
     /// they are there (the main view can show), the rest fills in off the GUI thread.
     function reloadAll(then, failed) {
+        refundLinksRevision++
         reloadSettings()
         reloadAccounts(() => {
             if (then) then()
@@ -1350,14 +1357,15 @@ QtObject {
     function compactAccountIds(a) {
         return [a.iban || "", a.account_number || ""].map(x => x.replace(/\s/g, "").toLowerCase()).filter(x => x !== "")
     }
-    /// Account.matchesSidebarSearch: name, Kontoinhaber, bank, IBAN or account number.
+    /// Account.matchesSidebarSearch: name, Kontoinhaber, bank (or its label), IBAN or account number.
     function matchesSidebarSearch(a, raw) {
         const q = raw.trim()
         if (q === "") return true
         const ids = compactAccountIds(a)
         const compactQ = q.replace(/\s/g, "").toLowerCase()
         if (compactQ.length >= 3 && ids.some(x => x.includes(compactQ))) return true
-        const text = [a.name || "", a.owner || "", a.bank_name || ""].map(x => x.toLowerCase())
+        // the bank as stored and as the sidebar shows it (#1467)
+        const text = [a.name || "", a.owner || "", a.bank_name || "", sidebarBankName(a)].map(x => x.toLowerCase())
         return q.split(/\s+/).map(t => t.toLowerCase()).every(term =>
             text.some(x => x.includes(term)) || ids.some(x => x.includes(term)))
     }
@@ -2647,6 +2655,7 @@ QtObject {
     /// Undoable via Bearbeiten › Rückgängig. `known` ({ cents, date }): the value stored now,
     /// passed by undo/redo because the account list reloads off the GUI thread.
     function setOpeningBalance(accountId, cents, date, known) {
+        if (refundEditing) throw new Error(qsTr("Eine Änderung wird gerade gespeichert. Bitte warten Sie."))
         const a = accountsByID[accountId] || null
         const old = known || (a ? { cents: a.opening_balance_cents, date: a.opening_balance_date } : null)
         core("set_account_opening_balance", { account_id: accountId, cents: cents, date: date })
@@ -3055,6 +3064,21 @@ QtObject {
     function setAccountNote(id, note) {
         if (run(() => { core("set_account_note", { account_id: id, note: note }); return true })) { reloadAccounts(); return true } else return false
     }
+    /// AccountGroupsModel.swift › saveAccountEdits › setAccountBankLabel (#1467): `null` the bank
+    /// name, `""` none, else the user's own text; synced like the note.
+    function setAccountBankLabel(id, label) {
+        if (run(() => { core("set_account_bank_label", { account_id: id, label: label }); return true })) { reloadAccounts(); return true } else return false
+    }
+    /// Account.sidebarBankName (#1467): the bank in the sidebar row, the user's label, else the bank name.
+    function sidebarBankName(a) {
+        return a.bank_label !== null && a.bank_label !== undefined ? a.bank_label : (a.bank_name || "")
+    }
+    /// AccountGroupsModel.swift › accountsWithOwnBankLabel (#1467): accounts of a bank login whose
+    /// sidebar shows a label of their own or none, so the login's settings can say why a new
+    /// display name doesn't show there.
+    function accountsWithOwnBankLabel(connectionID) {
+        return allAccounts.filter(a => a.connection_id === connectionID && a.bank_label !== null && a.bank_label !== undefined).length
+    }
     /// AccountGroupsModel.swift › setAccountKind (Kontoeinstellungen).
     function setAccountKind(id, kind) {
         if (run(() => { core("set_account_kind", { account_id: id, kind: kind }); return true })) { reloadAccounts(() => { reloadHistory(); reloadSelection(false) }); reloadDashboard(); return true } else return false
@@ -3226,8 +3250,50 @@ QtObject {
     property var budgetCategoryID: null
     /// Category whose "Symbol & Farbe" popover is open.
     property var iconColorCategoryID: null
-    /// The booking whose SplitSheet is open.
+    /// The booking whose SplitSheet is open; closing it drops the preset share.
     property var splitBooking: null
+    onSplitBookingChanged: if (splitBooking === null) splitPresetPercent = null
+    /// Share of the booking the sheet puts into the second part (#1663, row menu `splitShares`).
+    property var splitPresetPercent: null
+    /// SplitMath.shares: the shares offered in one click (row menu under „Umsatz aufteilen“ and the
+    /// buttons in the sheet), in percent of the booking's amount: plain shares, not the VAT in it.
+    readonly property var splitShares: [7, 19, 50]
+    property var refundBooking: null
+    property int refundLinksRevision: 0
+    property bool refundEditing: false
+
+    function changeRefundLink(pair, action, token) {
+        if (refundEditing || !isUnlocked || !vaultLoaded) return
+        const phase = UndoManager.phase, branch = UndoManager.branch, generation = vaultGeneration
+        const identity = run(() => core("refund_vault_identity"))
+        if (identity === undefined) return
+        const args = Object.assign({}, pair, { action: action, token: token === undefined ? null : token,
+            vault_identity: identity })
+        refundEditing = true
+        UndoManager.busy = true
+        const failed = message => {
+            if (generation !== vaultGeneration) return
+            refundEditing = false; UndoManager.busy = false
+            errorMessage = message
+            refundLinksRevision++
+        }
+        try { coreAsync("edit_refund", args, result => {
+            if (generation !== vaultGeneration) return
+            refundEditing = false; UndoManager.busy = false
+            if (!result.changed) return
+            const inverse = action === "unlink" ? "restore" : "unlink"
+            const undoToken = result.token
+            // the inverse unlink names the revision this call produced (compare-and-set)
+            const inversePair = inverse === "unlink" && result.changed_ms !== null && result.changed_ms !== undefined
+                ? Object.assign({}, pair, { changed_ms: result.changed_ms }) : pair
+            UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
+                if (vaultGeneration === generation) changeRefundLink(inversePair, inverse, undoToken)
+            }, phase, branch)
+            // documentation only (#714): sums stay, only the list markers change
+            refundLinksRevision++
+            reloadBookings()
+        }, failed) } catch (e) { failed(e.message) }
+    }
     readonly property var colorPalette: core("account_color_palette")
     /// AccountColorNames.names
     readonly property var colorNames: ({
@@ -3355,14 +3421,28 @@ QtObject {
         try { return core("parse_amount_to_cents", { text: text }) } catch (e) { return null }
     }
     /// `done(null)` = could not be read – not the same as "not split".
-    function splits(booking, done) {
-        coreAsync("list_transaction_splits", { transaction_id: booking.id }, r => done(r), () => done(null))
+    function splitEditorData(booking, done) {
+        coreAsync("split_editor_data", { transaction_id: booking.id }, done, () => done(null))
     }
     /// Error text, or "" on success.
     function saveSplits(parts, booking) {
         try { core("set_transaction_splits", { transaction_id: booking.id, splits: parts }) } catch (e) { return e.message }
+        refundLinksRevision++
         reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning()
         return ""
+    }
+    /// openSplit(_:percent:) (#1663): opens „Umsatz aufteilen“; `percent` puts that share of the
+    /// booking into the second part of a booking that is not split yet.
+    function openSplit(b, percent) {
+        splitPresetPercent = percent === undefined ? null : percent
+        splitBooking = b
+    }
+    /// Amounts cross the QML bridge as strings to preserve exact cents.
+    function splitDraft(bookingCents, texts) {
+        return coreOrNull("calculate_split_draft", { booking_cents: bookingCents, split_off_texts: texts })
+    }
+    function splitShareCents(total, numerator, denominator) {
+        return coreOrNull("split_share_cents", { total_cents: total, numerator: numerator, denominator: denominator })
     }
 
     function newRuleDraft(booking) {
@@ -3392,20 +3472,37 @@ QtObject {
         ruleDraft = booking ? newRuleDraft(booking) : null
         showRuleEditor = true
     }
-    /// The id of the saved rule, else null (error shown).
-    function saveRule(rule) {
+    /// The id of the saved rule, else null (error shown). Applies just this rule, to the
+    /// uncategorised bookings or to all (the scope question of „Speichern & anwenden“),
+    /// and reports the changed bookings; a failed apply keeps the saved rule.
+    function saveRule(rule, onlyUncategorized) {
+        let id
         try {
-            const id = core("save_rule", { rule: rule })
-            core("apply_rules", { only_uncategorized: false })
-            // the editor reads the saved rule (its new id) right away: rules now, the rest async
-            reloadRulesNow()
-            reloadAll()
-            return id
+            id = core("save_rule", { rule: rule })
         } catch (e) {
             errorTitle = qsTr("Regel konnte nicht gespeichert werden")
             errorMessage = e.message
             return null
         }
+        let changed = null
+        let applyError = null
+        try {
+            changed = core("apply_rule", { rule_id: id, only_uncategorized: onlyUncategorized })
+        } catch (e) {
+            applyError = e
+        }
+        // the editor reads the saved rule (its new id) right away: rules now, the rest async
+        reloadRulesNow()
+        reloadAll()
+        if (applyError !== null) {
+            errorTitle = qsTr("Regel gespeichert, Anwenden fehlgeschlagen")
+            errorMessage = applyError.message
+        } else if (changed === 0) {
+            toast = qsTr("Regel gespeichert – keine Buchungen geändert")
+        } else {
+            toast = qsTr("Regel gespeichert – geänderte Buchungen: %1").arg(changed)
+        }
+        return id
     }
     function deleteRule(id) {
         run(() => core("delete_rule", { rule_id: id }))
@@ -4327,27 +4424,48 @@ QtObject {
     }
     /// Selects a booking in the list, widening the filters if it is not loaded.
     function revealBooking(id) {
+        if (!isUnlocked) return
+        cancelLoad("revealBooking")
         if (!bookings.some(b => b.id === id)) {
             sidebarSelection = "all"; period = "all"; directionFilter = "All"; statusFilter = "all"; TagFilter.clear(); searchText = ""
+            scope = "All"
+            categoryAccountFilter = ({})
+            ListFilters.clearAmount()
+            MerchantFocus.sidebarChanged()
+            searchTimer.stop()
+        } else if (["documents", "wealth", "planned", "directDebits"].includes(sidebarSelection) || DepotState.presentation !== "bookings") {
+            sidebarSelection = "all"
         }
         revealTimer.bookingID = id
+        revealTimer.vault = vaultGeneration
+        revealTimer.request++
         revealTimer.restart()
     }
     property Timer revealTimer: Timer {
         property var bookingID: null
+        property int vault: 0
+        property int request: 0
         interval: 350
         onTriggered: {
-            // an older booking is not on the first page: load back to its day
-            const id = bookingID
-            if (!model.bookings.some(b => b.id === id)) {
-                const day = model.run(() => model.core("booking_date", { booking_id: id }))
-                if (day && model.page) {
-                    model.listLimit = Math.max(model.listLimit, model.page.total_count)
-                    model.reloadBookings(() => model.selectBooking(id, false, false))
-                    return
-                }
+            const id = bookingID, token = request, vgen = vault
+            const current = () => model.isUnlocked && model.vaultGeneration === vgen && request === token
+            const select = () => {
+                if (current() && model.bookings.some(b => b.id === id)) model.selectBooking(id, false, false)
             }
-            model.selectBooking(id, false, false)
+            if (!current()) return
+            if (model.selectionLoadRunning || model.isLoadPending("bookings")) { restart(); return }
+            if (model.bookings.some(b => b.id === id)) { select(); return }
+            const generation = model.listGeneration
+            model.loadOffMain("revealBooking", () => [["booking_date", { booking_id: id }]], r => {
+                if (!current() || generation !== model.listGeneration || !r[0]) return
+                const f = model.currentFilter()
+                if (f.date_from === null || f.date_from < r[0]) f.date_from = r[0]
+                model.loadOffMain("revealBooking", () => [["count_transactions", { filter: f }]], counts => {
+                    if (!current() || generation !== model.listGeneration) return
+                    model.listLimit = Math.max(model.listLimit, counts[0])
+                    model.reloadBookings(select)
+                }, undefined, true)
+            }, undefined, true)
         }
     }
 
@@ -4406,6 +4524,8 @@ QtObject {
         if (account) {
             sidebarSelection = "account:" + account.id
             selectedBookingID = null
+            // --depot-tab activities: a securities depot on its activities tab (#564)
+            if (launchValue("--depot-tab") === "activities") DepotState.depotTab = "activities"
         }
         switch (launchValue("--demo-filter")) {
         case "income": directionFilter = "Income"; break
@@ -4438,7 +4558,7 @@ QtObject {
                 // the group editor is a sheet of the main window (Swift: showGroupManager)
                 showGroupManager = true
             } else {
-                const tabs = { general: "general", banks: "banks", security: "security" }
+                const tabs = { general: "general", banks: "banks", security: "security", external: "externalAccess" }
                 settingsTab = tabs[parts[0]] || "general"
                 demoSettingsSheet = parts.length > 1 ? parts[1] : ""
                 showSettings = true
@@ -4459,6 +4579,18 @@ QtObject {
     function presentDemoSheet(name) {
         const top = categories.find(c => c.depth === 0)
         switch (name) {
+        case "refund": case "refund-reverse": case "refund-before": case "refund-linked": {
+            // fictional bookings only ever go into the demo vault
+            if (!demoActive) break
+            const vaultIdentity = core("refund_vault_identity")
+            loadOffMain("refundDemo", () => [["seed_refund_demo", { vault_identity: vaultIdentity, date: new Date().toISOString().slice(0, 10), linked: name === "refund-linked" }]], r => {
+                reloadAll()
+                sidebarSelection = "account:" + r[0].account
+                reloadBookings()
+                if (name === "refund" || name === "refund-reverse") refundBooking = { id: name === "refund" ? r[0].refund : r[0].original }
+            }, undefined, true)
+            break
+        }
         case "account-selection":
             // choice of accounts another login already delivers (#346)
             accountSelectionConnection = connections.length ? connections[connections.length - 1] : null
@@ -4480,6 +4612,12 @@ QtObject {
             break
         }
         case "category": if (top) newCategoryRequest = { parent: top.id }; break
+        // "Umsatz aufteilen" › „50 %“ of the first expense (#1663)
+        case "split": {
+            const b = bookings.find(x => x.amount_cents < 0)
+            if (b) openSplit(b, 50)
+            break
+        }
         // Konten › Tags verwalten … (#228)
         // `tags-accounts`: the first tag's bookings per account (TagManagerSheet.qml)
         case "tags": case "tags-accounts": TagManager.open(); break

@@ -27,6 +27,9 @@ ApplicationWindow {
     // LanguagePreference.startupQuestion (RootView on the Mac): decided once at start-up.
     readonly property string languageQuestion: (AppModel.run(() => AppModel.core("language_state")) || { question: "none" }).question
     property bool languagePromptDone: false
+    // Externe Analyse (#136): the singleton starts and stops the local socket with the vault
+    // (AppModel+LocalApi.swift › reconcileLocalApiServer), also while Settings never opened.
+    readonly property QtObject externalAccess: ExternalAccess
     readonly property bool showLanguagePrompt: languageQuestion === "choose" && !languagePromptDone
     Component.onCompleted: {
         if (showLanguagePrompt) return   // the vault opens after the language screen
@@ -359,6 +362,15 @@ ApplicationWindow {
                 HoverHandler { id: docScopeHover }
                 ToolTip.text: qsTr("Alle Dokumente, eigene Belege oder Bankdokumente anzeigen"); ToolTip.visible: docScopeHover.hovered; ToolTip.delay: 600
             }
+            // DepotTabPicker (DepotDetailView.swift, #564)
+            Segmented {
+                visible: DepotState.presentation === "securities"
+                options: DepotState.depotTabs
+                current: DepotState.depotTab
+                onActivated: id => DepotState.depotTab = id
+                HoverHandler { id: depotTabHover }
+                ToolTip.text: qsTr("Positionen oder Wertpapieraktivitäten (Strg+1, Strg+2)"); ToolTip.visible: depotTabHover.hovered; ToolTip.delay: 600
+            }
             Segmented {
                 visible: AppModel.sidebarSelection !== "wealth" && AppModel.sidebarSelection !== "documents" && DepotState.presentation === "bookings"
                 options: AppModel.scopes
@@ -537,6 +549,7 @@ ApplicationWindow {
     Loader { active: AppModel.showRuleEditor; sourceComponent: Component { RuleEditorView {} } }
     Loader { active: AppModel.showCategorizer; sourceComponent: Component { CategorizerSheet {} } }
     Loader { active: AppModel.splitBooking !== null; sourceComponent: Component { SplitSheet {} } }
+    Loader { active: AppModel.isUnlocked && AppModel.refundBooking !== null; sourceComponent: Component { RefundSheet {} } }
     Loader { active: AppModel.newCategoryRequest !== null; sourceComponent: Component { NewCategoryDialog {} } }
     Loader { active: AppModel.budgetCategoryID !== null; sourceComponent: Component { BudgetEditorSheet {} } }
     CategoryDialogs {}

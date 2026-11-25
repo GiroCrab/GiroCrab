@@ -8,6 +8,42 @@ use crate::models::{AccountKind, BookingFilter, BookingScope, ConnectorKind, Sep
 use crate::vault::Vault;
 
 #[test]
+fn dkb_offers_fints_and_one_psd2_access_with_or_without_live_catalog() {
+    use super::bank_directory::{BankAccessMode, Psd2Bank, search_banks};
+
+    let live_dkb = Psd2Bank {
+        name: "DKB".into(),
+        country: "DE".into(),
+        aspsp: "DKB".into(),
+        connector: None,
+        live: true,
+        tested: String::new(),
+    };
+    for live_catalog in [vec![], vec![live_dkb]] {
+        let banks = search_banks("DKB".into(), live_catalog, 10);
+        let fints = banks
+            .iter()
+            .find(|bank| bank.mode == BankAccessMode::FinTs && bank.blz == "12030000")
+            .expect("existing DKB FinTS access");
+        let psd2: Vec<_> = banks
+            .iter()
+            .filter(|bank| bank.mode == BankAccessMode::Psd2)
+            .collect();
+        assert_eq!(psd2.len(), 1);
+        let bank = psd2[0];
+        assert_eq!(bank.name, fints.name);
+        assert_eq!(bank.id, "psd2:DE:DKB");
+        assert_eq!(bank.aspsp, "DKB");
+        assert_eq!(bank.country, "DE");
+        assert_eq!(bank.connector, None);
+        assert!(bank.tested.is_empty());
+    }
+    // The assistant searches again using the selected FinTS entry's full name.
+    let banks = search_banks("DKB (Deutsche Kreditbank)".into(), vec![], 10);
+    assert!(banks.iter().any(|bank| bank.id == "psd2:DE:DKB"));
+}
+
+#[test]
 fn errors_after_submit_leave_outcome_unknown() {
     use super::{CoreError, error_leaves_outcome_unknown as unknown};
     assert!(unknown(&CoreError::Network {
@@ -66,6 +102,196 @@ fn store_fetch_matches_depot_holdings_without_iban() {
         let acc = v.list_accounts().unwrap().pop().unwrap();
         assert_eq!(v.list_holdings(acc.id).unwrap().len(), 1, "ref {r}");
     }
+}
+
+#[test]
+fn history_bookings_arrive_checked_and_stored_documents_get_linked() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-history-docs");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(
+            ConnectorKind::TradeRepublic,
+            String::new(),
+            "+491701234567".into(),
+        )
+        .unwrap();
+    let account = RemoteAccount {
+        external_ref: "tr:cash".into(),
+        name: "Verrechnungskonto".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 1000,
+        balance_date: "2026-11-10".into(),
+    };
+    let doc = |bytes: &[u8], booking: Option<&str>| crate::documents::RemoteDocument {
+        account_ref: "tr:cash".into(),
+        booking_external_id: booking.map(str::to_string),
+        title: "Abrechnung – Beispiel".into(),
+        doc_type: "abrechnung".into(),
+        mime_type: "application/pdf".into(),
+        file_name: "a.pdf".into(),
+        bytes: bytes.to_vec(),
+        source_url: "https://example.invalid/doc/1".into(),
+        date: "2024-05-02".into(),
+    };
+    // first the PDF alone (its booking is older than the sync window of that time)
+    let first = FetchResult {
+        accounts: vec![account.clone()],
+        documents: vec![doc(b"%PDF-1.4 test", None)],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::TradeRepublic, conn, first).unwrap();
+    assert_eq!(s.documents_imported, 1);
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert!(docs.iter().all(|d| d.booking_id.is_none()));
+
+    // later the history pass brings the booking (as checked) and the link-only document
+    let booking = RemoteTransaction {
+        account_ref: "tr:cash".into(),
+        external_id: "item-1".into(),
+        booking_date: "2024-05-02".into(),
+        value_date: "2024-05-02".into(),
+        amount_cents: -7500,
+        currency: "EUR".into(),
+        counterparty: "Beispiel".into(),
+        checked: true,
+        ..Default::default()
+    };
+    let second = || FetchResult {
+        accounts: vec![account.clone()],
+        transactions: vec![booking.clone()],
+        documents: vec![doc(&[], Some("item-1"))],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::TradeRepublic, conn, second()).unwrap();
+    assert_eq!(
+        s.documents_imported, 0,
+        "a link-only document is no new document"
+    );
+    assert_eq!(
+        v.list_accounts().unwrap().pop().unwrap().new_count,
+        0,
+        "history is not new"
+    );
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    assert_eq!(docs.len(), 1);
+    let doc_id = docs[0].id;
+    assert!(
+        docs[0].booking_id.is_some(),
+        "the stored document is linked now"
+    );
+    v.link_document(doc_id, None).unwrap();
+    store_fetch(&v, ConnectorKind::TradeRepublic, conn, second()).unwrap();
+    assert_eq!(
+        v.list_all_documents(Default::default()).unwrap()[0].booking_id,
+        None,
+        "replaying an already stored booking does not restore a manual unlink"
+    );
+}
+
+/// The document pass can reach a known receipt only in a later sync than its booking (#1660).
+#[test]
+fn a_known_receipt_reached_later_links_to_its_booking_unless_unlinked() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-history-docs-later");
+    let v = Vault::open(
+        p_dir.join("v.db").to_string_lossy().into_owned(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let conn = v
+        .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
+        .unwrap();
+    let mut base = fetch_with_document();
+    let account = base.accounts.remove(0);
+    let doc = |bytes: &[u8], booking: Option<&str>, url: &str| crate::documents::RemoteDocument {
+        booking_external_id: booking.map(str::to_string),
+        bytes: bytes.to_vec(),
+        source_url: url.into(),
+        ..base.documents[0].clone()
+    };
+    let booking = |id: &str| RemoteTransaction {
+        account_ref: "tr:cash".into(),
+        external_id: id.into(),
+        booking_date: "2024-05-02".into(),
+        value_date: "2024-05-02".into(),
+        amount_cents: -7500,
+        currency: "EUR".into(),
+        counterparty: "Beispiel".into(),
+        checked: true,
+        ..Default::default()
+    };
+    let store = |transactions: Vec<RemoteTransaction>, documents| {
+        let fetched = FetchResult {
+            accounts: vec![account.clone()],
+            transactions,
+            documents,
+            ..Default::default()
+        };
+        store_fetch(&v, ConnectorKind::TradeRepublic, conn, fetched).unwrap();
+    };
+    // both receipts stored without a booking, then both bookings arrive while the pass is full
+    store(
+        vec![],
+        vec![
+            doc(b"%PDF-1.4 a", None, "tr:doc:a"),
+            doc(b"%PDF-1.4 b", None, "tr:doc:b"),
+            doc(b"%PDF-1.4 c", None, "tr:doc:c"),
+        ],
+    );
+    store(
+        vec![booking("item-a"), booking("item-b"), booking("item-c")],
+        vec![],
+    );
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    let id_of = |url: &str| docs.iter().find(|d| d.source_url == url).unwrap().id;
+    let (a, b) = (id_of("tr:doc:a"), id_of("tr:doc:b"));
+    let booking_a = v
+        .list_all_documents(Default::default())
+        .unwrap()
+        .iter()
+        .find(|d| d.id == a)
+        .and_then(|d| d.booking_id);
+    assert_eq!(booking_a, None, "no link without the receipt in the fetch");
+    // the user unlinks receipt b from a booking it was put to by hand
+    let other = v.list_accounts().unwrap()[0].id;
+    let any_booking: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE account_id = ?1 ORDER BY id LIMIT 1",
+            [other],
+            |r| r.get(0),
+        )
+        .unwrap();
+    v.link_document(b, Some(any_booking)).unwrap();
+    v.link_document(b, None).unwrap();
+    // a later pass reaches the known receipts (link-only, no bytes); c is no longer remembered
+    // as known and comes downloaded again
+    store(
+        vec![],
+        vec![
+            doc(&[], Some("item-a"), "tr:doc:a"),
+            doc(&[], Some("item-b"), "tr:doc:b"),
+            doc(b"%PDF-1.4 c", Some("item-c"), "tr:doc:c"),
+        ],
+    );
+    let docs = v.list_all_documents(Default::default()).unwrap();
+    let linked = |id: i64| docs.iter().find(|d| d.id == id).unwrap().booking_id;
+    assert!(
+        linked(a).is_some(),
+        "the booking of an earlier sync gets its receipt"
+    );
+    assert_eq!(linked(b), None, "a manual unlink stays");
+    let c = id_of("tr:doc:c");
+    assert!(
+        linked(c).is_some(),
+        "a receipt downloaded again gets its link"
+    );
+    assert_eq!(docs.len(), 3, "the copy is not stored twice");
 }
 
 #[test]
@@ -189,6 +415,56 @@ fn fetch_warnings_name_accounts_by_their_stored_name() {
     assert_eq!(
         v.list_accounts().unwrap().pop().unwrap().balance_cents,
         250_00
+    );
+}
+
+#[test]
+fn fetch_hints_name_accounts_by_their_stored_name_without_any_warning() {
+    // #1743: "Depotbestand (HKWPD) – von der Bank nicht angeboten" is a hint, not a warning.
+    // With no warning in the fetch, the IBAN must still become the stored name.
+    let p_dir = crate::test_support::TempDir::new("girocrab-fetch-hints");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(
+            ConnectorKind::FinTsGeneric,
+            "fints:50010517".into(),
+            "login".into(),
+        )
+        .unwrap();
+    let iban = "DE02120300000000202051";
+    let depot = RemoteAccount {
+        external_ref: iban.into(),
+        name: "Direkt-Depot".into(),
+        owner: String::new(),
+        iban: iban.into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Brokerage,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let first = FetchResult {
+        accounts: vec![depot.clone()],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, first).unwrap();
+    let id = v.list_accounts().unwrap().pop().unwrap().id;
+    v.rename_account(id, "Mein Depot".into()).unwrap();
+
+    let hinted = FetchResult {
+        accounts: vec![depot],
+        balances_unknown: vec![iban.into()],
+        hints: vec![format!(
+            "{iban}: Depotbestand (HKWPD) – von der Bank nicht angeboten"
+        )],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::FinTsGeneric, conn, hinted).unwrap();
+    assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    assert_eq!(
+        s.hints,
+        vec!["Mein Depot: Depotbestand (HKWPD) – von der Bank nicht angeboten".to_string()]
     );
 }
 
@@ -1597,6 +1873,23 @@ async fn account_sync_stores_only_that_account() {
     assert!(accounts.iter().all(|a| !stored(a.id).access_revoked));
     // the login counts as synced only after a full sync (automatic sync)
     assert_eq!(last_sync(&v), synced_before);
+    // the fetched account notes its own time (#1716), the others keep theirs
+    let now = crate::dates::now_ms() / 1000;
+    let fetched = stored(other.id)
+        .last_fetch_unix
+        .expect("fetch time of the account");
+    assert!(
+        (now - 10..=now + 10).contains(&fetched),
+        "{fetched} vs {now}"
+    );
+    for a in accounts.iter().filter(|a| a.id != other.id) {
+        assert_eq!(
+            stored(a.id).last_fetch_unix,
+            a.last_fetch_unix,
+            "{}",
+            a.name
+        );
+    }
     let s = v
         .clone()
         .begin_account_sync(giro.id, "pin".into(), true)
@@ -2417,13 +2710,15 @@ fn a_fetch_stores_no_documents_while_retrieval_is_off() {
         .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
         .unwrap();
     v.set_documents_fetch(conn, false).unwrap();
-    store_fetch(
+    let summary = store_fetch(
         &v,
         ConnectorKind::TradeRepublic,
         conn,
         fetch_with_document(),
     )
     .unwrap();
+    // the log can say why no document came
+    assert!(summary.documents_off);
     assert!(
         v.list_all_documents(crate::documents::DocumentFilter::default())
             .unwrap()
@@ -2431,13 +2726,14 @@ fn a_fetch_stores_no_documents_while_retrieval_is_off() {
     );
     // on again: the same delivery is stored
     v.set_documents_fetch(conn, true).unwrap();
-    store_fetch(
+    let on = store_fetch(
         &v,
         ConnectorKind::TradeRepublic,
         conn,
         fetch_with_document(),
     )
     .unwrap();
+    assert!(!on.documents_off);
     assert_eq!(
         v.list_all_documents(crate::documents::DocumentFilter::default())
             .unwrap()

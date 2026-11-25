@@ -33,6 +33,7 @@ use crate::documents::RemoteDocument;
 use crate::error::CoreResult;
 use crate::i18n::{tr, trf};
 use crate::models::AccountKind;
+use crate::secret::SecretJson;
 
 /// The REST side of the PostBox fetch: comdirect's API, a fake in tests.
 #[async_trait]
@@ -276,6 +277,10 @@ impl BankConnector for FintsWithPostbox {
         if matches!(self.stage, Stage::Fints) {
             self.fints.finish(ctx).await;
         }
+    }
+
+    fn state_after_failed_fetch(&self) -> Option<SecretJson> {
+        self.fints.state_after_failed_fetch()
     }
 }
 
