@@ -2003,6 +2003,7 @@ impl Vault {
         }
         let (connection_id, iban, owner, key_str, kind, demo) =
             self.transfer_source(request.account_id, demo)?;
+        self.ensure_savings_transfer_to_own_checking(request.account_id, &request.recipient_iban)?;
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2412,6 +2413,43 @@ impl Vault {
     /// Debit account of a transfer: connection, IBAN, owner, connector and the
     /// gate/kind checks shared by single and batch transfers.
     #[allow(clippy::type_complexity)]
+    /// A savings account (Tagesgeld) only books to the user's own active checking accounts (#582, #1893).
+    /// Enforced here so no front end can send it to a third party.
+    fn ensure_savings_transfer_to_own_checking(
+        &self,
+        account_id: i64,
+        recipient_iban: &str,
+    ) -> CoreResult<()> {
+        let rows: Vec<(i64, String, String, bool)> = {
+            let db = self.db()?;
+            let mut stmt = db.prepare(
+                "SELECT id, kind, iban, archived_unix IS NOT NULL FROM accounts WHERE deleted_ms IS NULL",
+            )?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let Some((_, kind, _, _)) = rows.iter().find(|r| r.0 == account_id) else {
+            return Ok(()); // unknown source: `transfer_source` reports it
+        };
+        if AccountKind::from_str(kind) != AccountKind::Savings {
+            return Ok(());
+        }
+        let target = normalize_iban(recipient_iban);
+        let own = rows.iter().any(|(id, k, iban, archived)| {
+            *id != account_id
+                && !archived
+                && AccountKind::from_str(k) == AccountKind::Checking
+                && normalize_iban(iban) == target
+        });
+        if own {
+            Ok(())
+        } else {
+            Err(CoreError::invalid(tr(
+                "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich.",
+            )))
+        }
+    }
+
     pub(crate) fn transfer_source(
         &self,
         account_id: i64,
