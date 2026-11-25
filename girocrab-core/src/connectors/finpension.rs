@@ -106,10 +106,10 @@ pub fn extract_country_code(phone: &str) -> Option<&'static str> {
     let digits = phone.strip_prefix('+')?;
     // Match longest prefix first (e.g. +423 before +42 before +4)
     for len in (1..=3).rev() {
-        if digits.len() >= len {
-            if let Some(cc) = calling_code_to_country(&digits[..len]) {
-                return Some(cc);
-            }
+        if digits.len() >= len
+            && let Some(cc) = calling_code_to_country(&digits[..len])
+        {
+            return Some(cc);
         }
     }
     None
@@ -176,10 +176,10 @@ fn headers(token: Option<&str>, is_login: bool) -> HeaderMap {
             HeaderValue::from_static("https://app.finpension.ch/login"),
         );
     }
-    if let Some(t) = token {
-        if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {t}")) {
-            h.insert(AUTHORIZATION, hv);
-        }
+    if let Some(t) = token
+        && let Ok(hv) = HeaderValue::from_str(&format!("Bearer {t}"))
+    {
+        h.insert(AUTHORIZATION, hv);
     }
     h
 }
@@ -192,6 +192,23 @@ pub struct FinpensionState {
     pub phone: Option<String>,
     #[serde(default)]
     pub country_code: Option<String>,
+}
+
+/// The stored token, only for the login it was issued to: a changed phone number
+/// never reuses it, a formatting-only edit of the same number does.
+fn reusable_token(state: &FinpensionState, phone: &str) -> Option<String> {
+    let token = state
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())?;
+    let saved_phone = normalize_phone(state.phone.as_deref()?);
+    (saved_phone == phone).then(|| token.to_string())
+}
+
+/// Statuses with which the bank refuses a token (expired or revoked).
+fn token_rejected(status: u16) -> bool {
+    matches!(status, 401 | 403)
 }
 
 pub struct FinpensionConnector {
@@ -250,24 +267,30 @@ impl BankConnector for FinpensionConnector {
             }
         };
 
-        // 1. Check if a persisted token is still valid
-        if let Ok(st) = ctx.state.decode::<FinpensionState>() {
-            if let Some(ref stored_token) = st.token {
-                if !stored_token.trim().is_empty() {
-                    if let Ok(client) = http_client_same_host() {
-                        let verify_res = client
-                            .get(format!("{}/portfolios", self.api_base_url))
-                            .headers(headers(Some(stored_token), false))
-                            .send()
-                            .await;
-                        if let Ok(resp) = verify_res {
-                            if resp.status().is_success() {
-                                self.auth_token = Some(stored_token.clone());
-                                return Ok(Phase::Ready);
-                            }
-                        }
-                    }
-                }
+        // 1. Reuse the persisted token of the same login while the bank accepts it
+        let stored = ctx
+            .state
+            .decode::<FinpensionState>()
+            .ok()
+            .and_then(|st| reusable_token(&st, &self.phone));
+        if let Some(stored_token) = stored {
+            let resp = http_client_same_host()?
+                .get(format!("{}/portfolios", self.api_base_url))
+                .headers(headers(Some(&stored_token), false))
+                .send()
+                .await?;
+            let status = resp.status();
+            if status.is_success() {
+                self.auth_token = Some(stored_token);
+                return Ok(Phase::Ready);
+            }
+            // Only a token the bank no longer accepts leads to a new login (and SMS);
+            // timeouts and service errors stay errors.
+            if !token_rejected(status.as_u16()) {
+                return Err(CoreError::Bank {
+                    code: status.as_u16().to_string(),
+                    message: "finpension: Portfolios konnten nicht abgerufen werden".into(),
+                });
             }
         }
 
@@ -466,9 +489,10 @@ pub fn parse_portfolios_data(
     let mut accounts = Vec::new();
     let mut holdings = Vec::new();
     let mut transactions = Vec::new();
-    let mut ids = ContentIds::default();
 
     for p in portfolios {
+        // per portfolio: ID-less bookings keep their IDs whatever order the portfolios come in
+        let mut ids = ContentIds::default();
         let id_num = p["id"]
             .as_i64()
             .or_else(|| p["id"].as_str().and_then(|s| s.parse().ok()))
@@ -482,8 +506,11 @@ pub fn parse_portfolios_data(
             .or_else(|| p["number"].as_str().map(|s| s.to_string()))
             .unwrap_or_else(|| id_str.clone());
         let name = format!("Finpension Portfolio {number}");
-        let balance_cents =
-            json_number_to_cents_rounded(&p["performance"]["current_value"]).unwrap_or(0);
+        // A missing value is no balance of zero: reject the snapshot, keep the stored one.
+        let balance_cents = json_number_to_cents_rounded(&p["performance"]["current_value"])
+            .map_err(|_| CoreError::Protocol {
+                message: "finpension: Portfolio ohne aktuellen Wert".into(),
+            })?;
 
         let account_ref = format!("finpension-{id_str}");
         accounts.push(RemoteAccount {
@@ -506,119 +533,99 @@ pub fn parse_portfolios_data(
                     for pos in positions {
                         if let (Some(asset_name), Some(isin)) =
                             (pos["asset_name"].as_str(), pos["isin"].as_str())
+                            && !isin.trim().is_empty()
                         {
-                            if !isin.trim().is_empty() {
-                                isin_by_name
-                                    .insert(asset_name.to_string(), isin.trim().to_string());
-                            }
+                            isin_by_name.insert(asset_name.to_string(), isin.trim().to_string());
                         }
                     }
                 }
             }
         }
 
-        // 2. Estimate purchase price ratio via performance profit/deposits
-        let current_profit_cents =
-            json_number_to_cents_rounded(&p["performance"]["current_profit_value"]).unwrap_or(0);
-        let deposits_cents =
-            json_number_to_cents_rounded(&p["performance"]["deposits_ytd"]).unwrap_or(0);
-        let profit_ratio = if deposits_cents > 0 && current_profit_cents != 0 {
-            current_profit_cents as f64 / deposits_cents as f64
-        } else {
-            0.0
+        // 2. Holdings replace the account's stored ones, so an incomplete inventory rejects
+        // the snapshot; an empty list is a valid (empty) inventory.
+        let incomplete = || CoreError::Protocol {
+            message: "finpension: Unvollständige Vermögensaufteilung".into(),
         };
+        let classes = p["allocation_by_asset_class"]
+            .as_array()
+            .ok_or_else(incomplete)?;
+        for cls in classes {
+            for pos in cls["positions"].as_array().ok_or_else(incomplete)? {
+                let asset_name = pos["asset_name"].as_str().unwrap_or("Unbekannt");
+                let value_cents = json_number_to_cents_rounded(&pos["value"]).unwrap_or(0);
+                let shares = pos["shares"]
+                    .as_f64()
+                    .or_else(|| pos["shares"].as_str().and_then(|s| s.parse().ok()))
+                    .unwrap_or(0.0);
 
-        // 3. Extract asset allocations into holdings
-        if let Some(classes) = p["allocation_by_asset_class"].as_array() {
-            for cls in classes {
-                if let Some(positions) = cls["positions"].as_array() {
-                    for pos in positions {
-                        let asset_name = pos["asset_name"].as_str().unwrap_or("Unbekannt");
-                        let value_cents = json_number_to_cents_rounded(&pos["value"]).unwrap_or(0);
-                        let shares = pos["shares"]
-                            .as_f64()
-                            .or_else(|| pos["shares"].as_str().and_then(|s| s.parse().ok()))
-                            .unwrap_or(0.0);
-
-                        if asset_name.eq_ignore_ascii_case("cash")
-                            || asset_name.eq_ignore_ascii_case("liquidität")
-                        {
-                            holdings.push(RemoteHolding {
-                                account_ref: account_ref.clone(),
-                                holding: Holding {
-                                    isin: String::new(),
-                                    wkn: String::new(),
-                                    name: tr("Liquidität").into(),
-                                    quantity: 1.0,
-                                    current_price_cents: value_cents,
-                                    purchase_price_cents: value_cents,
-                                    value_cents,
-                                    currency: "CHF".into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            });
-                        } else {
-                            let current_price_cents = if shares > 0.0 {
-                                ((value_cents as f64) / shares).round() as i64
-                            } else {
-                                0
-                            };
-
-                            let purchase_price_cents = if profit_ratio != 0.0 {
-                                ((current_price_cents as f64) / (1.0 + profit_ratio)).round() as i64
-                            } else {
-                                current_price_cents
-                            };
-
-                            let isin = isin_by_name.get(asset_name).cloned().unwrap_or_default();
-
-                            holdings.push(RemoteHolding {
-                                account_ref: account_ref.clone(),
-                                holding: Holding {
-                                    isin,
-                                    wkn: String::new(),
-                                    name: asset_name.into(),
-                                    quantity: shares,
-                                    current_price_cents,
-                                    purchase_price_cents,
-                                    value_cents,
-                                    currency: "CHF".into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            });
-                        }
-                    }
+                if asset_name.eq_ignore_ascii_case("cash")
+                    || asset_name.eq_ignore_ascii_case("liquidität")
+                {
+                    holdings.push(RemoteHolding {
+                        account_ref: account_ref.clone(),
+                        holding: Holding {
+                            isin: String::new(),
+                            wkn: String::new(),
+                            name: tr("Liquidität").into(),
+                            quantity: 1.0,
+                            current_price_cents: value_cents,
+                            purchase_price_cents: value_cents,
+                            value_cents,
+                            currency: "CHF".into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                } else {
+                    let current_price_cents = if shares > 0.0 {
+                        ((value_cents as f64) / shares).round() as i64
+                    } else {
+                        0
+                    };
+                    let isin = isin_by_name.get(asset_name).cloned().unwrap_or_default();
+                    // The response has no cost basis per position: the purchase price stays
+                    // unknown (0), as in the export import, instead of a portfolio-wide guess.
+                    holdings.push(RemoteHolding {
+                        account_ref: account_ref.clone(),
+                        holding: Holding {
+                            isin,
+                            wkn: String::new(),
+                            name: asset_name.into(),
+                            quantity: shares,
+                            current_price_cents,
+                            value_cents,
+                            currency: "CHF".into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
                 }
             }
         }
 
-        // 4. Extract portfolio transactions
+        // 3. Extract portfolio transactions. Rows without a valid bank date or amount are
+        // skipped: a guessed value would be stored for good (and the fetch date would make an
+        // ID-less booking new every day). A later sync imports them once they are complete.
         if let Some(tx_list) = p["transactions"].as_array() {
             for tx in tx_list {
-                let booking_date = tx["date"]
+                let Some(booking_date) = tx["date"].as_str().and_then(|d| parse_date(d).ok())
+                else {
+                    continue;
+                };
+                let Ok(amount_val) = json_number_to_cents_rounded(&tx["amount"]) else {
+                    continue;
+                };
+                // language independent: part of the fallback ID, translated only for display
+                let tx_type = tx["type"]
                     .as_str()
-                    .unwrap_or(today)
-                    .get(..10)
-                    .unwrap_or(today)
-                    .to_string();
-                let amount_val = json_number_to_cents_rounded(&tx["amount"]).unwrap_or(0);
-                let tx_type = tx["type"].as_str().unwrap_or("deposit");
+                    .unwrap_or("deposit")
+                    .to_ascii_lowercase();
 
-                let amount_cents = if tx_type.eq_ignore_ascii_case("fee")
-                    || tx_type.eq_ignore_ascii_case("withdrawal")
-                {
+                let amount_cents = if matches!(tx_type.as_str(), "fee" | "withdrawal") {
                     -amount_val.abs()
                 } else {
                     amount_val.abs()
-                };
-
-                let purpose = match tx_type {
-                    "deposit" => tr("Einzahlung Säule 3a").to_string(),
-                    "fee" => tr("Pauschalgebühr").to_string(),
-                    "withdrawal" => tr("Auszahlung").to_string(),
-                    _ => tx_type.to_string(),
                 };
 
                 let mut r = RemoteTransaction {
@@ -627,7 +634,7 @@ pub fn parse_portfolios_data(
                     value_date: booking_date,
                     amount_cents,
                     currency: "CHF".into(),
-                    purpose,
+                    purpose: tx_type.clone(),
                     ..Default::default()
                 };
 
@@ -637,11 +644,16 @@ pub fn parse_portfolios_data(
                         .filter(|s| !s.trim().is_empty())
                         .map(|s| s.to_string())
                 });
-                if let Some(tid) = has_id {
-                    r.external_id = format!("finpension-{id_str}-{tid}");
-                } else {
-                    r.external_id = ids.next(&r);
-                }
+                r.external_id = match has_id {
+                    Some(tid) => format!("finpension-{id_str}-{tid}"),
+                    None => ids.next(&r),
+                };
+                r.purpose = match tx_type.as_str() {
+                    "deposit" => tr("Einzahlung Säule 3a").to_string(),
+                    "fee" => tr("Pauschalgebühr").to_string(),
+                    "withdrawal" => tr("Auszahlung").to_string(),
+                    _ => tx["type"].as_str().unwrap_or_default().to_string(),
+                };
 
                 transactions.push(r);
             }
@@ -826,8 +838,9 @@ impl Vault {
 }
 
 /// Parses an export; JSON when it starts with `{` or `[`, otherwise CSV.
-/// A CSV is recognized as transactions when it contains cash flow / category / date columns,
-/// or as holdings when it has an ISIN column without cash flow columns.
+/// A CSV with an ISIN column and no transaction amount column (amount / cash flow) is a
+/// holdings list, also with date or category columns; everything else is read as
+/// transactions (the transaction report has ISIN and cash flow).
 pub fn parse_export(input: &str) -> CoreResult<FinpensionExport> {
     let input = input.trim_start_matches('\u{feff}').trim();
     if input.starts_with('{') || input.starts_with('[') {
@@ -835,25 +848,8 @@ pub fn parse_export(input: &str) -> CoreResult<FinpensionExport> {
     } else {
         let rows = parse_csv_rows(input)?;
         let first_row = rows.first().ok_or_else(|| invalid("CSV has no rows"))?;
-        let is_tx = first_row.iter().any(|c| {
-            let n = norm(c);
-            matches!(
-                n.as_str(),
-                "cashflow" | "flow" | "buchungstext" | "verwendungszweck"
-            )
-        }) || (first_row.iter().any(|c| {
-            matches!(
-                norm(c).as_str(),
-                "date" | "datum" | "buchungsdatum" | "valuta"
-            )
-        }) && first_row.iter().any(|c| {
-            matches!(
-                norm(c).as_str(),
-                "category" | "kategorie" | "amount" | "betrag"
-            )
-        }));
-
-        let is_holdings = !is_tx && first_row.iter().any(|c| matches!(norm(c).as_str(), "isin"));
+        let c = Columns::new(first_row);
+        let is_holdings = c.find(&["isin"]).is_some() && c.find(TX_AMOUNT_COLUMNS).is_none();
         let mut out = FinpensionExport::default();
         if is_holdings {
             out.holdings = holdings_from_csv_rows(&rows)?;
@@ -926,6 +922,9 @@ fn norm(s: &str) -> String {
         .collect()
 }
 
+/// Columns holding a booking's amount; their presence makes a CSV a transaction list.
+const TX_AMOUNT_COLUMNS: &[&str] = &["amount", "betrag", "cashflow", "flow"];
+
 struct Columns(HashMap<String, usize>);
 
 impl Columns {
@@ -982,7 +981,18 @@ fn holdings_from_csv_rows(rows: &[Vec<String>]) -> CoreResult<Vec<FinpensionHold
         "wert",
         "marketvalueinchf",
     ])?;
-    let cur = c.find(&["currency", "währung", "waehrung", "whg", "assetcurrency"]);
+    // "… in CHF" columns are CHF whatever the asset's currency; mixing one of them with a
+    // column in the asset's currency would label one of the amounts wrongly.
+    let price_in_chf = c.find(&["assetpriceinchf"]) == Some(price);
+    let value_in_chf = c.find(&["marketvalueinchf"]) == Some(value);
+    if price_in_chf != value_in_chf {
+        return Err(invalid("price and market value in different currencies"));
+    }
+    let cur = if price_in_chf {
+        None
+    } else {
+        c.find(&["currency", "währung", "waehrung", "whg", "assetcurrency"])
+    };
     rows[1..]
         .iter()
         .map(|r| {
@@ -1013,7 +1023,7 @@ fn transactions_from_csv_rows(rows: &[Vec<String>]) -> CoreResult<Vec<Finpension
     if desc_col.is_none() && cat_col.is_none() && asset_col.is_none() {
         return Err(invalid("missing column description or category"));
     }
-    let amount = c.require(&["amount", "betrag", "cashflow", "flow"])?;
+    let amount = c.require(TX_AMOUNT_COLUMNS)?;
     let cur = c.find(&["currency", "währung", "waehrung", "whg", "assetcurrency"]);
     let reference = c.find(&["reference", "referenz", "id", "isin"]);
     rows[1..]
@@ -1377,7 +1387,7 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
     }
 
     #[test]
-    fn urls_accepted() {
+    fn urls_accepted_api_hosts() {
         assert!(validate_finpension_url("https://finpension.ch").is_ok());
         assert!(validate_finpension_url("https://finpension.ch/app").is_ok());
         assert!(validate_finpension_url("https://app.finpension.ch/export.csv").is_ok());
@@ -1594,7 +1604,21 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
                         r#"{"message": "OK", "method": "sms"}"#.to_string(),
                     )
                 } else if first_line.starts_with("GET /portfolios") {
-                    ("200 OK", mock_portfolios_json())
+                    // only with the issued token; "down" simulates a service failure
+                    let lower = req.to_ascii_lowercase();
+                    if lower.contains("authorization: bearer test-jwt-token-12345") {
+                        ("200 OK", mock_portfolios_json())
+                    } else if lower.contains("authorization: bearer down") {
+                        (
+                            "503 Service Unavailable",
+                            r#"{"error": "maintenance"}"#.to_string(),
+                        )
+                    } else {
+                        (
+                            "401 Unauthorized",
+                            r#"{"error": "unauthorized"}"#.to_string(),
+                        )
+                    }
                 } else if first_line.starts_with("POST /logout") {
                     ("200 OK", r#"{"message": "OK"}"#.to_string())
                 } else {
@@ -1679,6 +1703,8 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
         assert_eq!(fund_holding.holding.name, "Swiss Equity Fund");
         assert_eq!(fund_holding.holding.quantity, 100.0);
         assert_eq!(fund_holding.holding.value_cents, 1000000);
+        // no cost basis per position in the response: unknown, not estimated
+        assert_eq!(fund_holding.holding.purchase_price_cents, 0);
 
         // Verify transactions with stable external_id
         assert_eq!(result.transactions.len(), 3);
@@ -1720,5 +1746,159 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
         assert!(requests.iter().any(|r| r.starts_with("POST /login")));
         assert!(requests.iter().any(|r| r.starts_with("POST /login2fa")));
         assert!(requests.iter().any(|r| r.starts_with("GET /portfolios")));
+    }
+
+    fn ctx_with_token(login: &str, token: &str) -> ConnectContext {
+        ConnectContext {
+            connection_id: 1,
+            login_name: login.into(),
+            secret: SecretString::new(String::new()),
+            state: SecretJson::encode(&FinpensionState {
+                token: Some(token.into()),
+                phone: Some("+41791234567".into()),
+                country_code: Some("CH".into()),
+            })
+            .unwrap(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stored_token_only_for_the_same_login() {
+        let st = FinpensionState {
+            token: Some("t".into()),
+            phone: Some("+41791234567".into()),
+            country_code: Some("CH".into()),
+        };
+        assert_eq!(reusable_token(&st, "+41791234567").as_deref(), Some("t"));
+        assert_eq!(
+            reusable_token(&st, &normalize_phone("079 123 45 67")).as_deref(),
+            Some("t")
+        );
+        assert_eq!(reusable_token(&st, "+41799999999"), None);
+        let without_phone = FinpensionState { phone: None, ..st };
+        assert_eq!(reusable_token(&without_phone, "+41791234567"), None);
+        assert!(token_rejected(401) && token_rejected(403));
+        assert!(!token_rejected(503) && !token_rejected(500));
+    }
+
+    #[tokio::test]
+    async fn stored_token_probe_keeps_service_errors_and_login_changes() {
+        let (base, _log) = serve_finpension_mock();
+        let mut c = FinpensionConnector::with_base_urls(base.clone(), base.clone());
+
+        // a formatting-only edit of the phone number keeps the session
+        let phase = c
+            .begin(&ctx_with_token("079 123 45 67", "test-jwt-token-12345"))
+            .await
+            .unwrap();
+        assert!(matches!(phase, Phase::Ready));
+
+        // another phone number never reuses the previous login's token
+        let r = c
+            .begin(&ctx_with_token("+41 79 999 99 99", "test-jwt-token-12345"))
+            .await;
+        assert!(matches!(r, Err(CoreError::Authentication { .. })));
+
+        // a token the bank rejects asks for the password
+        let r = c.begin(&ctx_with_token("+41791234567", "stale")).await;
+        assert!(matches!(r, Err(CoreError::Authentication { .. })));
+
+        // a service failure stays a service failure: no password prompt, no new SMS
+        let Err(CoreError::Bank { code, .. }) =
+            c.begin(&ctx_with_token("+41791234567", "down")).await
+        else {
+            panic!("expected the bank's service error");
+        };
+        assert_eq!(code, "503");
+    }
+
+    fn portfolio(id: i64, transactions: Value) -> Value {
+        json!({
+            "id": id,
+            "performance": {"current_value": 100.0},
+            "allocation_by_asset_class": [],
+            "transactions": transactions,
+        })
+    }
+
+    #[test]
+    fn incomplete_portfolio_snapshot_is_rejected() {
+        let mut p = portfolio(1, json!([]));
+        p["performance"] = json!({});
+        assert!(parse_portfolios_data(&json!([p]), "2026-11-25").is_err());
+
+        let mut p = portfolio(1, json!([]));
+        p.as_object_mut()
+            .unwrap()
+            .remove("allocation_by_asset_class");
+        assert!(parse_portfolios_data(&json!([p]), "2026-11-25").is_err());
+
+        let mut p = portfolio(1, json!([]));
+        p["allocation_by_asset_class"] = json!([{"name": "Equities"}]);
+        assert!(parse_portfolios_data(&json!([p]), "2026-11-25").is_err());
+
+        // an explicit zero balance and an empty inventory are valid
+        let mut p = portfolio(1, json!([]));
+        p["performance"]["current_value"] = json!(0);
+        let (accounts, holdings, _) = parse_portfolios_data(&json!([p]), "2026-11-25").unwrap();
+        assert_eq!(accounts[0].balance_cents, 0);
+        assert!(holdings.is_empty());
+    }
+
+    #[test]
+    fn bookings_without_bank_date_or_amount_are_skipped() {
+        let txs = json!([
+            {"type": "deposit", "amount": 100.0},
+            {"id": 7, "date": "2026-02-30", "type": "deposit", "amount": 5.0},
+            {"id": 8, "date": "2026-03-01", "type": "deposit", "amount": null},
+            {"id": 9, "date": "2026-03-02T10:00:00Z", "type": "fee", "amount": 0},
+        ]);
+        let (_, _, t) = parse_portfolios_data(&json!([portfolio(1, txs)]), "2026-11-25").unwrap();
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].external_id, "finpension-1-9");
+        assert_eq!(t[0].booking_date, "2026-03-02");
+        assert_eq!(t[0].amount_cents, 0);
+    }
+
+    #[test]
+    fn id_less_booking_ids_do_not_depend_on_portfolio_order() {
+        let deposit = json!([{"date": "2026-01-15", "type": "Deposit", "amount": 50.0}]);
+        let a = portfolio(1, deposit.clone());
+        let b = portfolio(2, deposit);
+        let ids = |list: Value| {
+            let (_, _, t) = parse_portfolios_data(&list, "2026-11-25").unwrap();
+            assert!(t.iter().all(|t| t.purpose == "Einzahlung Säule 3a"));
+            let mut v: Vec<_> = t
+                .into_iter()
+                .map(|t| (t.account_ref, t.external_id))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(ids(json!([a.clone(), b.clone()])), ids(json!([b, a])));
+    }
+
+    #[test]
+    fn holdings_csv_with_date_and_category_stays_holdings() {
+        let csv = "Date;Category;ISIN;Name;Quantity;Price;Market Value;Currency\n\
+2026-03-31;Equities;CH0000000011;Fund;2;10.50;21.00;CHF\n";
+        let e = parse_export(csv).unwrap();
+        assert!(e.transactions.is_empty());
+        assert_eq!(e.holdings.len(), 1);
+        assert_eq!(e.holdings[0].value_cents, 2100);
+    }
+
+    #[test]
+    fn chf_columns_keep_chf_and_mixed_currencies_are_rejected() {
+        let csv = "ISIN;Name;\"Number of Shares\";\"Asset Currency\";\"Asset Price in CHF\";\"Market Value in CHF\"\n\
+IE0000000022;Bond Fund;2;EUR;50.00;100.00\n";
+        let h = parse_holdings_csv(csv).unwrap();
+        assert_eq!(h[0].currency, "CHF");
+        assert_eq!(h[0].value_cents, 10000);
+
+        let mixed = "ISIN;Name;Anzahl;\"Asset Price in CHF\";Marktwert;Währung\n\
+IE0000000022;Bond Fund;2;50.00;90.00;EUR\n";
+        assert!(parse_holdings_csv(mixed).is_err());
     }
 }
