@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GiroCrabUI is also built for iOS. CI has no iOS Simulator job (too slow), so macOS-only
-# Foundation APIs are caught here by grep instead: a use outside `#if os(macOS)` fails.
+# APIs are caught here by grep instead: a use outside `#if os(macOS)` fails.
 #
 #   scripts/lint-ios-compat.sh      exits 1 and lists offending lines
 set -euo pipefail
@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 # macOS-only APIs (unavailable on iOS). Extend when another one bites.
-PATTERN='homeDirectoryForCurrentUser|NSWorkspace\.shared|NSOpenPanel|NSSavePanel'
+PATTERN='homeDirectoryForCurrentUser|NSWorkspace\.shared|NSOpenPanel|NSSavePanel|toggleStyle[(][.]checkbox[)]|buttonStyle[(][.]link[)]'
 
 bad=$(find GiroCrabApp/Sources/GiroCrabUI -name '*.swift' -print0 | xargs -0 awk -v pat="$PATTERN" '
     FNR == 1 { depth = 0; mac = 0 }
