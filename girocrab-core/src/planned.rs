@@ -48,7 +48,8 @@ pub(crate) fn planned_kind(conn: &Connection) -> CoreResult<()> {
 
 /// Step 43 (#1900): `settled_ms` marks a scheduled order the bank's booking has
 /// settled (NULL = still open), so a vault merge cannot bring it back. The date
-/// index covers it, since lists and counts filter `settled_ms IS NULL`. Idempotent.
+/// index already covers it for the `settled_ms IS NULL` filter that lists and
+/// counts get in part 2; no query reads it yet. Idempotent.
 pub(crate) fn planned_settled(conn: &Connection) -> CoreResult<()> {
     if !has_column(conn, "main", "planned_transfers", "settled_ms")? {
         conn.execute_batch("ALTER TABLE planned_transfers ADD COLUMN settled_ms INTEGER;")?;
