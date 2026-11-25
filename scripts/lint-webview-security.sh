@@ -27,10 +27,20 @@ for f in $(grep -lE 'WKWebView\(' "$SWIFT_DIR"/*.swift); do
     grep -qE 'allowsMainFrame|== *"https"' "$f" || err "$f: navigation guard does not restrict the scheme to https"
 done
 
-# 2. QML: a WebEngineView must reject navigations; the guard must not be switched off.
+# 2. QML: a WebEngineView must reject navigations and restrict the scheme to https (a bare
+#    handler is not enough); the guard must not be switched off.
+QML_SCHEME_RE='startsWith\(.https:.\)|protocol *[!=]==? *.https:.'
+for bad in 'onNavigationRequested: request => { }'; do
+    ! grep -qE "$QML_SCHEME_RE" <<<"$bad" || err "self-test: handler without scheme check accepted: $bad"
+done
+for ok in 'if (request.isMainFrame && !u.toLowerCase().startsWith("https:")) request.reject()' \
+          'if (a.protocol !== "https:") request.reject()'; do
+    grep -qE "$QML_SCHEME_RE" <<<"$ok" || err "self-test: https scheme check not recognised: $ok"
+done
 for f in $(grep -lE '^[[:space:]]*(sourceComponent: )?WebEngineView[[:space:]]*\{|^WebEngineView[[:space:]]*\{' "$QML_DIR"/*.qml); do
     is_local "$f" && continue
     grep -q 'onNavigationRequested' "$f" || err "$f: WebEngineView without onNavigationRequested guard"
+    grep -qE "$QML_SCHEME_RE" "$f" || err "$f: WebEngineView navigation guard does not restrict the scheme to https"
 done
 hits=$(grep -nE 'navigationGuard: *false' "$QML_DIR"/*.qml || true)
 [[ -z "$hits" ]] || err "navigation guard switched off:"$'\n'"$hits"
@@ -39,18 +49,41 @@ hits=$(grep -nE 'navigationGuard: *false' "$QML_DIR"/*.qml || true)
 #    (neither through a variable `pw`/`password…` nor straight from the selector,
 #    `querySelector('input[type=password]').value`). Writes stay allowed.
 PW_READ_RE='\b(pw|pwd|pass(word)?[A-Za-z]*)\.value\b|type=[^]]*password[^)]*\)\.value\b'
-pw_reads() { grep -E "$PW_READ_RE" | grep -vE '\.value *=[^=]' | grep -vE '\.value\)\.set' || true; }
+# every `.value` access is classified on its own: one followed by an assignment (or `).set`) is a
+# permitted write, any other one a read – so `old = pw.value; pw.value = next;` is still flagged.
+PW_OP_RE="($PW_READ_RE)( *=[^=]|\)\.set)?"
+PW_WRITE_END='( *=[^=]|\)\.set)$'
+pw_reads() {
+    local line
+    while IFS= read -r line; do
+        [[ -n "$(grep -oE "$PW_OP_RE" <<<"$line" | grep -vE "$PW_WRITE_END" || true)" ]] && printf '%s\n' "$line"
+    done
+    return 0
+}
+# password fields a script addresses (any quoting / spacing of the attribute selector)
+PW_FIELD_RE='type[[:space:]]*={1,3}[[:space:]]*(\\)?.?password'
 # self-test (fixtures): every read form must be flagged, permitted writes must not
 for bad in "var v = pw.value;" \
            "var v = document.querySelector('input[type=password]').value;" \
-           "var v = document.querySelector('input[type=\"password\"]').value;"; do
+           "var v = document.querySelector('input[type=\"password\"]').value;" \
+           "const old = pw.value; pw.value = next;"; do
     [[ -n "$(pw_reads <<<"$bad")" ]] || err "self-test: password read not detected: $bad"
 done
 for ok in "pw.value = v;" \
-          "document.querySelector('input[type=password]').value = v;"; do
+          "document.querySelector('input[type=password]').value = v;" \
+          "document.querySelector(\"input[type='password']\").value = v;"; do
     [[ -z "$(pw_reads <<<"$ok")" ]] || err "self-test: password write flagged: $ok"
 done
-for f in $(grep -lE "type *=== *'password'|input\[type=password\]|type=\"password\"" "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml 2>/dev/null); do
+# the origin-gate discovery must see every spelling of the selector
+for field in "input[type=password]" \
+             "input[type=\"password\"]" \
+             "document.querySelector(\"input[type='password']\").value = secret;" \
+             "input[type = 'password']" \
+             "el.type === 'password'" \
+             "input[type=\\\"password\\\"]"; do
+    grep -qE "$PW_FIELD_RE" <<<"$field" || err "self-test: password field not discovered: $field"
+done
+for f in $(grep -lE "$PW_FIELD_RE" "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml 2>/dev/null); do
     grep -qE 'location\.(origin|hostname)' "$f" || err "$f: password field script without location.origin/hostname gate"
 done
 hits=$(grep -nE "$PW_READ_RE" "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml | pw_reads || true)
