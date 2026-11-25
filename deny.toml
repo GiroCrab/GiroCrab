@@ -1,9 +1,11 @@
-# cargo-deny policy (#1800). Run: `cargo deny check` (CI job `deny`).
+# cargo-deny policy (#1800). Run: `cargo deny --workspace check` (CI job `deny`).
+# Front ends (own lockfiles), same policy:
+#   cargo deny --manifest-path GiroCrabLinux/Cargo.toml --workspace check --config deny.toml
+#   cargo deny --manifest-path GiroCrabWindows/Cargo.toml --workspace check --config deny.toml
 # Advisory exceptions mirror `.cargo/audit.toml`; keep both in sync.
 
 [graph]
 # Run with `--workspace`: the root is a package too, without it only that one is checked.
-# (Linux/Windows front ends have their own lockfiles and are not covered.)
 all-features = true
 
 [advisories]
@@ -33,14 +35,32 @@ allow = [
     "MPL-2.0",             # uniffi (file-level copyleft, GPL-3.0 compatible via MPL-2.0 §3.3)
     "WTFPL",               # sqlcipher-src (bundled libtomcrypt)
     "blessing",            # sqlcipher-src (SQLite public-domain blessing)
+    "GPL-3.0-only",        # slint (Windows front end; combinable with this GPL-3.0-or-later project)
 ]
 confidence-threshold = 0.9
+# Only for the named crate: any other crate under the OpenSSL license still fails.
+exceptions = [
+    # aws-lc-sys (rustls crypto backend): "ISC AND (Apache-2.0 OR ISC) AND OpenSSL" for code
+    # inherited from BoringSSL/OpenSSL.
+    { allow = ["OpenSSL"], crate = "aws-lc-sys" },
+]
+
+[licenses.private]
+# Unpublished workspace crates (`publish = false`, e.g. the front ends) need no license field.
+ignore = true
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
 # Path dependencies between workspace members carry a version or are private.
 allow-wildcard-paths = true
+# Unwanted crates. Every entry needs a reason; extend only after a maintainer decision.
+deny = [
+    # TLS runs on rustls on every platform. Platform/OpenSSL TLS would make certificate
+    # handling differ per OS. `openssl-sys` stays allowed: SQLCipher links a vendored OpenSSL.
+    { crate = "native-tls", reason = "TLS only via rustls (same behaviour on all platforms)" },
+    { crate = "openssl", reason = "TLS only via rustls; OpenSSL is linked only for SQLCipher (openssl-sys)" },
+]
 
 [sources]
 unknown-registry = "deny"

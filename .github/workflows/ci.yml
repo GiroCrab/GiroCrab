@@ -119,7 +119,9 @@ jobs:
         run: cargo audit --deny warnings
 
   # Licenses, bans and sources of all dependencies (`deny.toml`, #1800). Advisory exceptions
-  # there mirror `.cargo/audit.toml`. `--workspace`: the root is a package itself.
+  # there mirror `.cargo/audit.toml`. `--workspace`: the root is a package itself. The Linux
+  # and Windows front ends are separate workspaces with their own lockfiles (cxx-qt, Slint):
+  # they get the same policy, passed explicitly with `--config`.
   deny:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -131,8 +133,14 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
-      - name: cargo deny
-        run: cargo deny --workspace check
+      - name: cargo deny (core workspace)
+        run: cargo deny --workspace check --config deny.toml
+      - name: cargo deny (GiroCrabLinux)
+        if: ${{ !cancelled() }}
+        run: cargo deny --manifest-path GiroCrabLinux/Cargo.toml --workspace check --config deny.toml
+      - name: cargo deny (GiroCrabWindows)
+        if: ${{ !cancelled() }}
+        run: cargo deny --manifest-path GiroCrabWindows/Cargo.toml --workspace check --config deny.toml
 
   # `rust` and `swift` deliberately run in parallel and independently: a red
   # fmt/Clippy/Rust test run must not hide the Swift build, and vice versa.
