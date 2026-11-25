@@ -458,7 +458,7 @@ final class PortalBrowser {
 
     /// Amex: the latest statement list (`documents/info/statements`) and the card token of
     /// its request; Amazon Visa: the last captured response whose URL names a statement
-    /// (its list page loads it; schema-agnostic, `parsePortalStatementList`). Both are
+    /// (its list page loads it; schema-agnostic, `parsePortalStatementListing`). Both are
     /// kept in memory only, for the statement download while the session is open.
     @ObservationIgnored private(set) var statementList: (body: String, token: String)?
 
@@ -722,7 +722,10 @@ final class PortalBrowser {
         var href = a.href || '';
         if (/\\.pdf(\\?|#|$)/i.test(href) === false || !vis(a)) return;
         var scope = a.closest('tr, li, article') || a;
-        out.push({ href: href, date: date(a.innerText || '') || date(scope.innerText || '') });
+        // the row's closing date decides (its text contains the anchor's) —
+        // only a link without a row of its own reads its anchor's date; an
+        // unclear row stays undated, the anchor's date must not overwrite it
+        out.push({ href: href, date: scope !== a ? date(scope.innerText || '') : date(a.innerText || '') });
       });
       return JSON.stringify(out);
     })()
@@ -732,25 +735,33 @@ final class PortalBrowser {
     /// schema-agnostic — either a captured response whose URL names a statement, or
     /// the visible PDF links of the page; the closing date decides, the portal's own
     /// ids change with every login. Statements that cannot be reached (foreign host,
-    /// no date) are failures, like for Amex. `failed` counts them, or 1 when neither
-    /// list nor visible links appear (e.g. the portal shows no statements page).
+    /// no date) are failures, like for Amex. `failed` counts them, plus 1 per lost
+    /// remainder when the browser signs out meanwhile or the captured response is
+    /// no readable list; only a verifiably empty statements list is no failure.
     func visaStatements(known: (String, String) async -> Set<String>?, since: String, limit: Int)
         async -> (card: String, number: String, statements: [PortalStatement], listed: Int, failed: Int) {
         guard onPortal, !onLoginPage else { return ("", "", [], 0, 0) }
-        func listItems() -> [(date: String, path: String)] {
-            guard let list = statementList else { return [] }
-            return parsePortalStatementList(body: list.body).map { ($0.date, $0.path) }
+        // the captured response parsed: its entries and whether it is a statement
+        // list at all (also an empty one) — anything else (a balance summary that
+        // only carries "statement" in its URL) is unreadable, a failure
+        func listItems() -> (items: [(date: String, path: String)], readable: Bool) {
+            guard let list = statementList else { return ([], false) }
+            let parsed = parsePortalStatementListing(body: list.body)
+            return (parsed.items.map { ($0.date, $0.path) }, parsed.readable)
         }
-        var items = listItems()
+        var parsed = listItems()
+        var items = parsed.items
+        var readable = parsed.readable
         if items.isEmpty {
             // the statements tab loads its list (and its PDF links) — a captured
-            // response only counts as a list once it holds statement entries itself
-            // (it keeps any "statement" response, also of other kinds, which must
-            // not suppress the tab's own list)
+            // response that yields no entries (and is no real, empty list) does
+            // not stand in for the tab's own list
             _ = try? await webView.callAsyncJavaScript(Self.visaStatementsPageJS, contentWorld: .page)
-            for _ in 0..<40 where items.isEmpty {
+            for _ in 0..<40 where items.isEmpty && !readable {
                 try? await Task.sleep(nanoseconds: 500_000_000)
-                items = listItems()
+                parsed = listItems()
+                items = parsed.items
+                readable = parsed.readable
             }
         }
         if items.isEmpty {
@@ -761,10 +772,11 @@ final class PortalBrowser {
                     return (date, path)
                 } ?? []
         }
-        guard onPortal, !onLoginPage else { return ("", "", [], items.count, 0) }
-        // neither a captured statement list nor visible PDF links: not readable
-        // (like Amex, a failure) — a captured but empty list stays failed=0
-        guard statementList != nil || !items.isEmpty else { return ("", "", [], 0, 1) }
+        // signed out while discovering (redirect to the login): the rest is lost
+        guard onPortal, !onLoginPage else { return ("", "", [], items.count, 1) }
+        // only a verifiably empty statement list counts as "nothing new"; neither
+        // a captured response nor visible PDF links (like Amex, a failure) is one
+        guard readable || !items.isEmpty else { return ("", "", [], 0, 1) }
         let card = Self.cardKey(statementList?.token ?? "")
         // visible links without a usable closing date: the statement exists but
         // cannot be identified — a failure, while known or older ones count fine

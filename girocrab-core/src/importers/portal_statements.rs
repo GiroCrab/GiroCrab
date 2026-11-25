@@ -40,86 +40,156 @@ pub struct PortalStatementItem {
 /// PDF of the same entry, never with the link of a neighbour. Duplicate
 /// `(date, path)` pairs and entries without a complete pair are left out.
 pub fn parse_portal_statement_list(body: &str) -> Vec<PortalStatementItem> {
-    /// First closing date of an object's direct fields — a field whose (separator-free,
-    /// lower-cased) name names a statement/closing date wins over any other date-like
-    /// field, whatever the map order (`serde_json` maps iterate alphabetically, e.g. a
-    /// `created` would otherwise win over `end_date` or `statementDate`).
-    fn own_date(m: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
-        const NAMED: [&str; 5] = [
-            "statementdate",
-            "closingdate",
-            "enddate",
-            "documentdate",
-            "date",
-        ];
-        let mut best: Option<(usize, String)> = None;
-        for (k, v) in m {
-            let Some(date) = v.as_str().and_then(closing_date) else {
-                continue;
-            };
-            let name: String = k
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric())
-                .map(|c| c.to_ascii_lowercase())
-                .collect();
-            let prio = NAMED.iter().position(|n| *n == name).unwrap_or(usize::MAX);
-            if best.as_ref().is_none_or(|(p, _)| prio < *p) {
-                best = Some((prio, date));
-            }
-        }
-        best.map(|(_, date)| date)
-    }
-    /// First PDF link within `v`, without crossing into an object that
-    /// carries its own closing date — that is another list entry, so its PDF
-    /// belongs to that entry, not to ours.
-    fn pdf_in(v: &serde_json::Value) -> Option<String> {
-        match v {
-            serde_json::Value::Object(m) if own_date(m).is_none() => m
-                .values()
-                .filter_map(|s| s.as_str())
-                .find_map(pdf_link)
-                .or_else(|| m.values().find_map(pdf_in)),
-            serde_json::Value::Array(a) => a.iter().filter_map(pdf_in).next(),
-            _ => None,
-        }
-    }
-    /// One list entry: its closing date is a direct field of the entry, the
-    /// PDF link comes from the entry itself (`files` array included) — never
-    /// from another entry. An entry without a PDF and a PDF without a date
-    /// emit nothing instead of pairing with each other or with a neighbour.
-    fn entry(v: &serde_json::Value) -> Option<(String, String)> {
-        let m = match v {
-            serde_json::Value::Object(m) => m,
-            _ => return None,
-        };
-        let date = own_date(m)?;
-        let path = m
-            .values()
-            .filter_map(|v| v.as_str().and_then(pdf_link))
-            .chain(m.values().filter_map(pdf_in))
-            .next()?;
-        Some((date, path))
-    }
-    let Some(v) = serde_json::from_str::<serde_json::Value>(body).ok() else {
-        return Vec::new();
-    };
     let mut out: Vec<(String, String)> = Vec::new();
-    fn collect(v: &serde_json::Value, out: &mut Vec<(String, String)>) {
-        if let Some((date, path)) = entry(v)
-            && !out.contains(&(date.clone(), path.clone()))
-        {
-            out.push((date, path));
-        }
-        match v {
-            serde_json::Value::Object(m) => m.values().for_each(|v| collect(v, out)),
-            serde_json::Value::Array(a) => a.iter().for_each(|v| collect(v, out)),
-            _ => {}
-        }
+    if let Some(v) = serde_json::from_str::<serde_json::Value>(body).ok() {
+        collect(&v, &mut out);
     }
-    collect(&v, &mut out);
     out.into_iter()
         .map(|(date, path)| PortalStatementItem { date, path })
         .collect()
+}
+
+/// Every complete entry (date and PDF from the same object) onto `out`, once each.
+fn collect(v: &serde_json::Value, out: &mut Vec<(String, String)>) {
+    if let Some((date, path)) = entry(v)
+        && !out.contains(&(date.clone(), path.clone()))
+    {
+        out.push((date, path));
+    }
+    match v {
+        serde_json::Value::Object(m) => m.values().for_each(|v| collect(v, out)),
+        serde_json::Value::Array(a) => a.iter().for_each(|v| collect(v, out)),
+        _ => {}
+    }
+}
+
+/// First closing date of an object's direct fields: a field whose (separator-free,
+/// lower-cased) name names a statement/closing date (best of `statementDate`,
+/// `closingDate`, `endDate`, `documentDate`, `date`), whatever the map order —
+/// `serde_json` maps iterate alphabetically, e.g. a `created` would otherwise win
+/// over `end_date` or `statementDate`. Mere metadata (`created`, `dueDate`) never
+/// names a statement date: an object with only such fields carries no closing
+/// date of its own — its PDF belongs to the enclosing entry.
+fn own_date(m: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    const NAMED: [&str; 5] = [
+        "statementdate",
+        "closingdate",
+        "enddate",
+        "documentdate",
+        "date",
+    ];
+    let mut best: Option<(usize, String)> = None;
+    for (k, v) in m {
+        let Some(date) = v.as_str().and_then(closing_date) else {
+            continue;
+        };
+        let name: String = k
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        let Some(prio) = NAMED.iter().position(|n| *n == name) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(p, _)| prio < *p) {
+            best = Some((prio, date));
+        }
+    }
+    best.map(|(_, date)| date)
+}
+
+/// First PDF link within `v`, without crossing into an object that
+/// carries its own closing date — that is another list entry, so its PDF
+/// belongs to that entry, not to ours. A file object with only metadata
+/// (`created`) is no entry of its own: its PDF belongs to the entry around it.
+fn pdf_in(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Object(m) if own_date(m).is_none() => m
+            .values()
+            .filter_map(|s| s.as_str())
+            .find_map(pdf_link)
+            .or_else(|| m.values().find_map(pdf_in)),
+        serde_json::Value::Array(a) => a
+            .iter()
+            .find_map(|i| i.as_str().and_then(pdf_link))
+            .or_else(|| a.iter().find_map(pdf_in)),
+        _ => None,
+    }
+}
+
+/// One list entry: its closing date is a direct field of the entry, the
+/// PDF link comes from the entry itself (`files` array included, string
+/// arrays as well as objects) — never from another entry. An entry without
+/// a PDF and a PDF without a date emit nothing instead of pairing with
+/// each other or with a neighbour.
+fn entry(v: &serde_json::Value) -> Option<(String, String)> {
+    let m = match v {
+        serde_json::Value::Object(m) => m,
+        _ => return None,
+    };
+    let date = own_date(m)?;
+    let path = m
+        .values()
+        .filter_map(|v| v.as_str().and_then(pdf_link))
+        .chain(m.values().filter_map(pdf_in))
+        .next()?;
+    Some((date, path))
+}
+
+/// The parsed entries of a captured response together with its shape:
+/// `readable` is only true for a recognized statements list — including an
+/// empty one. An unreadable or unrelated response (a balance summary that
+/// only carries "statement" in its URL) is no list: the download must count
+/// it as a failure instead of "nothing new".
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PortalStatementListing {
+    pub items: Vec<PortalStatementItem>,
+    pub readable: bool,
+}
+
+/// `parse_portal_statement_list` plus the response's shape: `readable` tells
+/// a verifiably empty statement list (no failure) apart from an unrelated
+/// captured response (a failure).
+pub fn parse_portal_statement_listing(body: &str) -> PortalStatementListing {
+    let items = parse_portal_statement_list(body);
+    if !items.is_empty() {
+        return PortalStatementListing {
+            items,
+            readable: true,
+        };
+    }
+    let readable = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|v| looks_like_list(&v));
+    PortalStatementListing {
+        items: Vec::new(),
+        readable,
+    }
+}
+
+/// A recognized statements list: an array whose items are all objects — empty
+/// (a real, empty list) or with an entry-shaped item (a statement-named field
+/// date, a PDF link). Other answers (balances, notifications, errors) are not.
+fn looks_like_list(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Object(m) => m.values().any(looks_like_list),
+        serde_json::Value::Array(a) => {
+            let all_objects = a.iter().all(|i| matches!(i, serde_json::Value::Object(_)));
+            let shaped = a.is_empty()
+                || a.iter().any(|i| match i {
+                    serde_json::Value::Object(m) => {
+                        own_date(m).is_some()
+                            || m.values()
+                                .filter_map(|s| s.as_str())
+                                .any(|s| pdf_link(s).is_some())
+                    }
+                    _ => false,
+                });
+            (all_objects && shaped) || a.iter().any(looks_like_list)
+        }
+        _ => false,
+    }
 }
 
 /// A plain closing date (`YYYY-MM-DD`, optionally with a time suffix, or
@@ -499,6 +569,73 @@ mod statement_list_tests {
                                      {"date":"2026-10-15","url":"/a/1.pdf"},
                                      {"date":"2026-10-15","url":"/a/2.pdf"}]}"#;
         assert_eq!(parse_portal_statement_list(body).len(), 2);
+    }
+
+    /// A `files` array of plain PDF paths carries the entry's PDF as well as an
+    /// object array; the entry's own date is used either way.
+    #[test]
+    fn a_string_array_carries_the_pdf_of_its_entry() {
+        let body = r#"{"statements":[
+            {"date":"2026-10-15","files":["/api/cards/C1/statements/S1.pdf"]},
+            {"date":"2026-09-14","files":[{"url":"/api/cards/C1/statements/S2.pdf"}]}]}"#;
+        assert_eq!(
+            parse_portal_statement_list(body),
+            vec![
+                PortalStatementItem {
+                    date: "2026-10-15".into(),
+                    path: "/api/cards/C1/statements/S1.pdf".into()
+                },
+                PortalStatementItem {
+                    date: "2026-09-14".into(),
+                    path: "/api/cards/C1/statements/S2.pdf".into()
+                },
+            ]
+        );
+    }
+
+    /// A nested file object with only metadata (`created`) is no entry of its
+    /// own: its PDF belongs to the enclosing statement's closing date — the
+    /// `created` does not turn it into a separate entry.
+    #[test]
+    fn a_file_objects_created_metadata_stays_with_the_enclosing_date() {
+        let body = r#"{"statements":[
+            {"statementDate":"2026-10-31","file":{"created":"2026-10-01","url":"/api/statements/S.pdf"}}]}"#;
+        assert_eq!(
+            parse_portal_statement_list(body),
+            vec![PortalStatementItem {
+                date: "2026-10-31".into(),
+                path: "/api/statements/S.pdf".into()
+            }]
+        );
+    }
+
+    /// Readability: a recognized (also empty) statements list reads, unrelated
+    /// responses (balances on a statement URL, error pages) do not.
+    #[test]
+    fn readability_tells_an_empty_list_from_an_unrelated_answer() {
+        // entries → readable
+        let listed = parse_portal_statement_listing(
+            r#"{"statements":[{"date":"2026-10-15","url":"/a/1.pdf"}]}"#,
+        );
+        assert!(listed.readable);
+        assert_eq!(listed.items.len(), 1);
+        // a real, empty list → readable, no items
+        for body in [
+            r#"{"statements":[]}"#,
+            r#"{"hasMore":false,"statements":[]}"#,
+            "[]",
+        ] {
+            assert!(parse_portal_statement_listing(body).readable, "{body}");
+        }
+        // balances and error bodies carry no statements list
+        for body in [
+            r#"{"balances":[{"currency":"EUR","total":19.99}]}"#,
+            r#"{"error":"Hinweis vom Portal"}"#,
+            "kein JSON",
+        ] {
+            let l = parse_portal_statement_listing(body);
+            assert!(!l.readable && l.items.is_empty(), "{body}");
+        }
     }
 
     /// The statement PDFs land with the card account of the visa login, once each.
