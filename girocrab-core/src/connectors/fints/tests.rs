@@ -2764,3 +2764,42 @@ async fn the_balance_stays_first_when_the_bank_has_not_asked_for_a_tan_for_it() 
     assert_eq!(r.accounts[0].balance_cents, 123_456);
     assert_eq!(business_requests(&seen.lock().unwrap()), ["HKSAL", "HKKAZ"]);
 }
+
+#[tokio::test]
+async fn a_tan_skipped_before_the_bookings_does_not_leave_out_the_balance() {
+    // review of #1882: only a skipped TAN for the bookings leaves out the late HKSAL; one
+    // skipped for the depot request (HKWPD) before them does not
+    let (url, seen) = mock_bank(vec![
+        TAN_DEMANDED, // HKWPD: skipped
+        TAN_DEMANDED, // HKKAZ: TAN typed
+        reply_with_binary("HIKAZ:3:7:3+", MT940_NO_CLOSING),
+        SAL_TAN_DEMANDED, // late HKSAL: TAN typed
+        SAL_A,
+    ]);
+    let mut c = flatex_like(&url, &["HKSAL"]);
+    c.st.versions.insert("HKWPD".into(), vec![6]);
+    c.upd = vec![upd_acc(
+        "0532013000",
+        "",
+        IBAN_A,
+        "Depot",
+        &["HKSAL", "HKKAZ", "HKWPD"],
+    )];
+    let mut first = true;
+    let (prompt, asked) = answering_prompt(move |_| {
+        Some(if std::mem::take(&mut first) {
+            crate::connectors::PromptAnswer::Skip
+        } else {
+            crate::connectors::PromptAnswer::Code(SecretString::new("123456".into()))
+        })
+    });
+    let ctx = ConnectContext {
+        prompt: Some(prompt),
+        ..test_ctx()
+    };
+    let r = c.fetch(&ctx).await.unwrap();
+    drop(ctx);
+    assert_eq!(asked.await.unwrap().len(), 3);
+    assert_eq!(business_requests(&seen.lock().unwrap()), ["HKKAZ", "HKSAL"]);
+    assert_eq!(r.accounts[0].balance_cents, 123_456);
+}

@@ -304,7 +304,7 @@ pub struct FinTsConnector {
     /// it was only asked, skipped or refused): a later reply without SCA (a further page,
     /// another job) says nothing about the next sync (#1828).
     sca_in_dialog: bool,
-    /// The user skipped a TAN for this account's requests (#1828): the late HKSAL is not sent either.
+    /// The user skipped the TAN for this account's bookings (#1828): the late HKSAL is not sent either.
     tan_skipped: bool,
     /// `sca_seen` changed during this connector's requests: a fetch that fails still hands the
     /// state back (`state_after_failed_fetch`, #1828).
@@ -606,7 +606,6 @@ impl BankConnector for FinTsConnector {
             if only.is_some_and(|o| o != label) {
                 continue;
             }
-            self.tan_skipped = false;
             let allowed = |tx: &str| upd.as_ref().is_none_or(|u| u.allows(tx));
             let mut kind = upd
                 .as_ref()
@@ -712,6 +711,8 @@ impl BankConnector for FinTsConnector {
                 }
             }
 
+            // only a TAN skipped for the bookings leaves out the late HKSAL (#1828)
+            self.tan_skipped = false;
             // --- Statements: camt (HKCAZ) first, MT940 (HKKAZ) as fallback. Loans are
             // included only when HIUPD permits it (or lists nothing); every request is
             // its own FinTS message, so a 9050 on one loan is just collected in `errors`.
