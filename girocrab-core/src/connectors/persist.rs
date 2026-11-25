@@ -767,10 +767,22 @@ pub(crate) fn store_fetch(
                                 )?
                                 .execute(params![t.amount_cents, t.booking_date, acc_id])?;
                             }
-                        } else if match_rules.is_some()
-                            && let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)?
-                        {
-                            new_booking_ids.insert(adopted.id);
+                        } else if let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)? {
+                            // the bank's first delivery of the imported row: it may settle a
+                            // planned payment like an inserted booking (#1900)
+                            // the imported row has no reference yet: store the bank's, so the
+                            // booking names its order and not an equal one
+                            tx.execute(
+                                "UPDATE transactions SET end_to_end_id = ?1
+                                  WHERE id = ?2
+                                    AND upper(trim(?1)) NOT IN ('', 'NOTPROVIDED')
+                                    AND upper(trim(end_to_end_id)) IN ('', 'NOTPROVIDED')",
+                                params![t.end_to_end_id, adopted.id],
+                            )?;
+                            inserted_ids.insert(adopted.id);
+                            if match_rules.is_some() {
+                                new_booking_ids.insert(adopted.id);
+                            }
                         }
                     }
                 }

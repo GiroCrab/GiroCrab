@@ -447,3 +447,80 @@ fn bank_dates_are_stored_as_real_days() {
     let s = store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(txs)).unwrap();
     assert_eq!(s.transactions_imported, 0);
 }
+
+/// #1900: the bank's first delivery of an imported row settles a planned payment it matches,
+/// although the row keeps its id (adopted, not inserted).
+#[test]
+fn adopted_booking_settles_a_planned_payment() {
+    let (v, conn) = setup();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(vec![])).unwrap();
+    let mut rent = tx("2999-01-10", -90_000, "Vermieter");
+    rent.external_id = "t1".into();
+    imported_row(&v, "mm-1", &rent, "");
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
+             SELECT id, 'E1', '2999-01-15', 90000 FROM accounts",
+            [],
+        )
+        .unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+    let s = store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(vec![rent])).unwrap();
+    assert_eq!(s.transactions_imported, 0, "the imported row was adopted");
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}
+
+/// #1900: the adopted row takes the reference the bank delivers, so it settles the order it
+/// names and not an equal one that comes first.
+#[test]
+fn adopted_booking_settles_the_order_its_reference_names() {
+    let (v, conn) = setup();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(vec![])).unwrap();
+    let mut rent = tx("2999-01-10", -90_000, "Vermieter");
+    rent.external_id = "t1".into();
+    rent.end_to_end_id = "E2".into();
+    imported_row(&v, "mm-1", &rent, "");
+    v.db()
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
+             SELECT id, 'E1', '2999-01-15', 90000 FROM accounts;
+             INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
+             SELECT id, 'E2', '2999-02-15', 90000 FROM accounts;",
+        )
+        .unwrap();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(vec![rent])).unwrap();
+    let open: String = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT end_to_end_id FROM planned_transfers WHERE settled_ms IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(open, "E1");
+}
+
+/// An imported row that kept the placeholder `NOTPROVIDED` takes the bank's real reference.
+#[test]
+fn adopted_booking_replaces_the_notprovided_placeholder() {
+    let (v, conn) = setup();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(vec![])).unwrap();
+    let mut rent = tx("2999-01-10", -90_000, "Vermieter");
+    rent.external_id = "t1".into();
+    rent.end_to_end_id = "E2".into();
+    imported_row(&v, "mm-1", &rent, "");
+    let db = v.db().unwrap();
+    db.execute("UPDATE transactions SET end_to_end_id = 'NOTPROVIDED'", [])
+        .unwrap();
+    drop(db);
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(vec![rent])).unwrap();
+    let e2e: String = v
+        .db()
+        .unwrap()
+        .query_row("SELECT end_to_end_id FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(e2e, "E2");
+}

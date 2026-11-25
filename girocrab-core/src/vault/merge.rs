@@ -68,6 +68,8 @@ impl Vault {
         crate::security_transactions::merge_attached(&tx, &acc_map)?;
         crate::depot_values::merge_attached(&tx, &acc_map)?;
         crate::planned::merge_attached(&tx, &acc_map)?;
+        // an order that arrived open may name a booking this vault has (#1900)
+        crate::planned::settle_referenced(&tx, None)?;
         crate::asset_classification::store::merge_attached(&tx)?;
         crate::mandates::merge_attached(&tx, &acc_map)?;
         crate::mandates::merge_ack(&tx, &acc_map)?;
@@ -166,6 +168,8 @@ impl Vault {
         let res = res.and_then(|st| {
             detach_res?;
             let _ = crate::sync_merge::twins::fold_twins(&conn);
+            // a booking that arrived under a twin can settle its planned payment now (#1900)
+            let _ = crate::planned::settle_referenced(&conn, None);
             // … and card holds an older build turned into bookings on a switch (#1134)
             let _ = super::connections::drop_switched_holds(&conn);
             Ok(st)
