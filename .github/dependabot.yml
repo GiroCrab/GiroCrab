@@ -1,0 +1,30 @@
+# Wöchentliche Abhängigkeits-Updates (#1801), pro Ökosystem gebündelt, damit keine PR-Flut entsteht.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - "/"
+      - "/GiroCrabLinux"
+      - "/GiroCrabWindows"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: swift
+    directory: "/GiroCrabApp"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      swift-minor-patch:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
