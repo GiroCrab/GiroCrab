@@ -1,6 +1,6 @@
 # Übersicht der UI-Audits
 
-Stand 25.11.2026, SwiftUI auf macOS, iPhone und iPad, `main` @ `09f11987`. Jede Zeile benennt den
+Letzter Abgleich der Übersicht am 25.11.2026, SwiftUI auf macOS, iPhone und iPad, `main` @ `09f11987`. Jede Zeile benennt den
 Umfang für einen eigenen Bericht nach der [Audit-Anleitung](../ui-audit.md). Die Reihenfolge startet mit
 häufig genutzten Ansichten und Abläufen, bei denen Schriftgröße, Fokus oder Schwärzung besonders wichtig sind.
 

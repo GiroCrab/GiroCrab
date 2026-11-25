@@ -28,8 +28,8 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
    Im Bericht die Startargumente, Interaktionen sowie erwartetes und beobachtetes
    Ergebnis nennen. Fälle ohne Nachweis als ausstehende Prüfung in die Übersicht aufnehmen.
 5. **Bericht schreiben.** Die [Vorlage](#vorlage-für-den-bericht) nach `docs/ui-audits/<bereich>.md` kopieren.
-   Jeder bestätigte Befund bekommt eine bleibende ID aus Kürzel und Nummer, z. B. `INS-1`. Bei Nachprüfungen
-   die ID und die ursprünglichen Scores beibehalten. Neue Befunde bekommen die nächste freie Nummer.
+   Jeder bestätigte Befund bekommt eine bleibende ID aus Kürzel und Nummer, z. B. `INS-1`. Neue Befunde
+   bekommen die nächste freie Nummer. Für bestehende Berichte gilt [Stand und Wiederholungen](#stand-und-wiederholungen).
    Die Tabelle fasst jeden Befund in einer Zeile zusammen. Unter „Prüfnachweis“ reichen die Schritte,
    die speziell für diese Ansicht gelten. Die allgemeine Prüfmatrix steht hier in der Anleitung.
 6. **Sortieren.** Jeder Befund bekommt genau einen Weg:
@@ -50,6 +50,27 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
    die betroffenen Fälle auf dem neuen Stand erneut prüfen. Die Übersicht aktualisieren und
    `scripts/lint-ui-audits.sh` ausführen. Der lokale Check prüft die Vorlage und die Berichte. Eine kurze Zusammenfassung
    kommt bei Veröffentlichung als Kommentar ins RFC-Issue.
+
+## Stand und Wiederholungen
+
+- **Berichtskopf „Datum / Stand“.** Das Prüfdatum (`TT.MM.JJJJ`) und der geprüfte App-Commit gehören zum
+  Erstaudit oder zum letzten vollständigen Audit der Ansicht. Datum und Commit beziehen sich auf den
+  Durchgang, aus dem die Scores stammen. Textkorrekturen, Links und reine Statuspflege lassen beide Angaben bestehen.
+- **Gezielte Nachprüfung.** Nach einem Fix, einem Verdacht auf Regression oder einer kleinen Änderung
+  die betroffenen Demo-Fälle auf dem aktuellen Stand wiederholen. Unter „Prüfnachweis“ eine Zeile mit Datum,
+  geprüftem Commit, Befund-IDs und Plattformen ergänzen. Ergebnis und Beleg den geprüften IDs zuordnen.
+  Wenn der neue Durchgang dieselben Fälle abdeckt, den bisherigen Nachweis ersetzen. Berichtskopf und Scores
+  gelten weiter für den vollständigen Durchgang. Tritt ein behobener Befund erneut auf, seine ID mit `open` wieder öffnen.
+- **Vollständiges Audit wiederholen.** Wenn sich Aufgabe, Aufbau, Bedienung, Plattformverhalten oder
+  gemeinsame Komponenten so ändern, dass mehrere Prüffälle betroffen sind oder die Bewertung fraglich wird,
+  den [Ablauf](#ablauf) am aktuellen `main` vollständig durchlaufen. Die bisherigen Demo-Fälle aus der
+  Prüfmatrix wiederholen und die neuen Zustände ergänzen. Im selben Bericht Kopf, Scores und Nachweis
+  aktualisieren. Bestehende Befund-IDs erhalten und neue fortlaufend ergänzen. Frühere Bewertungen bleiben
+  in der Git-Historie nachvollziehbar.
+
+Eine fällige Nachprüfung mit Anlass in der [Audit-Übersicht](ui-audits/README.md) vormerken. Das Datum in
+ihrem Kopf bezeichnet den letzten Abgleich der Übersicht mit der App. Eine neue Version allein löst
+keinen neuen Durchgang aus.
 
 ## Prüfmatrix
 
@@ -204,7 +225,7 @@ herstellen und die genaue Folge im Bericht notieren.
 ```markdown
 # UI-Audit: <Bereich>
 
-- **Datum / Stand:** <Datum>, `main` @ <Commit>
+- **Datum / Stand:** <Prüfdatum des vollständigen Audits>, `main` @ <Commit>
 - **Ansicht:** <was genau, auf welchen Plattformen>
 - **Dateien:** `GiroCrabApp/Sources/GiroCrabUI/<Datei>.swift`
 - **Werkzeug:** Impeccable `critique` und `audit` (nativ), dazu GiroCrab-Regeln von Hand
@@ -225,7 +246,7 @@ herstellen und die genaue Folge im Bericht notieren.
 
 ## Prüfnachweis
 
-- **Datum / Stand:** <Datum und Commit einer Nachprüfung, falls vorhanden>
+- **Nachprüfung:** <Datum, Commit, IDs, Plattformen, Ergebnis und Beleg, falls vorhanden>
 - **Umgebung:** <Plattformen, Versionen, Geräte, Sprache, geprüfte Varianten und Abweichungen von der Prüfmatrix>
 - **Demo-Einstieg:** <Startargumente, Auswahl und Bedienfolge>
 - **XYZ-2:** <Code-Stelle, Ergebnis, erwartetes Verhalten, Beleg und ggf. Issue oder PR>

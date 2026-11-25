@@ -27,7 +27,7 @@ Summenbeschriftung, Kontrast und dem Layout bei großer Schrift.
 
 ## Prüfnachweis
 
-- **Datum / Stand:** 25.11.2026, `main` @ `09f11987`. Für iOS lag der Swift-Buildfix aus [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919) in einer temporären Kopie.
+- **Nachprüfung:** 25.11.2026, `main` @ `09f11987`, VER-1 bis VER-6. Für iOS lag der Swift-Buildfix aus [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919) in einer temporären Kopie.
 - **Umgebung:** macOS 27.2.1, iPhone 18 Pro und iPad mini (iOS 27.2, Hochformat), Deutsch. Hell/Dunkel, große Schrift und `--redact=labels` nach [Prüfmatrix](../ui-audit.md#prüfmatrix).
 - **Demo-Einstieg:** `--demo-seed --view vermoegen`, Reiter „Alles“, Inhaber „Alle“.
 - **VER-1 bis VER-4:** Auf dem iPhone stapelt die Steuerung bei „Accessibility XL“ und die Summenzeilen bleiben ganz. Ohne Schuldenabzug heißt die Summe auf Mac und iPhone „Vermögenswerte“. Mit `--demo-filter wealth:cash` bleiben auf dem Mac die Legendeneinträge lesbar. Die geschwärzten Summen und Inhabernamen sind verdeckt.

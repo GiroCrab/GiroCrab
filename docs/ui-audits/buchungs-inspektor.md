@@ -1,10 +1,10 @@
 # UI-Audit: Buchungs-Inspektor
 
-- **Datum / Stand:** 22.11.2026, `main` @ `d93042a1`. Erster Abgleich nach #1666 auf `c96ddc36`.
+- **Datum / Stand:** 22.11.2026, `main` @ `d93042a1`.
 - **Ansicht:** Buchungsdetail in der rechten Mac-Spalte und im Sheet auf dem iPhone.
 - **Dateien:** `BookingDetailView.swift`, `TagsUI.swift`, `RootView.swift` in `GiroCrabUI/`.
 - **Werkzeug:** Native Impeccable `critique` und `audit` plus GiroCrab-Checkliste.
-- **Nachweis:** Demo-Aufnahmen in Hell, Dunkel, bei großer Schrift und mit Schwärzung. [Pilot #1707](https://github.com/GiroCrab/GiroCrab/pull/1707) · [Nacharbeit #1856](https://github.com/GiroCrab/GiroCrab/pull/1856)
+- **Nachweis:** Demo-Aufnahmen in Hell, Dunkel, bei großer Schrift und mit Schwärzung. Erster Abgleich nach #1666 auf `c96ddc36`. [Pilot #1707](https://github.com/GiroCrab/GiroCrab/pull/1707) · [Nacharbeit #1856](https://github.com/GiroCrab/GiroCrab/pull/1856)
 
 ## Befunde
 
@@ -34,7 +34,7 @@ die unterschiedlichen Flächen und die Barrierefreiheit des Notizfelds auf.
 
 ## Prüfnachweis
 
-- **Datum / Stand:** 25.11.2026, `main` @ `09f11987`. Für iOS lag der Swift-Buildfix aus [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919) in einer temporären Kopie.
+- **Nachprüfung:** 25.11.2026, `main` @ `09f11987`, INS-12 und INS-13. Für iOS lag der Swift-Buildfix aus [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919) in einer temporären Kopie.
 - **Umgebung:** macOS 27.2.1 und iPhone 18 Pro (iOS 27.2), Deutsch. Standard und große Schrift, Hell/Dunkel und Schwärzung nach [Prüfmatrix](../ui-audit.md#prüfmatrix).
 - **Demo-Einstieg:** `--demo-seed --pick rewe`, Standardlayout im Inspektor. Für die Schwärzung `--redact` ergänzen.
 - **INS-12:** In `NoteCard` den rechten Rand des leeren `TextEditor` im Mac-Dunkelmodus ansehen. Der Streifen ist in `mac-inspektor-dunkel.png` sichtbar. Auf dem iPhone ist das Sheet im hellen Modus hell. Titel, Name, Konto, Betrag und Buchungstext sind in der geschwärzten Aufnahme verdeckt.
