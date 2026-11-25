@@ -21,7 +21,7 @@ Portal: `https://banking.volkswagenbank.de/#/login` (React-Single-Page-App) übe
 | 3 | `POST …/pushtan/transaction/checkstate` `{RequestKey}` (alle paar Sekunden) | `AuthorizationPending`, dann `TransactionConfirmed` |
 | 4 | `POST AuthenticationService/authentication/execute` (Header `X-REQUEST-KEY`, leerer Body) | `Status: Success` |
 | 5 | `GET AccountListService/accountlist` | Konten mit IBAN, Kontonummer, Saldo, `Features.CashFlow` |
-| 6 | `POST CashFlowService/cashflow/list/get` `{accountNumber, dateFrom, dateTo}` (`YYYY-MM-DDZ`) | `CashflowList` mit `CreditAmount`/`DebitAmount`, `PaymentNotes`, `ReferenceAccount` |
+| 6 | `POST CashFlowService/cashflow/list/get` `{accountNumber, dateFrom, dateTo}` (Berliner Mitternacht in UTC, vom Connector erzeugt, z. B. `2026-10-22T22:00:00.0000000Z` für den 23.10.) | `CashflowList` mit `CreditAmount`/`DebitAmount`, `PaymentNotes`, `ReferenceAccount` |
 
 - Jede Antwort enthält einen neuen Header `Authorization: bearer …`; der jeweils neueste wird beim
   nächsten Aufruf zurückgeschickt. **Annahme:** Der Mitschnitt zeigt keine Anfrage-Header mit
