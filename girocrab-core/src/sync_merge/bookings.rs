@@ -451,10 +451,11 @@ pub(crate) fn merge_bookings(
                 let mut m = old.clone();
                 m.deleted_ms = individual(m.deleted_ms, acc_deleted);
                 m.merge(&o.fields);
-                // a date edit belongs to a manual booking: a statement booking kept here (paired
-                // with a manual copy by fingerprint) keeps its own dates
-                if old.manual_dates.is_none() {
-                    m.manual_dates = None;
+                // a date edit belongs to a manual booking: dates merge by revision only when both
+                // sides are manual; a statement booking on either side keeps the stored dates
+                // (CodeRabbit #1852: also when the incoming row is the statement)
+                if old.manual_dates.is_none() || o.fields.manual_dates.is_none() {
+                    m.manual_dates = old.manual_dates.clone();
                     m.dates_ms = old.dates_ms;
                 }
                 // checked against the amount this booking keeps; a 0-€ booking exists only

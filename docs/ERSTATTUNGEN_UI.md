@@ -3,7 +3,7 @@
 Gemeinsames Verhalten der Oberflächen unter macOS, Linux und Windows.
 
 Die Kernregeln und ihre Begründung stehen in
-[ADR 0003](adr/0003-refund-links.md).
+[ADR 0004](adr/0004-refund-links.md).
 
 ## Einstieg und Aufbau
 

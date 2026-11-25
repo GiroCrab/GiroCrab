@@ -5336,3 +5336,36 @@ fn bank_depot_with_positions_keeps_its_own() {
     assert_eq!(positions_of(&v, bank), 1);
     assert_eq!(positions_of(&v, twin), 0);
 }
+
+/// CodeRabbit (#1852): dates merge by revision only between two manual bookings; a manual
+/// booking paired with an incoming statement booking keeps its dates and their stamp.
+#[test]
+fn incoming_statement_booking_does_not_take_the_manual_date_stamp() {
+    let setup = |tag: &str, ext: &str, date: &str, stamp: i64| {
+        let v = open(&temp_dir(tag), "d.db");
+        v.db()
+            .unwrap()
+            .execute_batch(&format!(
+                "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+                 INSERT INTO accounts(id, group_id, external_ref, name) VALUES (1, 1, 'DE1', 'A');
+                 INSERT INTO transactions(id, account_id, external_id, import_fp, booking_date, amount_cents, counterparty, date_ms)
+                     VALUES (1, 1, '{ext}', 'fp-1', '{date}', -500, 'Shop', {stamp});"
+            ))
+            .unwrap();
+        v
+    };
+    let manual = setup("dates-manual", "manual-1", "2026-01-01", 100);
+    let statement = setup("dates-statement", "csv-1", "2026-01-05", 200);
+    manual
+        .merge_other_vault(statement.file_path(), vec![7u8; 32])
+        .unwrap();
+    let db = manual.db().unwrap();
+    let rows: Vec<(String, i64)> = db
+        .prepare("SELECT booking_date, date_ms FROM transactions WHERE deleted_ms IS NULL")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(rows, [("2026-01-01".to_string(), 100)]);
+}
