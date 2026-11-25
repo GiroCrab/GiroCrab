@@ -583,8 +583,7 @@ pub(crate) fn merge_attached(
             // includes soft-deleted rows (vault merge)
             "SELECT id, user_group_uuid, user_sort_order, placement_ms, name, name_ms, color_hex, color_ms,
                     archived_unix, archived_ms, sf_symbol, symbol_ms, note, note_ms,
-                    include_in_total != 0, total_ms, bank_label, bank_label_ms, archive_unknown != 0,
-                    last_fetch_unix
+                    include_in_total != 0, total_ms, bank_label, bank_label_ms, archive_unknown != 0, last_fetch_unix
              FROM other.accounts",
         )?
         .query_map([], |r| {

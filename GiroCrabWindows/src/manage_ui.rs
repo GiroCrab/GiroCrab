@@ -49,13 +49,22 @@ fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
 
 /// Gives the shortcut scope the keyboard focus again (a closed dialog or the unlock button took
 /// it with them). Deferred one tick: the element that held the focus is destroyed after the call.
+/// Checked again when the timer fires: a refresh from an older offline save must not pull the
+/// focus out of a dialog that was opened meanwhile.
 pub fn refocus_later(win: &MainWindow) {
     let weak = win.as_weak();
     slint::Timer::single_shot(Duration::from_millis(50), move || {
-        if let Some(win) = weak.upgrade() {
+        if let Some(win) = weak.upgrade()
+            && may_refocus(win.get_offline_open())
+        {
             win.invoke_refocus();
         }
     });
+}
+
+/// Whether a deferred refocus may take the focus: not while the offline dialog holds a draft.
+pub(crate) fn may_refocus(offline_open: bool) -> bool {
+    !offline_open
 }
 
 fn vault_of(slot: &VaultSlot) -> Option<Arc<Vault>> {
@@ -79,11 +88,14 @@ fn modals(win: &MainWindow) -> Modals {
     Modals {
         tan: win.get_tan_open(),
         transfer: win.get_transfer_open(),
+        refunds: win.get_refunds_open(),
         add_bank: win.get_add_open(),
         account: win.get_acct_open(),
+        offline: win.get_offline_open(),
         categories: win.get_cat_open(),
         rules: win.get_rules_open(),
         link: win.get_link_open(),
+        report: win.get_report_open(),
         about: win.get_about_open(),
         history: crate::position_history_ui::is_open(win),
     }
@@ -96,17 +108,21 @@ fn close_modal(win: &MainWindow, m: Modal) {
             win.invoke_tan_cancel();
         }
         Modal::Transfer => win.set_transfer_open(false),
+        Modal::Refunds => win.invoke_refund_close(),
         Modal::AddBank => win.set_add_open(false),
         Modal::Account => {
             with_ui(|u| u.account_gate.reset());
             win.set_acct_open(false);
         }
+        Modal::Offline => crate::offline_ui::reset(win),
         Modal::Categories => {
             with_ui(|u| u.category_gate.reset());
             win.set_cat_open(false);
         }
         Modal::Rules => crate::views_ui::close_rules(win),
         Modal::Link => win.set_link_open(false),
+        // Schließt den Dialog und verwirft eine laufende Bereinigung.
+        Modal::Report => crate::bug_report_ui::reset(win),
         Modal::About => win.set_about_open(false),
         Modal::History => crate::position_history_ui::dismiss(win),
     }
