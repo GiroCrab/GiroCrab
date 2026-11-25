@@ -12,12 +12,17 @@ Sheet {
     onClosed: AppModel.showCommandPalette = false
     property int index: 0
 
-    /// Item: { title, subtitle, symbol, action }
+    /// Item: { title, subtitle, symbol, action, hides, subtitleHides, moveName, moveGroup }:
+    /// `hides` / `subtitleHides` = what the bug report hides of the title / subtitle (AppModel
+    /// redaction bits: account, payee, group or category); `moveName`/`moveGroup`: the title of
+    /// a move command shows only the account name masked (the search still sees the real title).
     readonly property var items: {
         const m = AppModel
         const out = []
         const action = qsTr("Aktion"), view = qsTr("Ansicht")
-        const add = (title, subtitle, symbol, fn) => out.push({ title: title, subtitle: subtitle, symbol: symbol, action: fn })
+        const personal = m.redactPersonal, labels = m.redactLabels
+        const add = (title, subtitle, symbol, fn, hides, subtitleHides, extra) => out.push(Object.assign({
+            title: title, subtitle: subtitle, symbol: symbol, action: fn, hides: hides || 0, subtitleHides: subtitleHides || 0 }, extra || {}))
         for (const s of m.scopes) add(s.title, view, "rectangle.split.3x1", () => m.scope = s.id)
         // the list's scopes only over the booking list: the depot tabs while a securities depot
         // is shown, nothing for Sachwerte (#564)
@@ -37,8 +42,8 @@ Sheet {
         add(qsTr("Zeitraum: Benutzerdefiniert …"), view, "calendar.badge.clock", () => m.showCustomPeriod = true)
         const b = m.selectedBooking
         if (b) {
-            add(qsTr("„%1“ kategorisieren").arg(b.merchant_name), action + " · C", "tag", () => m.showCategorizer = true)
-            add(qsTr("Regel für „%1“ erstellen").arg(b.merchant_name), action + " · R", "wand.and.stars", () => m.openRuleEditor(b))
+            add(qsTr("„%1“ kategorisieren").arg(b.merchant_name), action + " · C", "tag", () => m.showCategorizer = true, personal)
+            add(qsTr("Regel für „%1“ erstellen").arg(b.merchant_name), action + " · R", "wand.and.stars", () => m.openRuleEditor(b), personal)
         }
         add(qsTr("Historie & Kategorien importieren"), action, "square.and.arrow.down.on.square", () => m.openMoneyMoneyImport())
         add(qsTr("Regeln jetzt anwenden"), action, "play", () => m.applyAllRules())
@@ -57,7 +62,7 @@ Sheet {
             const accId = parseInt(m.sidebarSelection.slice(8))
             if (m.isTangible(accId)) add(qsTr("Sachwert hinzufügen"), action, "plus", () => m.openAssetEditor(accId))
             const loan = m.manualLoan(accId)
-            if (loan) add(qsTr("Stand von „%1“ neu setzen").arg(loan.setup.name), action, "calendar.badge.clock", () => m.openLoanEditor("anchor", accId))
+            if (loan) add(qsTr("Stand von „%1“ neu setzen").arg(loan.setup.name), action, "calendar.badge.clock", () => m.openLoanEditor("anchor", accId), personal)
         }
         if (m.accountView !== "byGroup") add(qsTr("Konten nach Gruppe anzeigen"), view, "folder", () => m.setAccountView("byGroup"))
         if (m.accountView !== "byBank") add(qsTr("Konten nach Bank anzeigen"), view, "building.columns", () => m.setAccountView("byBank"))
@@ -67,12 +72,13 @@ Sheet {
                 m.setAccountView("byBank"); m.sidebarSelection = "bank:" + b.id })
         for (const g of m.namedUserGroups)
             add(g.name, qsTr("Gruppe · %1").arg(m.accountCountText(g.accounts.length)), g.sf_symbol, () => {
-                m.setAccountView("byGroup"); m.sidebarSelection = "userGroup:" + g.uuid })
+                m.setAccountView("byGroup"); m.sidebarSelection = "userGroup:" + g.uuid }, labels)
         const sel = m.selectedAccount
         if (sel) for (const g of m.namedUserGroups) if (g.uuid !== sel.user_group_uuid)
-            add(qsTr("„%1“ nach „%2“ verschieben").arg(sel.name).arg(g.name), action, "folder", () => m.moveAccount(sel.id, g.uuid, null))
-        for (const a of m.allAccounts) add(a.name, qsTr("Konto · %1").arg(a.bank_name), a.sf_symbol, () => m.sidebarSelection = "account:" + a.id)
-        for (const c of m.categories) add(c.name, qsTr("Kategorie · %1").arg(c.path), c.sf_symbol, () => m.sidebarSelection = "category:" + c.id)
+            add(qsTr("„%1“ nach „%2“ verschieben").arg(sel.name).arg(g.name), action, "folder", () => m.moveAccount(sel.id, g.uuid, null), labels, 0,
+                { moveName: sel.name, moveGroup: g.name })
+        for (const a of m.allAccounts) add(a.name, qsTr("Konto · %1").arg(a.bank_name), a.sf_symbol, () => m.sidebarSelection = "account:" + a.id, personal)
+        for (const c of m.categories) add(c.name, qsTr("Kategorie · %1").arg(c.path), c.sf_symbol, () => m.sidebarSelection = "category:" + c.id, labels, labels)
         const seen = {}
         let n = 0
         for (const x of m.bookings) {
@@ -80,7 +86,7 @@ Sheet {
             if (seen[key] || n >= 300) continue
             seen[key] = true; n++
             const name = x.merchant_name
-            add(name, qsTr("Händler suchen"), "magnifyingglass", () => m.searchText = name)
+            add(name, qsTr("Händler suchen"), "magnifyingglass", () => m.searchText = name, personal)
         }
         const q = query.text.trim().toLowerCase()
         if (q === "") return out.slice(0, 14)
@@ -113,6 +119,7 @@ Sheet {
                 Keys.onDownPressed: { sheet.index = Math.min(sheet.index + 1, Math.max(sheet.items.length - 1, 0)); results.positionViewAtIndex(sheet.index, ListView.Contain) }
                 Keys.onUpPressed: { sheet.index = Math.max(sheet.index - 1, 0); results.positionViewAtIndex(sheet.index, ListView.Contain) }
                 Keys.onEscapePressed: sheet.close()
+                Sensitive { when: query.text !== "" }
             }
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
@@ -140,8 +147,16 @@ Sheet {
                 contentItem: RowLayout {
                     spacing: 10
                     SFIcon { symbol: row.modelData.symbol; size: 16; color: row.current ? Theme.accent : Theme.secondary; Layout.preferredWidth: 20 }
-                    Text { text: row.modelData.title; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
-                    Text { text: row.modelData.subtitle; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.maximumWidth: 220 }
+                    Text {
+                        text: row.modelData.moveName === undefined ? row.modelData.title
+                            : qsTr("„%1“ nach „%2“ verschieben").arg(AppModel.masking(row.modelData.moveName)).arg(row.modelData.moveGroup)
+                        font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true
+                        Sensitive { when: row.modelData.hides !== 0; labels: row.modelData.hides === AppModel.redactLabels }
+                    }
+                    Text {
+                        text: row.modelData.subtitle; font.pixelSize: Theme.caption; color: Theme.secondary; elide: Text.ElideRight; Layout.maximumWidth: 220
+                        Sensitive { when: row.modelData.subtitleHides !== 0; labels: row.modelData.subtitleHides === AppModel.redactLabels }
+                    }
                 }
                 onClicked: { sheet.index = index; sheet.run() }
             }

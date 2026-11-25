@@ -705,8 +705,15 @@ Rectangle {
                     }
                     Text {
                         Layout.alignment: Qt.AlignRight
-                        text: wv.scope === "all" ? (sc.propertyHidden ? qsTr("Nettovermögen ohne Immobilien") : qsTr("Nettovermögen"))
-                            : wv.scope === "cash" ? qsTr("Cash gesamt") : wv.scope === "securities" ? qsTr("Depotwert gesamt") : qsTr("Sachwert gesamt")
+                        // without liabilities the total is the assets, not the net worth (#1861)
+                        text: {
+                            if (wv.scope === "all") {
+                                if (prefs.includeLiabilities)
+                                    return sc.propertyHidden ? qsTr("Nettovermögen ohne Immobilien") : qsTr("Nettovermögen")
+                                return sc.propertyHidden ? qsTr("Vermögenswerte ohne Immobilien") : qsTr("Vermögenswerte")
+                            }
+                            return wv.scope === "cash" ? qsTr("Cash gesamt") : wv.scope === "securities" ? qsTr("Depotwert gesamt") : qsTr("Sachwert gesamt")
+                        }
                         font.pixelSize: Theme.caption; color: Theme.secondary
                     }
                 }

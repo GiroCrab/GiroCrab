@@ -91,7 +91,8 @@ pub struct ApiInfo {
     pub shares_counterparty: bool,
     pub shares_purpose: bool,
     pub shares_notes: bool,
-    /// Newest successful bank sync of a shared account (Unix seconds).
+    /// Newest successful bank sync of a shared account (Unix seconds), single-account
+    /// fetches included (the same per-account value as `accounts`).
     pub last_sync_unix: Option<i64>,
 }
 
@@ -106,7 +107,8 @@ pub struct ApiAccount {
     pub balance_cents: i64,
     pub balance_date: String,
     pub archived: bool,
-    /// Last successful sync of the account's bank connection (Unix seconds).
+    /// Last successful sync of the account (Unix seconds): the later of its bank
+    /// connection's sync and its own single-account fetch (#1716).
     pub last_sync_unix: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iban: Option<String>,
@@ -462,7 +464,8 @@ impl Vault {
                 archived: a.archived_unix.is_some(),
                 last_sync_unix: a
                     .connection_id
-                    .and_then(|c| last_sync.get(&c).copied().flatten()),
+                    .and_then(|c| last_sync.get(&c).copied().flatten())
+                    .max(a.last_fetch_unix),
                 iban: numbers(a.iban),
                 account_number: numbers(a.account_number),
                 // Names can carry the account number ("Girokonto 1234567").
@@ -476,25 +479,7 @@ impl Vault {
     fn api_info(&self, scope: &ShareScope) -> ApiResult<ApiInfo> {
         let db = self.db()?;
         let shared: HashSet<i64> = shared_account_ids(&db, scope)?.into_iter().collect();
-        let mut stmt = db
-            .prepare(
-                "SELECT a.id, c.last_sync_unix FROM accounts a
-                   JOIN bank_connections c ON c.id = a.connection_id AND c.deleted_ms IS NULL
-                  WHERE a.deleted_ms IS NULL",
-            )
-            .map_err(CoreError::from)?;
-        let mut last_sync: Option<i64> = None;
-        for row in stmt
-            .query_map([], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
-            })
-            .map_err(CoreError::from)?
-        {
-            let (id, ts) = row.map_err(CoreError::from)?;
-            if shared.contains(&id) {
-                last_sync = last_sync.max(ts);
-            }
-        }
+        let last_sync = newest_sync(&db, &shared)?;
         Ok(ApiInfo {
             api_version: API_VERSION,
             core_version: crate::core_version(),
@@ -718,6 +703,31 @@ fn shared_account_ids(db: &rusqlite::Connection, scope: &ShareScope) -> ApiResul
     Ok(live_account_ids(db, &scope.account_ids)?)
 }
 
+/// Newest successful sync of the `shared` accounts (Unix seconds): per account the
+/// later of its connection's sync and its own single-account fetch (#1716), like
+/// `shared_accounts`. Compared in Rust: SQLite's `MAX(a, b)` is NULL if one is NULL.
+fn newest_sync(db: &rusqlite::Connection, shared: &HashSet<i64>) -> Result<Option<i64>, CoreError> {
+    let mut stmt = db.prepare(
+        "SELECT a.id, c.last_sync_unix, a.last_fetch_unix FROM accounts a
+           LEFT JOIN bank_connections c ON c.id = a.connection_id AND c.deleted_ms IS NULL
+          WHERE a.deleted_ms IS NULL",
+    )?;
+    let mut newest: Option<i64> = None;
+    for row in stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, Option<i64>>(1)?,
+            r.get::<_, Option<i64>>(2)?,
+        ))
+    })? {
+        let (id, synced, fetched) = row?;
+        if shared.contains(&id) {
+            newest = newest.max(synced).max(fetched);
+        }
+    }
+    Ok(newest)
+}
+
 /// Requested accounts, all of them shared (an unknown id reads as not shared,
 /// so the answer never tells which accounts exist); empty = all shared.
 fn requested_accounts(shared: &[i64], requested: &[i64]) -> ApiResult<Vec<i64>> {
@@ -891,3 +901,50 @@ pub mod server;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod newest_sync_tests {
+    use super::*;
+
+    fn db() -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE bank_connections(id INTEGER PRIMARY KEY, last_sync_unix INTEGER, deleted_ms INTEGER);
+             CREATE TABLE accounts(id INTEGER PRIMARY KEY, connection_id INTEGER,
+                                   last_fetch_unix INTEGER, deleted_ms INTEGER);
+             INSERT INTO bank_connections VALUES (1, 100, NULL), (2, 700, 5);
+             INSERT INTO accounts VALUES
+               (1, 1, 200, NULL),  -- fetched on its own after the connection sync
+               (2, 1, NULL, NULL), -- only the connection sync
+               (3, 1, 500, NULL),  -- newer, but not shared below
+               (4, 1, 900, 7),     -- deleted
+               (5, NULL, 300, NULL), -- no connection
+               (6, 2, NULL, NULL); -- connection deleted",
+        )
+        .unwrap();
+        db
+    }
+
+    fn newest(ids: &[i64]) -> Option<i64> {
+        newest_sync(&db(), &ids.iter().copied().collect()).unwrap()
+    }
+
+    /// #1716: `info` advances after a single-account fetch, like `accounts`.
+    #[test]
+    fn single_fetch_counts_for_info() {
+        assert_eq!(newest(&[1, 2]), Some(200));
+        assert_eq!(newest(&[2]), Some(100));
+    }
+
+    #[test]
+    fn unshared_and_deleted_accounts_stay_out() {
+        assert_eq!(newest(&[2, 4]), Some(100));
+        assert_eq!(newest(&[]), None);
+    }
+
+    #[test]
+    fn fetch_without_live_connection_counts() {
+        assert_eq!(newest(&[5]), Some(300));
+        assert_eq!(newest(&[6]), None);
+    }
+}
