@@ -202,10 +202,19 @@ if sparkleKeys.isEmpty {
 
 // The Windows package is not signed (no Authenticode, no Sparkle): the release carries SHA256SUMS.txt next to it.
 // That catches a replaced or corrupted file but not an attacker who replaces both – see docs/release-integrity.md.
-switch fetch(latestBase + "/SHA256SUMS.txt") {
+// "latest/download" is resolved per request: a release published in between would mix manifest and assets
+// of two releases. Resolve the tag once and use its fixed download base (--base keeps its own meaning).
+var windowsBase = latestBase
+if base == nil, case .ok(let json) = fetch("https://api.github.com/repos/\(repo)/releases/latest"),
+   let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+   let tag = object["tag_name"] as? String,
+   tag.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil {
+    windowsBase = assetPrefix + tag
+}
+switch fetch(windowsBase + "/SHA256SUMS.txt") {
 case .notFound:
     if state.windowsSeen == true {
-        finding("SHA256SUMS.txt is not reachable any more at \(latestBase)/SHA256SUMS.txt (404) – Windows assets unchecked")
+        finding("SHA256SUMS.txt is not reachable any more at \(windowsBase)/SHA256SUMS.txt (404) – Windows assets unchecked")
     } else {
         note("SHA256SUMS.txt not published yet (no Windows release so far) – Windows asset check skipped")
     }
@@ -226,7 +235,7 @@ case .ok(let sums):
         guard name.hasSuffix(".exe") || name.hasSuffix(".msi") || name.hasSuffix(".zip") else {
             finding("SHA256SUMS.txt lists an unexpected file type: \(name)"); continue
         }
-        switch fetch(latestBase + "/" + name) {
+        switch fetch(windowsBase + "/" + name) {
         case .notFound: finding("SHA256SUMS.txt lists \(name), but the release has no such asset")
         case .failed(let why): finding("\(name) could not be downloaded: \(why)")
         case .ok(let data):

@@ -99,8 +99,19 @@ jobs:
         run: |
           FILES=(dist/girocrab-windows-x86_64.zip dist/girocrab-windows-x86_64-setup.exe dist/SHA256SUMS.txt)
           if gh release view "$TAG_NAME" --repo "$REPO" >/dev/null 2>&1; then
+            # Same-day re-run after main moved on: the tag still points at the earlier commit.
+            # Never attach these packages to it (a draft without a tag yet gives an empty result).
+            TAGGED="$(gh api "repos/$REPO/commits/$TAG_NAME" --jq .sha 2>/dev/null || true)"
+            HEAD_SHA="$(git rev-parse HEAD)"
+            if [ -n "$TAGGED" ] && [ "$TAGGED" != "$HEAD_SHA" ]; then
+              echo "::warning::$TAG_NAME zeigt auf ${TAGGED:0:12}, HEAD ist ${HEAD_SHA:0:12}: Assets bleiben unverändert, der nächste Lauf veröffentlicht neu."
+              exit 0
+            fi
+            # --clobber deletes each asset before uploading its replacement: keep the release unpublished
+            # meanwhile, so a failed upload cannot leave a published release without its installer.
+            # A hand-pushed tag left a draft (release.yml): publish it only after all uploads succeeded.
+            gh release edit "$TAG_NAME" --draft=true --repo "$REPO"
             gh release upload "$TAG_NAME" "${FILES[@]}" --clobber --repo "$REPO"
-            # A hand-pushed tag left a draft (release.yml): publish it only after the upload succeeded.
             gh release edit "$TAG_NAME" --draft=false --prerelease --latest=false --repo "$REPO"
           else
             gh release create "$TAG_NAME" "${FILES[@]}" --target "$(git rev-parse HEAD)" --prerelease --latest=false \
