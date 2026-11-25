@@ -301,6 +301,18 @@ extension AppModel {
         errorMessage = describe(error)
     }
 
+    /// Switches the booking filter ("Alle Buchungen" / "Alltag & Konsum" / "Sparpläne & Perks") as set by a
+    /// UI control: a chosen category would narrow the new filter to its bookings and often leave
+    /// the list empty, so it ends and the filter shows all its bookings first.
+    func selectScope(_ newScope: BookingScope) {
+        guard newScope != scope else { return }
+        switch sidebarSelection {
+        case .category, .uncategorized: interactiveSidebarSelection = .allAccounts
+        default: break
+        }
+        scope = newScope
+    }
+
     // MARK: - Merchant list (GitHub #495)
 
     /// Shows every booking of the booking's merchant in the current period: all

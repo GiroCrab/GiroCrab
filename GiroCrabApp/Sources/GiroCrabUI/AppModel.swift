@@ -280,9 +280,15 @@ public final class AppModel {
     var assetClassificationVersion = 0
     var wealthScope: WealthScope = .all
 
+    /// Categories that hold bookings of `scope` (nil = the filter shows every category); the sidebar
+    /// lists only these while a filter is on, so no category is picked that leaves the list empty.
+    var scopeCategoryIDs: Set<Int64>?
+    @ObservationIgnored var scopeCategoryTask: Task<Void, Never>?
+
     var scope: BookingScope = .all {
         didSet {
             guard scope != oldValue else { return }
+            loadScopeCategories()
             listLimit = Self.defaultListLimit
             if scope == .investments, dashboardStale { loadDashboard() }
             // A selection still loading in the background has to pick up the new scope.

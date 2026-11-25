@@ -384,7 +384,7 @@ private struct BookingScopePicker: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Picker("Ansicht", selection: Binding(get: { model.scope }, set: { model.scope = $0 })) {
+        Picker("Ansicht", selection: Binding(get: { model.scope }, set: { model.selectScope($0) })) {
             ForEach(BookingScope.ordered, id: \.self) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)

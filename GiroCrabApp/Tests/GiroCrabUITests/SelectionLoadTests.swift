@@ -348,6 +348,44 @@ final class SelectionLoadTests: XCTestCase {
         XCTAssertEqual(model.bookings.map(\.id), expected)
     }
 
+    /// A chosen category ends when the booking filter changes: the new filter lists all its
+    /// bookings instead of "Keine Buchungen" for the category nobody guessed.
+    func testSwitchingScopeEndsTheCategorySelection() async throws {
+        let category = try XCTUnwrap(model.categoryTree.first)
+        for scope in [BookingScope.investments, .everyday, .all] {
+            model.interactiveSidebarSelection = .category(category.id)
+            model.selectScope(scope)
+            XCTAssertEqual(model.sidebarSelection, .allAccounts, "\(scope)")
+            XCTAssertEqual(model.scope, scope)
+        }
+        model.interactiveSidebarSelection = .uncategorized
+        model.selectScope(.everyday)
+        XCTAssertEqual(model.sidebarSelection, .allAccounts)
+    }
+
+    /// With a booking filter on, the sidebar lists only the categories that hold its bookings
+    /// (and their parents); "Alle Buchungen" lists every category again.
+    func testScopeLimitsTheSidebarCategories() async throws {
+        model.selectScope(.investments)
+        for _ in 0..<1500 where model.scopeCategoryIDs == nil { try await Task.sleep(for: .milliseconds(2)) }
+        let ids = try XCTUnwrap(model.scopeCategoryIDs)
+        XCTAssertFalse(ids.isEmpty)
+        let shown = model.categoryTree.limited(to: ids)
+        XCTAssertLessThan(shown.count, model.categoryTree.count)
+        for id in ids { XCTAssertNotNil(shown.node(id), "category \(id) of the filter is listed") }
+        model.selectScope(.all)
+        XCTAssertNil(model.scopeCategoryIDs)
+    }
+
+    /// An account or group stays selected: only categories are reset.
+    func testSwitchingScopeKeepsAnAccountSelection() async throws {
+        let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
+        model.interactiveSidebarSelection = .account(account.id)
+        model.selectScope(.everyday)
+        XCTAssertEqual(model.sidebarSelection, .account(account.id))
+        XCTAssertEqual(model.scope, .everyday)
+    }
+
     /// Geplant shows no booking list: it loads none, and the list of the account before stays.
     /// Back to an account, the column keeps Geplant until that account's data is in (#1396).
     func testNonBookingColumnLoadsNoBookingsAndSwitchesBackWithItsData() async throws {

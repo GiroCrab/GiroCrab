@@ -160,26 +160,38 @@ struct SidebarView: View {
                     .listRowInsets(Self.rowInsets)
                     .selectionDisabled()
             }
+            if !model.categoriesCollapsed, model.scope != .all {
+                Text("Diese Kategorien gehören zu „\(model.scope.title)“.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, DisclosureChevron.iconInset)
+                    .listRowInsets(Self.rowInsets)
+                    .selectionDisabled()
+            }
             if !model.categoriesCollapsed {
                 Group {
-                    HStack(spacing: DisclosureChevron.gap) {
-                        SidebarLeadingSlot()
-                        HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
-                            Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                            Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
-                            Spacer()
+                    // with a booking filter on, only that filter's categories are listed (no "Ohne Kategorie")
+                    if model.scope == .all {
+                        HStack(spacing: DisclosureChevron.gap) {
+                            SidebarLeadingSlot()
+                            HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
+                                Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                                Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                                Spacer()
+                            }
                         }
-                    }
-                    .contextMenu {
-                        Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
-                        if !model.uncategorizedName.isEmpty {
-                            Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                        .contextMenu {
+                            Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
+                            if !model.uncategorizedName.isEmpty {
+                                Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                            }
                         }
+                        .badge(model.uncategorizedCount)
+                        .tag(SidebarItem.uncategorized)
+                        .listRowInsets(Self.rowInsets)
                     }
-                    .badge(model.uncategorizedCount)
-                    .tag(SidebarItem.uncategorized)
-            .listRowInsets(Self.rowInsets)
-                    categoryRows(model.categoryTree, depth: 0)
+                    categoryRows(model.scopeCategoryIDs.map { model.categoryTree.limited(to: $0) } ?? model.categoryTree, depth: 0)
                 }
             }
         }

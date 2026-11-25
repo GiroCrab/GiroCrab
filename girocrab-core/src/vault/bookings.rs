@@ -903,6 +903,39 @@ impl Vault {
         self.list_page(filter, true)
     }
 
+    /// Ids of the categories (also those of split parts) that hold bookings of the booking
+    /// `scope`: the sidebar shows them while the filter is on, so no category is picked blind
+    /// and ends in "Keine Buchungen". Reads every booking once: call it off the main thread
+    /// and only when the scope changes.
+    pub fn categories_in_scope(&self, scope: BookingScope) -> Result<Vec<i64>, CoreError> {
+        let page = self.list_transactions(BookingFilter {
+            scope,
+            ..Default::default()
+        })?;
+        let mut ids: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+        let mut split: Vec<String> = vec![];
+        for t in &page.transactions {
+            match t.category_id {
+                Some(c) => {
+                    ids.insert(c);
+                }
+                None => split.push(t.id.to_string()),
+            }
+        }
+        let db = self.db()?;
+        for chunk in split.chunks(500) {
+            let mut st = db.prepare(&format!(
+                "SELECT DISTINCT sp.category_id FROM transaction_splits sp
+                  WHERE sp.category_id IS NOT NULL AND sp.transaction_id IN ({})",
+                chunk.join(",")
+            ))?;
+            for id in st.query_map([], |r| r.get::<_, i64>(0))? {
+                ids.insert(id?);
+            }
+        }
+        Ok(ids.into_iter().collect())
+    }
+
     /// `flow_other_currencies` for the plain selection of `selection_flow`: accounts and period.
     /// `respect_in_total`: in a totals context (#337) only the effective total
     /// set contributes — the same rule as the EUR sums this figure supplements.
@@ -2242,6 +2275,41 @@ mod own_transfer_tests {
             v.selection_flow(vec![], None, None).unwrap().invested_cents,
             200_00
         );
+    }
+
+    #[test]
+    fn categories_in_scope_lists_only_the_categories_of_that_filter() {
+        let (_d, v, ids) = vault_with(&[
+            (
+                "Depot",
+                -100_00,
+                "Sparplan MSCI World",
+                Some("Anlage/Sparplan"),
+            ),
+            ("Kino", -40_00, "Film", Some("Freizeit")),
+            ("Mama", 20_00, "Geschenk", None),
+        ]);
+        let cat = |i: usize| {
+            v.list_transactions(BookingFilter::default())
+                .unwrap()
+                .transactions
+                .into_iter()
+                .find(|t| t.id == ids[i])
+                .unwrap()
+                .category_id
+        };
+        let (savings, leisure) = (cat(0).unwrap(), cat(1).unwrap());
+        assert_eq!(
+            v.categories_in_scope(BookingScope::Investments).unwrap(),
+            vec![savings]
+        );
+        assert_eq!(
+            v.categories_in_scope(BookingScope::Everyday).unwrap(),
+            vec![leisure]
+        );
+        let mut all = v.categories_in_scope(BookingScope::All).unwrap();
+        all.sort();
+        assert_eq!(all, vec![savings.min(leisure), savings.max(leisure)]);
     }
 
     #[test]

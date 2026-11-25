@@ -93,6 +93,7 @@ extension AppModel {
             let sums = categorySumFilter
             categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
             categoryTree = Self.buildTree(categories)
+            if scope != .all { loadScopeCategories() }
             uncategorizedFilteredCount = Int(try vault.countTransactions(filter: uncategorizedCountFilter(sums)))
         }
     }
@@ -141,6 +142,19 @@ extension AppModel {
                 guard !Task.isCancelled, !(error is CancellationError), let self else { return }
                 self.errorMessage = describe(error)
             }
+        }
+    }
+
+    /// The categories of the booking filter for the sidebar (`scopeCategoryIDs`); the core reads
+    /// every booking for it, so it runs off the main thread.
+    func loadScopeCategories() {
+        scopeCategoryTask?.cancel()
+        let scope = scope
+        guard scope != .all, let vault else { scopeCategoryIDs = nil; return }
+        scopeCategoryTask = Task { [weak self] in
+            let ids = try? await Self.offMain { try vault.categoriesInScope(scope: scope) }
+            guard !Task.isCancelled, let self, self.vault === vault, self.scope == scope else { return }
+            self.scopeCategoryIDs = ids.map(Set.init)
         }
     }
 
