@@ -788,8 +788,10 @@ struct ConnectionEditSheet: View {
     }
 
     /// Before anything that fetches: the next sync must reach back as chosen (#1043).
-    private func saveFullHistoryIfChanged() -> Bool {
-        guard fullHistory != initialFullHistory else { return true }
+    /// `force`: a fetch starts right away, so the shown period is stored even when it is the one
+    /// loaded: a full sync that finished while the sheet was open has deleted the stored one.
+    private func saveFullHistoryIfChanged(force: Bool = false) -> Bool {
+        guard force || fullHistory != initialFullHistory else { return true }
         guard model.setFullHistory(connection.id, fullHistory) else { return false }
         initialFullHistory = fullHistory
         return true
@@ -798,6 +800,7 @@ struct ConnectionEditSheet: View {
     /// The login's settings and the account selection, saved together; a fetch only starts after
     /// the selection is stored (a switched-off account must not be fetched).
     private func saveAll(thenSync: Bool = false) {
+        guard !thenSync || saveFullHistoryIfChanged(force: true) else { return }
         if connection.connector == .advanzia {
             guard saveSyncScheduleIfChanged(), saveFullHistoryIfChanged() else { return }
             Task { @MainActor in

@@ -83,7 +83,7 @@ extension AppModel {
         // also while demo data is shown: the login goes into the personal vault (only a magic
         // demo login is a demo connection)
         if kind == .bitcoinCore, !Self.isMagicDemoLogin(login) {
-            addBitcoinCore(login: login)
+            addBitcoinCore(login: login, history: history)
             return
         }
         addConnectionStored(kind, login: login, history: history)
@@ -93,13 +93,13 @@ extension AppModel {
     /// there); otherwise its error says what is missing and nothing is added. The data
     /// directory Bitcoin-Qt uses is taken over when none is set. Runs in the personal vault, so
     /// the check uses its settings and the detected directory is saved there, not in the demo.
-    private func addBitcoinCore(login: String) {
-        runInOwnVault { [self] in checkAndAddBitcoinCore(login: login) }
+    private func addBitcoinCore(login: String, history: String?) {
+        runInOwnVault { [self] in checkAndAddBitcoinCore(login: login, history: history) }
     }
 
     /// Adds only when, after the check, the same vault is open and the datadir and RPC URL are
     /// still the checked ones; otherwise nothing is written and the user adds it again.
-    private func checkAndAddBitcoinCore(login: String) {
+    private func checkAndAddBitcoinCore(login: String, history: String?) {
         guard let pin = pinVault() else { return }
         let storedDatadir = settingEntry(BitcoinCoreDatadir.key)?.value ?? ""
         let rpcURL = settingEntry("bitcoin_core.rpc_url")?.value ?? ""
@@ -127,7 +127,7 @@ extension AppModel {
                 return
             }
             if let detected { saveSetting(BitcoinCoreDatadir.key, detected) }
-            addConnectionStored(.bitcoinCore, login: login)
+            addConnectionStored(.bitcoinCore, login: login, history: history)
         }
     }
 
