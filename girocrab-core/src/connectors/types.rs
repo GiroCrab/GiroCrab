@@ -266,6 +266,11 @@ pub struct ConnectContext {
     /// Per-account start (account external ref → YYYY-MM-DD): the account's
     /// own newest booking minus 10 days. Accounts not listed use `since`.
     pub since_by_account: HashMap<String, String>,
+    /// This sync runs the login's pending full fetch (#1043): `since` was set
+    /// by the period the user chose. Only then may a connector try a start
+    /// date the bank refuses again with a shorter one: in an ordinary sync
+    /// the bookings between would be skipped for good.
+    pub full_fetch: bool,
     /// Which documents (PDF statements, receipts, PostBox) this sync fetches.
     pub documents: Documents,
     /// Accounts (external refs) whose data this sync does not store: switched
@@ -277,6 +282,13 @@ pub struct ConnectContext {
     /// (#1124): the result is cut down to it in [`FetchResult::keep_only`];
     /// connectors that request accounts one by one (FinTS) ask only for it.
     pub only_account: Option<String>,
+    /// Asks the user for a TAN or an app approval during `fetch` (#1730). Set
+    /// by `SyncSession` for syncs the user started; `None` at login, for
+    /// transfers and for automatic syncs, which must not ask.
+    pub prompt: Option<super::FetchPrompt>,
+    /// Set once the user cancelled the sync (#1730): send no further order.
+    /// `SyncSession` sets it for every fetch, with or without a prompt.
+    pub cancelled: super::CancelFlag,
 }
 
 /// Document retrieval of one sync, set from the connection's settings.
@@ -337,11 +349,14 @@ impl Documents {
 /// because its siblings moved on. The lower bound is `days` back, or earlier
 /// when the whole connection has not been synced for longer. Accounts without
 /// bookings (new ones, depots) get that lower bound but do not pull the
-/// connection-wide `since` back.
+/// connection-wide `since` back. A full fetch (`full_days`, #1043) replaces
+/// `days` as that lower bound and starts every account at least that far
+/// back, also one with bookings.
 pub(crate) fn since_window(
     today: jiff::civil::Date,
     days: i64,
     newest: &[(String, Option<String>)],
+    full_days: Option<i64>,
 ) -> (String, HashMap<String, String>) {
     let parse = |d: &Option<String>| {
         d.as_deref()
@@ -349,7 +364,9 @@ pub(crate) fn since_window(
     };
     let back10 = |d: jiff::civil::Date| d - crate::dates::days(10);
     let fmt = |d: jiff::civil::Date| crate::dates::iso(d);
-    let default_start = today - crate::dates::days(days);
+    let full = full_days.map(|f| today - crate::dates::days(f));
+    // the period chosen for a full fetch, also when it is shorter than `days`
+    let default_start = full.unwrap_or(today - crate::dates::days(days));
     let floor = match newest.iter().filter_map(|(_, d)| parse(d)).max() {
         Some(g) => default_start.min(back10(g)),
         None => default_start,
@@ -360,6 +377,7 @@ pub(crate) fn since_window(
         let start = match parse(d) {
             Some(d) => {
                 let s = back10(d).max(floor);
+                let s = full.map_or(s, |f| s.min(f));
                 earliest = Some(earliest.map_or(s, |e| e.min(s)));
                 s
             }

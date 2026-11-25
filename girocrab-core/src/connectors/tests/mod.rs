@@ -8,6 +8,42 @@ use crate::models::{AccountKind, BookingFilter, BookingScope, ConnectorKind, Sep
 use crate::vault::Vault;
 
 #[test]
+fn dkb_offers_fints_and_one_psd2_access_with_or_without_live_catalog() {
+    use super::bank_directory::{BankAccessMode, Psd2Bank, search_banks};
+
+    let live_dkb = Psd2Bank {
+        name: "DKB".into(),
+        country: "DE".into(),
+        aspsp: "DKB".into(),
+        connector: None,
+        live: true,
+        tested: String::new(),
+    };
+    for live_catalog in [vec![], vec![live_dkb]] {
+        let banks = search_banks("DKB".into(), live_catalog, 10);
+        let fints = banks
+            .iter()
+            .find(|bank| bank.mode == BankAccessMode::FinTs && bank.blz == "12030000")
+            .expect("existing DKB FinTS access");
+        let psd2: Vec<_> = banks
+            .iter()
+            .filter(|bank| bank.mode == BankAccessMode::Psd2)
+            .collect();
+        assert_eq!(psd2.len(), 1);
+        let bank = psd2[0];
+        assert_eq!(bank.name, fints.name);
+        assert_eq!(bank.id, "psd2:DE:DKB");
+        assert_eq!(bank.aspsp, "DKB");
+        assert_eq!(bank.country, "DE");
+        assert_eq!(bank.connector, None);
+        assert!(bank.tested.is_empty());
+    }
+    // The assistant searches again using the selected FinTS entry's full name.
+    let banks = search_banks("DKB (Deutsche Kreditbank)".into(), vec![], 10);
+    assert!(banks.iter().any(|bank| bank.id == "psd2:DE:DKB"));
+}
+
+#[test]
 fn errors_after_submit_leave_outcome_unknown() {
     use super::{CoreError, error_leaves_outcome_unknown as unknown};
     assert!(unknown(&CoreError::Network {
@@ -533,6 +569,82 @@ fn card_holds_are_replaced_on_each_sync() {
     // Hold 1 cleared (booked elsewhere), hold 2 still open.
     store_fetch(&v, ConnectorKind::Bunq, conn, fetch(vec![hold("2", -7_10)])).unwrap();
     assert_eq!(holds(), vec!["pending-hold-bunq-2"]);
+    std::fs::remove_file(path).ok();
+}
+
+/// A FinTS fetch whose hold list is incomplete (camt failed or was cut at its page
+/// limit, #1043) leaves the stored holds alone, also older ones; optimistic transfer
+/// bookings still go after 14 days.
+#[test]
+fn incomplete_fints_hold_list_keeps_old_holds() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::FinTsGeneric, String::new(), "u".into())
+        .unwrap();
+    let acc = RemoteAccount {
+        external_ref: "f:1".into(),
+        name: "Giro".into(),
+        owner: String::new(),
+        iban: "DE02120300000000202051".into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Checking,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let pending = |id: &str| RemoteTransaction {
+        account_ref: "f:1".into(),
+        external_id: id.into(),
+        booking_date: "2026-10-01".into(),
+        value_date: "2026-10-01".into(),
+        amount_cents: -12_00,
+        currency: "EUR".into(),
+        counterparty: "Hotel".into(),
+        ..Default::default()
+    };
+    let hold = format!("{}1", crate::connectors::fints::camt::HOLD_PREFIX);
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        FetchResult {
+            accounts: vec![acc.clone()],
+            transactions: vec![pending(&hold), pending("pending-transfer-1")],
+            hold_prefix: Some(crate::connectors::fints::camt::HOLD_PREFIX.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET imported_unix = strftime('%s','now') - 30*86400
+              WHERE external_id LIKE 'pending-%'",
+            [],
+        )
+        .unwrap();
+    // no `hold_prefix`: the list of open holds is not complete
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        FetchResult {
+            accounts: vec![acc],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let open: Vec<String> = {
+        let db = v.db().unwrap();
+        let mut q = db
+            .prepare("SELECT external_id FROM transactions WHERE external_id LIKE 'pending-%' AND deleted_ms IS NULL")
+            .unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    assert_eq!(open, vec![hold]);
     std::fs::remove_file(path).ok();
 }
 
@@ -1521,6 +1633,23 @@ async fn account_sync_stores_only_that_account() {
     assert!(accounts.iter().all(|a| !stored(a.id).access_revoked));
     // the login counts as synced only after a full sync (automatic sync)
     assert_eq!(last_sync(&v), synced_before);
+    // the fetched account notes its own time (#1716), the others keep theirs
+    let now = crate::dates::now_ms() / 1000;
+    let fetched = stored(other.id)
+        .last_fetch_unix
+        .expect("fetch time of the account");
+    assert!(
+        (now - 10..=now + 10).contains(&fetched),
+        "{fetched} vs {now}"
+    );
+    for a in accounts.iter().filter(|a| a.id != other.id) {
+        assert_eq!(
+            stored(a.id).last_fetch_unix,
+            a.last_fetch_unix,
+            "{}",
+            a.name
+        );
+    }
     let s = v
         .clone()
         .begin_account_sync(giro.id, "pin".into(), true)
@@ -2044,6 +2173,8 @@ mod body_limit;
 mod content_id;
 mod direct_debit;
 mod document_matching;
+mod fetch_prompt;
+mod history;
 mod import_takeover;
 mod payment_method;
 mod postbox;

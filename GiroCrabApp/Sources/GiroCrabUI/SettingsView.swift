@@ -79,11 +79,12 @@ struct GeneralSettings: View {
     @AppStorage(BookingDensity.defaultsKey) private var bookingDensity: BookingDensity = .standard
     @AppStorage(SidebarDensity.defaultsKey) private var sidebarDensity: SidebarDensity = .defaultValue
 
-    /// Core setting `sync.days_back`: how far the first fetch of a new account reaches back.
-    private var firstFetchDays: Binding<Int> {
+    /// Core setting `sync.days_back`: how far the first fetch of a new login reaches back,
+    /// `max` (as far as the bank delivers, #1043) or days.
+    private var firstFetchPeriod: Binding<String> {
         Binding(
-            get: { Int(model.settingEntry("sync.days_back")?.value ?? "") ?? 90 },
-            set: { model.saveSetting("sync.days_back", String($0)) }
+            get: { model.settingEntry("sync.days_back")?.value ?? "max" },
+            set: { model.saveSetting("sync.days_back", $0) }
         )
     }
 
@@ -136,7 +137,7 @@ struct GeneralSettings: View {
                         .help("Versteht Angaben wie „Lebensmittel letzten Monat über 50 €“. Läuft vollständig auf diesem Gerät; an das Modell gehen nur Suchtext, heutiges Datum und Kategorienamen.")
                 }
                 Toggle("Auswertungen in der Übersicht anzeigen", isOn: $showStatistics)
-                Text("Blendet Saldoverlauf, Cashflow und Budgets über der Buchungsliste aus. Auch im Menü Ansicht umschaltbar.")
+                Text("Blendet die Kennzahlen (Konsumausgaben, Investiert, Einnahmen, Fixkosten offen) und die Cashflow-Karte über der Buchungsliste aus. Das Diagramm hat mit „Diagramm anzeigen“ einen eigenen Schalter. Budgets bleiben unabhängig und haben ebenfalls einen eigenen Schalter. Auch im Menü Ansicht umschaltbar.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 Toggle("Budgets anzeigen", isOn: $showBudgets)
                 Text("Wer keine Monatsbudgets nutzt, blendet die Budget-Karte und „Monatsbudget festlegen …“ ganz aus. Auch im Menü Ansicht umschaltbar.")
@@ -159,16 +160,17 @@ struct GeneralSettings: View {
                 }
                 Text(model.autoReviewDelay.helpText)
                     .appFont(.caption).foregroundStyle(.secondary)
-                Picker("Zeitraum beim ersten Abruf", selection: firstFetchDays) {
-                    Text("90 Tage").tag(90)
-                    Text("1 Jahr").tag(365)
-                    Text("2 Jahre").tag(730)
+                Picker("Zeitraum beim ersten Abruf", selection: firstFetchPeriod) {
+                    Text("90 Tage").tag("90")
+                    Text("1 Jahr").tag("365")
+                    Text("2 Jahre").tag("730")
+                    Text("Maximum").tag("max")
                     // a value set elsewhere (e.g. synced from another device) stays selectable
-                    if ![90, 365, 730].contains(firstFetchDays.wrappedValue) {
-                        Text("\(firstFetchDays.wrappedValue) Tage").tag(firstFetchDays.wrappedValue)
+                    if !["90", "365", "730", "max"].contains(firstFetchPeriod.wrappedValue) {
+                        Text("\(Int(firstFetchPeriod.wrappedValue) ?? 90) Tage").tag(firstFetchPeriod.wrappedValue)
                     }
                 }
-                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Kontos zurückgeht. Viele Banken liefern nur 90 Tage oder verlangen für mehr eine TAN. Bereits abgerufene Konten betrifft das nicht.")
+                Text("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Buchungen").appSectionHeader() }
             TransferSettingsSection()
@@ -647,6 +649,14 @@ struct ICloudSyncSection: View {
     /// Shown in the section: a toast would land in the main window, behind Settings on macOS.
     @State private var keyCopyError: String?
 
+    @ViewBuilder private var keychainTradeOff: some View {
+        if let text = KeychainSyncNote.tradeOff(available: VaultKeyManager.canShareViaICloudKeychain,
+                                                shared: keychainSync, syncEnabled: sync.isEnabled) {
+            Text(text).appFont(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     var body: some View {
         Section {
             Toggle("Tresor über iCloud synchronisieren", isOn: Bindable(sync).isEnabled)
@@ -660,6 +670,8 @@ struct ICloudSyncSection: View {
                         model.syncNow()
                     }
                 }
+            // before the switch is turned: it shares the key as well (#1798)
+            if !sync.isEnabled { keychainTradeOff }
             if sync.isEnabled {
                 LabeledContent("Ordner") { Text(sync.folderName ?? "iCloud Drive / GiroCrab").sensitive() }
                 if sync.folderNotice {
@@ -726,6 +738,7 @@ struct ICloudSyncSection: View {
                 if let note = KeychainSyncNote.text(available: VaultKeyManager.canShareViaICloudKeychain) {
                     Text(note).appFont(.caption).foregroundStyle(.secondary)
                 }
+                keychainTradeOff
                 HStack {
                     Button {
                         confirmKeyCopy = true
@@ -1005,8 +1018,21 @@ struct OwnProductIDField: View {
     }
 }
 
-/// Why the iCloud Keychain switch is off in this build (#909), or nil when it works.
+/// The notes on sharing the vault key via iCloud Keychain.
 enum KeychainSyncNote {
+    /// What sharing costs: a synchronizable keychain item cannot carry `userPresence` (#1798).
+    /// Nil when it can neither be on nor be turned on in this build.
+    static func tradeOff(available: Bool, shared: Bool, syncEnabled: Bool) -> String? {
+        guard available || shared else { return nil }
+        let cost = String(localized: "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Eine Abfrage beim Entsperren kommt dann nur noch von GiroCrab, nicht mehr vom Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account.")
+        if syncEnabled { return cost } // below the key's own switch
+        let state = shared // turning the sync off does not unshare the key
+            ? String(localized: "Der Tresor-Schlüssel wird weiterhin über den iCloud-Schlüsselbund geteilt.")
+            : String(localized: "Beim Einschalten wird auch der Tresor-Schlüssel über den iCloud-Schlüsselbund geteilt.")
+        return state + " " + cost
+    }
+
+    /// Why the switch is off in this build (#909), or nil when it works.
     static func text(available: Bool) -> String? {
         available ? nil : String(localized: "In dieser Version nicht verfügbar. Übertragen Sie den Schlüssel mit „Tresor-Schlüssel kopieren“ und fügen Sie ihn auf dem anderen Gerät mit „Schlüssel einfügen …“ ein.")
     }

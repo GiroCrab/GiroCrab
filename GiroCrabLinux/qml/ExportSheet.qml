@@ -258,7 +258,7 @@ Sheet {
         if (!accountIDs.length && o.scope !== "selection") { previewCount = 0; previewName = null; return }
         previewCount = null
         const preset = o.scope === "selection" ? "current" : o.periodPreset
-        BookingExport.loadExportBookings(accountIDs.length ? accountIDs : null, preset, bookingIDs, o, BookingExport.isCamt(o.format), (bookings, tagNote) => {
+        BookingExport.loadExportBookings(accountIDs.length ? accountIDs : null, preset, bookingIDs, o, BookingExport.isCamt(o.format), (bookings, balances, tagNote) => {
             if (gen !== previewGeneration) return
             const report = BookingExport.exportReport(bookings, accountIDs, preset, bookingIDs, o, tagNote)
             previewCount = report.rows.length
@@ -625,6 +625,10 @@ Sheet {
                     }
                     ToggleRow { visible: sheet.showDetails; Layout.leftMargin: 16; label: qsTr("Tagessaldo-Spalte")
                                 checked: sheet.options.showDailyBalance; onToggled: on => sheet.setOption("showDailyBalance", on) }
+                    // ExportSheet.swift: the balance after each booking, CSV only (#577)
+                    ToggleRow { visible: sheet.showDetails && sheet.options.format === "csv"; Layout.leftMargin: 16
+                                label: qsTr("Saldo-Spalte (nach jeder Buchung)")
+                                checked: sheet.options.showRunningBalance; onToggled: on => sheet.setOption("showRunningBalance", on) }
                     ToggleRow { visible: sheet.showDetails; Layout.leftMargin: 16; label: qsTr("Nach Konto gruppieren")
                                 checked: sheet.options.groupByAccount; onToggled: on => sheet.setOption("groupByAccount", on) }
                     ToggleRow { visible: sheet.showDetails; Layout.leftMargin: 16; label: qsTr("Nur erste Zeile Verwendungszweck")

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use rusqlite::{Connection, params};
 
 use super::*;
+use crate::offline::ManualBookingSetup;
 use crate::vault::Vault;
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -406,11 +407,13 @@ fn editing_a_booking_stamps_only_that_field() {
                     1,
                     vec![
                         crate::models::TransactionSplitInput {
+                            uuid: None,
                             category_id: Some(cat),
                             amount_cents: 3,
                             note: String::new(),
                         },
                         crate::models::TransactionSplitInput {
+                            uuid: None,
                             category_id: None,
                             amount_cents: 2,
                             note: String::new(),
@@ -623,12 +626,12 @@ fn deleting_a_category_soft_deletes_it_its_children_and_rules() {
             .unwrap();
         }
         db.execute(
-            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents) VALUES (1, 2, ?1, -3)",
+            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents, uuid, position) VALUES (1, 2, ?1, -3, 'part-1', 0)",
             [child],
         )
         .unwrap();
         db.execute(
-            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents) VALUES (2, 2, ?1, -2)",
+            "INSERT INTO transaction_splits(id, transaction_id, category_id, amount_cents, uuid, position) VALUES (2, 2, ?1, -2, 'part-2', 1)",
             [other],
         )
         .unwrap();
@@ -1333,6 +1336,7 @@ fn soft_delete_world(v: &Vault) {
     v.set_category_budget(supermarkt, Some(250_00)).unwrap();
     v.set_category_budget(wohnen, Some(1500_00)).unwrap();
     let split = |cat: Option<i64>, cents: i64| crate::models::TransactionSplitInput {
+        uuid: None,
         category_id: cat,
         amount_cents: cents,
         note: "Teil".into(),
@@ -2084,7 +2088,7 @@ fn independently_created_same_name_categories_are_combined() {
         )
         .unwrap();
         db.execute(
-            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents) VALUES (1, ?1, -5)",
+            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, uuid, position) VALUES (1, ?1, -5, 'part-1', 0)",
             [c],
         )
         .unwrap();
@@ -2430,6 +2434,7 @@ fn each_order(tag: &str, setup: impl Fn(&Vault, &Vault), check: impl Fn(&Vault))
 
 fn split(category_id: Option<i64>, amount_cents: i64) -> crate::models::TransactionSplitInput {
     crate::models::TransactionSplitInput {
+        uuid: None,
         category_id,
         amount_cents,
         note: String::new(),
@@ -2712,6 +2717,122 @@ fn edited_text_syncs() {
             );
         },
     );
+}
+
+#[test]
+fn incoming_splits_must_match_the_kept_bank_booking_amount() {
+    let dir = temp_dir("split-amount-sync");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let account = a
+        .create_offline_account(
+            "Wallet".into(),
+            crate::models::AccountKind::Cash,
+            "EUR".into(),
+            0,
+        )
+        .unwrap();
+    let mut setup = ManualBookingSetup {
+        booking_date: "2026-01-01".into(),
+        amount_cents: -500,
+        counterparty: "Shop".into(),
+        purpose: String::new(),
+        category_id: None,
+        note: String::new(),
+    };
+    let id = a.save_manual_booking(account, None, setup.clone()).unwrap();
+    exec(
+        &a,
+        &format!("UPDATE transactions SET external_id='bank-booking' WHERE id={id}"),
+    );
+    a.set_transaction_splits(id, vec![split(None, -200), split(None, -300)])
+        .unwrap();
+    merge(&b, &a);
+    let other_id = n(&b, "SELECT id FROM transactions LIMIT 1");
+    let before: Vec<_> = b
+        .list_transaction_splits(other_id)
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.uuid, p.amount_cents))
+        .collect();
+    // the first merge carried both parts over unchanged
+    assert_eq!(
+        before,
+        a.list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.uuid, p.amount_cents))
+            .collect::<Vec<_>>()
+    );
+    let stamp = n(&b, "SELECT splits_ms FROM transactions LIMIT 1");
+    setup.amount_cents = -1000;
+    a.save_manual_booking_with_splits(
+        account,
+        Some(id),
+        setup,
+        Some(vec![split(None, -400), split(None, -600)]),
+    )
+    .unwrap();
+    merge(&b, &a);
+    assert_eq!(n(&b, "SELECT amount_cents FROM transactions LIMIT 1"), -500);
+    assert_eq!(n(&b, "SELECT splits_ms FROM transactions LIMIT 1"), stamp);
+    assert_eq!(
+        b.list_transaction_splits(other_id)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.uuid, p.amount_cents))
+            .collect::<Vec<_>>(),
+        before
+    );
+    a.set_transaction_splits(id, vec![]).unwrap();
+    merge(&b, &a);
+    assert!(b.list_transaction_splits(other_id).unwrap().is_empty());
+}
+
+#[test]
+fn split_merge_preserves_uuids_and_winners_order() {
+    for a_first in [true, false] {
+        let (a, b) = booking_pair("split-identities");
+        a.set_transaction_splits(
+            1,
+            vec![split(None, -200), split(Some(cat(&a, "Food")), -300)],
+        )
+        .unwrap();
+        let parts = a.list_transaction_splits(1).unwrap();
+        merge(&b, &a);
+        assert_eq!(
+            a.list_transaction_splits(1)
+                .unwrap()
+                .iter()
+                .map(|p| &p.uuid)
+                .collect::<Vec<_>>(),
+            b.list_transaction_splits(1)
+                .unwrap()
+                .iter()
+                .map(|p| &p.uuid)
+                .collect::<Vec<_>>()
+        );
+        let mut retained = split(None, -250);
+        retained.uuid = Some(parts[0].uuid.clone());
+        let mut moved = split(Some(cat(&b, "Fun")), -250);
+        moved.uuid = Some(parts[1].uuid.clone());
+        b.set_transaction_splits(1, vec![moved, retained]).unwrap();
+        exec(&a, "UPDATE transactions SET splits_ms=100 WHERE id=1");
+        exec(&b, "UPDATE transactions SET splits_ms=200 WHERE id=1");
+        if a_first {
+            both_ways(&a, &b);
+        } else {
+            both_ways(&b, &a);
+        }
+        for v in [&a, &b] {
+            let result = v.list_transaction_splits(1).unwrap();
+            assert_eq!(
+                result.iter().map(|p| p.uuid.as_str()).collect::<Vec<_>>(),
+                vec![parts[1].uuid.as_str(), parts[0].uuid.as_str()]
+            );
+            assert!(result.iter().all(|p| p.amount_cents == -250));
+        }
+        assert_eq!(merge(&b, &a).bookings_updated, 0);
+    }
 }
 
 #[test]
@@ -3733,6 +3854,109 @@ fn loan_links_skip_deleted_bookings_and_match_by_key() {
     }
 }
 
+/// #1591: the #998 mark "state unknown" goes with the archive state. A device that gets a
+/// repaired account by merge gets the mark too (its next import gives the account MoneyMoney's
+/// state); a choice made there later ends the mark on every device.
+#[test]
+fn the_repair_mark_travels_with_the_archive_state() {
+    use crate::importers::moneymoney_db::archive_unknown;
+    let tmp = crate::test_support::TempDir::new("archive-note");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
+    // what step 38 leaves on A: active, stamped just after the import's archive, marked;
+    // B has never seen the account
+    exec(
+        &a,
+        "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+         INSERT INTO accounts(id, group_id, external_ref, name, archived_ms, archive_unknown)
+             VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124, 1);",
+    );
+    fill_missing_uuids(&a.db().unwrap()).unwrap();
+    both_ways(&a, &b);
+    let karte = n(&b, "SELECT id FROM accounts WHERE name = 'Karte'");
+    assert_eq!(archive_unknown(&b.db().unwrap()).unwrap(), vec![karte]);
+    // archived and reactivated on B: stays active, A's mark ends too
+    b.set_account_archived(karte, true).unwrap();
+    b.set_account_archived(karte, false).unwrap();
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert!(archive_unknown(&v.db().unwrap()).unwrap().is_empty());
+    }
+    assert_eq!(
+        n(
+            &a,
+            "SELECT archived_unix IS NULL FROM accounts WHERE id = 1"
+        ),
+        1
+    );
+}
+
+/// #998: step 38 stamps its reactivation one millisecond after the wrong archive, so two devices
+/// that repaired the same account carry the same stamp and keep their marks, while a choice made
+/// later on another device still wins over the repair.
+#[test]
+fn repairs_of_one_account_agree_and_a_later_choice_wins() {
+    use crate::importers::moneymoney_db::archive_unknown;
+    let tmp = crate::test_support::TempDir::new("archive-repair");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
+    for v in [&a, &b] {
+        // what step 38 leaves: active, stamped just after the import's archive, marked
+        exec(
+            v,
+            "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+             INSERT INTO accounts(id, group_id, external_ref, name, archived_ms, archive_unknown)
+                 VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', 1790001000124, 1);",
+        );
+        fill_missing_uuids(&v.db().unwrap()).unwrap();
+    }
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(archive_unknown(&v.db().unwrap()).unwrap(), vec![1]);
+    }
+    // archived on B later: A takes it over, mark included
+    b.set_account_archived(1, true).unwrap();
+    both_ways(&a, &b);
+    assert!(archive_unknown(&a.db().unwrap()).unwrap().is_empty());
+    assert_eq!(
+        n(
+            &a,
+            "SELECT archived_unix IS NOT NULL FROM accounts WHERE id = 1"
+        ),
+        1
+    );
+}
+
+/// #998 review: two known archive states with one stamp (an explicit choice that happens to
+/// carry the stamp of an import's resolution) end alike in both directions: archived wins.
+#[test]
+fn equal_archive_stamps_end_alike_on_both_devices() {
+    let tmp = crate::test_support::TempDir::new("archive-tie");
+    let dir = tmp.path();
+    let (a, b) = (open(dir, "a.db"), open(dir, "b.db"));
+    for (v, unix) in [(&a, "NULL"), (&b, "1790001000")] {
+        exec(
+            v,
+            &format!(
+                "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+                 INSERT INTO accounts(id, group_id, external_ref, name, archived_unix, archived_ms)
+                     VALUES (1, 1, 'moneymoney-db:1:abcd', 'Karte', {unix}, 1790001000125);"
+            ),
+        );
+        fill_missing_uuids(&v.db().unwrap()).unwrap();
+    }
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        assert_eq!(
+            n(
+                v,
+                "SELECT IFNULL(archived_unix, 0) FROM accounts WHERE id = 1"
+            ),
+            1790001000
+        );
+    }
+}
+
 /// A archived and deleted account A1; B took that over and then got A1 again
 /// from the bank (revive). Both end with A1 live, unarchived and in totals.
 #[test]
@@ -4409,6 +4633,46 @@ fn rule_account_set_merges_across_vaults() {
     assert_eq!(refs, vec!["A1", "A3"]);
     both_ways(&a, &b);
     assert_eq!(a.list_rules().unwrap()[0].account_ids, vec![ids[0], ids[2]]);
+}
+
+#[test]
+fn folded_twin_preserves_split_uuids() {
+    let dir = temp_dir("twin-split-identities");
+    let v = open(&dir, "a.db");
+    let c = comdirect(&v);
+    let bank = giro(&v, c, "API1", &["mm-1", "mm-2"]);
+    let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2"]);
+    let id = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id={twin} AND external_id='mm-1'"),
+    );
+    let amount = n(
+        &v,
+        &format!("SELECT amount_cents FROM transactions WHERE id={id}"),
+    );
+    v.set_transaction_splits(id, vec![split(None, amount - 1), split(None, 1)])
+        .unwrap();
+    let expected: Vec<_> = v
+        .list_transaction_splits(id)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.uuid)
+        .collect();
+    drop(v);
+    let v = open(&dir, "a.db");
+    let id = n(
+        &v,
+        &format!("SELECT id FROM transactions WHERE account_id={bank} AND external_id='mm-1'"),
+    );
+    assert_eq!(
+        v.list_transaction_splits(id)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.uuid)
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(n(&v, "SELECT COUNT(*) FROM transaction_splits"), 2);
 }
 
 #[test]
