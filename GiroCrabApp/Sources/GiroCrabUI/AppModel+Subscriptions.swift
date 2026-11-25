@@ -29,6 +29,9 @@ extension AppModel {
             if loaded != subscriptionData { subscriptionData = loaded }
             subscriptionDataLoaded = true
         } catch {
+            // an unreadable setting blocks writing, even when an earlier read had worked:
+            // the snapshot in memory may be older than what is stored
+            subscriptionDataLoaded = false
             errorMessage = describe(error)
         }
     }
