@@ -13,6 +13,7 @@ pub enum Modal {
     Categories,
     Rules,
     Link,
+    Report,
     About,
     History,
 }
@@ -28,6 +29,7 @@ pub struct Modals {
     pub categories: bool,
     pub rules: bool,
     pub link: bool,
+    pub report: bool,
     pub about: bool,
     /// Price history of a depot position (#578); it lies below every other dialog.
     pub history: bool,
@@ -45,6 +47,7 @@ impl Modals {
             (self.link, Modal::Link),
             (self.rules, Modal::Rules),
             (self.categories, Modal::Categories),
+            (self.report, Modal::Report),
             (self.about, Modal::About),
             (self.history, Modal::History),
         ]
