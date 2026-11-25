@@ -194,8 +194,8 @@ Sheet {
                             }
                             ColumnLayout {
                                 spacing: 2; Layout.fillWidth: true
-                                Text { text: rowItem.modelData.counterparty; elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.text; font.pixelSize: Theme.body }
-                                Text { text: Fmt.medium(rowItem.modelData.date) + " · " + rowItem.modelData.account_name; elide: Text.ElideRight; Layout.fillWidth: true
+                                Text { text: rowItem.modelData.counterparty; elide: Text.ElideRight; Layout.fillWidth: true; color: Theme.text; font.pixelSize: Theme.body; Sensitive {} }
+                                Text { text: Fmt.medium(rowItem.modelData.date) + " · " + AppModel.masking(rowItem.modelData.account_name); elide: Text.ElideRight; Layout.fillWidth: true
                                        color: Theme.secondary; font.pixelSize: Theme.caption }
                             }
                             Text {

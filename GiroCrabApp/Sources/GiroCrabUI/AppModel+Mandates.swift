@@ -69,6 +69,9 @@ extension AppModel {
 
     func editMandate(_ m: Mandate) {
         mandateError = nil
+        // iOS: the editor cannot present over the detail sheet it was opened from; the selection
+        // stays. (Never set on macOS, so a no-op there.)
+        showBookingSheet = false
         mandateDraft = MandateDraft(m)
     }
 

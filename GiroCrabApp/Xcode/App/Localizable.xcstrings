@@ -3460,6 +3460,17 @@
         }
       }
     },
+    "Aktienrechte, die erst später zugeteilt werden, erscheinen als eigene Position im Depot. Aus: die Position wird entfernt und nicht mehr abgerufen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share rights that are allotted later appear as their own position in the depot. Off: the position is removed and no longer fetched."
+          }
+        }
+      }
+    },
     "Aktion" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7217,6 +7228,17 @@
         }
       }
     },
+    "Beim Einschalten wird auch der Tresor-Schlüssel über den iCloud-Schlüsselbund geteilt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turning this on also shares the vault key via iCloud Keychain."
+          }
+        }
+      }
+    },
     "Beim Entsperren %@ verlangen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8723,13 +8745,13 @@
         }
       }
     },
-    "Blendet Saldoverlauf, Cashflow und Budgets über der Buchungsliste aus. Auch im Menü Ansicht umschaltbar." : {
+    "Blendet die Kennzahlen (Konsumausgaben, Investiert, Einnahmen, Fixkosten offen) und die Cashflow-Karte über der Buchungsliste aus. Das Diagramm hat mit „Diagramm anzeigen“ einen eigenen Schalter. Budgets bleiben unabhängig und haben ebenfalls einen eigenen Schalter. Auch im Menü Ansicht umschaltbar." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hides the balance history, cash flow and budgets above the booking list. Also available in the View menu."
+            "value" : "Hides the KPIs (Consumption, Invested, Income, Open Fixed Costs) and the cash flow card above the booking list. The header chart has its own \"Show Chart\" switch. Budgets are independent and have their own switch too. Also available in the View menu."
           }
         }
       }
@@ -10812,6 +10834,17 @@
         }
       }
     },
+    "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › Sicherheit)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The iCloud vault uses a different key. Enable iCloud Keychain or paste the vault key from your other device (Settings › Security)."
+          }
+        }
+      }
+    },
     "Der Tresor in iCloud nutzt einen anderen Schlüssel. Aktivieren Sie den iCloud-Schlüsselbund oder fügen Sie den Tresor-Schlüssel von Ihrem anderen Gerät ein (Einstellungen › iCloud Sync)." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10863,6 +10896,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The vault key could not be saved in the keychain (error %d). The vault stays open until you quit – please do not quit GiroCrab, check the keychain (Keychain Access) and try again."
+          }
+        }
+      }
+    },
+    "Der Tresor-Schlüssel wird weiterhin über den iCloud-Schlüsselbund geteilt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The vault key is still shared via iCloud Keychain."
           }
         }
       }
@@ -11593,6 +11637,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The copy keeps the logo, colour and kind of “%@” and replaces the built-in merchant as long as it exists."
+          }
+        }
+      }
+    },
+    "Die Liquiditätsgrade zeigen das Bruttovermögen. Abzüglich der Verbindlichkeiten ergibt sich das Nettovermögen oben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades show gross assets. Subtracting liabilities gives the net worth shown above."
+          }
+        }
+      }
+    },
+    "Die Liquiditätsgrade zeigen das Bruttovermögen. Verbindlichkeiten sind oben derzeit nicht abgezogen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades show gross assets. Liabilities are currently not deducted above."
           }
         }
       }
@@ -16088,6 +16154,17 @@
         }
       }
     },
+    "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Eine Abfrage beim Entsperren kommt dann nur noch von GiroCrab, nicht mehr vom Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While shared, the key is not bound to Touch ID, Face ID or the device passcode: any prompt when unlocking then comes only from GiroCrab, no longer from the keychain. That makes a well-protected Apple Account all the more important."
+          }
+        }
+      }
+    },
     "Geteilte Felder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16352,13 +16429,13 @@
         }
       }
     },
-    "GiroCrab kann den Sync-Ordner „%@“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter iCloud Sync neu aus." : {
+    "GiroCrab kann den Sync-Ordner „%@“ nicht lesen. Wählen Sie den Ordner in den Einstellungen unter Sicherheit neu aus." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "GiroCrab can't read the sync folder “%@”. Choose the folder again in Settings › iCloud Sync."
+            "value" : "GiroCrab can't read the sync folder “%@”. Choose the folder again in Settings › Security."
           }
         }
       }
@@ -17920,6 +17997,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your transactions are kept in an encrypted vault.\nThe key never leaves this device's keychain."
+          }
+        }
+      }
+    },
+    "Illiquide" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Illiquid"
           }
         }
       }
@@ -21643,6 +21731,17 @@
         }
       }
     },
+    "Kurzfristig verfügbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available Short-Term"
+          }
+        }
+      }
+    },
     "Käufe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21661,6 +21760,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Country"
+          }
+        }
+      }
+    },
+    "Langfristig gebunden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tied Up Long-Term"
           }
         }
       }
@@ -22035,6 +22145,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cash & money market"
+          }
+        }
+      }
+    },
+    "Liquiditätsgrade · Vermögenswerte (brutto)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liquidity grades · assets (gross)"
           }
         }
       }
@@ -22420,6 +22541,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Market value (trading currency)"
+          }
+        }
+      }
+    },
+    "Maximum" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Maximum"
           }
         }
       }
@@ -23256,6 +23388,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "By Account Type"
+          }
+        }
+      }
+    },
+    "Nach Liquidität" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "By Liquidity"
           }
         }
       }
@@ -24526,6 +24669,17 @@
         }
       }
     },
+    "Nicht zugeteilte Aktienrechte abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch share rights not yet allotted"
+          }
+        }
+      }
+    },
     "Nicht übernommen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24855,6 +25009,17 @@
         }
       }
     },
+    "Noch nichts in iCloud gespeichert: Der Tresor wird erst synchronisiert, sobald er ein Konto enthält." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing saved to iCloud yet: the vault is only synced once it contains an account."
+          }
+        }
+      }
+    },
     "Noch nie" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24983,6 +25148,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Edit note …"
+          }
+        }
+      }
+    },
+    "Notiz hinzufügen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a note …"
           }
         }
       }
@@ -25236,6 +25412,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Only the selected bookings. You don’t need accounts or a period here."
+          }
+        }
+      }
+    },
+    "Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip only this request. The rest of the fetch is stored."
           }
         }
       }
@@ -28994,6 +29181,17 @@
         }
       }
     },
+    "Sofort verfügbar" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available Immediately"
+          }
+        }
+      }
+    },
     "Software" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30408,6 +30606,17 @@
         }
       }
     },
+    "TAN auslassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip this TAN"
+          }
+        }
+      }
+    },
     "TAN-Medium" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31053,6 +31262,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Vault restored from the backup"
+          }
+        }
+      }
+    },
+    "Tresor aus der Sicherung wiederhergestellt. Der Stand wird mit Ihren anderen Geräten abgeglichen; das Ergebnis sehen Sie unter Einstellungen › iCloud Sync." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vault restored from the backup. It will be synchronized with your other devices; see Settings › iCloud Sync for the result."
           }
         }
       }
@@ -32225,6 +32445,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total assets"
+          }
+        }
+      }
+    },
+    "Vermögenswerte ohne Immobilien" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total assets excluding property"
           }
         }
       }
@@ -33670,13 +33901,13 @@
         }
       }
     },
-    "Wie weit GiroCrab beim ersten Abruf eines neuen Kontos zurückgeht. Viele Banken liefern nur 90 Tage oder verlangen für mehr eine TAN. Bereits abgerufene Konten betrifft das nicht." : {
+    "Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "How far back GiroCrab goes on the first fetch of a new account. Many banks only provide 90 days or require a TAN for more. Accounts already fetched are not affected."
+            "value" : "How far back GiroCrab goes on the first fetch of a new connection. “Maximum” goes back as far as the bank and the connection allow. Many banks require a TAN for more than 90 days. Existing connections keep fetching from their newest transaction."
           }
         }
       }

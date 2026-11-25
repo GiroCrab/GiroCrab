@@ -581,8 +581,7 @@ pub(crate) fn accounts_key(conn: &Connection, ids: &[i64]) -> CoreResult<Option<
 }
 
 /// `<account key>|external_id`
-#[cfg(test)]
-fn booking_key(conn: &Connection, id: i64) -> CoreResult<String> {
+pub(crate) fn booking_key(conn: &Connection, id: i64) -> CoreResult<String> {
     let (account, external_id): (i64, String) = conn
         .query_row(
             // includes soft-deleted rows
