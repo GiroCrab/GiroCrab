@@ -12,14 +12,10 @@ updates:
     groups:
       cargo-minor-patch:
         update-types: ["minor", "patch"]
-  - package-ecosystem: swift
-    directory: "/GiroCrabApp"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
-    groups:
-      swift-minor-patch:
-        update-types: ["minor", "patch"]
+  # Swift (Sparkle) wird hier bewusst nicht verfolgt: GiroCrabApp/Package.swift hängt von
+  # ../generated/GiroCrabCorePackage ab, das gitignored ist und nur von build-xcframework.sh
+  # erzeugt wird. Dependabot kann das Manifest daher nicht auflösen.
+  # Sparkle-Updates bleiben vorerst manuell (THIRD_PARTY_NOTICES.md pflegen).
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
