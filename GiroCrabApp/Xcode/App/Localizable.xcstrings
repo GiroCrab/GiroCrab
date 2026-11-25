@@ -25889,6 +25889,17 @@
         }
       }
     },
+    "Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip only this request. The rest of the fetch is stored."
+          }
+        }
+      }
+    },
     "Nur eine Bewertung: %@ · %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31167,6 +31178,17 @@
         }
       }
     },
+    "TAN auslassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip this TAN"
+          }
+        }
+      }
+    },
     "TAN-Medium" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32973,6 +32995,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total assets"
+          }
+        }
+      }
+    },
+    "Vermögenswerte ohne Immobilien" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total assets excluding property"
           }
         }
       }
