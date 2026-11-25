@@ -47,7 +47,8 @@ and `migrate` runs the missing ones in a single transaction.
 | 40 | `refund_links`: refund links between bookings or split parts (#714) |
 | 41 | `transactions.date_ms`: edit stamp of a manual booking's date, synced on its own (#714) |
 | 42 | `accounts.last_fetch_unix`: last single-account fetch, shown with the later of it and the login's sync time (#1716) |
-| 43+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 43 | `planned_transfers.settled_ms`: settled scheduled orders (NULL = open), date index over `(execution_date, settled_ms)` (#1900) |
+| 44+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 

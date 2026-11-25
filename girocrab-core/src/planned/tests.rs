@@ -119,3 +119,34 @@ fn planned_payments_are_counted_without_past_ones() {
         .unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 2);
 }
+
+#[test]
+fn settled_step_adds_null_column_and_is_idempotent() {
+    let v = vault("planned-settled-step");
+    let acc = account(&v, "A");
+    let db = v.db().unwrap();
+    db.execute(
+        "INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
+         VALUES (?1, 'E2E', '2030-01-01', 100)",
+        [acc],
+    )
+    .unwrap();
+    assert!(super::has_column(&db, "main", "planned_transfers", "settled_ms").unwrap());
+    let settled: Option<i64> = db
+        .query_row("SELECT settled_ms FROM planned_transfers", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(settled, None);
+    super::planned_settled(&db).unwrap();
+    super::planned_settled(&db).unwrap();
+    let idx: Vec<String> = db
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='planned_transfers'",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(idx.contains(&"planned_transfers_date_settled".to_string()));
+    assert!(!idx.contains(&"planned_transfers_date".to_string()));
+}
