@@ -37,7 +37,8 @@ werden, steht im [Verification Plan](docs/verification-plan.md), der Vorschlag f
   prüft nur die App die Biometrie. Unter Linux und Windows schützt die Anmeldung bzw. der Schlüsselbund des Systems.
 - **iCloud-Schlüsselbund (Opt-in):** Synchronisierte Einträge können keine Biometrie-Bindung tragen. Der Tresorschlüssel
   liegt dann als `WhenUnlocked` im iCloud-Schlüsselbund; die Biometrie-Abfrage ist nur noch eine Prüfung der App
-  ([#1798](https://github.com/GiroCrab/GiroCrab/issues/1798)). Mit demselben Opt-in werden eigene
+  ([#1798](https://github.com/GiroCrab/GiroCrab/issues/1798)). „Tresor über iCloud synchronisieren“ schaltet das Teilen mit
+  ein, wo es verfügbar ist; die Einstellungen weisen bei beiden Schaltern darauf hin. Mit demselben Opt-in werden eigene
   Enable-Banking-Anwendungen (ID und privater Schlüssel) als `AfterFirstUnlock` geteilt
   ([#1795](https://github.com/GiroCrab/GiroCrab/issues/1795)).
 - **Weitere Schlüsselbund-Einträge (Apple):** das gespeicherte Passwort des Advanzia-Portals und der Stand der
@@ -169,7 +170,8 @@ summary).
   login or keyring protects it.
 - **iCloud Keychain (opt-in):** synchronised items cannot carry a biometric binding. The vault key is then kept as
   `WhenUnlocked` in iCloud Keychain, and the biometric prompt is only a check by the app
-  ([#1798](https://github.com/GiroCrab/GiroCrab/issues/1798)). The same opt-in shares your own Enable Banking
+  ([#1798](https://github.com/GiroCrab/GiroCrab/issues/1798)). “Sync vault via iCloud” also turns on sharing where it is
+  available; the settings say so at both switches. The same opt-in shares your own Enable Banking
   applications (ID and private key) as `AfterFirstUnlock`
   ([#1795](https://github.com/GiroCrab/GiroCrab/issues/1795)).
 - **Other keychain items (Apple):** the stored password of the Advanzia portal and the state of the security lock, both on
