@@ -529,6 +529,8 @@ impl BankConnector for FinTsConnector {
             .collect();
         let mut result = FetchResult::default();
         let mut ok_any = false;
+        // what the bank does not offer: said, but no failure of the sync (#1743)
+        let mut not_offered: Vec<String> = Vec::new();
         // a TAN was demanded for more statements than banks serve without one (#1627)
         let mut period_too_long = false;
         // not yet booked entries ("vorgemerkt"), see `camt::HOLD_PREFIX`
@@ -674,8 +676,10 @@ impl BankConnector for FinTsConnector {
                 .as_ref()
                 .is_some_and(|u| kind_from_code(u.kind_code) == AccountKind::Brokerage)
             {
-                // a depot by its Kontoart: its value stays as it was, and the user is told (#1743)
-                errors.push(trf(
+                // a depot by its Kontoart: its value stays as it was, and the user is told (#1743).
+                // A hint, not a warning: there is nothing to fix, and a login with only this
+                // depot must not fail at every sync.
+                not_offered.push(trf(
                     "{0}: Depotbestand (HKWPD) – von der Bank nicht angeboten",
                     &[&label],
                 ));
@@ -863,6 +867,7 @@ impl BankConnector for FinTsConnector {
         let hints: Vec<String> = period_too_long
             .then(|| period_hint().into())
             .into_iter()
+            .chain(not_offered)
             .collect();
         if !ok_any && !errors.is_empty() {
             errors.extend(hints);

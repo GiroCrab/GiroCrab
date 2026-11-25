@@ -2415,14 +2415,23 @@ async fn a_depot_the_bank_does_not_answer_fails_the_fetch_with_the_banks_codes()
 }
 
 #[tokio::test]
-async fn a_depot_without_hkwpd_at_the_bank_is_warned_about() {
+async fn a_depot_without_hkwpd_at_the_bank_is_a_hint_not_a_failed_sync() {
+    // the only account of the login: nothing to fix, so the sync still ends (#1743)
     let (url, seen) = mock_bank(vec![WPD_WITHOUT_DATA]);
-    let e = depot_connector(&url, false)
+    let r = depot_connector(&url, false)
         .fetch(&test_ctx())
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(e.contains("von der Bank nicht angeboten"), "{e}");
+        .expect("a depot the bank cannot serve is no failed sync");
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert!(
+        r.hints
+            .iter()
+            .any(|h| h.contains("von der Bank nicht angeboten")),
+        "{:?}",
+        r.hints
+    );
+    // the value stays as it was instead of becoming 0
+    assert_eq!(r.balances_unknown.len(), 1);
     assert!(seen.lock().unwrap().is_empty(), "HKWPD is not sent");
 }
 
