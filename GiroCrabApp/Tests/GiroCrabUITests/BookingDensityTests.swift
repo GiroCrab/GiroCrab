@@ -82,6 +82,18 @@ final class BookingDensityTests: XCTestCase {
         XCTAssertTrue(fields.allSatisfy { !$0.value.isEmpty })
     }
 
+    func testExpandedRowHasCategoryControlForUncategorizedBooking() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        var booking = try XCTUnwrap(model.bookings.first)
+        booking.categoryId = nil
+        booking.categoryName = ""
+        booking.categoryPath = ""
+        let field = BookingInlineDetails.fields(for: booking, includesUncategorized: true)
+            .first { $0.id == "category" }
+        XCTAssertEqual(field?.value, String(localized: "Ohne Kategorie"))
+        XCTAssertEqual(field?.redaction, .labels)
+    }
+
     func testFullPurposePreservesOriginalCardTextAndMovesOnlyTaggedReferences() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         var booking = try XCTUnwrap(model.bookings.first)
@@ -92,6 +104,35 @@ final class BookingDensityTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testNoteDoubleClickOnlyOpensOutsideOccupiedAreasAndTextSequences() {
+        let text = BookingRowClickRect(bounds: CGRect(x: 12, y: 4, width: 120, height: 18), region: .occupied)
+        let amount = BookingRowClickRect(bounds: CGRect(x: 320, y: 4, width: 60, height: 18), region: .occupied)
+        let regions = [text, amount]
+        let gap = CGPoint(x: 200, y: 12)
+
+        XCTAssertFalse(BookingRowClicks.opensNote(at: CGPoint(x: 20, y: 12), regions: regions, textClick: false))
+        XCTAssertFalse(BookingRowClicks.opensNote(at: CGPoint(x: 330, y: 12), regions: regions, textClick: false))
+        XCTAssertTrue(BookingRowClicks.opensNote(at: gap, regions: regions, textClick: false))
+        XCTAssertFalse(BookingRowClicks.opensNote(at: gap, regions: regions, textClick: true))
+    }
+
+    func testRowControlsHandleTheirClicksWithoutInvokingRowGestures() {
+        let category = BookingRowClickRect(bounds: CGRect(x: 30, y: 4, width: 60, height: 18), region: .control)
+        let orderItems = BookingRowClickRect(bounds: CGRect(x: 130, y: 4, width: 16, height: 18), region: .control)
+        let note = BookingRowClickRect(bounds: CGRect(x: 290, y: 4, width: 18, height: 16), region: .control)
+        let regions = [category, orderItems, note]
+
+        for control in regions {
+            let click = CGPoint(x: control.bounds.midX, y: control.bounds.midY)
+            XCTAssertFalse(BookingRowClicks.selectsRow(at: click, regions: regions, textClick: false))
+            XCTAssertFalse(BookingRowClicks.opensNote(at: click, regions: regions, textClick: false))
+        }
+
+        let gap = CGPoint(x: 100, y: 12)
+        XCTAssertTrue(BookingRowClicks.selectsRow(at: gap, regions: regions, textClick: false))
+        XCTAssertTrue(BookingRowClicks.opensNote(at: gap, regions: regions, textClick: false))
+    }
+
     /// Exercises real SwiftUI layout with narrow widths, long text and large type.
     /// Optional local QA images contain only the fictional fixture below.
     func testNarrowRowsGrowForDetailsAndLargeText() throws {
