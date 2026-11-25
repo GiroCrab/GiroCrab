@@ -24,6 +24,9 @@ Sheet {
     property bool showAdvanced: false
     /// comdirect via FinTS: Postbox through the bank's API as well (#838).
     property bool postbox: false
+    /// Full fetch at the next sync (#1043): `max`, days, or "" for none.
+    property string fullHistory: ""
+    property string initialFullHistory: ""
 
     readonly property string kind: connection ? connection.connector : ""
     readonly property var descriptor: connection ? AppModel.descriptor(kind) : null
@@ -98,6 +101,8 @@ Sheet {
         status = AppModel.connectionStatus(connection.id)
         storePin = status ? status.has_pin : false
         postbox = isComdirect && kind === "FinTsGeneric" ? AppModel.comdirectPostbox(connection.id) : false
+        fullHistory = AppModel.pendingFullHistory(connection.id)
+        initialFullHistory = fullHistory
         revealed = ({})
         showAdvanced = false
         const v = {}
@@ -115,7 +120,19 @@ Sheet {
         }
         values = v
     }
+    /// ConnectionsUI.swift › saveFullHistoryIfChanged: before anything that fetches, the next sync
+    /// must reach back as chosen (#1043). `force`: a fetch starts right away, so the shown period is
+    /// stored even when it is the one loaded: a full sync that finished while the sheet was open
+    /// has deleted the stored one.
+    function saveFullHistoryIfChanged(force) {
+        if (!force && fullHistory === initialFullHistory) return true
+        if (!AppModel.setFullHistory(connection.id, fullHistory)) return false
+        initialFullHistory = fullHistory
+        return true
+    }
+    /// False when the period of the next fetch was not stored (the error is shown, nothing else saved).
     function save() {
+        if (!saveFullHistoryIfChanged(false)) return false
         const l = isTR ? AppModel.core("normalize_phone_number", { input: login }) : login.trim()
         // Advanzia: another login is another profile with its own session (AdvanziaConnectionSettingsState.save)
         if (kind === "Advanzia" && l !== connection.login_name) AppModel.forgetWebCookies(connection.id)
@@ -132,6 +149,7 @@ Sheet {
                 AppModel.setConnectionEnableBankingApp(connection.id, id, pem)
         }
         pin = ""
+        return true
     }
     function saveSettings(list) {
         for (const key of list) {
@@ -146,7 +164,8 @@ Sheet {
     /// saved together; a fetch only starts after the selection is stored (a switched-off
     /// account must not be fetched).
     function saveAll(thenSync) {
-        save()
+        if (thenSync && !saveFullHistoryIfChanged(true)) return
+        if (!save()) return
         const id = connection.id
         selection.saveIfChanged((ok, message) => {
             if (ok) {
@@ -163,7 +182,7 @@ Sheet {
     /// The other save-and-go actions (log in, Postbox, reconnect, import): like `saveAll`, the
     /// action starts only once the account selection is stored, never with the old one.
     function saveThen(action) {
-        save()
+        if (!save()) return
         const id = connection.id
         const fallback = current()
         selection.saveIfChanged((ok, message) => {
@@ -373,6 +392,22 @@ Sheet {
                         text: qsTr("Postbox jetzt abrufen")
                         enabled: AppModel.syncingConnectionID === null
                         onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
+                    }
+                }
+                // ConnectionsUI.swift › Section "Umsätze" (#1043)
+                SettingsFormSection {
+                    title: qsTr("Umsätze")
+                    footer: qsTr("Ein Zeitraum holt beim nächsten Abruf alle Umsätze daraus, auch für Konten, die schon Umsätze haben. Vorhandene Umsätze werden nicht doppelt angelegt. Für mehr als 90 Tage verlangen viele Banken eine TAN.")
+                    SettingsFormRow {
+                        label: qsTr("Beim nächsten Abruf")
+                        AppComboBox {
+                            readonly property var options: [{ id: "", title: qsTr("Ab dem neuesten Umsatz") }].concat(AppModel.historyOptionsWith(sheet.fullHistory))
+                            Layout.preferredWidth: 220 * Theme.textScale
+                            model: options
+                            textRole: "title"; valueRole: "id"
+                            currentIndex: options.findIndex(o => o.id === sheet.fullHistory)
+                            onActivated: sheet.fullHistory = currentValue
+                        }
                     }
                 }
                 SettingsFormSection {
