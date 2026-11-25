@@ -160,6 +160,7 @@ object VaultSnapshotMapper {
         currency = row.currency,
         checked = row.checked,
         counterpartyIban = row.counterpartyIban,
+        bookingText = row.bookingText,
         // Existing data has to arrive too, or a search by note finds nothing on this device.
         note = row.note,
         tagIds = row.tags.map { it.id.toString() }.toSet(),
@@ -177,8 +178,8 @@ object VaultSnapshotMapper {
     )
 
     /**
-     * Rule fields the app has no separate column for: [CoreRuleField.BOOKING_TEXT] lands on
-     * [RuleField.Any] because that is the text the rule is shown against.
+     * Rules are applied on this side too (preview and apply), so the mapping has to keep what the
+     * matcher reads: field, kind, case sensitivity, account scope and the signed amount range.
      */
     fun rule(row: CoreRule): Rule = Rule(
         id = row.id.toString(),
@@ -186,7 +187,7 @@ object VaultSnapshotMapper {
             CoreRuleField.ANY -> RuleField.Any
             CoreRuleField.COUNTERPARTY -> RuleField.Counterparty
             CoreRuleField.PURPOSE -> RuleField.Purpose
-            CoreRuleField.BOOKING_TEXT -> RuleField.Any
+            CoreRuleField.BOOKING_TEXT -> RuleField.BookingText
             CoreRuleField.COUNTERPARTY_IBAN -> RuleField.Iban
         },
         matchKind = when (row.matchKind) {
@@ -201,6 +202,8 @@ object VaultSnapshotMapper {
         enabled = row.enabled,
         minCents = row.minAmountCents,
         maxCents = row.maxAmountCents,
+        caseSensitive = row.caseSensitive,
+        accountIds = row.accountIds.map { it.toString() }.toSet(),
     )
 
     private fun tag(row: CoreTag): Tag = Tag(

@@ -175,7 +175,8 @@ class NativeVaultOpener {
                 ?: throw IllegalStateException("listCategories did not return a list")
             val tags = callNoArgs("listTags") as? List<CoreTag>
                 ?: throw IllegalStateException("listTags did not return a list")
-            // Core rules, read-only: the app does not apply them, the core does.
+            // Core rules. The app applies them for preview and apply too, so the mapper has to
+            // keep the fields its matcher reads (range, accounts, case sensitivity).
             val rules = callNoArgs("listRules") as? List<CoreRule>
                 ?: throw IllegalStateException("listRules did not return a list")
             // The core asks per account here; the flat list is assembled on this side.

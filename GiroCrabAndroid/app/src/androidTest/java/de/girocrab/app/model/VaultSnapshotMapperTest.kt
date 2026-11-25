@@ -367,8 +367,60 @@ class VaultSnapshotMapperTest {
     }
 
     @Test
-    fun bookingTextFallsBackToTheAnyField() {
+    fun bookingTextHasItsOwnField() {
         val rule = VaultSnapshotMapper.rule(coreRule(field = CoreRuleField.BOOKING_TEXT))
-        assertEquals("the app has no separate booking-text column", RuleField.Any, rule.field)
+        assertEquals(RuleField.BookingText, rule.field)
+    }
+
+    private fun booking(
+        counterparty: String = "REWE",
+        amountCents: Long = -1200,
+        accountId: String = "1",
+        bookingText: String = "",
+    ) = Booking(
+        id = "b1",
+        accountId = accountId,
+        bookingDate = LocalDate.of(2026, 1, 2),
+        valueDate = LocalDate.of(2026, 1, 2),
+        amountCents = amountCents,
+        counterparty = counterparty,
+        purpose = "",
+        bookingText = bookingText,
+    )
+
+    @Test
+    fun keywordDropsEmptyTermsLikeTheCore() {
+        val rule = Rule("r", RuleField.Counterparty, MatchKind.Keyword, "REWE|", "c")
+        assertTrue(rule.matches(booking(counterparty = "REWE")))
+        assertFalse("an empty term must not match everything", rule.matches(booking(counterparty = "LIDL")))
+    }
+
+    @Test
+    fun amountRangeIsSignedLikeTheCore() {
+        val rule = Rule("r", RuleField.Counterparty, MatchKind.Contains, "REWE", "c", minCents = -2000, maxCents = -500)
+        assertTrue(rule.matches(booking(amountCents = -1200)))
+        assertFalse("income is outside a negative range", rule.matches(booking(amountCents = 1200)))
+    }
+
+    @Test
+    fun accountScopeIsHonoured() {
+        val rule = Rule("r", RuleField.Counterparty, MatchKind.Contains, "REWE", "c", accountIds = setOf("7"))
+        assertTrue(rule.matches(booking(accountId = "7")))
+        assertFalse(rule.matches(booking(accountId = "8")))
+    }
+
+    @Test
+    fun anyFieldAlsoLooksAtTheBookingText() {
+        val rule = Rule("r", RuleField.Any, MatchKind.Contains, "Sammelueberweisung", "c")
+        assertTrue(rule.matches(booking(counterparty = "REWE", bookingText = "Sammelueberweisung 12")))
+    }
+
+    @Test
+    fun ibanMatchesTheCounterpartyIbanNotTheReference()  {
+        val rule = Rule("r", RuleField.Iban, MatchKind.Contains, "DE02120300000000202051", "c")
+        val hit = booking().copy(counterpartyIban = "DE02 1203 0000 0000 2020 51")
+        val miss = booking().copy(counterpartyIban = "DE02120300000000202052")
+        assertTrue("whitespace in the stored IBAN must not matter", rule.matches(hit))
+        assertFalse(rule.matches(miss))
     }
 }

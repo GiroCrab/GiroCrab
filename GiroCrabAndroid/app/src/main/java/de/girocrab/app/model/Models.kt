@@ -57,6 +57,8 @@ data class Booking(
     val isTransfer: Boolean = false,
     val transferReason: String = "",
     val counterpartyIban: String = "",
+    /** Separate from [purpose] in the core; rules can match it on its own. */
+    val bookingText: String = "",
 ) {
     val isIncome get() = amountCents > 0
 }
@@ -72,7 +74,7 @@ data class Category(
 
 data class Tag(val id: String, val name: String, val colorHex: Long = 0xFF1976D2)
 
-enum class RuleField { Counterparty, Purpose, Iban, Amount, Any }
+enum class RuleField { Counterparty, Purpose, BookingText, Iban, Amount, Any }
 
 /**
  * Match kinds of a rule. [Keyword] is the core's pipe list ("REWE|EDEKA|ALDI"), [Expression] its
@@ -88,33 +90,54 @@ data class Rule(
     val categoryId: String?,
     val tagIds: Set<String> = emptySet(),
     val enabled: Boolean = true,
-    /** Optional range on |amount| in cents (#759). */
+    /** Range on the signed amount in cents, like the core: expenses are negative. */
     val minCents: Long? = null,
     val maxCents: Long? = null,
+    /** The core's `case_sensitive`; its default is case-insensitive. */
+    val caseSensitive: Boolean = false,
+    /** Empty means every account, as in the core. */
+    val accountIds: Set<String> = emptySet(),
 ) {
+    private fun haystacks(b: Booking): List<String> = when (field) {
+        RuleField.Counterparty -> listOf(b.counterparty)
+        RuleField.Purpose -> listOf(b.purpose)
+        RuleField.BookingText -> listOf(b.bookingText)
+        RuleField.Amount -> listOf((b.amountCents / 100.0).toString())
+        // The core matches counterparty, purpose and booking text separately.
+        RuleField.Any -> listOf(b.counterparty, b.purpose, b.bookingText)
+        RuleField.Iban -> listOf(b.counterpartyIban.filterNot { it.isWhitespace() })
+    }
+
     fun matches(b: Booking): Boolean {
         val hasRange = minCents != null || maxCents != null
         if (!enabled || (pattern.isBlank() && !hasRange)) return false
-        val abs = kotlin.math.abs(b.amountCents)
-        if (minCents != null && abs < minCents) return false
-        if (maxCents != null && abs > maxCents) return false
+        if (accountIds.isNotEmpty() && b.accountId !in accountIds) return false
+        // Signed, not |amount|: a core rule with a negative range has to match here too.
+        if (minCents != null && b.amountCents < minCents) return false
+        if (maxCents != null && b.amountCents > maxCents) return false
         if (pattern.isBlank()) return true
-        val haystack = when (field) {
-            RuleField.Counterparty -> b.counterparty
-            RuleField.Purpose -> b.purpose
-            RuleField.Iban -> b.reference.orEmpty()
-            RuleField.Amount -> (b.amountCents / 100.0).toString()
-            RuleField.Any -> "${b.counterparty} ${b.purpose}"
-        }
+        val fields = haystacks(b)
         return when (matchKind) {
-            MatchKind.Contains -> haystack.contains(pattern, ignoreCase = true)
-            MatchKind.Equals -> haystack.equals(pattern, ignoreCase = true)
-            MatchKind.StartsWith -> haystack.startsWith(pattern, ignoreCase = true)
-            MatchKind.Regex -> runCatching { Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(haystack) }
-                .getOrDefault(false)
-            MatchKind.Keyword -> pattern.split('|').any { haystack.contains(it.trim(), ignoreCase = true) }
-            // The core evaluates this one; re-implementing its search language here would create a
-            // second truth about money. The demo path never produces it.
+            MatchKind.Contains -> fields.any { it.contains(pattern, ignoreCase = !caseSensitive) }
+            MatchKind.Equals -> fields.any { it.equals(pattern, ignoreCase = !caseSensitive) }
+            MatchKind.StartsWith -> fields.any { it.startsWith(pattern, ignoreCase = !caseSensitive) }
+            MatchKind.Regex -> fields.any {
+                runCatching {
+                    Regex(pattern, if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE))
+                        .containsMatchIn(it)
+                }.getOrDefault(false)
+            }
+            // One keyword per line or separated by | or ,; empty terms are dropped, as in the core.
+            MatchKind.Keyword -> {
+                val words = pattern.split('|', ',', '\n', '\r')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                words.isNotEmpty() &&
+                    fields.any { f -> words.any { w -> f.contains(w, ignoreCase = !caseSensitive) } }
+            }
+            // The core's search language (AND/OR/NOT, field prefixes, amount comparisons). The app
+            // cannot evaluate it; the editor does not offer it either, so this only guards rules
+            // that came from a vault.
             MatchKind.Expression -> false
         }
     }

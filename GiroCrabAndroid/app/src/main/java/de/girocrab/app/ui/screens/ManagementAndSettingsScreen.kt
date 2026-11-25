@@ -241,7 +241,13 @@ fun RuleEditorDialog(
     var maxText by remember { mutableStateOf(initial?.maxCents?.let { "%.2f".format(it / 100.0) }.orEmpty()) }
     var applied by remember { mutableStateOf<Int?>(null) }
 
-    val rule = Rule(id, field, kind, pattern.trim(), categoryId, tagIds, initial?.enabled ?: true, parseRuleCents(minText), parseRuleCents(maxText))
+    val rule = Rule(
+        id, field, kind, pattern.trim(), categoryId, tagIds, initial?.enabled ?: true,
+        parseRuleCents(minText), parseRuleCents(maxText),
+        // Keep what the dialog does not edit, or saving would widen the rule to all accounts.
+        caseSensitive = initial?.caseSensitive ?: false,
+        accountIds = initial?.accountIds ?: emptySet(),
+    )
     val scoped = state.scopedAccountIds
     val preview: List<Booking> = remember(rule, state.data.bookings, scoped) {
         state.data.bookings.filter { it.accountId in scoped && rule.matches(it) }
@@ -255,7 +261,8 @@ fun RuleEditorDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 EnumDropdown("Feld", field, RuleField.entries) { field = it }
-                EnumDropdown("Vergleich", kind, MatchKind.entries) { kind = it }
+                // Expression is the core's own search language; the app cannot evaluate it.
+                EnumDropdown("Vergleich", kind, MatchKind.entries.filter { it != MatchKind.Expression }) { kind = it }
                 OutlinedTextField(pattern, { pattern = it }, label = { Text("Muster") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
