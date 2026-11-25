@@ -8,10 +8,12 @@ import XCTest
 final class PortalStoredLoginTests: XCTestCase {
     private func step(autofillDisabled: Bool = false, vaultAnswered: Bool = true,
                       storedLogin: String = "", password: String = "",
-                      connectionLogin: String = "", amazonVisa: Bool = false) -> PortalWebSheet.StoredLoginStep {
+                      connectionLogin: String = "", amazonVisa: Bool = false,
+                      tryCount: Int = 0) -> PortalWebSheet.StoredLoginStep {
         PortalWebSheet.storedLoginStep(autofillDisabled: autofillDisabled, vaultAnswered: vaultAnswered,
                                        storedUser: storedLogin, password: password,
-                                       connectionLogin: connectionLogin, connectionIsAmazonVisa: amazonVisa)
+                                       connectionLogin: connectionLogin, connectionIsAmazonVisa: amazonVisa,
+                                       tryCount: tryCount)
     }
 
     func testVaultThatHasNotAnsweredYetIsRetried() {
@@ -26,6 +28,17 @@ final class PortalStoredLoginTests: XCTestCase {
         if case .done = step() { } else { XCTFail("nichts gespeichert: fertig") }
         if case .done = step(autofillDisabled: true, storedLogin: "max@example.com", password: "x") { }
         else { XCTFail("Autofilling aus: fertig") }
+    }
+
+    func testAVaultThatStaysClosedStopsThePollAfterAWhile() {
+        // a real read error (or a vault that never opens) must not poll and log
+        // forever: after 20 tries the autofill is dropped
+        if case .retry = step(vaultAnswered: false, tryCount: 19) { }
+        else { XCTFail("unter der Grenze wird noch gelesen") }
+        if case .done = step(vaultAnswered: false, tryCount: 20) { }
+        else { XCTFail("bei dem Grenzwert endet das Poll") }
+        if case .done = step(vaultAnswered: false, tryCount: 19, autofillDisabled: true) { }
+        else { XCTFail("Autofilling aus: ohne Versuche fertig") }
     }
 
     func testAmazonVisaUsesTheConnectionEmailAsUser() {

@@ -687,20 +687,34 @@ final class PortalBrowser {
     static let visaStatementsPageJS =
         "location.href = location.origin + '/amazon/statements'; return true;"
 
-    /// PDF links of the visible page with a closing date from their row
-    /// (`href`, and the date out of the link's or its list entry's text).
+    /// PDF links of the visible page with a closing date from their row (`href`
+    /// resolved against the document, the date out of the link's or its list
+    /// entry's text). Rows where the closing date stays ambiguous (several
+    /// dates, none marked as period end) come back without a date.
     static let pdfLinksJS = """
     (function(){
       var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      var norm = function(s) {
+        var p = s.split('.');
+        if (p.length !== 3) return s;
+        return p[2] + '-' + p[1].padStart(2, '0') + '-' + p[0].padStart(2, '0');
+      };
       var date = function(t) {
-        var m = t.match(/(\\d{4})-(\\d{2})-(\\d{2})/);
-        if (m) return m[0];
-        m = t.match(/(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})/);
-        return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : '';
+        var re = /(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4})/g, ms = [], m;
+        while ((m = re.exec(t || ''))) {
+          var d = norm(m[1]);
+          if (ms.indexOf(d) < 0) ms.push(d);
+        }
+        if (!ms.length) return '';
+        if (ms.length === 1) return ms[0];
+        // several dates: only an adjacent pair ("A – B") names the period – its
+        // end closes the statement, anything else stays ambiguous
+        var pair = t.match(/(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4})\\s*(?:–|—|-|bis)\\s*(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4})/i);
+        return pair ? norm(pair[2]) : '';
       };
       var out = [];
       document.querySelectorAll('a[href]').forEach(function(a) {
-        var href = a.getAttribute('href') || '';
+        var href = a.href || '';
         if (/\\.pdf(\\?|#|$)/i.test(href) === false || !vis(a)) return;
         var scope = a.closest('tr, li, article') || a;
         out.push({ href: href, date: date(a.innerText || '') || date(scope.innerText || '') });
@@ -718,14 +732,21 @@ final class PortalBrowser {
     func visaStatements(known: (String, String) async -> Set<String>?, since: String, limit: Int)
         async -> (card: String, number: String, statements: [PortalStatement], listed: Int, failed: Int) {
         guard onPortal, !onLoginPage else { return ("", "", [], 0, 0) }
-        if statementList == nil {
-            // the statements tab loads its list (and its PDF links)
-            _ = try? await webView.callAsyncJavaScript(Self.visaStatementsPageJS, contentWorld: .page)
-            for _ in 0..<40 where statementList == nil { try? await Task.sleep(nanoseconds: 500_000_000) }
+        func listItems() -> [(date: String, path: String)] {
+            guard let list = statementList else { return [] }
+            return parsePortalStatementList(body: list.body).map { ($0.date, $0.path) }
         }
-        var items: [(date: String, path: String)] = []
-        if let list = statementList {
-            items = parsePortalStatementList(body: list.body).map { ($0.date, $0.path) }
+        var items = listItems()
+        if items.isEmpty {
+            // the statements tab loads its list (and its PDF links) — a captured
+            // response only counts as a list once it holds statement entries itself
+            // (it keeps any "statement" response, also of other kinds, which must
+            // not suppress the tab's own list)
+            _ = try? await webView.callAsyncJavaScript(Self.visaStatementsPageJS, contentWorld: .page)
+            for _ in 0..<40 where items.isEmpty {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                items = listItems()
+            }
         }
         if items.isEmpty {
             let rows = (try? await webView.callAsyncJavaScript(Self.pdfLinksJS, contentWorld: .page) as? String) ?? "[]"
@@ -740,14 +761,17 @@ final class PortalBrowser {
         // (like Amex, a failure) — a captured but empty list stays failed=0
         guard statementList != nil || !items.isEmpty else { return ("", "", [], 0, 1) }
         let card = Self.cardKey(statementList?.token ?? "")
-        guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1) }
+        guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1 + undated) }
+        // visible links without a usable closing date: the statement exists but
+        // cannot be identified — a failure, while known or older ones count fine
+        let undated = items.filter { $0.date.count != 10 }.count
         let wanted = items
             .filter { $0.date.count == 10 && $0.date >= since && !knownDates.contains($0.date) }
             .map { (date: $0.date, path: $0.path) }
             .sorted { $0.date > $1.date }
         let todo = Array(wanted.prefix(limit))
         guard !todo.isEmpty, onPortal, !onLoginPage, let keyHost = currentURL?.host else {
-            return (card, "", [], items.count, 0)
+            return (card, "", [], items.count, undated)
         }
         let download = """
         try {
@@ -766,7 +790,7 @@ final class PortalBrowser {
         } catch (e) { return ''; }
         """
         var out: [PortalStatement] = []
-        var failed = 0
+        var failed = undated
         for (n, s) in todo.enumerated() {
             guard onPortal, !onLoginPage, currentURL?.host == keyHost else {
                 failed += todo.count - n
@@ -946,6 +970,9 @@ struct PortalWebSheet: View {
     @State private var cardsSince: Date?
     /// Amex: the stored login was filled in (or there is none): not tried again.
     @State private var loginFilled = false
+    /// Amex: polls that found the vault unanswered — ends the retry after a while
+    /// (a vault that stays closed would otherwise be read and logged forever).
+    @State private var missingTries = 0
     /// Amex: statement PDFs are being downloaded before the sheet closes.
     @State private var loadingStatements = false
     /// Amex: statements were loaded with the button: the automatic import still stores
@@ -1271,9 +1298,13 @@ struct PortalWebSheet: View {
 
     static func storedLoginStep(autofillDisabled: Bool, vaultAnswered: Bool,
                                 storedUser: String, password: String,
-                                connectionLogin: String, connectionIsAmazonVisa: Bool) -> StoredLoginStep {
+                                connectionLogin: String, connectionIsAmazonVisa: Bool,
+                                tryCount: Int = 0) -> StoredLoginStep {
         if autofillDisabled { return .done }
-        guard vaultAnswered else { return .retry }
+        // an unanswered vault is retried (a restart catches it while opening) —
+        // but a vault that stays closed (e.g. a real read error) ends the poll,
+        // or every poll would read again and log for the whole session
+        guard vaultAnswered else { return tryCount < 20 ? .retry : .done }
         // Amazon Visa already stores the email as the connection login; use it when
         // no separate user name was stored.
         let user = storedUser.isEmpty && connectionIsAmazonVisa ? connectionLogin : storedUser
@@ -1303,12 +1334,14 @@ struct PortalWebSheet: View {
         let step = Self.storedLoginStep(
             autofillDisabled: AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)),
             vaultAnswered: answered, storedUser: storedUser, password: password,
-            connectionLogin: connection.loginName, connectionIsAmazonVisa: connection.connector == .amazonVisa)
+            connectionLogin: connection.loginName, connectionIsAmazonVisa: connection.connector == .amazonVisa,
+            tryCount: missingTries)
         switch step {
         case .done:
             return true
         case .retry:
-            AppModel.debugLog("portal: vault busy – stored login read again")
+            missingTries += 1
+            AppModel.debugLog("portal: vault busy – stored login read again (\(missingTries).)")
             return false
         case let .fill(user, password):
             let filled = await browser.fillLogin(user: user, password: password)
