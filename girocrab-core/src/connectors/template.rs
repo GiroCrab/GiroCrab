@@ -5,6 +5,8 @@
 //!   2. add a `ConnectorKind` variant in `models.rs` + a `BankDescriptor` in
 //!      `connectors/catalog.rs::descriptor()`
 //!   3. wire it into `make_connector()` and add a test (see below).
+//!   4. say in `connectors/history.rs::max_days()` how far back it can reach:
+//!      whether a start date the bank refuses is tried again (`retry_since`).
 //!
 //! Rules: money is always `i64` cents (never floats); never log secrets;
 //! `external_id` must be stable so re-syncs de-duplicate (no bank id: leave it
