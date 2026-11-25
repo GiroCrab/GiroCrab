@@ -647,7 +647,34 @@ Rectangle {
         AppMenuItem { text: qsTr("Notiz bearbeiten …"); icon.name: SF.icon("note.text"); onTriggered: AppModel.editNote(stream.menuBooking) }
         // TagsMenu (#228)
         TagsMenu { booking: stream.menuBooking }
-        AppMenuItem { text: qsTr("Umsatz aufteilen (Splitbuchung) …"); icon.name: SF.icon("arrow.triangle.branch"); onTriggered: AppModel.splitBooking = stream.menuBooking }
+        // #1663: a common share opens the sheet with that share already in the second part
+        AppMenu {
+            id: splitMenu
+            title: qsTr("Umsatz aufteilen (Splitbuchung)")
+            icon.name: SF.icon("arrow.triangle.branch")
+            Instantiator {
+                model: AppModel.splitShares
+                delegate: AppMenuItem {
+                    required property int modelData
+                    text: qsTr("%1 %").arg(modelData)
+                    onTriggered: AppModel.openSplit(stream.menuBooking, modelData)
+                }
+                onObjectAdded: (index, item) => splitMenu.insertItem(index, item)
+                onObjectRemoved: (index, item) => splitMenu.removeItem(item)
+            }
+            AppMenuSeparator {}
+            AppMenuItem { text: qsTr("Andere Aufteilung …"); onTriggered: AppModel.openSplit(stream.menuBooking) }
+        }
+        AppMenuItem {
+            readonly property var b: stream.menuBooking
+            visible: b !== null && (b.amount_cents !== 0 || b.split_count > 0)
+            height: visible ? implicitHeight : 0
+            text: b && b.amount_cents > 0
+                ? (["refund", "both"].includes(b.refund_marker) ? qsTr("Ursprüngliche Buchungen bearbeiten …") : qsTr("Ursprüngliche Buchung zuordnen …"))
+                : (b && ["original", "both"].includes(b.refund_marker) ? qsTr("Erstattungen bearbeiten …") : qsTr("Erstattung zuordnen …"))
+            icon.name: SF.icon("arrow.uturn.backward")
+            onTriggered: AppModel.refundBooking = b
+        }
         // LoanAssignMenu(hidesWhenUnavailable: true): left out for loan bookings and unlinked inflows
         Instantiator {
             model: AppModel.loanAssignable(stream.menuBooking) ? 1 : 0
@@ -655,7 +682,7 @@ Rectangle {
             onObjectAdded: (index, menu) => {
                 let at = 0
                 for (let i = 0; i < rowMenu.count; ++i)
-                    if (rowMenu.itemAt(i) && rowMenu.itemAt(i).text === qsTr("Umsatz aufteilen (Splitbuchung) …")) at = i + 1
+                    if (rowMenu.itemAt(i) && rowMenu.itemAt(i).subMenu === splitMenu) at = i + 1
                 rowMenu.insertMenu(at, menu)
             }
             onObjectRemoved: (index, menu) => rowMenu.removeMenu(menu)
@@ -746,11 +773,13 @@ Rectangle {
         readonly property var refundSource: amazonRef !== null && amazonRef.isRefund ? AmazonOrderRef.refundSource(booking, AppModel.bookings) : null
         readonly property bool expanded: amazonRef !== null && booking !== null && !!stream.amazonExpanded[booking.id]
         readonly property var counterAccount: BookingDetails.counterAccount(booking)
+        readonly property bool hasRefund: booking !== null && ["refund", "original", "both"].includes(booking.refund_marker)
+        readonly property real refundRoom: hasRefund ? refundBadge.implicitWidth + 8 : 0
         property alias chevron: chevron
         /// Width the name line gets in a single line: the row minus date, signet, marks and amount.
         readonly property real nameLineWidth: width - 28 - (compact ? 80 * Theme.textScale + 8 : 0) - Theme.scaled(signetSize) - 8
             - (checkIcon.visible ? checkIcon.width + 8 : 0) - (pendingIcon.visible ? pendingIcon.width + 8 : 0)
-            - amountColumn.implicitWidth - 8
+            - amountColumn.implicitWidth - 8 - refundRoom
         implicitHeight: Math.max((effectiveDensity === "compact" ? 28 : 44) * Theme.textScale, column.implicitHeight) + 2 * verticalPadding
         // DayCard: .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton) (ff91866);
         // name, amount and date follow the redaction like the planned rows.
@@ -929,6 +958,21 @@ Rectangle {
                          Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop; Layout.topMargin: br.isSingleLine ? 0 : 4 }
                 SFIcon { id: pendingIcon; visible: br.booking && br.booking.is_pending; symbol: "clock"; size: 11; color: Theme.tertiary
                          Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop; Layout.topMargin: br.isSingleLine ? 0 : 4 }
+                RowLayout {
+                    id: refundBadge
+                    visible: br.hasRefund
+                    spacing: 3
+                    Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop
+                    SFIcon { symbol: "arrow.uturn.backward"; size: 12; color: Theme.accent }
+                    Text {
+                        text: br.booking ? Fmt.money(Math.max(br.booking.refund_cents, br.booking.refunded_cents), br.booking.currency) : ""
+                        font.pixelSize: Theme.caption; color: Theme.secondary; font.features: { "tnum": 1 }
+                        Sensitive { amounts: true }
+                    }
+                    HoverHandler { id: refundHover }
+                    ToolTip.visible: refundHover.hovered
+                    ToolTip.text: qsTr("Erstattung zugeordnet")
+                }
                 // compact rows stay one line: the balance goes next to the amount (#577)
                 GridLayout {
                     id: amountColumn

@@ -261,6 +261,10 @@ mod tests {
             creditor_id: String::new(),
             external_id: String::new(),
             tags: Vec::new(),
+            refund_marker: "none".into(),
+            refund_cents: 0,
+            refunded_cents: 0,
+            split_count: 0,
         }
     }
 

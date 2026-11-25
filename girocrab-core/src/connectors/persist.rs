@@ -206,7 +206,8 @@ pub(crate) fn store_fetch(
     {
         let db = vault.db()?;
         // Document retrieval switched off: whatever a connector still delivers is not stored.
-        if !documents_fetch_on(&db, connection_id)? {
+        let documents_enabled = documents_fetch_on(&db, connection_id)?;
+        if !documents_enabled {
             data.documents.clear();
         }
         if let Some(rules) =
@@ -751,6 +752,12 @@ pub(crate) fn store_fetch(
                                 new_booking_ids.insert(tx.last_insert_rowid());
                             }
                             imported += 1;
+                            if t.checked {
+                                tx.prepare_cached(
+                                    "UPDATE transactions SET checked = 1 WHERE account_id = ?1 AND external_id = ?2",
+                                )?
+                                .execute(params![acc_id, t.external_id])?;
+                            }
                             if data.adjust_balances {
                                 tx.prepare_cached(
                                     "UPDATE accounts SET balance_cents = balance_cents + ?1, balance_date = ?2 WHERE id = ?3",
@@ -893,6 +900,8 @@ pub(crate) fn store_fetch(
         }
         let mut postbox_added = 0u32;
         let mut documents_stored = 0u32;
+        // switched off at a bank that delivers documents: the log says so
+        let documents_off = !documents_enabled && kind_delivers_documents(kind);
         let documents_incomplete = data.documents_incomplete;
         for d in &data.documents {
             if archived_ids.contains_key(&d.account_ref) || blocked_refs.contains(&d.account_ref) {
@@ -950,6 +959,25 @@ pub(crate) fn store_fetch(
                 }
                 (booking, _) => booking,
             };
+            // A known history receipt gets its direct link once its cash booking exists, also when the
+            // document pass reaches it only in a later sync. Never against the user's own unlink, never
+            // to a deleted booking; a receipt that already has a booking keeps it. Also for a receipt
+            // downloaded again (no longer remembered as known): storing it again ignores the copy.
+            if kind == ConnectorKind::TradeRepublic
+                && !d.source_url.is_empty()
+                && let Some(booking_id) = booking_id
+            {
+                tx.execute(
+                    "UPDATE booking_documents SET booking_id = ?1
+                      WHERE source_url = ?2 AND booking_id IS NULL
+                        AND NOT EXISTS (SELECT 1 FROM settings
+                              WHERE key = 'doc.unlinked.' || booking_documents.id)
+                        AND EXISTS (SELECT 1 FROM transactions WHERE id = ?1 AND deleted_ms IS NULL)
+                        AND account_id IN (SELECT id FROM accounts WHERE connection_id = ?3
+                              AND deleted_ms IS NULL AND archived_unix IS NULL)",
+                    params![booking_id, d.source_url, connection_id],
+                )?;
+            }
             // without bytes (download failed) only a stored copy gets its account
             let added = if d.bytes.is_empty() {
                 Ok(None)
@@ -1087,10 +1115,11 @@ pub(crate) fn store_fetch(
                 [connection_id],
             )?;
         }
-        // Accounts by the name they carry here instead of their bank reference (an IBAN).
+        // Accounts by the name they carry here instead of their bank reference (an IBAN),
+        // in warnings and hints alike (e.g. "Depotbestand … nicht angeboten", #1743).
         let mut warnings = std::mem::take(&mut data.warnings);
-        let hints = std::mem::take(&mut data.hints);
-        if !warnings.is_empty() {
+        let mut hints = std::mem::take(&mut data.hints);
+        if !warnings.is_empty() || !hints.is_empty() {
             for acc in data.accounts.iter().filter(|a| !a.external_ref.is_empty()) {
                 let name: Option<String> = tx
                     .query_row(
@@ -1100,7 +1129,7 @@ pub(crate) fn store_fetch(
                     )
                     .optional()?;
                 let name = name.unwrap_or_else(|| acc.name.clone());
-                for w in &mut warnings {
+                for w in warnings.iter_mut().chain(hints.iter_mut()) {
                     *w = w.replace(&acc.external_ref, &name);
                 }
             }
@@ -1142,6 +1171,13 @@ pub(crate) fn store_fetch(
             postbox_documents,
             warnings,
             hints,
+            documents_imported: documents_stored,
+            security_transactions: data.security_transactions.len() as u32,
+            holdings: data.holdings.len() as u32,
+            history_incomplete: data.history_incomplete,
+            history_remaining: data.history_remaining,
+            history_total: data.history_total,
+            documents_off,
         })
     }
 }
@@ -1212,6 +1248,15 @@ pub(crate) fn clear_documents_settings(
         ],
     )?;
     Ok(())
+}
+
+/// Whether the bank of this connector delivers documents (`Capability::Documents` in the bank matrix).
+pub(crate) fn kind_delivers_documents(kind: ConnectorKind) -> bool {
+    super::catalog::BANK_MATRIX.iter().any(|e| {
+        e.kind == Some(kind)
+            && e.capabilities
+                .contains(&super::catalog::Capability::Documents)
+    })
 }
 
 /// Whether the connection fetches documents (default: yes).
@@ -1768,6 +1813,10 @@ impl Vault {
             )
         };
         let (since, since_by_account) = since;
+        let state = match history {
+            Some(_) => super::history::state_for_full_fetch(state)?,
+            None => state,
+        };
         let documents = match only_account {
             // see begin_account_sync
             Some(_) => Documents::Off,

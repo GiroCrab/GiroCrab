@@ -1,4 +1,6 @@
 import { Button, ListView, LineEdit, Palette, ComboBox, CheckBox, TextEdit, Switch, ScrollView } from "std-widgets.slint";
+import { RefundRow, RefundsPanel } from "refunds_dialog.slint";
+export { RefundRow }
 import { TagRow, SplitRow, BudgetRow, TemplateRow, TagsPanel, SplitsPanel, BudgetsPanel, TemplatesPanel } from "tags_dialog.slint";
 export { TagRow, SplitRow, BudgetRow, TemplateRow }
 import { RecLine, RecurringPanel } from "recurring_dialog.slint";
@@ -16,7 +18,7 @@ export { RecLine }
 
 export struct AccountRow { id: int, name: string, bank: string, iban: string, header: string, monogram: string, dot: color, balance: string, currency: string, negative: bool, archived: bool }
 export struct CategoryRow { id: int, name: string, depth: int, color: color }
-export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, balance: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string }
+export struct BookingRow { id: int, checked: bool, counterparty: string, account: string, category: string, category-color: color, detail: string, amount: string, balance: string, negative: bool, monogram: string, tint: color, logo: image, has-logo: bool, marked: bool, tags-text: string, has-note: bool, expand-detail: string, refund-linked: bool, refund: string }
 export struct DayGroup { title: string, sum: string, balance: string, negative: bool, rows: [BookingRow], show-month: bool, month: string, month-income: string, month-expense: string }
 export struct BarGroup { label: string, income: float, expense: float }
 export struct BudgetLine { name: string, amount: string, progress: float, color: color, over: bool }
@@ -87,6 +89,7 @@ component Icon inherits Path {
         : name == "arrow-in" ? "M 9 2.5 L 13.5 2.5 L 13.5 13.5 L 9 13.5 M 2 8 L 10 8 M 7 5 L 10 8 L 7 11"
         : name == "document" ? "M 4 2 L 9.5 2 L 12.5 5 L 12.5 14 L 4 14 Z M 9.5 2 L 9.5 5 L 12.5 5 M 6 8 L 10.5 8 M 6 10.5 L 10.5 10.5"
         : name == "folder" ? "M 2 4 L 6.5 4 L 8 5.5 L 14 5.5 L 14 12.5 L 2 12.5 Z"
+        : name == "refund" ? "M 6 3 L 3 6 L 6 9 M 3 6 L 10 6 A 3.5 3.5 0 0 1 10 13 L 6 13"
         : name == "search" ? "M 2.5 7 A 4.5 4.5 0 1 0 11.5 7 A 4.5 4.5 0 1 0 2.5 7 M 10.5 10.5 L 14 14"
         : "";
 }
@@ -278,9 +281,22 @@ component SegButton inherits Rectangle {
     callback clicked();
     height: 28px;
     border-radius: 4px;
-    border-width: checked ? 0px : 0px;
+    // Focus ring for keyboard operation (Tab, then Enter or Space).
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: #0a84ff;
     background: checked ? #FFFFFF : ta.has-hover ? Theme.text.with-alpha(0.07) : transparent;
     horizontal-stretch: 1;
+    fs := FocusScope {
+        focus-on-tab-navigation: true;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.clicked();
+                accept
+            } else {
+                reject
+            }
+        }
+    }
     ta := TouchArea { clicked => { root.clicked(); } }
     Text { text: root.text; color: checked ? #1a1a1a : #3a3a3a; font-size: 11px; font-weight: checked ? 700 : 500; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
 }
@@ -517,6 +533,8 @@ component BookingLine inherits Rectangle {
                 spacing: 6px;
                 Text { text: b.counterparty; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
                 if b.has-note: Text { text: "📎"; font-size: 11px; color: Theme.muted; }
+                if b.refund-linked: Icon { name: "refund"; width: 12px; height: 12px; }
+                if b.refund != "": Text { text: b.refund; color: Theme.muted; font-size: 11px; }
             }
             if !root.compact || root.active: HorizontalLayout {
                 spacing: 5px;
@@ -793,6 +811,8 @@ component Dialog inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
+    /// "Letzten Abruf anzeigen" (#815): off by default, as in the reference app.
+    in-out property <bool> show-fetched: false;
     in property <string> window-title: "GiroCrab";
     title: window-title;
     icon: @image-url("../../docs/assets/app-icon.png");
@@ -861,6 +881,8 @@ export component MainWindow inherits Window {
     callback cashflow-changed();
     in property <string> selected-name;
     in property <string> selected-balance;
+    // "Abgerufen vor …" of the selected account (#815); empty = nothing shown.
+    in property <string> selected-fetched;
     in property <string> liquid-balance;
     in-out property <bool> show-liquid: false;
     in property <string> selected-currency;
@@ -893,7 +915,14 @@ export component MainWindow inherits Window {
     in property <[string]> category-names;
     in-out property <int> inspector-category: 0;
     in-out property <bool> inspector-checked: false;
-    in-out property <bool> cards-open: false;
+    // Menü „Ansicht“ (geräte-lokal, `src/view_prefs.rs`; Mac: ViewLayout.swift).
+    in-out property <bool> show-chart: true;
+    in-out property <bool> show-statistics: false;
+    in-out property <bool> compact-header: false;
+    callback view-prefs-changed();
+    // Abgeleitet für bestehende Leser; nicht mehr setzen.
+    in-out property <bool> cards-open: root.show-chart || root.show-statistics;
+    private property <int> budget-rows: root.compact-header ? 1 : 4;
     in-out property <string> note-text;
     in-out property <bool> transfer-open: false;
     in property <[string]> transfer-accounts;
@@ -925,6 +954,12 @@ export component MainWindow inherits Window {
     callback side-controls-changed();
     // 0 = bookings, 1 = depot / Sachwerte, 2 = Vermögen, 3 = Geplant, 4 = Lastschriften, 5 = Belege
     in property <int> view-mode: 0;
+    // Belege & Postbox: bank connection filter and document retrieval switch (#954, #1042)
+    in-out property <[string]> doc-connections;
+    in-out property <int> doc-connection-index;
+    in-out property <bool> doc-fetch-shown;
+    in-out property <bool> doc-fetch-on;
+    callback doc-fetch-toggled(bool);
     in property <string> view-title;
     in property <string> view-total;
     in property <string> view-note;
@@ -942,6 +977,11 @@ export component MainWindow inherits Window {
     in-out property <bool> export-tags: false;
     callback export-statements(int, int, bool, bool);
     in-out property <int> depot-tab: 0;
+    in property <bool> depot-chart-shown;
+    in property <string> depot-chart-path;
+    in property <[string]> depot-chart-ticks;
+    in property <string> depot-chart-readout;
+    in-out property <int> depot-chart-range: 1;
     in-out property <int> wealth-tab: 0;
     in-out property <int> interval-index: 0;
     in property <[string]> period-labels;
@@ -1032,6 +1072,29 @@ export component MainWindow inherits Window {
     callback tag-clear-booking();
     in property <string> inspector-tags;
     in-out property <bool> splits-open: false;
+    in-out property <bool> refunds-open: false;
+    in property <bool> rf-can-open;
+    in property <bool> rf-english;
+    in property <bool> rf-from-refund;
+    in property <bool> rf-loading;
+    in property <bool> rf-search-empty;
+    in property <bool> rf-edit-pending;
+    in property <bool> rf-can-undo;
+    in property <string> rf-title;
+    in property <string> rf-amount;
+    in property <string> rf-sums;
+    in property <string> rf-status;
+    in property <[RefundRow]> rf-rows;
+    in property <[RefundRow]> rf-card-rows;
+    in property <[string]> rf-parts;
+    in-out property <int> rf-part-index;
+    callback refunds-request();
+    callback refund-reveal(int);
+    callback refund-close();
+    callback refund-part-picked(int);
+    callback refund-search(string);
+    callback refund-toggle(int);
+    callback refund-undo-unlink();
     in property <string> sp-title;
     in property <string> sp-amount;
     in property <string> sp-remaining;
@@ -1121,6 +1184,7 @@ export component MainWindow inherits Window {
     callback save-note(string);
     callback apply-rules();
     callback privacy-changed();
+    callback print-request();
     callback lock();
     callback import-file();
     callback transfer-submit(int, string, string, string, string, bool, string);
@@ -1135,6 +1199,16 @@ export component MainWindow inherits Window {
     in property <[color]> palette;
     in property <string> app-version;
     in-out property <bool> about-open: false;
+    // ---- Problem melden (#384, Teil 2): Text geht nur nach Klick und erneut bereinigt hinaus
+    in-out property <bool> report-open: false;
+    in-out property <string> report-description;
+    in-out property <string> report-preview;
+    in property <string> report-status;
+    in property <bool> report-busy: false;
+    callback report-request();
+    callback report-copy();
+    callback report-open-issue();
+    callback report-close();
     // ---- Mehrere Tresore (#410) und Tresor-Synchronisation (Cloud-Ordner)
     in-out property <bool> vaults-open: false;
     in property <[string]> vault-names: ["Haupttresor"];
@@ -1169,6 +1243,15 @@ export component MainWindow inherits Window {
     in property <bool> cat-can-down: false;
     in property <bool> cat-busy: false;
     callback account-new();
+    in-out property <bool> offline-open: false;
+    in-out property <bool> offline-busy: false;
+    in-out property <bool> offline-mask: false;
+    in-out property <string> offline-name;
+    in-out property <string> offline-currency: "EUR";
+    in-out property <string> offline-opening;
+    in-out property <string> offline-status;
+    callback offline-new();
+    callback offline-save(string, string, string);
     callback account-edit();
     callback account-save(string, int);
     callback account-archive();
@@ -1234,8 +1317,10 @@ export component MainWindow inherits Window {
     capture-key-pressed(event) => {
         if (root.transfer-open && event.modifiers.control && event.modifiers.shift && (event.text == "V" || event.text == "v" || event.text == "\u{16}")) { root.paste-transfer(); return accept; }
         if (root.unlocked && event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p" || event.text == "\u{10}")) { root.privacy = !root.privacy; root.privacy-changed(); return accept; }
-        if (root.unlocked && event.modifiers.control && (event.text == "," || event.text == ";")) { SettingsImportState.request(); return accept; }
-        if (root.unlocked && !root.busy && event.modifiers.control && !event.modifiers.shift && (event.text == "e" || event.text == "\u{5}")) { SettingsImportState.request(); SettingsImportState.tab = 1; return accept; }
+        // Bei offenem „Problem melden“ öffnen weder Ctrl+, noch Ctrl+E die Einstellungen darüber.
+        if (root.unlocked && !root.report-open && !root.refunds-open && event.modifiers.control && (event.text == "," || event.text == ";")) { SettingsImportState.request(); return accept; }
+        if (root.unlocked && !root.busy && !root.report-open && !root.refunds-open && event.modifiers.control && !event.modifiers.shift && (event.text == "e" || event.text == "\u{5}")) { SettingsImportState.request(); SettingsImportState.tab = 1; return accept; }
+        if (root.unlocked && !root.busy && event.modifiers.control && !event.modifiers.shift && (event.text == "p" || event.text == "\u{10}")) { root.print-request(); return accept; }
         if (root.shortcut(event.text, event.modifiers.control)) { return accept; }
         reject
     }
@@ -1271,29 +1356,35 @@ export component MainWindow inherits Window {
                 padding-right: 8px;
                 spacing: 2px;
                 MenuTitle {
-                    text: "Datei"; menu-height: 192px;
+                    text: "Datei"; menu-height: 220px;
                     MenuEntry { text: "Alle Konten abrufen"; hint: "Strg+R"; enabled: !root.busy; clicked => { root.sync(); } }
                     MenuEntry { text: "Neue Überweisung …"; hint: "Strg+N"; enabled: !root.busy; clicked => { root.transfer-start(); } }
                     MenuSep {}
                     MenuEntry { text: "Vorhandene Daten importieren …"; hint: "Strg+I"; enabled: !root.busy; clicked => { root.import-file(); } }
                     MenuEntry { text: "Umsätze exportieren …"; hint: "Strg+E"; enabled: !root.busy; clicked => { SettingsImportState.request(); SettingsImportState.tab = 1; } }
+                    MenuEntry { text: "Drucken …"; hint: "Strg+P"; enabled: !root.busy; clicked => { root.print-request(); } }
                     MenuSep {}
                     MenuEntry { text: "Tresor sperren"; hint: "Strg+L"; clicked => { root.lock(); } }
                 }
                 MenuTitle {
-                    text: "Ansicht"; menu-height: 262px;
+                    text: "Ansicht"; menu-height: 398px;
                     MenuEntry { text: "Übersicht (Alle Konten)"; clicked => { root.side-click("all"); } }
                     MenuEntry { text: "Neue Buchungen"; clicked => { root.side-click("new"); } }
                     MenuEntry { text: "Geplante Zahlungen"; clicked => { root.side-click("planned"); } }
                     MenuEntry { text: "Vermögen"; clicked => { root.side-click("wealth"); } }
                     MenuEntry { text: "Lastschriften"; clicked => { root.side-click("mandates"); } }
                     MenuEntry { text: "Dokumente"; clicked => { root.side-click("docs"); } }
+                    MenuEntry { text: root.show-fetched ? "✓ Letzten Abruf anzeigen" : "Letzten Abruf anzeigen"; clicked => { root.show-fetched = !root.show-fetched; } }
+                    MenuSep {}
+                    MenuEntry { text: (root.show-chart ? "✓ " : "") + "Diagramm anzeigen"; clicked => { root.show-chart = !root.show-chart; root.view-prefs-changed(); } }
+                    MenuEntry { text: (root.show-statistics ? "✓ " : "") + "Auswertungen anzeigen"; clicked => { root.show-statistics = !root.show-statistics; root.view-prefs-changed(); } }
+                    MenuEntry { text: (root.compact-header ? "✓ " : "") + "Kopfbereich minimieren"; clicked => { root.compact-header = !root.compact-header; root.view-prefs-changed(); } }
                     MenuSep {}
                     MenuEntry { text: root.privacy ? "Datenschutzmodus ausschalten" : "Datenschutzmodus einschalten"; hint: "Strg+Umschalt+P"; clicked => { root.privacy = !root.privacy; root.privacy-changed(); } }
                     MenuEntry { text: root.demo-active ? "Demo-Daten beenden" : "Demo-Daten ansehen"; clicked => { root.demo-switch(); } }
                 }
                 MenuTitle {
-                    text: "Werkzeuge"; menu-height: 256px;
+                    text: "Werkzeuge"; menu-height: 288px;
                     MenuEntry { text: "Regeln …"; clicked => { root.rules-request(); } }
                     MenuEntry { text: "Tags verwalten …"; clicked => { root.tags-request(); } }
                     MenuEntry { text: "Kategorien …"; clicked => { root.categories-open(); } }
@@ -1302,6 +1393,7 @@ export component MainWindow inherits Window {
                     MenuEntry { text: "Tresor-Synchronisation …"; clicked => { root.vaults-open = true; } }
                     MenuSep {}
                     MenuEntry { text: "Einstellungen …"; hint: "Strg+,"; clicked => { SettingsImportState.request(); SettingsImportState.tab = 3; } }
+                    MenuEntry { text: "Problem melden …"; clicked => { root.report-request(); } }
                     MenuEntry { text: "Info"; clicked => { root.about-open = true; } }
                 }
                 MenuTitle {
@@ -1495,6 +1587,11 @@ export component MainWindow inherits Window {
                             }
                         }
                         bal := Text { text: (root.selected == 0 && root.show-liquid) ? root.liquid-balance : root.selected-balance; font-size: 18px; font-weight: 700; color: Theme.text; vertical-alignment: bottom; overflow: elide; wrap: no-wrap; }
+                        if root.show-fetched && root.selected-fetched != "": Text {
+                            text: root.selected-fetched;
+                            font-size: 11px;
+                            color: Theme.muted;
+                        }
                     }
                     HorizontalLayout {
                         horizontal-stretch: 0;
@@ -1592,7 +1689,7 @@ export component MainWindow inherits Window {
                     text: "Saldo";
                     checked <=> root.show-balance;
                 }
-                GhostButton { horizontal-stretch: 0; text: root.cards-open ? "Übersicht ausblenden ▴" : "Cashflow & Budgets ▾"; clicked => { root.cards-open = !root.cards-open; } }
+                GhostButton { horizontal-stretch: 0; text: root.show-statistics ? "Auswertungen ausblenden ▴" : "Auswertungen ▾"; clicked => { root.show-statistics = !root.show-statistics; root.view-prefs-changed(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: root.booking-count; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
             }
@@ -1648,15 +1745,15 @@ export component MainWindow inherits Window {
                     GhostButton { text: "Aufheben"; clicked => { root.batch-clear(); } }
                 }
             }
-            // dashboard cards above the bookings: cashflow chart and budgets
-            if root.view-mode == 0 && root.cards-open: CashflowCard {
-                height: 190px;
+            // Bereiche über der Buchungsliste (Menü „Ansicht“): Diagramm, Auswertungen, kompakter Kopf
+            if root.view-mode == 0 && root.show-chart: CashflowCard {
+                height: root.compact-header ? 120px : 190px;
                 bars: root.cashflow-bars;
                 ticks: root.cashflow-ticks;
                 period <=> root.cashflow-period;
                 changed => { root.cashflow-changed(); }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
+            if root.view-mode == 0 && root.show-statistics && !root.compact-header: Rectangle {
                 height: 112px + max(root.allowance-banks.length, 1) * 20px;
                 background: Theme.surface;
                 border-radius: 8px;
@@ -1675,7 +1772,7 @@ export component MainWindow inherits Window {
                     for b in root.allowance-banks: Text { text: b; font-size: 12px; color: Theme.text; overflow: elide; }
                 }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
+            if root.view-mode == 0 && root.show-statistics && !root.compact-header: Rectangle {
                 height: 84px;
                 background: Theme.surface;
                 border-radius: 8px;
@@ -1692,8 +1789,8 @@ export component MainWindow inherits Window {
                     }
                 }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
-                height: root.budget-lines.length == 0 ? 56px : 46px + min(root.budget-lines.length, 4) * 32px;
+            if root.view-mode == 0 && root.show-statistics: Rectangle {
+                height: root.budget-lines.length == 0 ? 56px : 46px + min(root.budget-lines.length, root.budget-rows) * 32px;
                 background: Theme.surface;
                 border-radius: 8px;
                 border-width: 1px;
@@ -1703,11 +1800,11 @@ export component MainWindow inherits Window {
                     spacing: 6px;
                     Text { text: root.budget-title; color: Theme.text; font-size: 14px; font-weight: 700; }
                     if root.budget-lines.length == 0: Text { text: "Keine Ausgaben in diesem Monat"; color: Theme.muted; font-size: 11px; }
-                    for l[i] in root.budget-lines: BudgetBar { l: l; visible: i < 4; height: i < 4 ? 30px : 0px; }
+                    for l[i] in root.budget-lines: BudgetBar { l: l; visible: i < root.budget-rows; height: i < root.budget-rows ? 30px : 0px; }
                 }
             }
-            if root.view-mode == 0 && root.cards-open: Rectangle {
-                height: 50px + (root.analytics-expense-cats.length + root.analytics-income-cats.length + root.analytics-tags.length) * 32px + (root.analytics-tags.length == 0 ? 20px : 0px) + 90px;
+            if root.view-mode == 0 && root.show-statistics: Rectangle {
+                height: root.compact-header ? 68px : 50px + (root.analytics-expense-cats.length + root.analytics-income-cats.length + root.analytics-tags.length) * 32px + (root.analytics-tags.length == 0 ? 20px : 0px) + 90px;
                 background: Theme.surface;
                 border-radius: 8px;
                 border-width: 1px;
@@ -1717,13 +1814,17 @@ export component MainWindow inherits Window {
                     spacing: 6px;
                     Text { text: "Analysen"; color: Theme.text; font-size: 14px; font-weight: 700; }
                     Text { text: root.analytics-summary; color: Theme.muted; font-size: 11px; overflow: elide; }
-                    Text { text: "Ausgaben nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
-                    for l in root.analytics-expense-cats: BudgetBar { l: l; height: 30px; }
-                    Text { text: "Einnahmen nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
-                    for l in root.analytics-income-cats: BudgetBar { l: l; height: 30px; }
-                    Text { text: "Auswertung nach Tags"; color: Theme.text; font-size: 12px; font-weight: 700; }
-                    if root.analytics-tags.length == 0: Text { text: "Keine getaggten Buchungen im Filter"; color: Theme.muted; font-size: 11px; }
-                    for l in root.analytics-tags: BudgetBar { l: l; height: 30px; }
+                    // Kopfbereich minimiert: nur Titel und Zusammenfassung.
+                    if !root.compact-header: VerticalLayout {
+                        spacing: 6px;
+                        Text { text: "Ausgaben nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                        for l in root.analytics-expense-cats: BudgetBar { l: l; height: 30px; }
+                        Text { text: "Einnahmen nach Kategorie"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                        for l in root.analytics-income-cats: BudgetBar { l: l; height: 30px; }
+                        Text { text: "Auswertung nach Tags"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                        if root.analytics-tags.length == 0: Text { text: "Keine getaggten Buchungen im Filter"; color: Theme.muted; font-size: 11px; }
+                        for l in root.analytics-tags: BudgetBar { l: l; height: 30px; }
+                    }
                 }
             }
             if root.view-mode == 0: Rectangle {
@@ -1819,6 +1920,25 @@ export component MainWindow inherits Window {
                     }
                 }
                 if root.view-note != "": Text { text: root.view-note; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+                if root.view-mode == 5 && (root.doc-connections.length > 0 || root.doc-fetch-shown): HorizontalLayout {
+                    spacing: 8px;
+                    if root.doc-connections.length > 0: VerticalLayout {
+                        alignment: center;
+                        ComboBox {
+                            width: 190px;
+                            model: root.doc-connections;
+                            current-index <=> root.doc-connection-index;
+                            selected => { root.docs-filter-changed(); }
+                        }
+                    }
+                    if root.doc-fetch-shown: CheckBox {
+                        text: "Dokumente abrufen";
+                        enabled: !root.busy && !SettingsImportState.busy && !root.privacy;
+                        checked <=> root.doc-fetch-on;
+                        toggled => { root.doc-fetch-toggled(self.checked); }
+                    }
+                    Rectangle { horizontal-stretch: 2; }
+                }
                 if root.view-mode == 2: HorizontalLayout {
                     spacing: 6px;
                     for label[i] in ["Alles", "Cash", "Wertpapiere", "Sachwerte"]: SegButton {
@@ -1843,6 +1963,49 @@ export component MainWindow inherits Window {
                         spacing: 4px;
                         Text { text: "Zusammensetzung"; color: Theme.muted; font-size: 11px; font-weight: 700; }
                         for s in root.shares: ShareBarLine { s: s; }
+                    }
+                }
+                // Shrinks with the window so Positionen/Aktivitäten stay reachable at the 600px minimum height:
+                // ~330px fixed blocks above the table plus ~120px for the table header and first rows.
+                if root.view-mode == 1 && root.depot-chart-shown: Rectangle {
+                    height: max(110px, min(210px, root.height - 450px - root.shares.length * 26px));
+                    background: Theme.surface;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Wertverlauf"; color: Theme.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            for label[i] in ["1 M", "1 J", "Max"]: SegButton {
+                                text: label;
+                                checked: root.depot-chart-range == i;
+                                clicked => { root.depot-chart-range = i; root.view-changed(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: space-between;
+                                for t in root.depot-chart-ticks: Text { text: t; color: Theme.muted; font-size: 10px; horizontal-alignment: right; }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                if root.depot-chart-path != "": Path {
+                                    width: 100%;
+                                    height: 100%;
+                                    commands: root.depot-chart-path;
+                                    viewbox-width: 1000;
+                                    viewbox-height: 100;
+                                    stroke: #0a84ff;
+                                    stroke-width: 1.5px;
+                                }
+                            }
+                        }
+                        Text { text: root.depot-chart-readout; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
                     }
                 }
                 if root.view-mode == 1: HorizontalLayout {
@@ -2020,6 +2183,21 @@ export component MainWindow inherits Window {
                                 Text { text: root.inspector-tags == "" ? "Keine Tags" : root.inspector-tags; font-size: 11px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide; }
                                 GhostButton { text: "Tags …"; enabled: !root.inspector.read-only; clicked => { root.tags-request(); } }
                                 GhostButton { text: "Aufteilen …"; enabled: !root.inspector.read-only; clicked => { root.splits-request(); } }
+                                Button { text: root.rf-english ? "Refund …" : "Erstattung …"; enabled: root.rf-can-open; clicked => { root.refunds-request(); } }
+                            }
+                        }
+                        if root.rf-card-rows.length > 0: Rectangle {
+                            background: Theme.surface;
+                            border-radius: 8px;
+                            height: refund-card.preferred-height + 24px;
+                            refund-card := VerticalLayout {
+                                padding: 12px;
+                                spacing: 6px;
+                                Text { text: root.rf-english ? "Refunds" : "Erstattungen"; color: Theme.text; font-size: 12px; font-weight: 700; }
+                                for row in root.rf-card-rows: Button {
+                                    text: root.privacy ? "••••" : row.title + "\n" + row.detail + "\n" + row.amount;
+                                    clicked => { root.refund-reveal(row.index); }
+                                }
                             }
                         }
                         // details
@@ -2142,6 +2320,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     alignment: end;
                     spacing: 8px;
+                    Button { text: "Offline-Konto …"; clicked => { root.add-open = false; root.offline-new(); } }
                     Button { text: "Abbrechen"; clicked => { root.add-open = false; } }
                     Button {
                         text: root.add-busy ? "Bitte warten …" : "Hinzufügen";
@@ -2151,6 +2330,24 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    if refunds-open: Dialog {
+        dialog-width: 680px;
+        RefundsPanel {
+            ink: Theme.text; muted: Theme.muted; line: Theme.border; accent: Theme.accent;
+            english: root.rf-english; privacy: root.privacy; from-refund: root.rf-from-refund;
+            booking-title: root.rf-title; booking-amount: root.rf-amount; sums: root.rf-sums; status: root.rf-status;
+            loading: root.rf-loading; pending: root.rf-edit-pending; can-undo: root.rf-can-undo;
+            parts: root.rf-parts; part-index <=> root.rf-part-index; rows: root.rf-rows; search-empty: root.rf-search-empty;
+            part-picked(i) => { root.refund-part-picked(i); }
+            search(t) => { root.refund-search(t); }
+            toggle(i) => { root.refund-toggle(i); }
+            undo-unlink() => { root.refund-undo-unlink(); }
+            shortcut(t, control) => { root.shortcut(t, control) }
+            close() => { root.refund-close(); }
+            privacy-toggle() => { root.privacy = !root.privacy; root.privacy-changed(); }
         }
     }
 
@@ -2251,6 +2448,33 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // ---- Problem melden (#384, Teil 2; Mac: BugReportUI.swift), ohne Bildschirmaufnahme
+    // Steht bewusst VOR dem PIN/TAN-Overlay: spätere Geschwister liegen oben, ein während
+    // eines Abrufs erscheinender TAN-Dialog darf nie vom Report verdeckt werden.
+    if report-open: Dialog {
+        dialog-width: 620px;
+        Text { text: "Problem melden"; font-size: 18px; font-weight: 700; color: Theme.text; }
+        Text { text: "Nichts wird automatisch gesendet. Beim Kopieren oder Öffnen werden Beschreibung und Diagnose erneut bereinigt. Bitte keine echten IBANs, Namen oder Buchungsdaten eintragen."; font-size: 11px; color: Theme.muted; wrap: word-wrap; }
+        if root.privacy: Text { text: "Im Datenschutzmodus sind Beschreibung und Diagnose ausgeblendet; Kopieren und Öffnen sind gesperrt."; font-size: 12px; color: Theme.muted; wrap: word-wrap; }
+        if !root.privacy: ScrollView {
+            height: 300px;
+            VerticalLayout {
+                spacing: 6px;
+                Text { text: "Was ist passiert?"; font-size: 12px; font-weight: 600; color: Theme.text; }
+                TextEdit { height: 80px; wrap: word-wrap; text <=> root.report-description; }
+                Text { text: root.report-busy ? "Diagnose wird bereinigt …" : "Diagnose (automatisch bereinigt, editierbar)"; font-size: 12px; font-weight: 600; color: Theme.text; }
+                TextEdit { height: 200px; enabled: !root.report-busy; text <=> root.report-preview; }
+            }
+        }
+        if root.report-status != "": Text { text: root.report-status; font-size: 12px; color: Theme.muted; wrap: word-wrap; }
+        HorizontalLayout {
+            alignment: end; spacing: 8px;
+            Button { text: "In Zwischenablage kopieren"; enabled: !root.privacy && !root.report-busy && root.report-preview != ""; clicked => { root.report-copy(); } }
+            Button { text: "Issue im Browser öffnen"; enabled: !root.privacy && !root.report-busy && root.report-preview != ""; clicked => { root.report-open-issue(); } }
+            Button { text: "Schließen"; primary: true; clicked => { root.report-close(); } }
         }
     }
 
@@ -2377,11 +2601,54 @@ export component MainWindow inherits Window {
         }
         HorizontalLayout {
             spacing: 8px;
+            if !root.acct-edit: Button { text: "Offline-Konto …"; clicked => { root.acct-open = false; root.offline-new(); } }
             if root.acct-edit: Button { text: root.acct-archived ? "Reaktivieren" : "Archivieren"; clicked => { root.account-archive(); } }
             if root.acct-edit && root.acct-archived: Button { text: root.acct-armed ? "Wirklich löschen?" : "Löschen"; clicked => { root.account-delete(); } }
             Rectangle { horizontal-stretch: 1; }
             Button { text: "Abbrechen"; clicked => { root.acct-open = false; root.refocus(); } }
             Button { text: "Speichern"; primary: true; clicked => { root.account-save(root.acct-name, root.acct-color); } }
+        }
+    }
+
+    // ---- offline account dialog (#679): cash and accounts without bank access, never fetched
+    if offline-open: Dialog {
+        dialog-width: 420px;
+        Text { text: "Offline-Konto anlegen"; font-size: 18px; font-weight: 700; color: Theme.text; }
+        Text {
+            text: "Für Bargeld und Konten ohne Bankzugang. Es wird kein Abruf eingerichtet.";
+            color: Theme.muted; font-size: 11px; wrap: word-wrap;
+        }
+        Text { text: "Name"; font-size: 11px; color: Theme.muted; }
+        LineEdit {
+            placeholder-text: "Bargeld";
+            text <=> root.offline-name;
+            input-type: root.offline-mask ? InputType.password : InputType.text;
+            accepted => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+        }
+        Text { text: "Währung"; font-size: 11px; color: Theme.muted; }
+        LineEdit {
+            placeholder-text: "EUR";
+            text <=> root.offline-currency;
+            accepted => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+        }
+        Text { text: "Anfangssaldo (optional)"; font-size: 11px; color: Theme.muted; }
+        LineEdit {
+            placeholder-text: "0,00";
+            text <=> root.offline-opening;
+            input-type: root.offline-mask ? InputType.password : InputType.text;
+            accepted => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+        }
+        if root.offline-status != "": Text { text: root.offline-status; color: Theme.negative; font-size: 12px; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Abbrechen"; clicked => { root.offline-open = false; root.refocus(); } }
+            Button {
+                text: root.offline-busy ? "Lege an …" : "Anlegen";
+                primary: true;
+                enabled: !root.offline-busy;
+                clicked => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+            }
         }
     }
 

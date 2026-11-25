@@ -11,7 +11,7 @@ use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 
 use crate::error::{CoreError, CoreResult};
 use crate::models::ConnectorKind;
-use crate::secret::SecretString;
+use crate::secret::{SecretJson, SecretString};
 use crate::vault::Vault;
 
 use super::*;
@@ -93,7 +93,11 @@ struct Active {
 }
 
 /// `fetch` and `finish`, owning the connector and its context.
-type FetchRun = Pin<Box<dyn Future<Output = CoreResult<FetchResult>> + Send>>;
+type FetchRun = Pin<Box<dyn Future<Output = FetchEnd> + Send>>;
+
+/// How a fetch ended: its result, and for a failed one the connector state worth keeping
+/// (`BankConnector::state_after_failed_fetch`, #1828).
+type FetchEnd = (CoreResult<FetchResult>, Option<SecretJson>);
 
 /// A fetch in progress. It runs only while a session call drives it, and
 /// stops at the connector's questions until the user answers (no task of its
@@ -116,7 +120,7 @@ enum State {
 /// How far a drive of the fetch got.
 enum Driven {
     Asked(Question),
-    Done(Box<CoreResult<FetchResult>>),
+    Done(Box<FetchEnd>),
 }
 
 /// One sync run for one bank connection. Created by `Vault::begin_sync`.
@@ -248,8 +252,13 @@ impl SyncSession {
         let run: FetchRun = Box::pin(async move {
             crate::depot_debug::log(&format!("sync advance: Ready, calling fetch for {kind:?}"));
             let fetched = connector.fetch(&ctx).await;
+            // read before `finish` ends the bank dialog
+            let kept = fetched
+                .is_err()
+                .then(|| connector.state_after_failed_fetch())
+                .flatten();
             connector.finish(&ctx).await;
-            fetched
+            (fetched, kept)
         });
         Fetching {
             run,
@@ -295,7 +304,24 @@ impl SyncSession {
                     if self.is_cancelled() {
                         return Err(CoreError::SessionClosed);
                     }
-                    let mut data = (*fetched)?;
+                    let (fetched, kept_state) = *fetched;
+                    let mut data = match fetched {
+                        Ok(data) => data,
+                        Err(e) => {
+                            // the sync failed, what the connector learned about the bank on the
+                            // way stays (#1828); best effort, the failure is what gets reported
+                            if let Some(state) = kept_state
+                                && let Ok(db) = self.vault.db()
+                            {
+                                let _ = crate::vault::connections::store_state(
+                                    &db,
+                                    f.connection_id,
+                                    &state,
+                                );
+                            }
+                            return Err(e);
+                        }
+                    };
                     if let Some(only) = &f.only_account {
                         data.keep_only(only);
                     }

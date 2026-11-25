@@ -79,15 +79,14 @@ Sheet {
                 ToolTip.visible: hovered; ToolTip.delay: 600
             }
         }
-        // TransferKindPicker(batch: true)
-        Segmented {
+        // TransferKindPicker(batch: true, offersOwn: model.hasOwnTransferTargets)
+        TransferKindPicker {
             id: kindPicker
             visible: !sheet.reviewing
             Layout.alignment: Qt.AlignHCenter
             Layout.bottomMargin: 10
-            options: [{ id: "single", title: qsTr("Einzeln") }, { id: "batch", title: qsTr("Sammelüberweisung") }]
-            current: "batch"
-            onActivated: id => { if (id === "single") Payments.switchToSingleTransfer() }
+            batch: true
+            offersOwn: AppModel.hasOwnTransferTargets
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 

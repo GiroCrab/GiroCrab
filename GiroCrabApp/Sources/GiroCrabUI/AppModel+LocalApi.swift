@@ -186,6 +186,24 @@ extension AppModel {
         #endif
     }
 
+    /// A client set categories or tags (only while the user allows edits): reload
+    /// like after an iCloud merge, at most once per burst of requests (an
+    /// assistant often sends several in a row). The burst belongs to one vault:
+    /// a reload still pending for a vault that was swapped meanwhile never
+    /// swallows the change of the one served now.
+    func localApiChangedBookings(in vault: Vault) {
+        let id = ObjectIdentifier(vault)
+        guard localApiReloadPending != id else { return }
+        localApiReloadPending = id
+        Task { [weak self, weak vault] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self else { return }
+            if self.localApiReloadPending == id { self.localApiReloadPending = nil }
+            guard let vault, self.localApiTarget === vault else { return }
+            self.reloadAllInBackground()
+        }
+    }
+
     /// After a failed start (e.g. another instance served the socket): try again.
     func retryLocalApiStart() {
         if localApiStartError != nil { reconcileLocalApiServer() }
@@ -269,7 +287,9 @@ extension AppModel {
         _ = Self.localApiQuitObserver
         Self.localApiOwner = self
         do {
-            let server = try LocalApiServer.start(vault: v, socketPath: Self.localApiSocketPath)
+            // The listener is in place before the first request, so no early edit goes unreported.
+            let server = try LocalApiServer.start(vault: v, socketPath: Self.localApiSocketPath,
+                                                  onChange: LocalApiChangeListener(model: self, servedVault: v))
             localApi = RunningLocalApi(server: server, servedVault: v)
         } catch {
             // Kept for the status line: a toast alone would leave "starting" forever.
