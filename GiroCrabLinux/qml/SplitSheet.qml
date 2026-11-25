@@ -17,6 +17,9 @@ Sheet {
     property string error: ""
     /// The booking is split already (loaded with the parts).
     property bool hasSplits: false
+    /// The stored split was read (an empty result counts). Until then, and after a failed read,
+    /// nothing can be added, picked or saved: a draft must never replace a split it has not seen.
+    property bool ready: false
     /// The loaded parts no longer add up to the booking (its amount changed after saving): the
     /// first part shows the rest instead of what was stored (#1663), so the sheet says so.
     property bool storedPartsDiffer: false
@@ -45,7 +48,7 @@ Sheet {
     /// The rest is below 0 and counter-books the other parts: allowed (#427), but computed
     /// (#1663), so a typo gets there unnoticed. Warn, never block.
     readonly property bool restIsNegative: rest !== null && rest < 0
-    readonly property bool valid: parts.length >= 2 && rest !== null && rest !== 0 && splitOff.every(c => c !== 0)
+    readonly property bool valid: ready && parts.length >= 2 && rest !== null && rest !== 0 && splitOff.every(c => c !== 0)
     /// Why "Speichern" is greyed out (#383): say so instead of leaving it silent; nothing while
     /// nothing is typed yet (SplitDraft.problem).
     readonly property string problem: {
@@ -64,7 +67,7 @@ Sheet {
     function part(categoryID, amount, note, uuid) { return { uid: nextUid++, uuid: uuid || null, categoryID: categoryID, amount: amount, note: note } }
 
     onAboutToShow: {
-        error = ""; hasSplits = false; storedPartsDiffer = false; ignoredShare = ""; parts = []
+        error = ""; hasSplits = false; storedPartsDiffer = false; ignoredShare = ""; parts = []; ready = false
         const b = booking
         AppModel.splits(b, existing => {
             if (sheet.booking !== b) return
@@ -81,6 +84,7 @@ Sheet {
             // before `parts`: the Repeater builds the rows (and reads focusUid) on assignment
             if (!hasSplits) focusUid = loaded[1].uid
             parts = loaded
+            ready = true
             if (hasSplits) {
                 storedPartsDiffer = existing.reduce((s, x) => s + sign * x.amount_cents, 0) !== total
                 const percent = AppModel.splitPresetPercent
@@ -144,6 +148,7 @@ Sheet {
                     text: qsTr("%1 %").arg(modelData)
                     font.pixelSize: Theme.body
                     ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("%1 abspalten").arg(text)
+                    enabled: sheet.ready
                     onClicked: sheet.pick(modelData)
                 }
             }
@@ -207,6 +212,7 @@ Sheet {
                     text: row.modelData.note
                     placeholderText: qsTr("Notiz")
                     onTextEdited: sheet.parts[row.index].note = text
+                    Sensitive {}   // notes are personal (.sensitive())
                 }
                 IconButton {
                     visible: !row.isRest && sheet.parts.length > 2
@@ -219,6 +225,7 @@ Sheet {
         }
         IconButton {
             text: qsTr("Teil hinzufügen"); symbol: "plus"; symbolSize: 13
+            enabled: sheet.ready
             onClicked: {
                 const p = sheet.part(null, "", "")
                 sheet.focusUid = p.uid

@@ -1,3 +1,4 @@
+// test: serial-defaults
 import XCTest
 @testable import GiroCrabUI
 import GiroCrabCore
@@ -47,7 +48,12 @@ final class SplitBookingTests: XCTestCase {
         // #1663: absurd parts never trap; a sum beyond Int64 is just invalid
         XCTAssertFalse(SplitMath.isValid(total: 1, parts: [Int64.max, Int64.max]))
         XCTAssertFalse(SplitMath.isValid(total: 1, parts: [Int64.min, Int64.min]))
-        XCTAssertTrue(SplitMath.isValid(total: 8_743, parts: [223_372_036_854_783_743, 9_000_000_000_000_000_000, -9_223_372_036_854_775_000]))
+        // the vault adds from 0 in save order (PR #1761 review): the first two parts overflow there
+        XCTAssertFalse(SplitMath.isValid(total: 8_743, parts: [223_372_036_854_783_743, 9_000_000_000_000_000_000, -9_223_372_036_854_775_000]))
+        // every running sum fits, although `total - first part` would not
+        XCTAssertTrue(SplitMath.isValid(total: 100, parts: [Int64.min + 100, Int64.max, 1]))
+        XCTAssertNil(SplitMath.sum([Int64.max, 1]))
+        XCTAssertEqual(SplitMath.sum([20_000, -14_100]), 5_900)
 
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
@@ -96,7 +102,8 @@ final class SplitBookingTests: XCTestCase {
         XCTAssertEqual(SplitMath.share(of: 8_743, 7, 100), 612)
         for percent in SplitMath.shares {
             let label = SplitMath.label(percent)
-            XCTAssertTrue(label.hasPrefix("\(percent)") && label.hasSuffix("%"), label)
+            // the sign's position follows the locale ("19 %", "19%", "%19")
+            XCTAssertTrue(label.contains("\(percent)") && label.contains("%"), label)
         }
     }
 
@@ -159,12 +166,19 @@ final class SplitBookingTests: XCTestCase {
         XCTAssertEqual(counter.amountsToSave(sign: 1), [-14_100, 20_000])
         XCTAssertFalse(half.restIsNegative)
 
-        // absurd input never traps
-        XCTAssertFalse(SplitDraft(total: 1, splitOffTexts: ["92233720368547758", "92233720368547758"]).valid)
-        // adds up, but Int64.min cannot take an expense's sign: nothing to save (PR #1761 review)
-        let extreme = SplitDraft(total: 1, splitOffTexts: ["92233720368547758,07", "-92233720368547758,08"])
+        // absurd input never traps; a sum beyond Int64 is its own problem, not a zero part
+        let huge = SplitDraft(total: 1, splitOffTexts: ["92233720368547758", "92233720368547758"])
+        XCTAssertFalse(huge.valid)
+        XCTAssertEqual(huge.problem, .outOfRange)
+        // the rest fits, but rest + first part leave Int64 in save order: the vault would reject it (PR #1761 review)
+        let overflowing = SplitDraft(total: 1, splitOffTexts: ["92233720368547758,07", "-92233720368547758,08"])
+        XCTAssertFalse(overflowing.valid)
+        XCTAssertEqual(overflowing.problem, .outOfRange)
+        XCTAssertNil(overflowing.amountsToSave(sign: 1))
+        // adds up in save order, but a rest of Int64.min cannot take an expense's sign: nothing to save
+        let extreme = SplitDraft(total: 1, splitOffTexts: ["92233720368547758,07", "0,02"])
         XCTAssertTrue(extreme.valid)
         XCTAssertNil(extreme.amountsToSave(sign: -1))
-        XCTAssertEqual(extreme.amountsToSave(sign: 1), [2, Int64.max, Int64.min])
+        XCTAssertEqual(extreme.amountsToSave(sign: 1), [Int64.min, Int64.max, 2])
     }
 }

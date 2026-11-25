@@ -542,10 +542,20 @@ enum SplitMath {
     static let shares: [Int64] = [7, 19, 50]
     /// A share as the UI writes it: „19 %“ (de), "19%" (en).
     static func label(_ percent: Int64) -> String { (Double(percent) / 100).formatted(.percent) }
-    /// At least two parts, none 0, parts add up to `total`. Negative parts are allowed; parts
-    /// whose sum leaves `Int64` are invalid instead of trapping (#1663, absurd input).
+    /// At least two parts, none 0, parts add up to `total`, added from 0 in save order like the
+    /// vault (`validate_splits`). Negative parts are allowed; a running sum that leaves `Int64`
+    /// is invalid instead of trapping (#1663, absurd input).
     static func isValid(total: Int64, parts: [Int64]) -> Bool {
-        parts.count >= 2 && !parts.contains(0) && rest(total: total, splitOff: parts) == 0
+        parts.count >= 2 && !parts.contains(0) && sum(parts) == total
+    }
+    /// The parts added from 0 in the given order, as the vault checks them; nil when a running
+    /// sum leaves `Int64`.
+    static func sum(_ parts: [Int64]) -> Int64? {
+        parts.reduce(Int64?.some(0)) { sum, part in
+            guard let sum else { return nil }
+            let (next, overflow) = sum.addingReportingOverflow(part)
+            return overflow ? nil : next
+        }
     }
     /// What the first part keeps (#1663): `total` minus the parts split off; nil when one of
     /// them is unreadable (nil) or the difference leaves `Int64`.
@@ -597,6 +607,8 @@ struct SplitDraft: Equatable {
         case unreadable
         /// A part, or the rest, is 0.
         case zeroPart
+        /// The parts add up only beyond `Int64` (absurd input): the vault would reject them.
+        case outOfRange
     }
     /// The parts split off (all but the first) as typed; nil = unreadable. An empty field counts
     /// as 0, so the rest shows the whole amount until something is typed.
@@ -615,8 +627,12 @@ struct SplitDraft: Equatable {
         (splitOff, self.rest, self.valid) = (parts, rest, valid)
         if valid || typed.allSatisfy(\.isEmpty) {
             problem = nil
+        } else if zip(typed, parts).contains(where: { !$0.isEmpty && $1 == nil }) {
+            problem = .unreadable
+        } else if rest == 0 || parts.contains(0) {
+            problem = .zeroPart
         } else {
-            problem = zip(typed, parts).contains { !$0.isEmpty && $1 == nil } ? .unreadable : .zeroPart
+            problem = .outOfRange
         }
     }
 
@@ -628,8 +644,12 @@ struct SplitDraft: Equatable {
     /// nil unless valid.
     func amountsToSave(sign: Int64) -> [Int64]? {
         guard valid, let rest else { return nil }
-        let signed = ([rest] + splitOff.compactMap { $0 }).map { $0.multipliedReportingOverflow(by: sign) }
-        return signed.contains { $0.overflow } ? nil : signed.map(\.partialValue)
+        let own = [rest] + splitOff.compactMap { $0 }
+        let signed = own.map { $0.multipliedReportingOverflow(by: sign) }
+        guard !signed.contains(where: { $0.overflow }), let target = SplitMath.sum(own) else { return nil }
+        let amounts = signed.map(\.partialValue)
+        // the vault adds exactly these amounts from 0 in this order (`validate_splits`)
+        return SplitMath.sum(amounts) == sign * target ? amounts : nil
     }
 }
 
@@ -654,6 +674,9 @@ struct SplitSheet: View {
     @State private var error: String?
     /// The booking is split already (loaded with the parts).
     @State private var hasSplits = false
+    /// The stored split was read (an empty result counts). Until then, and after a failed read,
+    /// nothing can be added, picked or saved: a draft must never replace a split it has not seen.
+    @State private var loaded = false
     /// The loaded parts no longer add up to the booking (its amount changed after saving): the
     /// first part shows the rest instead of what was stored (#1663), so the sheet says so.
     @State private var storedPartsDiffer = false
@@ -708,6 +731,7 @@ struct SplitSheet: View {
                                 .sensitive(.amounts)
                         }
                         TextField("Notiz", text: $p.note).textFieldStyle(.roundedBorder)
+                            .sensitive()
                         if !isRest, parts.count > 2 {
                             Button { parts.removeAll { $0.id == p.id } } label: { Label("Aufteilung entfernen", systemImage: "minus.circle") }
                                 .labelStyle(.iconOnly)
@@ -725,6 +749,7 @@ struct SplitSheet: View {
                 Label("Teil hinzufügen", systemImage: "plus")
             }
             .buttonStyle(.borderless)
+            .disabled(!loaded)
             if let ignoredShare {
                 Text("Die Buchung ist schon aufgeteilt, deshalb wurde „\(ignoredShare)“ nicht eingetragen.")
                     .appFont(.callout).foregroundStyle(Theme.secondary)
@@ -736,7 +761,8 @@ struct SplitSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let problem = draft.problem, error == nil {
-                Text(problem == .unreadable
+                // `.outOfRange` (absurd input) shows the format hint: no new text for a 92-trillion sum
+                Text(problem != .zeroPart
                     ? "Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“."
                     : "Jeder Teil braucht einen Betrag ungleich 0.")
                     .appFont(.callout).foregroundStyle(Theme.secondary)
@@ -760,14 +786,14 @@ struct SplitSheet: View {
                 // Int64.min that cannot take the booking's sign (absurd input)
                 let toSave = draft.amountsToSave(sign: sign)
                 Button("Speichern") {
-                    guard let toSave else { return }
+                    guard loaded, let toSave else { return }
                     let inputs = zip(parts, toSave).map { part, cents in
                         TransactionSplitInput(uuid: part.uuid, categoryId: part.categoryID, amountCents: cents, note: part.note)
                     }
                     error = model.saveSplits(inputs, for: booking)
                     if error == nil { dismiss() }
                 }
-                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(toSave == nil)
+                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!loaded || toSave == nil)
             }
         }
         .padding(22)
@@ -793,6 +819,7 @@ struct SplitSheet: View {
             } else {
                 parts = zip(existing, opening.amounts).map { Part(uuid: $0.uuid, categoryID: $0.categoryId, amount: $1, note: $0.note) }
             }
+            loaded = true
         }
     }
 
@@ -820,6 +847,7 @@ struct SplitSheet: View {
         }
         .buttonStyle(.bordered)
         .appFont(.body)
+        .disabled(!loaded)
     }
 }
 
