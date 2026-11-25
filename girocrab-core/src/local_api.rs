@@ -1,4 +1,4 @@
-//! Read-only local interface for external analysis tools (GitHub #136).
+//! Local interface for external analysis tools (GitHub #136).
 //!
 //! A versioned JSON request/response layer over the open vault: accounts,
 //! categories, bookings (keyset-paged) and period summaries. The app serves it
@@ -7,8 +7,10 @@
 //!
 //! - Opt-in: off until the user stores an enabled [`ShareScope`]; the scope is
 //!   read on every request, so revoking takes effect at once.
-//! - Strictly read-only: the handler only knows the read methods below, nothing
-//!   writes user data, no connection logins, credentials, keys or documents
+//! - Read-only unless the user also allows edits (`ShareScope::allow_edits`, off by
+//!   default). Then a client may set the category and the tags of bookings on
+//!   shared accounts ([`edit`]); nothing else is ever written: no amounts, texts,
+//!   accounts, rules, connection logins, credentials, keys or documents
 //!   (`accounts` uses `list_accounts`, which may refresh stale derived asset
 //!   values, as on every app reload).
 //! - Only the accounts in the scope are visible, also through search, loan views
@@ -34,7 +36,7 @@ use serde_json::{Value, json};
 
 use crate::error::CoreError;
 use crate::merchants::FlowKind;
-use crate::models::{Booking, BookingDirection, BookingFilter, KpiSide, kpi_side};
+use crate::models::{Booking, BookingDirection, BookingFilter, CategorySource, KpiSide, kpi_side};
 use crate::vault::Vault;
 
 /// Version of the request/response format; a breaking change bumps it.
@@ -61,6 +63,9 @@ pub struct ShareScope {
     /// Purpose and booking text.
     pub share_purpose: bool,
     pub share_notes: bool,
+    /// Clients may set the category and tags of bookings on shared accounts
+    /// (`set_category`, `set_tags`). Off = strictly read-only.
+    pub allow_edits: bool,
     /// SHA-256 (hex) of the access token; "" = none, socket requests are refused.
     /// Only `create_local_api_token` / `revoke_local_api_token` change it.
     pub token_sha256: String,
@@ -75,6 +80,7 @@ impl Default for ShareScope {
             share_counterparty: true,
             share_purpose: true,
             share_notes: false,
+            allow_edits: false,
             token_sha256: String::new(),
         }
     }
@@ -91,6 +97,8 @@ pub struct ApiInfo {
     pub shares_counterparty: bool,
     pub shares_purpose: bool,
     pub shares_notes: bool,
+    /// `set_category` and `set_tags` are allowed.
+    pub allows_edits: bool,
     /// Newest successful bank sync of a shared account (Unix seconds), single-account
     /// fetches included (the same per-account value as `accounts`).
     pub last_sync_unix: Option<i64>,
@@ -138,6 +146,11 @@ pub struct ApiTransaction {
     pub currency: String,
     pub category_id: Option<i64>,
     pub category_path: String,
+    /// Who set the category: `none`, `rule` (an auto-categorisation rule, which
+    /// may change it again) or `manual` (the user or `set_category`).
+    pub category_source: String,
+    /// Names of the booking's tags.
+    pub tags: Vec<String>,
     /// Recognised merchant ("" = none).
     pub merchant: String,
     /// `consumption`, `income`, `investment`, `perk`, `transfer`, `loan`.
@@ -247,6 +260,8 @@ pub enum ApiErrorCode {
     UnknownMethod,
     InvalidParams,
     NotShared,
+    /// A write method while the user has not allowed edits.
+    ReadOnly,
     Internal,
 }
 
@@ -261,6 +276,7 @@ impl ApiErrorCode {
             ApiErrorCode::UnknownMethod => "unknown_method",
             ApiErrorCode::InvalidParams => "invalid_params",
             ApiErrorCode::NotShared => "not_shared",
+            ApiErrorCode::ReadOnly => "read_only",
             ApiErrorCode::Internal => "internal",
         }
     }
@@ -382,17 +398,22 @@ impl Vault {
     /// `{"v":1,"result":…}` or `{"v":1,"error":{"code":"…","message":"…"}}`.
     /// In process, without a token (tests, the app itself).
     pub fn local_api_request(&self, request: &str) -> String {
-        response(self.local_api_dispatch(request, false))
+        response(self.local_api_dispatch(request, false).map(|(v, _)| v))
     }
 
     /// The same for a request from the socket: it must carry the current token.
-    /// Only the Unix-socket server calls it (`server` is `cfg(unix)`).
+    /// Only the Unix-socket server calls it (`server` is `cfg(unix)`). The flag
+    /// tells whether the request changed bookings (the app then reloads).
     #[cfg(unix)]
-    pub(crate) fn local_api_socket_request(&self, request: &str) -> String {
-        response(self.local_api_dispatch(request, true))
+    pub(crate) fn local_api_socket_request(&self, request: &str) -> (String, bool) {
+        match self.local_api_dispatch(request, true) {
+            Ok((value, changed)) => (response(Ok(value)), changed),
+            Err(e) => (response(Err(e)), false),
+        }
     }
 
-    fn local_api_dispatch(&self, request: &str, require_token: bool) -> ApiResult<Value> {
+    /// The result and whether bookings changed.
+    fn local_api_dispatch(&self, request: &str, require_token: bool) -> ApiResult<(Value, bool)> {
         let req: Request = serde_json::from_str(request)
             .map_err(|e| ApiError::invalid(format!("malformed request: {e}")))?;
         if req.v.is_some_and(|v| v != API_VERSION) {
@@ -425,12 +446,31 @@ impl Vault {
             }
             serde_json::from_value(v).map_err(|e| ApiError::invalid(e.to_string()))
         }
+        let writes = matches!(req.method.as_str(), "set_category" | "set_tags");
+        if writes && !scope.allow_edits {
+            return Err(ApiError::new(
+                ApiErrorCode::ReadOnly,
+                "changing categories and tags is turned off in GiroCrab \
+                 (Settings › Analysis)",
+            ));
+        }
         let value = match req.method.as_str() {
             "info" => to_value(self.api_info(&scope)?),
             "accounts" => to_value(self.shared_accounts(&scope)?),
             "categories" => to_value(self.api_categories()?),
+            "tags" => to_value(self.api_tags(&scope)?),
             "transactions" => to_value(self.api_transactions(&scope, params(req.params)?)?),
             "summary" => to_value(self.api_summary(&scope, params(req.params)?)?),
+            "set_category" => {
+                let edit = self.api_set_category(&scope, params(req.params)?)?;
+                let changed = edit.changed_any();
+                return Ok((to_value(edit), changed));
+            }
+            "set_tags" => {
+                let edit = self.api_set_tags(&scope, params(req.params)?)?;
+                let changed = edit.changed_any();
+                return Ok((to_value(edit), changed));
+            }
             other => {
                 return Err(ApiError::new(
                     ApiErrorCode::UnknownMethod,
@@ -438,7 +478,7 @@ impl Vault {
                 ));
             }
         };
-        Ok(value)
+        Ok((value, false))
     }
 
     /// Shared accounts that still exist, in sidebar order, with the balances the
@@ -488,6 +528,7 @@ impl Vault {
             shares_counterparty: scope.share_counterparty,
             shares_purpose: scope.share_purpose,
             shares_notes: scope.share_notes,
+            allows_edits: scope.allow_edits,
             last_sync_unix: last_sync,
         })
     }
@@ -773,6 +814,14 @@ fn to_value<T: Serialize>(v: T) -> Value {
     serde_json::to_value(v).unwrap_or(Value::Null)
 }
 
+fn category_source_str(source: CategorySource) -> &'static str {
+    match source {
+        CategorySource::None => "none",
+        CategorySource::Rule => "rule",
+        CategorySource::Manual => "manual",
+    }
+}
+
 fn flow_str(flow: FlowKind) -> &'static str {
     match flow {
         FlowKind::Consumption => "consumption",
@@ -871,6 +920,8 @@ fn api_transaction(scope: &ShareScope, t: &Booking) -> ApiTransaction {
         currency: t.currency.clone(),
         category_id: t.category_id,
         category_path: t.category_path.clone(),
+        category_source: category_source_str(t.category_source).into(),
+        tags: t.tags.iter().map(|g| g.name.clone()).collect(),
         // The merchant is read from counterparty and purpose, so it is masked
         // like them ("Darlehen Kto 4009988").
         merchant: shared_text(
@@ -896,6 +947,7 @@ fn api_transaction(scope: &ShareScope, t: &Booking) -> ApiTransaction {
     }
 }
 
+mod edit;
 #[cfg(unix)]
 pub mod server;
 

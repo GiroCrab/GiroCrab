@@ -8,12 +8,16 @@ use crate::iban::{normalize_iban, validate_iban};
 
 pub const PAIN_DESCRIPTOR: &str = "urn:iso:std:iso:20022:tech:xsd:pain.001.001.03";
 pub const PAIN_09_DESCRIPTOR: &str = "urn:iso:std:iso:20022:tech:xsd:pain.001.001.09";
+/// The German DK profile of `.03`: same layout, own namespace (#1792).
+pub const PAIN_DK_03_DESCRIPTOR: &str = "urn:iso:std:iso:20022:tech:xsd:pain.001.003.03";
 
 /// pain.001 schema version. `.09` is the current format and preferred whenever
 /// a bank offers it; `.03` only for banks that offer nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PainVersion {
     V03,
+    /// `pain.001.003.03`: laid out like `V03`, only the namespace differs.
+    V03Dk,
     V09,
 }
 
@@ -21,6 +25,7 @@ impl PainVersion {
     pub fn descriptor(self) -> &'static str {
         match self {
             PainVersion::V03 => PAIN_DESCRIPTOR,
+            PainVersion::V03Dk => PAIN_DK_03_DESCRIPTOR,
             PainVersion::V09 => PAIN_09_DESCRIPTOR,
         }
     }
@@ -219,7 +224,7 @@ pub fn build_pain001(p: &Pain001) -> CoreResult<String> {
     let c_iban = normalize_iban(p.creditor_iban);
     // pain.001.001.09 renamed <BIC> to <BICFI> and wraps the execution date.
     let bic_tag = match p.version {
-        PainVersion::V03 => "BIC",
+        PainVersion::V03 | PainVersion::V03Dk => "BIC",
         PainVersion::V09 => "BICFI",
     };
     let d_agent = if validate_bic(p.debtor_bic) {
@@ -241,7 +246,7 @@ pub fn build_pain001(p: &Pain001) -> CoreResult<String> {
     };
     let exec = xml_escape(p.execution_date);
     let exec = match p.version {
-        PainVersion::V03 => exec,
+        PainVersion::V03 | PainVersion::V03Dk => exec,
         PainVersion::V09 => format!("<Dt>{exec}</Dt>"),
     };
     let local_instrument = if p.instant {
@@ -351,7 +356,7 @@ pub fn build_pain001_batch(p: &Pain001Batch) -> CoreResult<String> {
     let debtor = xml_escape(&clip(p.debtor_name, 70));
     let d_iban = normalize_iban(p.debtor_iban);
     let bic_tag = match p.version {
-        PainVersion::V03 => "BIC",
+        PainVersion::V03 | PainVersion::V03Dk => "BIC",
         PainVersion::V09 => "BICFI",
     };
     let d_agent = if validate_bic(p.debtor_bic) {
@@ -361,7 +366,7 @@ pub fn build_pain001_batch(p: &Pain001Batch) -> CoreResult<String> {
     };
     let exec = xml_escape(p.execution_date);
     let exec = match p.version {
-        PainVersion::V03 => exec,
+        PainVersion::V03 | PainVersion::V03Dk => exec,
         PainVersion::V09 => format!("<Dt>{exec}</Dt>"),
     };
     let mut txs = String::new();

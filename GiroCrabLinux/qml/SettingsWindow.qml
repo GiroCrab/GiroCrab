@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// SettingsView.swift: the macOS Settings window with its tabs Allgemein, Banken, Sicherheit.
+// SettingsView.swift: the macOS Settings window with its tabs Allgemein, Banken, Sicherheit, Analyse.
 // Dropped on Linux: Dokumente (document folder), Updates (Sparkle).
 ApplicationWindow {
     id: win
@@ -19,7 +19,9 @@ ApplicationWindow {
         // SettingsView.swift › settingsPane(height:): "Allgemein" 600 since #343/#388 (it scrolls)
         { id: "general", title: qsTr("Allgemein"), symbol: "gearshape", height: 600 },
         { id: "banks", title: qsTr("Banken"), symbol: "building.columns", height: 600 },
-        { id: "security", title: qsTr("Sicherheit"), symbol: "lock.shield", height: 780 }]
+        { id: "security", title: qsTr("Sicherheit"), symbol: "lock.shield", height: 780 },
+        // ExternalAccessSettings (#136): settingsPane(height: 640)
+        { id: "externalAccess", title: qsTr("Analyse"), symbol: "chart.bar.doc.horizontal", height: 640 }]
     readonly property int tabIndex: Math.max(0, tabs.findIndex(t => t.id === AppModel.settingsTab))
     width: 680 * Theme.textScale   // SettingsPaneFrame: 680 × textScale
     // never taller than the screen (small laptop displays)
@@ -81,6 +83,7 @@ ApplicationWindow {
                 GeneralSettings {}
                 BankConnectionsSettings { enabled: AppModel.isUnlocked }
                 SecuritySettings { id: security }
+                ExternalAccessSettings { enabled: AppModel.isUnlocked }
             }
             // AppVersion.swift › AppVersionFooter: a subtle line under every pane. Linux shows the
             // core version it was built on (the same number as „Kern-Version“ in Sicherheit), plus

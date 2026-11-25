@@ -250,16 +250,16 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
 
     fun deleteRule(ruleId: String) = editData { d -> d.copy(rules = d.rules.filterNot { it.id == ruleId }) }
 
-    /** Applies enabled rules to uncategorized bookings (never overrides manual categories). Returns count changed. */
+    /**
+     * Applies enabled rules: a category only to uncategorized bookings (never overrides manual
+     * categories), tags from every matching rule. Returns count changed.
+     */
     fun applyRules(): Int {
         var changed = 0
         editData { d ->
             val active = d.rules.filter { it.enabled }
             d.copy(bookings = d.bookings.map { b ->
-                if (b.categoryId != null) return@map b
-                val r = active.firstOrNull { it.matches(b) } ?: return@map b
-                changed++
-                b.copy(categoryId = r.categoryId, categoryByRule = true, tagIds = b.tagIds + r.tagIds)
+                applyRulesTo(active, b).also { if (it !== b) changed++ }
             })
         }
         return changed
@@ -271,9 +271,8 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         val scoped = _state.value.scopedAccountIds
         editData { d ->
             d.copy(bookings = d.bookings.map { b ->
-                if (b.categoryId != null || b.accountId !in scoped || !rule.matches(b)) return@map b
-                changed++
-                b.copy(categoryId = rule.categoryId, categoryByRule = true, tagIds = b.tagIds + rule.tagIds)
+                if (b.categoryId != null || b.accountId !in scoped) return@map b
+                applyRulesTo(listOf(rule), b).also { if (it !== b) changed++ }
             })
         }
         return changed
@@ -316,6 +315,22 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
     }
 
     companion object {
+        /**
+         * The core's split (`RuleSet::categorise` / `tags_for`): the category comes from the first
+         * matching rule that sets one, and only for an uncategorized booking; tag-only rules never
+         * categorise. Tags are the union of every matching rule. Returns [b] itself when nothing changes.
+         */
+        fun applyRulesTo(rules: List<Rule>, b: Booking): Booking {
+            val matching = rules.filter { it.matches(b) }
+            val tags = b.tagIds + matching.flatMap { it.tagIds }
+            val category = if (b.categoryId == null) matching.firstOrNull { it.categoryId != null }?.categoryId else null
+            return when {
+                category != null -> b.copy(categoryId = category, categoryByRule = true, tagIds = tags)
+                tags != b.tagIds -> b.copy(tagIds = tags)
+                else -> b
+            }
+        }
+
         fun filterBookings(s: AppUiState): List<Booking> {
             val ids = s.scopedAccountIds
             val f = s.filter
