@@ -433,6 +433,10 @@ extension AppModel {
                 self.activeSession = session
                 let step = try await session.start()
                 guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
+                // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with .finished
+                if self.activeChallenge?.busy == true {
+                    guard case .finished = step else { return }
+                }
                 self.handle(step, connection: connection)
             } catch {
                 if let started, self.activeSession !== started { return }
@@ -465,13 +469,17 @@ extension AppModel {
         }
         switch step {
         case .needsChallenge(let c):
-            activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: false)
+            activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: false,
+                                              canSkipOrder: activeSession?.isFetching() ?? false)
             if c.kind == .decoupledPush || c.kind == .progress { schedulePoll(connection: connection, interval: c.pollIntervalSeconds) }
         case .stillWaiting(let c):
             if activeChallenge == nil {
-                activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: true)
+                activeChallenge = ActiveChallenge(connection: connection, challenge: c, waiting: true,
+                                                  canSkipOrder: activeSession?.isFetching() ?? false)
             } else {
                 activeChallenge?.challenge = c  // progress steps bring a new text
+                activeChallenge?.canSkipOrder = activeSession?.isFetching() ?? false
+                activeChallenge?.polling = false
                 activeChallenge?.waiting = true
                 activeChallenge?.busy = false
             }
@@ -557,9 +565,14 @@ extension AppModel {
                 return
             }
             guard let session = self.activeSession else { return }
+            if self.activeChallenge?.canSkipOrder == true { self.activeChallenge?.polling = true }
             do {
                 let step = try await session.poll()
                 guard self.activeSession === session else { return }  // skipped / cancelled meanwhile
+                if self.activeChallenge?.busy == true {
+                    // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with .finished
+                    guard case .finished = step else { return }
+                }
                 self.handle(step, connection: connection)
             } catch {
                 guard self.activeSession === session else { return }
@@ -599,6 +612,25 @@ extension AppModel {
             do {
                 let step = try await session.submitCode(code: code)
                 // "Überspringen" while the code was on its way: drop the late answer
+                guard self.activeSession === session else { return }
+                self.handle(step, connection: ch.connection)
+            } catch {
+                guard self.activeSession === session else { return }
+                self.finishSync(error: error)
+            }
+        }
+    }
+
+    /// "TAN auslassen" (#1730): leaves out the order the bank wants a TAN for during the
+    /// fetch; the sync goes on with the rest and reports the order as a warning.
+    func skipOrder() {
+        guard let session = activeSession, let ch = activeChallenge, ch.canSkipOrder, !ch.busy else { return }
+        pollTask?.cancel()
+        activeChallenge?.busy = true
+        activeChallenge?.error = nil
+        Task {
+            do {
+                let step = try await session.skip()
                 guard self.activeSession === session else { return }
                 self.handle(step, connection: ch.connection)
             } catch {

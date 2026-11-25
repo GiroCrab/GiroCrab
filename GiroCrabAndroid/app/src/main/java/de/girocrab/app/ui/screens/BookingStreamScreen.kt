@@ -167,8 +167,9 @@ fun BookingStreamScreen(
                 onAccountSettings = onAccountSettings,
             )
         }
-        // The list is a single page from the core for now (#1429, 3.3 brings the cursor). Saying so
-        // is the point: a silently cut list looks like the vault holds no more than this.
+        // Every page is read at unlock (#1429, 3.3). What is left is the page cap of
+        // BookingsPaging: saying so is the point, because a silently cut list looks like the
+        // vault holds no more than this.
         if (data.bookingsTotal > data.bookings.size) {
             item {
                 Surface(
