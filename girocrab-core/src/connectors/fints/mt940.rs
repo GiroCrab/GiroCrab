@@ -86,6 +86,10 @@ pub struct Details {
     pub gvc: String,
     /// SEPA purpose code (`PURP+SALA` keyword), "" if absent.
     pub purpose_code: String,
+    /// `ABWA+` (abweichender Auftraggeber, credits) and `ABWE+` (abweichender
+    /// Zahlungsempfänger, debits) from the purpose text.
+    pub ultimate_debtor: String,
+    pub ultimate_creditor: String,
 }
 
 pub fn parse_86(raw: &str) -> Details {
@@ -127,7 +131,23 @@ pub fn parse_86(raw: &str) -> Details {
     let joined = purpose_parts.concat();
     d.purpose_code = sepa_purpose_code(&joined);
     d.purpose = sepa_purpose(&joined);
+    d.ultimate_debtor = sepa_keyword(&joined, "ABWA+");
+    d.ultimate_creditor = sepa_keyword(&joined, "ABWE+");
     d
+}
+
+/// Value of one SEPA keyword (`ABWE+…`) up to the next keyword, "" if absent.
+fn sepa_keyword(text: &str, key: &str) -> String {
+    let Some(pos) = text.find(key) else {
+        return String::new();
+    };
+    let rest = &text[pos + key.len()..];
+    let end = SEPA_KEYS
+        .iter()
+        .filter_map(|k| rest.find(k))
+        .min()
+        .unwrap_or(rest.len());
+    rest[..end].trim().to_string()
 }
 
 /// SEPA purpose code from a `PURP+XXXX` keyword (some banks put it into `:86:`).
@@ -144,14 +164,15 @@ fn sepa_purpose_code(text: &str) -> String {
         .unwrap_or_default()
 }
 
+const SEPA_KEYS: [&str; 10] = [
+    "EREF+", "KREF+", "MREF+", "CRED+", "DEBT+", "SVWZ+", "ABWA+", "ABWE+", "IBAN+", "PURP+",
+];
+
 /// Extracts the human purpose ("SVWZ+") from SEPA keyword text if present.
 fn sepa_purpose(text: &str) -> String {
-    const KEYS: [&str; 10] = [
-        "EREF+", "KREF+", "MREF+", "CRED+", "DEBT+", "SVWZ+", "ABWA+", "ABWE+", "IBAN+", "PURP+",
-    ];
     if let Some(pos) = text.find("SVWZ+") {
         let rest = &text[pos + 5..];
-        let end = KEYS
+        let end = SEPA_KEYS
             .iter()
             .filter_map(|k| rest.find(k))
             .min()
@@ -176,6 +197,8 @@ pub fn parse(
     // A `:61:` that could not be read is dropped; its `:86:` details must then be
     // dropped too, not attached to the previous booking.
     let mut skip_86 = false;
+    // (index, abweichende Gegenpartei) per booking, applied once ids exist.
+    let mut ultimate: Vec<(usize, String)> = Vec::new();
     for (tag, value) in fields(text) {
         match tag.as_str() {
             "25" => stmt.account = value.trim().to_string(),
@@ -260,6 +283,7 @@ pub fn parse(
             }
             "86" if skip_86 => skip_86 = false,
             "86" => {
+                let last = txs.len().wrapping_sub(1);
                 if let Some(t) = txs.last_mut() {
                     let d = parse_86(&value);
                     if !d.booking_text.is_empty() {
@@ -267,6 +291,15 @@ pub fn parse(
                     }
                     t.purpose = d.purpose;
                     t.counterparty = d.counterparty;
+                    // After the id is derived below the ultimate party replaces it.
+                    ultimate.push((
+                        last,
+                        if t.amount_cents < 0 {
+                            d.ultimate_creditor
+                        } else {
+                            d.ultimate_debtor
+                        },
+                    ));
                     t.counterparty_iban = d.counterparty_iban;
                     t.gvc = d.gvc;
                     t.purpose_code = d.purpose_code;
@@ -283,6 +316,11 @@ pub fn parse(
         let n = occurrences.entry(key).or_insert(0);
         t.external_id = t.content_id(*n);
         *n += 1;
+    }
+    for (i, name) in ultimate {
+        if !name.is_empty() {
+            txs[i].counterparty = name;
+        }
     }
     (txs, stmt)
 }
@@ -311,6 +349,27 @@ mod tests {
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].purpose, "Echt");
         assert_eq!(txs[0].counterparty, "Haendler");
+    }
+
+    #[test]
+    fn ultimate_party_replaces_the_counterparty_by_direction() {
+        let text = ":20:X\r\n:25:52090000/1\r\n\
+:61:2501020102DR10,00NDDTNONREF\r\n:86:105?00LASTSCHRIFT?20SVWZ+Paket ABWE+Muster Versand?21 GmbH?32Beispielbank AG\r\n\
+:61:2501030103CR20,00NTRFNONREF\r\n:86:166?00GUTSCHRIFT?20SVWZ+Erstattung ABWA+Muster Shop?32Beispielbank AG\r\n\
+:61:2501040104DR5,00NDDTNONREF\r\n:86:105?00LASTSCHRIFT?20SVWZ+Ohne ABWA+Falsche Richtung?32Beispielbank AG\r\n\
+:62F:C250104EUR0,00\r\n-\r\n";
+        let (txs, _) = parse(text, "acc", "EUR");
+        assert_eq!(txs[0].counterparty, "Muster Versand GmbH");
+        assert_eq!(txs[0].purpose, "Paket");
+        assert_eq!(txs[1].counterparty, "Muster Shop");
+        // wrong direction or no keyword: fall back to the name field
+        assert_eq!(txs[2].counterparty, "Beispielbank AG");
+        // the id does not depend on the ultimate party (synced bookings keep it)
+        let plain = text.replace("ABWE+Muster Versand?21 GmbH", "");
+        assert_eq!(
+            parse(&plain, "acc", "EUR").0[0].external_id,
+            txs[0].external_id
+        );
     }
 
     #[test]
