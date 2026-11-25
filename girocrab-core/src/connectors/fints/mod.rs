@@ -304,6 +304,8 @@ pub struct FinTsConnector {
     /// it was only asked, skipped or refused): a later reply without SCA (a further page,
     /// another job) says nothing about the next sync (#1828).
     sca_in_dialog: bool,
+    /// The user skipped a TAN for this account's requests (#1828): the late HKSAL is not sent either.
+    tan_skipped: bool,
     /// `sca_seen` changed during this connector's requests: a fetch that fails still hands the
     /// state back (`state_after_failed_fetch`, #1828).
     sca_seen_changed: bool,
@@ -400,6 +402,7 @@ impl FinTsConnector {
             partial_statements: false,
             truncated_statements: false,
             sca_in_dialog: false,
+            tan_skipped: false,
             sca_seen_changed: false,
             sca_asked: HashSet::new(),
             sca_approved: HashSet::new(),
@@ -603,6 +606,7 @@ impl BankConnector for FinTsConnector {
             if only.is_some_and(|o| o != label) {
                 continue;
             }
+            self.tan_skipped = false;
             let allowed = |tx: &str| upd.as_ref().is_none_or(|u| u.allows(tx));
             let mut kind = upd
                 .as_ref()
@@ -641,17 +645,19 @@ impl BankConnector for FinTsConnector {
             let mut balance_date = super::today();
 
             // --- Balance (HKSAL), only if the account allows it
-            if self.bank_supports("HKSAL") && allowed("HKSAL") {
-                match self.balance(ctx, acc).await {
-                    Ok(Some((b, cur, date))) => {
-                        balance = Some(b);
-                        currency = cur;
-                        balance_date = date;
-                        ok_any = true;
-                    }
-                    Ok(None) => {}
-                    Err(e) => errors.push(trf("{0}: Saldo – {1}", &[&label, &e])),
-                }
+            let hksal = self.bank_supports("HKSAL") && allowed("HKSAL");
+            // #1828: the bank wants a TAN for the balance: the bookings' closing balance may save it
+            let balance_late = hksal && self.st.sca_seen.contains("HKSAL");
+            if hksal && !balance_late {
+                apply_balance(
+                    self.balance(ctx, acc).await,
+                    label,
+                    &mut balance,
+                    &mut currency,
+                    &mut balance_date,
+                    &mut ok_any,
+                    &mut errors,
+                );
             }
 
             // --- Depot value (HKWPD / MT535), only for depots that allow it
@@ -817,6 +823,17 @@ impl BankConnector for FinTsConnector {
                     .for_each(super::comdirect::fill_card_merchant);
             }
             result.transactions.extend(txs);
+            if balance_late && balance.is_none() && !self.tan_skipped {
+                apply_balance(
+                    self.balance(ctx, acc).await,
+                    label,
+                    &mut balance,
+                    &mut currency,
+                    &mut balance_date,
+                    &mut ok_any,
+                    &mut errors,
+                );
+            }
 
             // --- Standing orders (HKCDB), read-only. Sent right after the statements,
             // in the same dialog: a bank that wants SCA for it usually accepts the
@@ -994,6 +1011,29 @@ impl BankConnector for FinTsConnector {
 
 #[cfg(test)]
 mod invariant_tests;
+/// Takes the answer of an `HKSAL` request into the account's balance, or its error into `errors`.
+#[allow(clippy::too_many_arguments)]
+fn apply_balance(
+    read: CoreResult<Option<(i64, String, String)>>,
+    label: &str,
+    balance: &mut Option<i64>,
+    currency: &mut String,
+    date: &mut String,
+    ok_any: &mut bool,
+    errors: &mut Vec<String>,
+) {
+    match read {
+        Ok(Some((b, cur, d))) => {
+            *balance = Some(b);
+            *currency = cur;
+            *date = d;
+            *ok_any = true;
+        }
+        Ok(None) => {}
+        Err(e) => errors.push(trf("{0}: Saldo – {1}", &[&label, &e])),
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

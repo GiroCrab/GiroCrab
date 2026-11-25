@@ -790,6 +790,7 @@ impl FinTsConnector {
             }
             match (answer, decoupled) {
                 (PromptAnswer::Skip, _) => {
+                    self.tan_skipped = true;
                     return Err(CoreError::Bank {
                         code: "0030".into(),
                         message: trf("Die TAN-Eingabe für {0} wurde übersprungen.", &[&seg_id]),
