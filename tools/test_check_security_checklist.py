@@ -85,6 +85,14 @@ class SecurityChecklist(unittest.TestCase):
         body = "~~~ `md`\n- [x] **Security-Check:** example\n~~~\n- [ ] **Security-Check:**"
         self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
 
+    def test_indented_fence_is_stripped_fail_safe(self):
+        # a fence nested in a list item (indented) still hides its example
+        body = "- Beispiel\n  ```\n  - [x] **Security-Check:** example\n  ```\n- [ ] **Security-Check:**"
+        self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
+        # a four-space opener without closer swallows the rest: fails, but never passes by mistake
+        body = "- [ ] **Security-Check:**\n    ```\n- [x] **Security-Check:** example"
+        self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
+
     def test_message_names_the_fix(self):
         msg = chk.verdict(["scripts/x.sh"], "")[1]
         self.assertIn("- [x] **Security-Check:**", msg)

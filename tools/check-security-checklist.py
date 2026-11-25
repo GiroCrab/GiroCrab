@@ -31,6 +31,8 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 # Fenced code blocks (``` or ~~~). As in CommonMark, the closing fence uses the opener's character, is at least
 # as long (```` closes ```, ``` does not close ````) and is indented by at most three spaces; a backtick opener's
 # info string holds no backtick (```x``` is inline code, not a fence); an unclosed fence runs to the end of the text.
+# The opener is deliberately NOT limited to three spaces: fences inside list items are indented further, and their
+# examples must not count as a ticked box. Over-stripping only fails the check (fail-safe), never lets it pass.
 FENCE_RE = re.compile(
     r"^[ \t]*(?:(`{3,})(?=[^`\n]*$).*?(?:^ {0,3}\1`*[ \t]*$|\Z)|(~{3,}).*?(?:^ {0,3}\2~*[ \t]*$|\Z))", re.S | re.M
 )
