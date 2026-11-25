@@ -1863,8 +1863,10 @@ export component MainWindow inherits Window {
                         for s in root.shares: ShareBarLine { s: s; }
                     }
                 }
+                // Shrinks with the window so Positionen/Aktivitäten stay reachable at the 600px minimum height:
+                // ~330px fixed blocks above the table plus ~120px for the table header and first rows.
                 if root.view-mode == 1 && root.depot-chart-shown: Rectangle {
-                    height: 210px;
+                    height: max(110px, min(210px, root.height - 450px - root.shares.length * 26px));
                     background: Theme.surface;
                     border-radius: 8px;
                     border-width: 1px;
