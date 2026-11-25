@@ -832,6 +832,9 @@ struct PortalWebSheet: View {
     @State private var cardsSince: Date?
     /// Amex: the stored login was filled in (or there is none): not tried again.
     @State private var loginFilled = false
+    /// Amex: polls that found the vault unanswered — ends the retry after a while
+    /// (a vault that stays closed would otherwise be read and logged forever).
+    @State private var missingTries = 0
     /// Amex: statement PDFs are being downloaded before the sheet closes.
     @State private var loadingStatements = false
     /// Amex: statements were loaded with the button: the automatic import still stores
@@ -1143,22 +1146,68 @@ struct PortalWebSheet: View {
             + String(localized: "„Vorerst behalten“ lässt sie als Vormerkung stehen; beim nächsten Abruf wird erneut gesucht.")
     }
 
+    /// What to do with the stored portal login on this poll. `.retry` keeps the poll
+    /// running (the vault has not answered: at app start it opens for a moment;
+    /// treating that as "nothing stored" latched the autofill off for one test run
+    /// and the login form stayed empty after a restart).
+    enum StoredLoginStep {
+        case fill(user: String, password: String)
+        case retry
+        case done
+    }
+
+    static func storedLoginStep(autofillDisabled: Bool, vaultAnswered: Bool,
+                                storedUser: String, password: String,
+                                connectionLogin: String, connectionIsAmazonVisa: Bool,
+                                tryCount: Int = 0) -> StoredLoginStep {
+        if autofillDisabled { return .done }
+        // an unanswered vault is retried (a restart catches it while opening) —
+        // but a vault that stays closed (e.g. a real read error) ends the poll,
+        // or every poll would read again and log for the whole session
+        guard vaultAnswered else { return tryCount < 20 ? .retry : .done }
+        // Amazon Visa already stores the email as the connection login; use it when
+        // no separate user name was stored.
+        let user = storedUser.isEmpty && connectionIsAmazonVisa ? connectionLogin : storedUser
+        // nothing stored (or only a user name that was never given): stop polling
+        guard !user.isEmpty else { return .done }
+        return .fill(user: user, password: password)
+    }
+
     /// Fills the stored user name and password into the portal's login form. True once
     /// done, or when nothing is stored; false while the form is not there yet.
     private func fillStoredLogin() async -> Bool {
         let id = connection.id
-        guard !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)) else { return true }
-        let stored = try? await model.vaultOffMain {
-            (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+        var answered = true
+        var storedUser = "", password = ""
+        do {
+            let stored: (String, String)? = try await model.vaultOffMain {
+                (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+            }
+            if let stored {
+                (storedUser, password) = stored
+            } else {
+                answered = false
+            }
+        } catch {
+            answered = false
         }
-        guard let (storedUser, password) = stored, !password.isEmpty else { return true }
-        // Amazon Visa already stores the email as the connection login; copy it to
-        // the encrypted portal-login secret when the user opts into saving credentials.
-        let user = storedUser.isEmpty && connection.connector == .amazonVisa ? connection.loginName : storedUser
-        guard !user.isEmpty else { return true }
-        let filled = await browser.fillLogin(user: user, password: password)
-        if filled { AppModel.debugLog("portal: stored login filled in") }
-        return filled
+        let step = Self.storedLoginStep(
+            autofillDisabled: AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)),
+            vaultAnswered: answered, storedUser: storedUser, password: password,
+            connectionLogin: connection.loginName, connectionIsAmazonVisa: connection.connector == .amazonVisa,
+            tryCount: missingTries)
+        switch step {
+        case .done:
+            return true
+        case .retry:
+            missingTries += 1
+            AppModel.debugLog("portal: vault busy – stored login read again (\(missingTries).)")
+            return false
+        case let .fill(user, password):
+            let filled = await browser.fillLogin(user: user, password: password)
+            if filled { AppModel.debugLog("portal: stored login filled in (password \(password.isEmpty ? "no" : "yes"))") }
+            return filled
+        }
     }
 
     /// Amex: switches the portal to the next card not seen yet. Returns true while
