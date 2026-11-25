@@ -1170,6 +1170,15 @@ export component MainWindow inherits Window {
     in property <bool> cat-can-down: false;
     in property <bool> cat-busy: false;
     callback account-new();
+    in-out property <bool> offline-open: false;
+    in-out property <bool> offline-busy: false;
+    in-out property <bool> offline-mask: false;
+    in-out property <string> offline-name;
+    in-out property <string> offline-currency: "EUR";
+    in-out property <string> offline-opening;
+    in-out property <string> offline-status;
+    callback offline-new();
+    callback offline-save(string, string, string);
     callback account-edit();
     callback account-save(string, int);
     callback account-archive();
@@ -2145,6 +2154,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     alignment: end;
                     spacing: 8px;
+                    Button { text: "Offline-Konto …"; clicked => { root.add-open = false; root.offline-new(); } }
                     Button { text: "Abbrechen"; clicked => { root.add-open = false; } }
                     Button {
                         text: root.add-busy ? "Bitte warten …" : "Hinzufügen";
@@ -2380,11 +2390,54 @@ export component MainWindow inherits Window {
         }
         HorizontalLayout {
             spacing: 8px;
+            if !root.acct-edit: Button { text: "Offline-Konto …"; clicked => { root.acct-open = false; root.offline-new(); } }
             if root.acct-edit: Button { text: root.acct-archived ? "Reaktivieren" : "Archivieren"; clicked => { root.account-archive(); } }
             if root.acct-edit && root.acct-archived: Button { text: root.acct-armed ? "Wirklich löschen?" : "Löschen"; clicked => { root.account-delete(); } }
             Rectangle { horizontal-stretch: 1; }
             Button { text: "Abbrechen"; clicked => { root.acct-open = false; root.refocus(); } }
             Button { text: "Speichern"; primary: true; clicked => { root.account-save(root.acct-name, root.acct-color); } }
+        }
+    }
+
+    // ---- offline account dialog (#679): cash and accounts without bank access, never fetched
+    if offline-open: Dialog {
+        dialog-width: 420px;
+        Text { text: "Offline-Konto anlegen"; font-size: 18px; font-weight: 700; color: Theme.text; }
+        Text {
+            text: "Für Bargeld und Konten ohne Bankzugang. Es wird kein Abruf eingerichtet.";
+            color: Theme.muted; font-size: 11px; wrap: word-wrap;
+        }
+        Text { text: "Name"; font-size: 11px; color: Theme.muted; }
+        LineEdit {
+            placeholder-text: "Bargeld";
+            text <=> root.offline-name;
+            input-type: root.offline-mask ? InputType.password : InputType.text;
+            accepted => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+        }
+        Text { text: "Währung"; font-size: 11px; color: Theme.muted; }
+        LineEdit {
+            placeholder-text: "EUR";
+            text <=> root.offline-currency;
+            accepted => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+        }
+        Text { text: "Anfangssaldo (optional)"; font-size: 11px; color: Theme.muted; }
+        LineEdit {
+            placeholder-text: "0,00";
+            text <=> root.offline-opening;
+            input-type: root.offline-mask ? InputType.password : InputType.text;
+            accepted => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+        }
+        if root.offline-status != "": Text { text: root.offline-status; color: Theme.negative; font-size: 12px; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Abbrechen"; clicked => { root.offline-open = false; root.refocus(); } }
+            Button {
+                text: root.offline-busy ? "Lege an …" : "Anlegen";
+                primary: true;
+                enabled: !root.offline-busy;
+                clicked => { root.offline-save(root.offline-name, root.offline-currency, root.offline-opening); }
+            }
         }
     }
 

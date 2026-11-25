@@ -20,6 +20,8 @@ mod manage_ui;
 mod mandates_ui;
 mod mandates_view;
 mod nav;
+mod offline;
+mod offline_ui;
 mod planning;
 mod policy;
 mod portfolio;
@@ -1366,6 +1368,18 @@ fn render_header(
     Ok(sel)
 }
 
+/// Like `show` after an edit (e.g. a new offline account), but keeps private mode on: `show`
+/// switches it off for the first paint after unlock. Restored and re-rendered in the same
+/// event-loop callback, so no frame shows unmasked values.
+fn refresh(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
+    let private = win.get_privacy();
+    show(win, vault, selected);
+    if private {
+        win.set_privacy(true);
+        win.invoke_privacy_changed();
+    }
+}
+
 /// Header plus the view of the selected target (bookings reload, or the depot / list view).
 fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     // A worker that finished after the lock must not bring the vault back.
@@ -1379,6 +1393,8 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
     match render_header(win, vault, selected) {
         Ok(sel) => {
             refresh_transfer_sources(win, vault);
+            // Offline accounts are marked (and masked in private mode) in the sidebar (#679).
+            nav::set_offline_accounts(vault.list_offline_account_ids().unwrap_or_default());
             // Fill the sidebar and the account count now; the background refresh follows.
             views_ui::set_accounts_now(win, vault);
             views_ui::sync_target(sel);
@@ -2246,6 +2262,7 @@ fn main() -> Result<(), slint::PlatformError> {
             views_ui::rerender(&win);
             mandates_ui::render_batch(&win);
             apply_transfer_rule(&win, win.get_tr_account_index());
+            offline_ui::sync_mask(&win);
         });
     }
     {
@@ -2372,6 +2389,7 @@ fn main() -> Result<(), slint::PlatformError> {
             win.set_accounts(ModelRc::new(VecModel::from(Vec::<AccountRow>::new())));
             win.set_has_inspector(false);
             views_ui::on_lock(&win);
+            offline_ui::reset(&win);
             win.set_first_run(false);
         });
     }
@@ -2682,6 +2700,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     manage_ui::wire(&win, vault.clone());
+    offline_ui::wire(&win, &vault);
     views_ui::wire(&win, vault.clone());
 
     if demo_mode {
