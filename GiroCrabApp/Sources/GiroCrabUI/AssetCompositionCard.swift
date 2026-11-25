@@ -130,13 +130,15 @@ struct SliceCompositionCard<Grouping: View, Footer: View>: View {
         filter = filter == s.memberKeys ? nil : s.memberKeys
     }
 
-    /// Grouping and drawing. iPhone: always the compact form, a menu plus icons; elsewhere side by side
-    /// or stacked, and the compact form where even that does not fit.
+    /// Grouping and drawing. The compact iOS menu and display tools stack when they do not fit together.
     @ViewBuilder
     private var controls: some View {
         #if os(iOS)
-        HStack(spacing: 10) { grouping(true); displayTools }
-            .onChange(of: displayRaw) { filter = nil }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { grouping(true); displayTools }
+            VStack(alignment: .leading, spacing: 8) { grouping(true); displayTools }
+        }
+        .onChange(of: displayRaw) { filter = nil }
         #else
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) { grouping(false); displayTools }

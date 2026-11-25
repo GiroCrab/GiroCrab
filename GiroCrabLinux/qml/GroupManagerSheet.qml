@@ -204,7 +204,7 @@ Sheet {
         x: pos.x - 12; y: pos.y - height / 2
         width: ghostText.implicitWidth + 20; height: 24; radius: 12
         color: Theme.card; border.color: Theme.border; opacity: 0.92
-        Text { id: ghostText; anchors.centerIn: parent; text: sheet.draggedAccount ? sheet.draggedAccount.name : ""; font.pixelSize: Theme.body; color: Theme.text }
+        Text { id: ghostText; anchors.centerIn: parent; text: sheet.draggedAccount ? sheet.draggedAccount.name : ""; font.pixelSize: Theme.body; color: Theme.text; Sensitive {} }
     }
 
     // "Symbol & Farbe" of the selected group, next to its button
@@ -265,7 +265,7 @@ Sheet {
             SFIcon { symbol: glr.group.sf_symbol; size: 16; color: Theme.accent; Layout.preferredWidth: 22 }
             ColumnLayout {
                 spacing: 1; Layout.fillWidth: true
-                Text { text: glr.group.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                Text { text: glr.group.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive { labels: true } }
                 Text { text: glr.hitCount < 0 ? AppModel.accountCountText(glr.group.accounts.length)
                            : glr.hitCount === 0 ? qsTr("Kein Treffer") : glr.hitCount === 1 ? qsTr("1 Treffer") : qsTr("%1 Treffer").arg(glr.hitCount)
                        font.pixelSize: Theme.caption; color: Theme.secondary }
@@ -429,11 +429,12 @@ Sheet {
                     AccountSignet { account: arow.modelData; size: 22; tintColor: AppModel.accountColor(arow.modelData.id) }
                     ColumnLayout {
                         spacing: 1; Layout.fillWidth: true
-                        Text { text: arow.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                        Text { text: arow.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                         // bank and IBAN/number, marked when archived
                         Text {
                             text: gal.rowDetail(arow.modelData)
                             font.pixelSize: Theme.caption2; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true
+                            Sensitive {}
                         }
                     }
                 }
