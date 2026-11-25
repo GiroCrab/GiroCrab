@@ -16072,7 +16072,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "While shared, the key is not bound to Touch ID, Face ID or the device passcode: when unlocking, only GiroCrab asks for it, no longer the keychain. That makes a well-protected Apple Account all the more important."
+            "value" : "While shared, the key is not bound to Touch ID, Face ID or the device passcode: when unlocking, only GiroCrab asks for authentication, no longer the keychain. That makes a well-protected Apple Account all the more important."
           }
         }
       }
