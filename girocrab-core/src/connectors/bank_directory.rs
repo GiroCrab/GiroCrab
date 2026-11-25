@@ -173,6 +173,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "ford money fordmoney fordbank tagesgeld festgeld",
         ),
         (
+            ConnectorKind::AirPlus,
+            "AirPlus Corporate Card",
+            "airplus air plus corporate card firmenkreditkarte kreditkarte business travel",
+        ),
+        (
             ConnectorKind::HanseaticBank,
             "Hanseatic Bank",
             "hanseatic hanseaticbank hanseatic bank genialcard goldcard kreditkarte sparbrief tagesgeld festgeld",

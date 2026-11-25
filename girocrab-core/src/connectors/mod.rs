@@ -17,6 +17,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 
 pub mod advanzia;
+pub mod airplus;
 pub mod amazon_documents;
 pub mod axashareplan;
 pub mod bank_directory;

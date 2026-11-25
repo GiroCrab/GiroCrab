@@ -198,7 +198,7 @@ struct ConnectionEditSheet: View {
         case .bunq: return ["bunq.environment"]
         case .bitcoinCore: return ["bitcoin_core.datadir", "bitcoin_core.rpc_url"]
         case .enableBanking: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
-        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .sharinbox, .axaShareplan, .unionInvestment, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .finpension, .monefit, .goAndGrow: return []
+        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .sharinbox, .axaShareplan, .unionInvestment, .airPlus, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .finpension, .monefit, .goAndGrow: return []
         }
     }
 

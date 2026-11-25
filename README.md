@@ -223,6 +223,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Bank | Schnittstelle | Umsätze | Salden | Depot | Depot-Aktivitäten | Überweisung | Dauerauftrag | PDF/Postfach | Status |
 |---|---|---|---|---|---|---|---|---|---|
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| AirPlus Corporate Card | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verifiziert |
 | Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Test gesucht |
 | AXA Mitarbeiter Shareplan | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
@@ -497,6 +498,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Bank | Interface | Transactions | Balances | Securities | Securities activity | Transfers | Standing orders | PDF/post box | Status |
 |---|---|---|---|---|---|---|---|---|---|
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| AirPlus Corporate Card | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verified |
 | Amazon orders | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Testing wanted |
 | AXA Mitarbeiter Shareplan | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |

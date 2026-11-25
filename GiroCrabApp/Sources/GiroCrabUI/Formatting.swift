@@ -535,6 +535,7 @@ extension ConnectorKind {
         case .monefit: return "Monefit SmartSaver"
         case .bitcoin: return "Bitcoin-Wallet (xpub)"
         case .goAndGrow: return "Go & Grow"
+        case .airPlus: return "AirPlus"
         }
     }
 
@@ -578,6 +579,7 @@ extension ConnectorKind {
         case .monefit: return "#1F4E79"
         case .bitcoin: return "#F7931A"
         case .goAndGrow: return "#2E7D32"
+        case .airPlus: return "#003A70"
         }
     }
 
@@ -628,6 +630,7 @@ extension ConnectorKind {
         case .monefit: return "MS"
         case .bitcoin: return "BTC"
         case .goAndGrow: return "GG"
+        case .airPlus: return "AP"
         }
     }
 }

@@ -421,6 +421,19 @@ fn english(de: &str) -> Option<&'static str> {
         "Bitte bei quirion im Browserfenster abrufen." => {
             "Please fetch your data in the quirion browser window."
         }
+        "AirPlus: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "AirPlus: Incomplete or invalid portal response. No data was imported."
+        }
+        "AirPlus Corporate Card" => "AirPlus Corporate Card",
+        "Bitte bei AirPlus im Browserfenster anmelden und die Umsätze abrufen." => {
+            "Please sign in to AirPlus in the browser window and fetch your transactions."
+        }
+        "Bitte bei AirPlus im Browserfenster abrufen." => {
+            "Please fetch your data in the AirPlus browser window."
+        }
+        "AirPlus Corporate Card: gebuchte Umsätze und verbrauchtes Limit. Anmeldung im Browserfenster mit SMS-TAN. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. Vorgemerkte Umsätze und Abrechnungs-PDFs werden noch nicht übernommen." => {
+            "AirPlus Corporate Card: booked transactions and used limit. Sign in in the browser window with an SMS TAN. Unofficial portal interface; subject to change and restrictions under the terms of use. Pending transactions and statement PDFs are not imported yet."
+        }
         "Schwäbisch Hall: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
             "Schwäbisch Hall: Incomplete or invalid portal response. No data was imported."
         }

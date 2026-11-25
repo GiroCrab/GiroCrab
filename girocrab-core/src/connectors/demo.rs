@@ -132,6 +132,7 @@ impl BankConnector for DemoConnector {
             | ConnectorKind::Sharinbox
             | ConnectorKind::AxaShareplan
             | ConnectorKind::UnionInvestment
+            | ConnectorKind::AirPlus
             | ConnectorKind::SchwaebischHall
             | ConnectorKind::Fnz
             | ConnectorKind::EnableBanking => Challenge {

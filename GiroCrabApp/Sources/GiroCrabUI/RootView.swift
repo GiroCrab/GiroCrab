@@ -868,6 +868,7 @@ struct MainSplitView: View {
                 else if c.connector == .sharinbox { SharinboxWebSheet(connection: c) }
                 else if c.connector == .axaShareplan { AxaShareplanWebSheet(connection: c) }
                 else if c.connector == .unionInvestment { UnionInvestmentWebSheet(connection: c) }
+                else if c.connector == .airPlus { AirPlusWebSheet(connection: c) }
                 else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
             }
