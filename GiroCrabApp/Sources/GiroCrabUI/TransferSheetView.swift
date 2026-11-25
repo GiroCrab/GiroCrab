@@ -946,12 +946,12 @@ struct SourceAccountPicker: View {
                     .appFont(.body)
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
-                    .sensitive()
                 Image(systemName: "chevron.up.chevron.down").appFont(.footnote)
                     .accessibilityHidden(true)
             }
             .foregroundStyle(Color.secondary) // not the secondary shade of the tint
         }
+        .sensitive() // on the menu, not its label: hidden, it must not open and list the accounts
     }
     #endif
 
