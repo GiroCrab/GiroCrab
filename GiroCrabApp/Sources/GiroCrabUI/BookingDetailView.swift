@@ -33,6 +33,8 @@ struct InspectorView: View {
                             PlannedInspector()
                         } else if model.mainColumn == .directDebits {
                             MandateInspector()
+                        } else if model.mainColumn == .subscriptions {
+                            SubscriptionInspector()
                         } else {
                             SelectedLoanCard()
                             if model.isMultiSelection {
@@ -94,7 +96,7 @@ struct InspectorView: View {
 
     /// The single-booking cards are shown, so their layout can be edited.
     private var showsBookingCards: Bool {
-        model.mainColumn != .planned && model.mainColumn != .directDebits
+        model.mainColumn != .planned && model.mainColumn != .directDebits && model.mainColumn != .subscriptions
             && !model.isMultiSelection && model.selectedBooking != nil
     }
 }

@@ -21,6 +21,8 @@ enum SidebarItem: Hashable {
     case planned
     /// „Lastschriften“ (GitHub #143): mandates and collections.
     case directDebits
+    /// „Abos“ (GitHub #1787): marked recurring expenses with a monthly total.
+    case subscriptions
     /// "Vermögen": cash and assets (depots) minus liabilities
     case wealth
 
@@ -31,7 +33,7 @@ enum SidebarItem: Hashable {
     var usesTotalsContext: Bool {
         switch self {
         case .allAccounts, .group, .bank, .userGroup: true
-        case .account, .category, .uncategorized, .documents, .newBookings, .planned, .directDebits, .wealth:
+        case .account, .category, .uncategorized, .documents, .newBookings, .planned, .directDebits, .subscriptions, .wealth:
             false
         }
     }
@@ -41,7 +43,7 @@ enum SidebarItem: Hashable {
 /// (`AppModel.mainColumn`). Accounts, groups and categories all show bookings
 /// (or a depot / Sachwerte view, decided by `AccountColumn`).
 enum MainColumn: Equatable {
-    case bookings, documents, planned, directDebits, wealth
+    case bookings, documents, planned, directDebits, subscriptions, wealth
 
     /// The right column: Belege & Postbox has its own preview, Vermögen no booking list.
     var hasInspector: Bool { self != .documents && self != .wealth }
@@ -51,6 +53,7 @@ enum MainColumn: Equatable {
         case .documents?: self = .documents
         case .planned?: self = .planned
         case .directDebits?: self = .directDebits
+        case .subscriptions?: self = .subscriptions
         case .wealth?: self = .wealth
         default: self = .bookings
         }
@@ -349,6 +352,9 @@ struct MerchantFocusReturn {
     let direction: BookingDirection
     let search: String
     let tags: BookingTagFilter
+    /// Set when the list was switched to all periods for the merchant list (a subscription's bookings).
+    var period: Period?
+    var amount: AmountFilter?
 }
 
 /// Tag filter of the booking list (#228): bookings carrying every tag in `tagIDs`,

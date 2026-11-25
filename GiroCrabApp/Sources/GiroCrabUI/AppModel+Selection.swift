@@ -388,13 +388,14 @@ extension AppModel {
     /// Shows every booking of the booking's merchant in the current period: all
     /// accounts, no category, status, direction, tag, scope or search filter. The
     /// merchant key covers differing counterparty spellings of one merchant.
-    func focusMerchant(of booking: Booking) {
+    func focusMerchant(of booking: Booking, inAccount account: Int64? = nil, allPeriods: Bool = false) {
         let key = booking.merchant.key
         guard !key.isEmpty else { return }
         // A second merchant from within a merchant list still returns to the original view.
         let back = merchantFocusReturn ?? MerchantFocusReturn(
             selection: sidebarSelection, scope: scope, status: statusFilter,
-            direction: directionFilter, search: searchText, tags: tagFilter)
+            direction: directionFilter, search: searchText, tags: tagFilter,
+            period: allPeriods ? period : nil, amount: allPeriods ? amountFilter : nil)
         // Filters first: their reloads still run on the old, cheaper selection.
         scope = .all
         statusFilter = .all
@@ -404,7 +405,8 @@ extension AppModel {
         searchTask?.cancel()
         merchantFocus = MerchantFocus(key: key, name: booking.merchantName)
         merchantFocusReturn = back
-        applyMerchantFocusSelection(.allAccounts)
+        if allPeriods { period = .all; amountFilter = AmountFilter() }
+        applyMerchantFocusSelection(account.map { .account($0) } ?? .allAccounts)
         #if os(iOS)
         showBookingSheet = false
         #endif
@@ -422,6 +424,8 @@ extension AppModel {
         statusFilter = back.status
         directionFilter = back.direction
         tagFilter = back.tags
+        if let previous = back.period { period = previous }
+        if let previous = back.amount { amountFilter = previous }
         if searchText != back.search { searchText = back.search }
     }
 

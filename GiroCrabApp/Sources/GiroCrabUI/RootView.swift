@@ -500,6 +500,7 @@ struct MainSplitView: View {
             case .documents: DocumentsView()
             case .planned: PlannedPaymentsView()
             case .directDebits: DirectDebitsView()
+            case .subscriptions: SubscriptionsView()
             case .wealth: WealthView()
             case .bookings: AccountColumn()
             }
@@ -711,6 +712,7 @@ struct MainSplitView: View {
         case .bookings: model.selectedBookingID != nil
         case .planned: model.selectedPlannedID != nil
         case .directDebits: model.selectedMandateID != nil
+        case .subscriptions: model.selectedSubscriptionID != nil
         case .documents, .wealth: false
         }
     }

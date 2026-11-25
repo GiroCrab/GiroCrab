@@ -375,7 +375,7 @@ extension AppModel {
     static func offersAccountFilter(_ selection: SidebarItem?) -> Bool {
         switch selection {
         case .category, .uncategorized, .allAccounts, .group, .bank, .userGroup, .newBookings: true
-        case .account, .documents, .planned, .directDebits, .wealth, .none: false
+        case .account, .documents, .planned, .directDebits, .subscriptions, .wealth, .none: false
         }
     }
 
@@ -526,7 +526,7 @@ extension AppModel {
         case .category(let id): category = id; accountIDs = chosen
         case .uncategorized: uncategorized = true; accountIDs = chosen
         case .allAccounts: accountIDs = chosen
-        case .documents, .newBookings, .planned, .directDebits, .wealth, .none: break
+        case .documents, .newBookings, .planned, .directDebits, .subscriptions, .wealth, .none: break
         }
         // Everything new, whatever the other list filters say; only the account and amount filters narrow it.
         if sidebarSelection == .newBookings {
@@ -695,7 +695,7 @@ extension AppModel {
     /// (one account, also a group or filter that narrows to one, its own; else the EUR sum).
     var balanceCurrency: String {
         switch sidebarSelection {
-        case .documents, .planned, .directDebits, .wealth, .none: return "EUR"
+        case .documents, .planned, .directDebits, .subscriptions, .wealth, .none: return "EUR"
         default: return sumCurrency(forAccounts: currentFilter.accountIds)
         }
     }
@@ -1065,6 +1065,7 @@ extension AppModel {
         case .newBookings: return String(localized: "Neue Umsätze")
         case .planned: return String(localized: "Geplant")
         case .directDebits: return String(localized: "Lastschriften")
+        case .subscriptions: return String(localized: "Abos & Verträge")
         case .wealth: return String(localized: "Vermögen")
         }
     }
@@ -1109,7 +1110,7 @@ extension AppModel {
         case .allAccounts, .none: return (String(localized: "Verfügbar (Giro, Tagesgeld, Karten)"), liquidBalance)
         // The category total covers all accounts: no figure while accounts are filtered (#406).
         case .category(let id): return categoryAccountIDs.isEmpty ? categories.first { $0.id == id }.map { (String(localized: "Summe im Zeitraum"), $0.totalCents) } : nil
-        case .uncategorized, .documents, .newBookings, .planned, .directDebits, .wealth: return nil
+        case .uncategorized, .documents, .newBookings, .planned, .directDebits, .subscriptions, .wealth: return nil
         }
     }
 
