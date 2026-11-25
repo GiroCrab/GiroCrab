@@ -57,6 +57,14 @@
 //! - 37: one sidebar section per account kind (#1003): the accounts of the old
 //!   section "Giro & Tagesgeld" move to Girokonten, Tagesgeld / Sparen, Festgeld, Bargeld
 //!   and Zahlungsdienste by `accounts.kind`; the old section is removed.
+//! - 38: repair (#998): accounts the MoneyMoney import archived because their last refresh there
+//!   was cancelled (`cancel_tsp`) are active again ([`unarchive_cancelled_refreshes`]), marked
+//!   in `accounts.archive_unknown` until an import or the user settles their state.
+//! - 39: stable split-part identities (#714): `transaction_splits.uuid` (UUIDv5 backfill from
+//!   booking identity and content) and `position`.
+//! - 40: refund links (#714): `refund_links` between bookings or their split parts.
+//! - 41: `transactions.date_ms` (#714): edit stamp of the date of a manual booking, so a date
+//!   edit syncs on its own (neither with the text nor with amount and splits).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -110,7 +118,47 @@ const STEPS: &[Step] = &[
     Step::Sql(crate::merchants::custom::SCHEMA),               // 35: merchant settings (#1373)
     Step::Hook(account_bank_label),                            // 36 (#1467)
     Step::Hook(account_kind_groups),                           // 37 (#1003)
+    Step::Hook(unarchive_cancelled_refreshes),                 // 38: repair (#998)
+    Step::Hook(crate::planning::stable_split_ids),             // 39 (#714)
+    Step::Sql(REFUND_LINKS),                                   // 40 (#714)
+    Step::Hook(manual_date_stamp),                             // 41 (#714)
 ];
+
+/// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
+/// Idempotent (repair paths run steps again).
+fn manual_date_stamp(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "transactions", "date_ms")? {
+        conn.execute_batch(
+            "ALTER TABLE transactions ADD COLUMN date_ms INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    Ok(())
+}
+
+/// Step 40 (#714): refund links between bookings or their split parts (`crate::refunds`).
+const REFUND_LINKS: &str = "CREATE TABLE IF NOT EXISTS refund_links (
+            id INTEGER PRIMARY KEY,
+            refund_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+            refund_part TEXT NOT NULL DEFAULT '',
+            original_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+            original_part TEXT NOT NULL DEFAULT '',
+            refund_cents INTEGER NOT NULL,
+            original_cents INTEGER NOT NULL,
+            created_ms INTEGER NOT NULL,
+            changed_ms INTEGER NOT NULL,
+            deleted_ms INTEGER,
+            moved INTEGER NOT NULL DEFAULT 0,
+            moved_from_refund_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+            moved_from_refund_part TEXT,
+            moved_from_original_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+            moved_from_original_part TEXT,
+            moved_from_key TEXT NOT NULL DEFAULT '',
+            unlink_id TEXT NOT NULL DEFAULT '',
+            UNIQUE(refund_id, refund_part, original_id, original_part)
+         );
+         CREATE INDEX IF NOT EXISTS refund_links_original ON refund_links(original_id, deleted_ms);
+         CREATE INDEX IF NOT EXISTS refund_links_moved_refund ON refund_links(moved_from_refund_id);
+         CREATE INDEX IF NOT EXISTS refund_links_moved_original ON refund_links(moved_from_original_id);";
 
 /// Step 32 (#980): the account note moves from the vault setting `account.note.<id>` (keyed by
 /// this device's account id and never merged) to `accounts.note` with its edit stamp `note_ms`,
@@ -135,6 +183,46 @@ fn account_notes(conn: &Connection) -> CoreResult<()> {
         [crate::user_groups::MOVED_NOTE_MS],
     )?;
     conn.execute("DELETE FROM settings WHERE key GLOB 'account.note.*'", [])?;
+    Ok(())
+}
+
+/// An archive the app (`set_account_archived`, also the account selection) or the MoneyMoney
+/// import sets carries its time and its stamp from the same second. Step 38 takes an archive
+/// whose time lies more than this before its stamp for one the import of v0.8.5 made.
+pub(crate) const ARCHIVE_STAMP_GAP_MS: i64 = 2000;
+
+/// Step 38 (#998): the MoneyMoney import of v0.8.5 read `cancel_tsp` (when the last refresh of an
+/// account was cancelled there, e.g. a TAN not confirmed) as "closed" and archived accounts that
+/// are in use: they left the totals and syncs skipped them. Such an archive carries MoneyMoney's
+/// earlier time next to the import's stamp (see [`ARCHIVE_STAMP_GAP_MS`]), and the vault merge
+/// copies time and stamp as a pair. Only the import archived that way: accounts that still carry
+/// its reference, and those with its bookings (`mm-…`, not the `mm-switch-…` marks of a switch):
+/// a fetch took them over by IBAN in the meantime (the reference is gone, the archive stayed), or
+/// the import merged into a bank account. One taken over without imported bookings stays; the next
+/// import brings it back when its own MoneyMoney account reports it open.
+/// The reactivation is stamped one millisecond after that wrong archive: the merge carries it to
+/// devices that still hold the archive, an edit made after it (on any device) still wins, and two
+/// devices that repair the same account stamp it alike, so neither takes the other's. Some of these
+/// accounts are closed in MoneyMoney after all, which the vault cannot tell: `archive_unknown`
+/// marks them, so the next import gives them MoneyMoney's state. The mark is part of the archive
+/// state: it syncs with it (a device that gets such an account by merge gets the mark, #1591),
+/// and any later archive choice ends it.
+fn unarchive_cancelled_refreshes(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "archive_unknown")? {
+        conn.execute_batch(
+            "ALTER TABLE accounts ADD COLUMN archive_unknown INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    conn.execute(
+        "UPDATE accounts SET archived_unix = NULL, archived_ms = archived_ms + 1, archive_unknown = 1
+          WHERE archived_unix IS NOT NULL AND archived_unix * 1000 < archived_ms - ?1
+            AND deleted_ms IS NULL
+            AND (external_ref LIKE 'moneymoney-db:%'
+                 OR EXISTS (SELECT 1 FROM transactions t
+                             WHERE t.account_id = accounts.id AND t.external_id LIKE 'mm-%'
+                               AND t.external_id NOT LIKE 'mm-switch-%'))",
+        [ARCHIVE_STAMP_GAP_MS],
+    )?;
     Ok(())
 }
 
@@ -1139,7 +1227,65 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 37);
+        assert_eq!(SCHEMA_VERSION, 41);
+    }
+
+    /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for
+    /// the next import, also once a fetch took it over (its bookings show the import); an account
+    /// the user archived, a deleted one, an archive from before the stamps and a bank account
+    /// without imported bookings stay as they are.
+    #[test]
+    fn accounts_archived_for_a_cancelled_refresh_are_reactivated() {
+        let mut conn = schema_at(37);
+        conn.execute_batch(
+            "INSERT INTO account_groups(name,sf_symbol,sort_order) VALUES ('Konten','building.columns',1);
+             INSERT INTO accounts(group_id,external_ref,name,archived_unix,archived_ms,deleted_ms) VALUES
+               (1,'moneymoney-db:1','Girokonto',1790000000,1790001000123,NULL),
+               (1,'moneymoney-db:2','Alte Karte',1790002000,1790002000456,NULL),
+               (1,'moneymoney-db:3','Gelöscht',1790000000,1790001000123,1790003000000),
+               (1,'moneymoney-db:4','Früher archiviert',1700000000,0,NULL),
+               (1,'DE89370400440532013000','Bankkonto',1790000000,1790001000123,NULL),
+               (1,'DE02120300000000202051','Übernommen',1790000000,1790001000123,NULL),
+               (1,'DE02500105170137075030','Umgestellt',1790000000,1790001000123,NULL);
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 SELECT id, 'mm-abc-1', '2026-01-01', -5 FROM accounts WHERE name = 'Übernommen';
+             INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                 SELECT id, 'mm-switch-pending-hold-1', '2026-01-01', -5 FROM accounts WHERE name = 'Umgestellt';",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        // (id, archived_unix, archived_ms)
+        let row = |name: &str| {
+            conn.query_row(
+                "SELECT id, archived_unix, archived_ms FROM accounts WHERE name = ?1",
+                [name],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, Option<i64>>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+        };
+        let (giro, archived, stamp) = row("Girokonto");
+        assert_eq!(archived, None);
+        // just after the wrong archive: the merge carries it, a later edit wins
+        assert_eq!(stamp, 1790001000124);
+        assert_eq!(row("Alte Karte").1, Some(1790002000));
+        assert_eq!(row("Gelöscht").1, Some(1790000000));
+        assert_eq!(row("Früher archiviert").1, Some(1700000000));
+        assert_eq!(row("Bankkonto").1, Some(1790000000));
+        // the mark of a switch is no imported booking
+        assert_eq!(row("Umgestellt").1, Some(1790000000));
+        // taken over by a fetch: the import's reference is gone, its bookings show it
+        let (adopted, archived, _) = row("Übernommen");
+        assert_eq!(archived, None);
+        assert_eq!(
+            crate::importers::moneymoney_db::archive_unknown(&conn).unwrap(),
+            vec![giro, adopted]
+        );
     }
 
     /// A vault that an early draft migrated as version 15 (scheduled transfers

@@ -96,20 +96,24 @@ pub(crate) const COMDIRECT: DocumentMatchRules = DocumentMatchRules {
     link_types: &["abrechnung"],
     direction_required: true,
     account_from_text: true,
+    // What reaches the Girokonto is the amount after tax: the gross amount of a taxed sale must not
+    // link to a booking of that size (#1626). Without a tax line the settled amount or the amount
+    // before tax (a tax-free sale, a purchase) is the one booked.
     amount_labels: &[
+        &[
+            "zu ihren gunsten nach steuern",
+            "zu ihren lasten nach steuern",
+        ],
         &["ausmachender betrag"],
         &[
-            "zu ihren lasten vor steuern",
             "zu ihren gunsten vor steuern",
+            "zu ihren lasten vor steuern",
         ],
     ],
     slack_days: 5,
     inflow: |title, text| {
-        inflow_in(
-            title.split_once('(').map_or(title, |(head, _)| head),
-            text,
-            1500,
-        )
+        let (event, groups) = split_event_and_parenthesized(title);
+        inflow_in_without(event, text, &groups, 1500)
     },
 };
 
@@ -137,6 +141,58 @@ fn comdirect_subjects(title: &str, text: &str) -> Vec<String> {
         add(c[1].trim());
     }
     out
+}
+
+/// Splits a title into the text before the first '(' and the contents of each top-level parenthesised group (nested parentheses stay inside their group).
+fn split_event_and_parenthesized(title: &str) -> (&str, Vec<&str>) {
+    let Some((event, _)) = title.split_once('(') else {
+        return (title, Vec::new());
+    };
+    let (mut groups, mut depth, mut start) = (Vec::new(), 0usize, 0usize);
+    for (idx, ch) in title.char_indices() {
+        match ch {
+            '(' => {
+                if depth == 0 {
+                    start = idx + ch.len_utf8();
+                }
+                depth += 1;
+            }
+            ')' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    groups.push(&title[start..idx]);
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth > 0 && start <= title.len() {
+        groups.push(&title[start..]);
+    }
+    (event, groups)
+}
+
+/// Masks the excluded names in `text`, then calls `inflow_in`.
+pub(crate) fn inflow_in_without(
+    title: &str,
+    text: &str,
+    excluded: &[&str],
+    text_chars: usize,
+) -> Option<bool> {
+    let raw: String = text
+        .chars()
+        .take(text_chars)
+        .flat_map(char::to_lowercase)
+        .collect();
+    let mut body = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    for name in excluded {
+        let low: String = name.chars().flat_map(char::to_lowercase).collect();
+        let needle = low.split_whitespace().collect::<Vec<_>>().join(" ");
+        if needle.chars().count() >= 3 {
+            body = body.replace(&needle, " ");
+        }
+    }
+    inflow_in(title, &body, text_chars)
 }
 
 /// The direction of a document (`Some(true)` a credit: a sale, a dividend, interest; `Some(false)` a
@@ -240,10 +296,13 @@ fn match_by_amounts(
     inflow: Option<bool>,
 ) -> BookingMatch {
     let subject = squash(subject);
-    if subject.len() < 3 {
+    if subject.chars().count() < 3 {
         return BookingMatch::None;
     }
     let mut best: Vec<(i64, i64)> = Vec::new();
+    // Candidates of different amounts (gross and net of a taxed sale) compete: a nearer booking
+    // of the one amount must not beat a booking of the other.
+    let mut stated = BTreeSet::new();
     for (id, date, cents, counterparty) in bookings {
         if !amounts.contains(&cents.abs()) || !squash(counterparty).contains(&subject) {
             continue;
@@ -261,7 +320,11 @@ fn match_by_amounts(
             && distance <= slack_days
         {
             best.push((distance, *id));
+            stated.insert(cents.abs());
         }
+    }
+    if stated.len() > 1 {
+        return BookingMatch::Ambiguous;
     }
     best.sort();
     match best.as_slice() {
@@ -275,20 +338,21 @@ fn match_by_amounts(
 /// The amount a text states after one of the labels: the first amount of the rest of the label's
 /// line or, when the label heads a column (`IBAN  Valuta  Zu Ihren Lasten vor Steuern` and the
 /// values below), of the next line. Dates are no amounts ("19.07.2023" holds a "19.07"). The settled
-/// amount of a trade confirmation, not the price, a fee or a tax amount.
+/// amount of a trade confirmation, not the price, a fee or a tax amount. Only the first group present
+/// counts: a taxed sale offers its amount after tax only, never the gross amount next to it.
 fn settled_amounts(text: &str, label_groups: &[&[&str]]) -> Vec<(i64, String)> {
     static DATE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\b\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})\b").unwrap());
     // ASCII lower case keeps the byte positions of the original
     let lower = text.to_ascii_lowercase();
-    let Some(labels) = label_groups
+    let labels: Vec<&&str> = label_groups
         .iter()
+        .copied()
         .find(|labels| labels.iter().any(|&label| lower.contains(label)))
-    else {
-        return Vec::new();
-    };
+        .map(|group| group.iter().collect())
+        .unwrap_or_default();
     let mut out = Vec::new();
-    for label in *labels {
+    for label in labels {
         let mut from = 0;
         while let Some(at) = lower[from..].find(label).map(|i| i + from) {
             let first_amount = |line: &str| {
@@ -457,6 +521,121 @@ fn currency_fits(bound: &[(i64, String)], cents: i64, currency: &str) -> bool {
         || stated.any(|(_, cur)| cur.is_empty() || cur.eq_ignore_ascii_case(currency))
 }
 
+fn encode_cached_match_days(pdf_len: i64, title: &str, days: &[jiff::civil::Date]) -> String {
+    let csv = days
+        .iter()
+        .map(|d| crate::dates::iso(*d))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{MATCH_DAYS_CACHE_VERSION}{pdf_len}:{csv}\n{title}")
+}
+
+/// Bumped whenever the extraction rules change what a PDF yields: an entry of an older extractor
+/// (e.g. an empty result for a taxed sale before the after-tax labels, #1626) is read again.
+const MATCH_DAYS_CACHE_VERSION: &str = "v2:";
+
+fn parse_cached_match_days(
+    raw: Option<&str>,
+    pdf_len: i64,
+    title: &str,
+) -> Option<Vec<jiff::civil::Date>> {
+    let (head, cached_title) = raw?
+        .strip_prefix(MATCH_DAYS_CACHE_VERSION)?
+        .split_once('\n')?;
+    if cached_title != title {
+        return None;
+    }
+    let (len_str, csv) = head.split_once(':')?;
+    if len_str.parse::<i64>().ok()? != pdf_len {
+        return None;
+    }
+    if csv.is_empty() {
+        return Some(Vec::new());
+    }
+    let days: Vec<_> = csv.split(',').filter_map(crate::dates::parse_iso).collect();
+    (!days.is_empty()).then_some(days)
+}
+
+type ExtractedDocFacts = (
+    String,
+    Vec<jiff::civil::Date>,
+    Vec<String>,
+    Option<bool>,
+    Vec<i64>,
+    Vec<(i64, String)>,
+);
+
+fn extract_days(bytes: &[u8], title: &str, rules: &DocumentMatchRules) -> ExtractedDocFacts {
+    let text = extract_pdf_text(bytes);
+    let days = pdf_dates(&text);
+    let subjects = (rules.subjects)(title, &text);
+    let inflow = (rules.inflow)(title, &text);
+    let (amounts, currencies) = if rules.amount_labels.is_empty() {
+        (unambiguous_amounts(&text), amounts_with_currency(&text))
+    } else {
+        let settled = settled_amounts(&text, rules.amount_labels);
+        (settled.iter().map(|(c, _)| *c).collect(), settled)
+    };
+    let usable = !days.is_empty()
+        && !subjects.is_empty()
+        && !(rules.direction_required && inflow.is_none())
+        && !amounts.is_empty();
+    (
+        text,
+        if usable { days } else { Vec::new() },
+        subjects,
+        inflow,
+        amounts,
+        currencies,
+    )
+}
+
+pub(crate) fn warm_open_pdf_cache(
+    conn: &Connection,
+    connection_id: i64,
+    rules: &DocumentMatchRules,
+) -> CoreResult<()> {
+    let mut q = conn.prepare(
+        "SELECT d.id, d.title, d.doc_type, length(d.pdf_bytes), s.value
+           FROM booking_documents d JOIN accounts a ON a.id = d.account_id
+           LEFT JOIN settings s ON s.key = 'doc.match_days.' || d.id
+          WHERE d.booking_id IS NULL AND a.connection_id = ?1
+            AND a.archived_unix IS NULL AND a.deleted_ms IS NULL
+            AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'doc.unlinked.' || d.id)",
+    )?;
+    let rows = q
+        .query_map([connection_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut pdf = conn.prepare("SELECT pdf_bytes FROM booking_documents WHERE id = ?1")?;
+    let mut save = conn.prepare("INSERT INTO settings(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?;
+    for (id, title, doc_type, pdf_len, cached) in rows {
+        if !rules.link_types.contains(&doc_type.as_str()) {
+            continue;
+        }
+        if !rules.subjects_from_text && (rules.subjects)(&title, "").is_empty() {
+            continue;
+        }
+        if parse_cached_match_days(cached.as_deref(), pdf_len, &title).is_some() {
+            continue;
+        }
+        let bytes: Vec<u8> = pdf.query_row([id], |r| r.get(0))?;
+        let (_, days, ..) = extract_days(&bytes, &title, rules);
+        save.execute(params![
+            format!("doc.match_days.{id}"),
+            encode_cached_match_days(pdf_len, &title, &days)
+        ])?;
+    }
+    Ok(())
+}
+
 /// Matches changed documents and new bookings using the dates printed in each PDF.
 pub(crate) fn link_unlinked_by_content(
     conn: &Connection,
@@ -513,35 +692,46 @@ pub(crate) fn link_unlinked_by_content(
             new_booking_dates.insert(date);
         }
     }
-    // The PostBox creation date can differ from the dates in the PDF. With a new
-    // booking, even an older open PDF may contain the relevant transaction date.
     let mut pending = conn.prepare(
-        "SELECT d.id, d.title, d.doc_type FROM booking_documents d
-          JOIN accounts a ON a.id = d.account_id
-         WHERE d.booking_id IS NULL AND a.connection_id = ?1
-           AND a.archived_unix IS NULL AND a.deleted_ms IS NULL",
+        "SELECT d.id, d.title, d.doc_type, length(d.pdf_bytes), s.value
+           FROM booking_documents d JOIN accounts a ON a.id = d.account_id
+           LEFT JOIN settings s ON s.key = 'doc.match_days.' || d.id
+          WHERE d.booking_id IS NULL AND a.connection_id = ?1
+            AND a.archived_unix IS NULL AND a.deleted_ms IS NULL
+            AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'doc.unlinked.' || d.id)",
     )?;
     let docs = pending
-        .query_map([connection_id], |row| {
+        .query_map([connection_id], |r| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, Option<String>>(4)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut postings = conn.prepare(
-        "SELECT t.id, t.booking_date, t.amount_cents, t.counterparty || ' ' || t.purpose,
-                t.currency, t.account_id
+        "SELECT t.id, t.booking_date, t.amount_cents, t.counterparty || ' ' || t.purpose, t.currency, t.account_id
            FROM transactions t JOIN accounts a ON a.id = t.account_id
-          WHERE a.connection_id = ?1 AND t.deleted_ms IS NULL AND a.deleted_ms IS NULL
-            AND a.archived_unix IS NULL
+          WHERE a.connection_id = ?1 AND t.deleted_ms IS NULL AND a.deleted_ms IS NULL AND a.archived_unix IS NULL
             AND t.external_id NOT LIKE 'pending-%' AND t.external_id NOT LIKE 'advanzia-hold-%'
             AND t.booking_date BETWEEN ?2 AND ?3",
     )?;
     let mut pdf = conn.prepare("SELECT pdf_bytes FROM booking_documents WHERE id = ?1")?;
+    let mut save_days = conn.prepare("INSERT INTO settings(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")?;
+    let date_ranges = |days: &[jiff::civil::Date]| -> Vec<(jiff::civil::Date, jiff::civil::Date)> {
+        days.iter()
+            .map(|&d| {
+                (
+                    crate::dates::add_days(d, -rules.slack_days).unwrap_or(jiff::civil::Date::MIN),
+                    crate::dates::add_days(d, rules.slack_days).unwrap_or(jiff::civil::Date::MAX),
+                )
+            })
+            .collect()
+    };
     let mut linked = 0;
-    for (id, title, doc_type) in docs {
+    for (id, title, doc_type, pdf_len, cached) in docs {
         let changed_document = changed_document_ids.contains(&id);
         if !changed_document && new_booking_dates.is_empty() {
             continue;
@@ -552,39 +742,40 @@ pub(crate) fn link_unlinked_by_content(
         if !rules.subjects_from_text && (rules.subjects)(&title, "").is_empty() {
             continue;
         }
+        if !changed_document
+            && let Some(cached_days) = parse_cached_match_days(cached.as_deref(), pdf_len, &title)
+        {
+            let ranges = date_ranges(&cached_days);
+            if ranges.is_empty()
+                || !ranges
+                    .iter()
+                    .any(|&(f, t)| new_booking_dates.range(f..=t).next().is_some())
+            {
+                continue;
+            }
+        }
         let bytes: Vec<u8> = pdf.query_row([id], |row| row.get(0))?;
-        let text = extract_pdf_text(&bytes);
-        let days = pdf_dates(&text);
-        let ranges: Vec<_> = days
-            .iter()
-            .map(|&date| {
-                (
-                    crate::dates::add_days(date, -rules.slack_days)
-                        .unwrap_or(jiff::civil::Date::MIN),
-                    crate::dates::add_days(date, rules.slack_days)
-                        .unwrap_or(jiff::civil::Date::MAX),
-                )
-            })
-            .collect();
+        let (text, days, subjects, inflow, amounts, currencies) =
+            extract_days(&bytes, &title, rules);
+        let encoded = encode_cached_match_days(pdf_len, &title, &days);
+        if cached.as_deref() != Some(encoded.as_str()) {
+            save_days.execute(params![format!("doc.match_days.{id}"), encoded])?;
+        }
+        if days.is_empty() {
+            continue;
+        }
+        let ranges = date_ranges(&days);
         let (Some(from), Some(to)) = (
-            ranges.iter().map(|&(from, _)| from).min(),
-            ranges.iter().map(|&(_, to)| to).max(),
+            ranges.iter().map(|&(f, _)| f).min(),
+            ranges.iter().map(|&(_, t)| t).max(),
         ) else {
             continue;
         };
         if !changed_document
             && !ranges
                 .iter()
-                .any(|&(from, to)| new_booking_dates.range(from..=to).next().is_some())
+                .any(|&(f, t)| new_booking_dates.range(f..=t).next().is_some())
         {
-            continue;
-        }
-        let subjects = (rules.subjects)(&title, &text);
-        if subjects.is_empty() {
-            continue;
-        }
-        let inflow = (rules.inflow)(&title, &text);
-        if rules.direction_required && inflow.is_none() {
             continue;
         }
         let named = if rules.account_from_text {
@@ -596,15 +787,6 @@ pub(crate) fn link_unlinked_by_content(
         } else {
             None
         };
-        let (amounts, currencies) = if rules.amount_labels.is_empty() {
-            (unambiguous_amounts(&text), amounts_with_currency(&text))
-        } else {
-            let amounts = settled_amounts(&text, rules.amount_labels);
-            (amounts.iter().map(|(cents, _)| *cents).collect(), amounts)
-        };
-        if amounts.is_empty() {
-            continue;
-        }
         let rows = postings.query_map(
             params![
                 connection_id,
@@ -738,6 +920,39 @@ mod tests {
             (COMDIRECT.inflow)("Wertpapierabrechnung Kauf (Dividenden ETF)", ""),
             Some(false)
         );
+        assert_eq!(
+            trade_republic(
+                "Abrechnung \u{2013} Dividenden ETF",
+                "DEPOTABRECHNUNG\nDividenden\nETF\nKauf"
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            (COMDIRECT.inflow)(
+                "Wertpapierabrechnung 3 St. WKN A1JX52 (Dividenden ETF)",
+                "Wertpapier Dividenden\nETF Kauf"
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn non_ascii_subject_shorter_than_three_characters_does_not_match() {
+        let bookings = vec![(
+            1,
+            "2025-12-04".to_string(),
+            -25_00,
+            "中文字 Corp".to_string(),
+        )];
+        let days = vec![crate::dates::parse_iso("2025-12-04").unwrap()];
+        assert_eq!(
+            match_by_amounts(&[25_00], &days, "中", &bookings, 5, Some(false)),
+            BookingMatch::None
+        );
+        assert_eq!(
+            match_by_amounts(&[25_00], &days, "中文字", &bookings, 5, Some(false)),
+            BookingMatch::Unique(1)
+        );
     }
 
     #[test]
@@ -809,6 +1024,53 @@ mod tests {
     }
 
     #[test]
+    fn comdirect_taxed_sale_offers_only_the_amount_after_tax() {
+        let cents = |text: &str| -> Vec<i64> {
+            settled_amounts(text, COMDIRECT.amount_labels)
+                .into_iter()
+                .map(|(cents, _)| cents)
+                .collect()
+        };
+        let sale = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
+            Steuerabzug   EUR   52,75\n\
+            Zu Ihren Gunsten nach Steuern:   EUR   4.947,25\n";
+        let amounts = cents(sale);
+        // neither the gross amount nor the tax is a candidate
+        assert_eq!(amounts, [494_725]);
+        // a credit of the gross amount within the slack does not take the document before the
+        // net booking arrives
+        let gross = vec![(
+            1,
+            "2025-12-04".to_string(),
+            5_000_00,
+            "A1JX52 ETF".to_string(),
+        )];
+        let days = vec![crate::dates::parse_iso("2025-12-04").unwrap()];
+        assert_eq!(
+            match_by_amounts(&amounts, &days, "A1JX52", &gross, 5, Some(true)),
+            BookingMatch::None
+        );
+
+        // a tax-free sale states only the amount before tax: that one is settled and still links
+        let tax_free = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n";
+        let amounts = cents(tax_free);
+        assert_eq!(amounts, [500_000]);
+        assert_eq!(
+            match_by_amounts(&amounts, &days, "A1JX52", &gross, 5, Some(true)),
+            BookingMatch::Unique(1)
+        );
+
+        let purchase = "Wertpapierabrechnung Kauf\n\
+            Zu Ihren Lasten vor Steuern   EUR   1.000,00\n\
+            Zu Ihren Lasten nach Steuern:   EUR   1.000,00\n";
+        let amounts = cents(purchase);
+        assert!(amounts.iter().all(|&c| c == 100_000), "{amounts:?}");
+        assert!(!amounts.is_empty());
+    }
+
+    #[test]
     fn only_the_amount_after_the_label_is_the_settled_one() {
         let text = "Kurs 100,00 EUR\nProvision 1,50 EUR\nAusmachender Betrag  500,00- EUR\nAUSMACHENDER BETRAG 7,00 EUR";
         assert_eq!(
@@ -850,6 +1112,81 @@ mod tests {
                 5,
                 Some(false)
             ),
+            BookingMatch::Unique(1)
+        );
+    }
+
+    #[test]
+    fn a_sale_without_tax_line_takes_the_settled_amount_not_the_gross_one() {
+        let sale = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
+            Ausmachender Betrag   EUR   4.947,25\n";
+        let cents = settled_amounts(sale, COMDIRECT.amount_labels)
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect::<Vec<_>>();
+        assert_eq!(cents, [494_725]);
+    }
+
+    #[test]
+    fn match_days_cached_by_an_older_extractor_are_read_again() {
+        let title = "Wertpapierabrechnung Verkauf";
+        let day = crate::dates::parse_iso("2025-12-04").unwrap();
+        let encoded = encode_cached_match_days(1234, title, &[day]);
+        assert_eq!(
+            parse_cached_match_days(Some(&encoded), 1234, title),
+            Some(vec![day])
+        );
+        let empty = encode_cached_match_days(1234, title, &[]);
+        assert_eq!(
+            parse_cached_match_days(Some(&empty), 1234, title),
+            Some(Vec::new())
+        );
+        // an empty result of the extractor before the after-tax labels must not stick
+        assert_eq!(
+            parse_cached_match_days(Some("v1:1234:\nWertpapierabrechnung Verkauf"), 1234, title),
+            None
+        );
+        assert_eq!(
+            parse_cached_match_days(
+                Some("v1:1234:2025-12-04\nWertpapierabrechnung Verkauf"),
+                1234,
+                title
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_booking_of_the_net_amount_does_not_beat_a_gross_booking_a_day_later() {
+        let bookings = vec![
+            (
+                1,
+                "2025-12-04".to_string(),
+                4_947_25,
+                "A1JX52 ETF".to_string(),
+            ),
+            (
+                2,
+                "2025-12-05".to_string(),
+                5_000_00,
+                "A1JX52 ETF".to_string(),
+            ),
+        ];
+        let days = vec![crate::dates::parse_iso("2025-12-04").unwrap()];
+        assert_eq!(
+            match_by_amounts(
+                &[4_947_25, 5_000_00],
+                &days,
+                "A1JX52",
+                &bookings,
+                5,
+                Some(true)
+            ),
+            BookingMatch::Ambiguous
+        );
+        assert_eq!(
+            match_by_amounts(&[4_947_25], &days, "A1JX52", &bookings, 5, Some(true)),
             BookingMatch::Unique(1)
         );
     }
@@ -937,6 +1274,42 @@ mod tests {
         assert_eq!(
             match_by_content(text, subject, &bookings[..1], 5, Some(true)),
             Some(1)
+        );
+    }
+    #[test]
+    fn nested_parentheses_in_comdirect_title_are_masked() {
+        assert_eq!(
+            (COMDIRECT.inflow)(
+                "Wertpapierabrechnung WKN A1JX52 (Vanguard (USD) Dividenden ETF)",
+                "Vanguard (USD) Dividenden ETF Kauf"
+            ),
+            Some(false)
+        );
+    }
+    #[test]
+    fn nested_parentheses_pick_debit_over_credit_booking() {
+        let title = "Wertpapierabrechnung WKN A1JX52 (Vanguard (USD) Dividenden ETF)";
+        let text = "Wertpapierabrechnung\nVanguard (USD) Dividenden ETF\nGeschäftsart: Kauf\nZu Ihren Lasten 25,00 EUR\n04.12.2025";
+        let inflow = (COMDIRECT.inflow)(title, text);
+        assert_eq!(inflow, Some(false));
+        let bookings = vec![
+            (
+                1,
+                "2025-12-04".to_string(),
+                25_00,
+                "A1JX52 Vanguard Dividenden ETF".to_string(),
+            ),
+            (
+                2,
+                "2025-12-04".to_string(),
+                -25_00,
+                "A1JX52 Vanguard Dividenden ETF".to_string(),
+            ),
+        ];
+        let days = vec![crate::dates::parse_iso("2025-12-04").unwrap()];
+        assert_eq!(
+            match_by_amounts(&[25_00], &days, "A1JX52", &bookings, 5, inflow),
+            BookingMatch::Unique(2)
         );
     }
 }

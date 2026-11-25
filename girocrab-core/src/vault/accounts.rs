@@ -196,6 +196,9 @@ impl Vault {
         )?;
         // document retrieval switch and catch-up days of this login
         crate::connectors::clear_documents_settings(db, connection_id)?;
+        crate::connectors::sharinbox::clear_rights_setting(db, connection_id)?;
+        // its pending full fetch (#1043)
+        crate::connectors::history::clear(db, connection_id)?;
         // its own Enable Banking application (#824)
         super::enable_banking_apps::forget(db, connection_id)?;
         // the account choice of this login (#346): a re-added login starts fresh,
@@ -288,7 +291,15 @@ impl Vault {
             crate::banking_gate::check_connector(connector.as_str())?;
         }
         let db = self.db()?;
-        Ok(Self::add_bank_connection_inner(&db, connector, display_name, login_name)?.0)
+        // the login and its full fetch together: a retry finds the login and marks nothing
+        let tx = db.unchecked_transaction()?;
+        let (id, created) =
+            Self::add_bank_connection_inner(&tx, connector, display_name, login_name)?;
+        if created {
+            crate::connectors::history::request_default(&tx, id)?;
+        }
+        tx.commit()?;
+        Ok(id)
     }
 
     /// Adds a login at any FinTS 3.0 PIN/TAN bank and stores the bank's URL
@@ -319,15 +330,19 @@ impl Vault {
             crate::banking_gate::check_connector(&key)?;
         }
         let db = self.db()?;
-        let (id, _) = Self::add_bank_connection_keyed(
-            &db,
+        let tx = db.unchecked_transaction()?;
+        let (id, created) = Self::add_bank_connection_keyed(
+            &tx,
             ConnectorKind::FinTsGeneric,
             &key,
             Some(&blz),
             display_name,
             login_name,
         )?;
-        db.execute(
+        if created {
+            crate::connectors::history::request_default(&tx, id)?;
+        }
+        tx.execute(
             "INSERT INTO settings(key, value, is_secret) VALUES (?1, ?2, 0)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![format!("fints.url.{blz}"), url],
@@ -335,12 +350,13 @@ impl Vault {
         // Optional TAN medium name (HKTAN), e.g. Postbank BestSign "SO:Gerät".
         let tan_medium = tan_medium.trim();
         if !tan_medium.is_empty() {
-            db.execute(
+            tx.execute(
                 "INSERT INTO settings(key, value, is_secret) VALUES (?1, ?2, 0)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![format!("fints.tan_medium.{id}"), tan_medium],
             )?;
         }
+        tx.commit()?;
         Ok(id)
     }
 
@@ -374,14 +390,19 @@ impl Vault {
             display_name
         };
         let db = self.db()?;
-        let (id, _) = Self::add_bank_connection_keyed(
-            &db,
+        let tx = db.unchecked_transaction()?;
+        let (id, created) = Self::add_bank_connection_keyed(
+            &tx,
             ConnectorKind::EnableBanking,
             &key,
             None,
             display,
             login,
         )?;
+        if created {
+            crate::connectors::history::request_default(&tx, id)?;
+        }
+        tx.commit()?;
         Ok(id)
     }
 

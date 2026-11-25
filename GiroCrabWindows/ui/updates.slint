@@ -1,0 +1,61 @@
+// Update check in Einstellungen (Tab 3); logic in `src/updates.rs`, wiring in `settings_import_ui.rs`.
+import { Button, CheckBox, ComboBox } from "std-widgets.slint";
+
+export global UpdateState {
+    in-out property <int> channel;
+    in-out property <bool> auto;
+    in-out property <string> last;
+    in-out property <bool> checking;
+    in-out property <string> result;
+    in-out property <string> notes;
+    in-out property <bool> has-download;
+    in-out property <string> download-url;
+    callback channel-changed(int);
+    callback auto-changed(bool);
+    callback check-now();
+    callback open-download();
+}
+
+export component UpdatesSection inherits VerticalLayout {
+    spacing: 6px;
+    Text { text: "Updates"; font-weight: 600; }
+    CheckBox {
+        text: "Automatisch nach Updates suchen";
+        checked <=> UpdateState.auto;
+        toggled => { UpdateState.auto-changed(self.checked); }
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        Text { text: "Kanal:"; vertical-alignment: center; }
+        ComboBox {
+            width: 260px;
+            model: ["Stabil", "Beta (Vorabversionen)", "Nightly (Entwicklungsstand)"];
+            current-index <=> UpdateState.channel;
+            selected => { UpdateState.channel-changed(self.current-index); }
+        }
+    }
+    if UpdateState.channel > 0: Text {
+        text: "Vorabversionen können Fehler enthalten. Vor dem Wechsel eine Sicherung anlegen.";
+        wrap: word-wrap;
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        Button {
+            text: "Nach Updates suchen …";
+            enabled: !UpdateState.checking;
+            clicked => { UpdateState.check-now(); }
+        }
+        Text { text: "Zuletzt gesucht: " + UpdateState.last; vertical-alignment: center; }
+    }
+    if UpdateState.result != "": Text { text: UpdateState.result; wrap: word-wrap; }
+    if UpdateState.notes != "": Text { text: UpdateState.notes; wrap: word-wrap; }
+    if UpdateState.has-download: HorizontalLayout {
+        alignment: start;
+        Button {
+            text: "Installer öffnen …";
+            clicked => { UpdateState.open-download(); }
+        }
+    }
+}

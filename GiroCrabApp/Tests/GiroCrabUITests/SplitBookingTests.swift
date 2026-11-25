@@ -5,13 +5,31 @@ import GiroCrabCore
 /// #383: the split flow behind „Umsatz aufteilen (Splitbuchung)“ saves and reads back.
 @MainActor
 final class SplitBookingTests: XCTestCase {
+    func testSplitSavesInvalidateTotalsOnlyOnSuccess() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
+        let half = booking.amountCents / 2
+        let parts = [
+            TransactionSplitInput(uuid: nil, categoryId: booking.categoryId, amountCents: half, note: "a"),
+            TransactionSplitInput(uuid: nil, categoryId: nil, amountCents: booking.amountCents - half, note: "b"),
+        ]
+        var version = model.totalsVersion
+        XCTAssertNil(model.saveSplits(parts, for: booking))
+        XCTAssertGreaterThan(model.totalsVersion, version)
+        version = model.totalsVersion
+        XCTAssertNotNil(model.saveSplits([parts[0]], for: booking))
+        XCTAssertEqual(model.totalsVersion, version)
+        XCTAssertNil(model.saveSplits([], for: booking))
+        XCTAssertGreaterThan(model.totalsVersion, version)
+    }
+
     func testSaveSplitsRoundTrips() async throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
         let half = booking.amountCents / 2
         let parts = [
-            TransactionSplitInput(categoryId: booking.categoryId, amountCents: half, note: "a"),
-            TransactionSplitInput(categoryId: nil, amountCents: booking.amountCents - half, note: "b"),
+            TransactionSplitInput(uuid: nil, categoryId: booking.categoryId, amountCents: half, note: "a"),
+            TransactionSplitInput(uuid: nil, categoryId: nil, amountCents: booking.amountCents - half, note: "b"),
         ]
         XCTAssertNil(model.saveSplits(parts, for: booking))
         let stored = await model.splits(for: booking)
@@ -35,8 +53,8 @@ final class SplitBookingTests: XCTestCase {
         let booking = try XCTUnwrap(model.bookings.first { $0.amountCents < 0 })
         let big = booking.amountCents * 3
         let parts = [
-            TransactionSplitInput(categoryId: booking.categoryId, amountCents: big, note: "a"),
-            TransactionSplitInput(categoryId: nil, amountCents: booking.amountCents - big, note: "b"),
+            TransactionSplitInput(uuid: nil, categoryId: booking.categoryId, amountCents: big, note: "a"),
+            TransactionSplitInput(uuid: nil, categoryId: nil, amountCents: booking.amountCents - big, note: "b"),
         ]
         XCTAssertNil(model.saveSplits(parts, for: booking))
         let stored = await model.splits(for: booking)

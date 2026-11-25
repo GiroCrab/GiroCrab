@@ -40,6 +40,8 @@ struct AccountCopyMenu: View {
 
 /// Header card of the stream: title, balance, calm balance chart and the
 /// monthly KPIs (consumption is always shown without ETF plans / perks).
+/// The chart follows „Diagramm anzeigen“, the KPIs follow „Auswertungen anzeigen“;
+/// folding the chart keeps its controls (GitHub #1760).
 /// The account holder shown under the bank/IBAN line; nil when empty (#606).
 func accountHolderLine(_ a: Account) -> String? {
     let owner = a.owner.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -92,6 +94,12 @@ struct StreamHeaderCard: View {
 
     private var compactHeaderTitle: LocalizedStringKey {
         compactHeader ? "Kopfbereich einblenden" : "Kopfbereich minimieren"
+    }
+
+    /// Chart and its controls follow only the chart fold; the KPI row follows
+    /// „Auswertungen anzeigen“ (GitHub #1760).
+    private var analysis: (chart: Bool, controls: Bool, kpis: Bool) {
+        ViewLayout.headerAnalysis(statistics: showStatistics, chartCollapsed: chartCollapsed, compact: compactHeader)
     }
 
     var body: some View {
@@ -207,9 +215,9 @@ struct StreamHeaderCard: View {
                 LoanProgressCard(account: a, compact: true)
             }
 
-            if !compactHeader && showStatistics && model.scope != .investments {
+            if analysis.controls && model.scope != .investments {
                 VStack(alignment: .leading, spacing: 4) {
-                    if !chartCollapsed {
+                    if analysis.chart {
                         // iOS: 44 pt = HIG minimum hit region (the chart is tappable);
                         // macOS: room for the min/max/0 axis labels (GitHub #203).
                         #if os(iOS)
@@ -223,7 +231,7 @@ struct StreamHeaderCard: View {
                 }
             }
 
-            if !compactHeader {
+            if analysis.kpis {
             #if os(iOS)
             HStack(spacing: 10) {
                 Text("Konsum \(kpiValue(-model.consumptionThisMonth))").foregroundStyle(Theme.outflow).sensitive(.amounts)
@@ -378,14 +386,22 @@ struct StreamHeaderCard: View {
                 get: { model.categoryAccountIDs.isEmpty },
                 set: { _ in model.categoryAccountFilter = [] }
             ))
-            Divider()
-            ForEach(model.accountFilterCandidates, id: \.id) { a in
-                Toggle(isOn: Binding(
-                    get: { model.categoryAccountIDs.contains(a.id) },
-                    set: { _ in model.toggleCategoryAccount(a.id) }
-                )) {
-                    Text(verbatim: a.bankName.isEmpty || a.name.localizedCaseInsensitiveContains(a.bankName) ? a.name : "\(a.name) · \(a.bankName)")
+            let groups = model.accountFilterGroups
+            if groups.count > 1 {
+                // Grouped like the sidebar (#357): a group's entry chooses all its accounts at once.
+                ForEach(groups) { group in
+                    Divider()
+                    Toggle(isOn: Binding(
+                        get: { model.isCategoryGroupChosen(group) },
+                        set: { _ in model.toggleCategoryGroup(group) }
+                    )) {
+                        Label(group.name, systemImage: group.symbol)
+                    }
+                    ForEach(group.accounts, id: \.id) { categoryAccountToggle($0) }
                 }
+            } else {
+                Divider()
+                ForEach(model.accountFilterCandidates, id: \.id) { categoryAccountToggle($0) }
             }
         } label: {
             Label(model.categoryAccountFilterTitle,
@@ -395,6 +411,16 @@ struct StreamHeaderCard: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Nur Buchungen ausgewählter Konten anzeigen")
+    }
+
+    /// One account of the account menu.
+    private func categoryAccountToggle(_ a: Account) -> some View {
+        Toggle(isOn: Binding(
+            get: { model.categoryAccountIDs.contains(a.id) },
+            set: { _ in model.toggleCategoryAccount(a.id) }
+        )) {
+            Text(verbatim: a.bankName.isEmpty || a.name.localizedCaseInsensitiveContains(a.bankName) ? a.name : "\(a.name) · \(a.bankName)")
+        }
     }
 
     /// Amount range (#357): the pill opens the popover and shows the range while one is set;

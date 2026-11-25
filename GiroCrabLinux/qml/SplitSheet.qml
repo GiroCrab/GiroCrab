@@ -61,7 +61,7 @@ Sheet {
         const share = percent === null ? null : AppModel.splitShareCents(total, percent, 100)
         return share === null ? "" : Fmt.plain(share)
     }
-    function part(categoryID, amount, note) { return { uid: nextUid++, categoryID: categoryID, amount: amount, note: note } }
+    function part(categoryID, amount, note, uuid) { return { uid: nextUid++, uuid: uuid || null, categoryID: categoryID, amount: amount, note: note } }
 
     onAboutToShow: {
         error = ""; hasSplits = false; storedPartsDiffer = false; ignoredShare = ""; parts = []
@@ -76,7 +76,7 @@ Sheet {
             hasSplits = existing.length > 0
             // the share picked in the row menu (#1663) goes into the second part
             const loaded = hasSplits
-                ? existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note))
+                ? existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note, s.uuid))
                 : [part(b.category_id, "", ""), part(null, presetAmount(), "")]
             // before `parts`: the Repeater builds the rows (and reads focusUid) on assignment
             if (!hasSplits) focusUid = loaded[1].uid
@@ -91,7 +91,7 @@ Sheet {
     function save() {
         if (!valid) return
         const amounts = [rest].concat(splitOff)
-        const inputs = parts.map((p, i) => ({ category_id: p.categoryID, amount_cents: sign * amounts[i], note: p.note }))
+        const inputs = parts.map((p, i) => ({ uuid: p.uuid, category_id: p.categoryID, amount_cents: sign * amounts[i], note: p.note }))
         error = AppModel.saveSplits(inputs, booking)
         if (error === "") close()
     }

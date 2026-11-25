@@ -77,7 +77,7 @@ public struct LaunchOptions: Sendable {
     /// (demo) preselect the account whose name contains this text
     public var selectAccount: String?
     /// (demo) preselect the booking whose merchant/counterparty contains this text
-    /// (in „Belege & Postbox“: the document whose title contains it)
+    /// (in „Belege & Postbox“: the document whose title contains it; on the iPhone it also opens the booking sheet)
     public var pickBooking: String?
     /// (demo) `--depot-tab activities|plans`: tab of the securities depot view
     public var depotTab: String?

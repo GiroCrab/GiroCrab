@@ -32,6 +32,7 @@ extension AppModel {
     func saveSplits(_ parts: [TransactionSplitInput], for booking: Booking) -> String? {
         guard let vault else { return nil }
         do { try vault.setTransactionSplits(transactionId: booking.id, splits: parts) } catch { return "\(error)" }
+        invalidateTotals()
         reloadBookings(); reloadCategories(); reloadAccounts()
         return nil
     }
@@ -473,6 +474,7 @@ struct CashflowCard: View {
             // account is a proof view and keeps its sums
             if let loaded = await model.cashflow(granularity, count: granularity == .year ? 5 : 6, accountIds: accountIds,
                                                  respectInTotal: model.sidebarSelection?.usesTotalsContext ?? true) {
+                guard !Task.isCancelled else { return }
                 rows = loaded
             }
         }
@@ -641,6 +643,7 @@ struct SplitSheet: View {
 
     private struct Part: Identifiable {
         let id = UUID()
+        var uuid: String?
         var categoryID: Int64?
         var amount = ""
         var note = ""
@@ -759,7 +762,7 @@ struct SplitSheet: View {
                 Button("Speichern") {
                     guard let toSave else { return }
                     let inputs = zip(parts, toSave).map { part, cents in
-                        TransactionSplitInput(categoryId: part.categoryID, amountCents: cents, note: part.note)
+                        TransactionSplitInput(uuid: part.uuid, categoryId: part.categoryID, amountCents: cents, note: part.note)
                     }
                     error = model.saveSplits(inputs, for: booking)
                     if error == nil { dismiss() }
@@ -788,7 +791,7 @@ struct SplitSheet: View {
                 parts = [Part(categoryID: booking.categoryId), Part(amount: opening.amounts[1])]
                 focusedPart = parts.last?.id
             } else {
-                parts = zip(existing, opening.amounts).map { Part(categoryID: $0.categoryId, amount: $1, note: $0.note) }
+                parts = zip(existing, opening.amounts).map { Part(uuid: $0.uuid, categoryID: $0.categoryId, amount: $1, note: $0.note) }
             }
         }
     }

@@ -51,3 +51,5 @@ and test results in audits. Use issues for plans and open questions.
 | ADR | Status |
 | --- | --- |
 | [0001 – Bank connector architecture](0001-connector-architecture.md) | Proposed |
+| [0002 – Challenges during a fetch](0002-challenges-during-fetch.md) | Proposed |
+| [0003 – Category roles](0003-category-roles.md) | Proposed |
