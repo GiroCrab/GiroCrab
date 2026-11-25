@@ -4654,6 +4654,48 @@ fn archive_on_an_already_folded_twin_reaches_the_bank_account() {
     }
 }
 
+/// #1691 review: a device that gets a folded pair by merge (both accounts new
+/// there) passes the twin's archive state on after the bank's own is written,
+/// whichever of the two rows comes first; a newer bank state stays.
+#[test]
+fn folded_pair_new_on_a_device_gets_the_twin_archive_state() {
+    for twin_first in [true, false] {
+        for (bank_state, expected) in [("NULL, 10, 0", "100:20:0"), ("NULL, 30, 0", "-:30:0")] {
+            let dir = temp_dir("twin-archive-new");
+            let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+            let cb = comdirect(&b);
+            let (twin, bank) = if twin_first {
+                let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+                (twin, giro(&b, cb, "API1", &["mm-1", "mm-2", "b1"]))
+            } else {
+                let bank = giro(&b, cb, "API1", &["mm-1", "mm-2", "b1"]);
+                (giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]), bank)
+            };
+            assert_eq!(super::twins::fold_twins(&b.db().unwrap()).unwrap(), 1);
+            // what a fold before #1691 left: the twin's archive state stayed behind
+            exec(
+                &b,
+                &format!(
+                    "UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = (100, 20, 0)
+                      WHERE id = {twin};
+                     UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = ({bank_state})
+                      WHERE id = {bank};"
+                ),
+            );
+            merge(&a, &b);
+            merge(&b, &a);
+            for v in [&a, &b] {
+                let live = n(v, "SELECT id FROM accounts WHERE deleted_ms IS NULL");
+                assert_eq!(
+                    archive_state(v, live),
+                    expected,
+                    "twin_first: {twin_first}, bank: {bank_state}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn twin_refund_links_use_the_exact_booking_map_and_full_row_collision_rank() {
     for tombstone_wins in [false, true] {

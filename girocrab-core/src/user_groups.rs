@@ -600,6 +600,9 @@ pub(crate) fn merge_attached(
     // A←B and B←A end up identical.
     // (`merge_other_vault` migrates the other file first, so it has all columns.)
     let mut changed = tx.execute(&group_upsert_sql(), [])? as u32;
+    // accounts whose archive state this merge changed: a folded twin among them
+    // passes it on after the loop, once the bank row's own (maybe fresh) write is in
+    let mut archive_changed = Vec::new();
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         (i64, Option<String>, i64, i64, String, i64, Option<String>, i64),
@@ -655,10 +658,8 @@ pub(crate) fn merge_attached(
             ),
             params![id, archived, archived_ms, unknown, fresh],
         )?;
-        if archive_rows > 0
-            && let Some(bank) = crate::sync_merge::twins::folded_into(tx, id)?
-        {
-            pass_archive_on(tx, id, bank)?;
+        if archive_rows > 0 {
+            archive_changed.push(id);
         }
         changed += archive_rows as u32;
         // total switch (#337): the one field merge of value and stamp — newer
@@ -712,6 +713,13 @@ pub(crate) fn merge_attached(
             pass_note_on(tx, id, bank)?;
         }
         changed += note_rows;
+    }
+    // a twin folded here passes its archive state on (#1691): a fresh bank row
+    // later in the loop would otherwise overwrite it, depending on row order
+    for id in archive_changed {
+        if let Some(bank) = crate::sync_merge::twins::folded_into(tx, id)? {
+            pass_archive_on(tx, id, bank)?;
+        }
     }
     changed += combine_same_names(tx)?;
     changed += follow_merges(tx)?;
