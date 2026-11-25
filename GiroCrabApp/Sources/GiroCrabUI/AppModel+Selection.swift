@@ -627,6 +627,7 @@ extension AppModel {
         let list = visibleBookings
         guard let move = Self.keyboardMove(ids: list.map(\.id), current: selectedBookingID, delta: delta) else { return }
         selectedBookingIDs = []
+        keyboardSelectedBookingID = list[move.index].id
         selectedBookingID = list[move.index].id
         if move.rescroll { keyboardScrollToken &+= 1 }
     }

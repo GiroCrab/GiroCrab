@@ -521,6 +521,8 @@ public final class AppModel {
     /// Bumped when a keyboard move keeps the selected row (Pos1 on the first row, Ende/Bild↓ on
     /// the last): `selectedBookingID` does not change then, so `SelectionScroller` scrolls on this.
     var keyboardScrollToken = 0
+    /// Booking the last keyboard move selected; consumed by `SelectionScroller`.
+    @ObservationIgnored var keyboardSelectedBookingID: Booking.ID?
     var autoReviewDelay: AutoReviewDelay = .stored {
         didSet {
             AppDefaults.store.set(autoReviewDelay.rawValue, forKey: AutoReviewDelay.defaultsKey)
