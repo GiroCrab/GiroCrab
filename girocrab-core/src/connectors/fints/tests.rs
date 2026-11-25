@@ -2619,3 +2619,34 @@ async fn a_login_tan_the_bank_asks_again_for_does_not_approve_the_dialog() {
         assert_eq!(c.sca_in_dialog, approved, "{answer}");
     }
 }
+#[tokio::test]
+async fn an_automatic_fetch_sends_further_pages_of_a_job_approved_in_the_app() {
+    // review of #1882: an automatic sync learns HKCAZ from an app approval it then gets; the
+    // next page of that request (3040) must still go out, or page 1's bookings are lost.
+    // Jobs remembered before the sync, learned without an approval, or learned while only
+    // another job was approved, stay left out.
+    let seg = || super::syntax::SegmentBuilder::new("HKCAZ", 3, 1).build();
+    for (stored, approved, sent) in [
+        (false, Some("HKCAZ"), true),
+        (true, Some("HKCAZ"), false),
+        (false, None, false),
+        (false, Some("HKSAL"), false),
+    ] {
+        let (url, seen) = mock_bank(vec![ACCEPT]);
+        let mut c = savings_needing_sca_seen(&url, &["HKCAZ"]);
+        if stored {
+            c.stored.sca_seen.insert("HKCAZ".into());
+        }
+        if let Some(job) = approved {
+            c.sca_in_dialog = true;
+            c.sca_approved.insert(job.into());
+        }
+        let r = c.request(&test_ctx(), "HKCAZ", seg()).await;
+        assert_eq!(
+            r.is_ok(),
+            sent,
+            "stored={stored} approved={approved:?}: {r:?}"
+        );
+        assert_eq!(seen.lock().unwrap().len(), usize::from(sent));
+    }
+}

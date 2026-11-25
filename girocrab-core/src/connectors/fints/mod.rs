@@ -310,6 +310,9 @@ pub struct FinTsConnector {
     /// Jobs that demanded a TAN or an approval during this connector's requests: another
     /// account's reply without SCA does not forget them in the same fetch (#1828).
     sca_asked: HashSet<String>,
+    /// Jobs whose TAN or app approval the bank accepted in this dialog (#1828): an automatic
+    /// sync sends their further pages; an approval for one job lets no other job through.
+    sca_approved: HashSet<String>,
     /// The state as `begin` read it from storage: a failed fetch keeps only the receipt codes
     /// found here (codes of dropped PDFs must not be stored, #1828).
     stored: FinTsState,
@@ -399,6 +402,7 @@ impl FinTsConnector {
             sca_in_dialog: false,
             sca_seen_changed: false,
             sca_asked: HashSet::new(),
+            sca_approved: HashSet::new(),
             stored: FinTsState::default(),
             order_submitted: false,
             result: TransferResult::default(),

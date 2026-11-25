@@ -411,6 +411,7 @@ impl FinTsConnector {
         self.dialog_id = "0".into();
         self.msg_no = 1;
         self.sca_in_dialog = false;
+        self.sca_approved.clear();
     }
 
     pub(super) fn hkidn(&self, ctx: &ConnectContext, n: u32) -> Vec<u8> {
@@ -651,8 +652,12 @@ impl FinTsConnector {
         if ctx.cancelled.is_set() {
             return Err(CoreError::SessionClosed);
         }
-        // #1828: the bank wanted a TAN for this job the last time; an automatic sync does not ask
-        if ctx.prompt.is_none() && self.st.sca_seen.contains(seg_id) {
+        // #1828: the bank wanted a TAN for this job the last time; an automatic sync does not ask.
+        // Learned in this fetch and this job approved in the app since (a further page): it goes out.
+        if ctx.prompt.is_none()
+            && self.st.sca_seen.contains(seg_id)
+            && (self.stored.sca_seen.contains(seg_id) || !self.sca_approved.contains(seg_id))
+        {
             return Err(CoreError::Bank {
                 code: SCA_NOT_ASKED.into(),
                 message: trf(
@@ -679,6 +684,7 @@ impl FinTsConnector {
                 // unless the bank asks for another one
                 if !demands_sca(&reply) {
                     self.sca_in_dialog = true;
+                    self.sca_approved.insert(seg_id.to_string());
                 }
                 return Ok(reply);
             }
@@ -727,6 +733,7 @@ impl FinTsConnector {
         // longer pending may still ask for a TAN (0030), that is no acceptance
         if approval_given && !demands_sca(&reply) {
             self.sca_in_dialog = true;
+            self.sca_approved.insert(seg_id.to_string());
         }
         Ok(reply)
     }
