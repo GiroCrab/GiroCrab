@@ -668,22 +668,18 @@ impl FinTsConnector {
             payload.push(self.hktan_process4(4, seg_id));
         }
         let mut reply = self.send(ctx, payload, &sec, None).await?;
-        let wants_sca = demands_sca(&reply);
-        // #1828: what the next automatic sync leaves out. After an approval in this dialog
-        // (a later page, another job) a reply without SCA says nothing about the next sync.
-        if wants_sca {
-            self.sca_seen_changed |= self.st.sca_seen.insert(seg_id.to_string());
-        } else if reply.errors().is_empty() && !self.sca_in_dialog {
-            self.sca_seen_changed |= self.st.sca_seen.remove(seg_id);
-        }
+        let wants_sca = self.learn_sca(seg_id, &reply);
         if let Some(prompt) = prompt.filter(|_| wants_sca) {
             // only this reply's task counts, not one left from the login
             self.task_reference = None;
             if let Some(question) = self.challenge_from(&reply)? {
                 let reply = self.ask_during_fetch(ctx, prompt, seg_id, question).await?;
                 reply.check()?;
-                // the TAN or the approval was accepted; a skip or a refusal returned above
-                self.sca_in_dialog = true;
+                // the TAN or the approval was accepted (a skip or a refusal returned above),
+                // unless the bank asks for another one
+                if !demands_sca(&reply) {
+                    self.sca_in_dialog = true;
+                }
                 return Ok(reply);
             }
         }
@@ -727,11 +723,30 @@ impl FinTsConnector {
             });
         }
         reply.check()?;
-        // the app approval was given and the bank accepted it
-        if approval_given {
+        // the app approval was given and the bank accepted it: a status reply that is no
+        // longer pending may still ask for a TAN (0030), that is no acceptance
+        if approval_given && !demands_sca(&reply) {
             self.sca_in_dialog = true;
         }
         Ok(reply)
+    }
+
+    /// #1828: what the next automatic sync leaves out, learned from the bank's `reply` to
+    /// `seg_id`; returns whether the reply demands a TAN or an app approval. After an approval
+    /// in this dialog (a later page, another job) a reply without SCA says nothing about the
+    /// next sync, nor does one for another account when the job asked for SCA in this fetch.
+    pub(super) fn learn_sca(&mut self, seg_id: &str, reply: &BankReply) -> bool {
+        let wants_sca = demands_sca(reply);
+        if wants_sca {
+            self.sca_asked.insert(seg_id.to_string());
+            self.sca_seen_changed |= self.st.sca_seen.insert(seg_id.to_string());
+        } else if reply.errors().is_empty()
+            && !self.sca_in_dialog
+            && !self.sca_asked.contains(seg_id)
+        {
+            self.sca_seen_changed |= self.st.sca_seen.remove(seg_id);
+        }
+        wants_sca
     }
 
     /// The bank wants a TAN or an app approval for `seg_id` during the fetch
