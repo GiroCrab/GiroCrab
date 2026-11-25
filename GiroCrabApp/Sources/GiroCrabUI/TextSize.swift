@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 /// App-wide text size (GitHub #343). macOS has no Dynamic Type, so the app
 /// scales its text styles itself; on iOS the system setting stays in charge.
@@ -69,6 +72,23 @@ extension Font.TextStyle {
 
     /// Whole points stay crisp: caption 10 → 12 → 13, body 13 → 15 → 17.
     func macSize(scale: CGFloat) -> CGFloat { (macMetrics.size * scale).rounded() }
+
+    #if os(macOS)
+    func appKitFont(scale: CGFloat, weight: Font.Weight? = nil) -> NSFont {
+        let nativeWeight: NSFont.Weight = switch weight ?? macMetrics.weight {
+        case .ultraLight: .ultraLight
+        case .thin: .thin
+        case .light: .light
+        case .medium: .medium
+        case .semibold: .semibold
+        case .bold: .bold
+        case .heavy: .heavy
+        case .black: .black
+        default: .regular
+        }
+        return .systemFont(ofSize: macSize(scale: scale), weight: nativeWeight)
+    }
+    #endif
 }
 
 extension Font {
