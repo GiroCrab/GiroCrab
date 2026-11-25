@@ -1,7 +1,7 @@
 # cargo-deny policy (#1800). Run: `cargo deny --workspace check` (CI job `deny`).
-# Front ends (own lockfiles), same policy:
-#   cargo deny --manifest-path GiroCrabLinux/Cargo.toml --workspace check --config deny.toml
-#   cargo deny --manifest-path GiroCrabWindows/Cargo.toml --workspace check --config deny.toml
+# Front ends (own lockfiles), same policy (found in the manifest's parent directory):
+#   cargo deny --manifest-path GiroCrabLinux/Cargo.toml --workspace check
+#   cargo deny --manifest-path GiroCrabWindows/Cargo.toml --workspace check
 # Advisory exceptions mirror `.cargo/audit.toml`; keep both in sync.
 
 [graph]
@@ -36,6 +36,7 @@ allow = [
     "WTFPL",               # sqlcipher-src (bundled libtomcrypt)
     "blessing",            # sqlcipher-src (SQLite public-domain blessing)
     "GPL-3.0-only",        # slint (Windows front end; combinable with this GPL-3.0-or-later project)
+    "BSL-1.0",             # clipboard-win, error-code (Windows front end; permissive, GPL-3.0 compatible)
 ]
 confidence-threshold = 0.9
 # Only for the named crate: any other crate under the OpenSSL license still fails.
