@@ -419,6 +419,56 @@ fn fetch_warnings_name_accounts_by_their_stored_name() {
 }
 
 #[test]
+fn fetch_hints_name_accounts_by_their_stored_name_without_any_warning() {
+    // #1743: "Depotbestand (HKWPD) – von der Bank nicht angeboten" is a hint, not a warning.
+    // With no warning in the fetch, the IBAN must still become the stored name.
+    let p_dir = crate::test_support::TempDir::new("girocrab-fetch-hints");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(
+            ConnectorKind::FinTsGeneric,
+            "fints:50010517".into(),
+            "login".into(),
+        )
+        .unwrap();
+    let iban = "DE02120300000000202051";
+    let depot = RemoteAccount {
+        external_ref: iban.into(),
+        name: "Direkt-Depot".into(),
+        owner: String::new(),
+        iban: iban.into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Brokerage,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let first = FetchResult {
+        accounts: vec![depot.clone()],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, first).unwrap();
+    let id = v.list_accounts().unwrap().pop().unwrap().id;
+    v.rename_account(id, "Mein Depot".into()).unwrap();
+
+    let hinted = FetchResult {
+        accounts: vec![depot],
+        balances_unknown: vec![iban.into()],
+        hints: vec![format!(
+            "{iban}: Depotbestand (HKWPD) – von der Bank nicht angeboten"
+        )],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::FinTsGeneric, conn, hinted).unwrap();
+    assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    assert_eq!(
+        s.hints,
+        vec!["Mein Depot: Depotbestand (HKWPD) – von der Bank nicht angeboten".to_string()]
+    );
+}
+
+#[test]
 fn depot_value_points_follow_what_a_fetch_confirms() {
     // total without positions, unknown balance, unconfirmed 0, confirmed 0
     let p_dir = crate::test_support::TempDir::new("girocrab-depot-points");
