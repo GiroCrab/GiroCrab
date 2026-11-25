@@ -60,10 +60,16 @@ extension AppModel {
         refreshRecurring()
     }
 
+    /// The latest `revealBooking` call: an older jump still waiting gives way to a newer one.
+    @MainActor private static var revealRequest = 0
+
     /// Selects a booking in the list, widening the period if it is outside of it.
     /// With `account` the booking is shown in that account with every filter cleared (from the
     /// subscription list, whose column is not a booking list); without, only when it is not visible yet.
     func revealBooking(_ id: Int64, inAccount account: Int64? = nil) {
+        guard let pin = pinVault() else { return }
+        AppModel.revealRequest &+= 1
+        let request = AppModel.revealRequest
         if let account {
             sidebarSelection = .account(account)
             period = .all
@@ -75,19 +81,43 @@ extension AppModel {
         } else if booking(withID: id) == nil {
             sidebarSelection = .allAccounts
             period = .all
-            directionFilter = .all
-            statusFilter = .all
-            tagFilter = BookingTagFilter()
-            searchText = ""
+            scope = .all
+            resetListFilters(inBackground: true)
         }
+        let generation = listGeneration
         // After a closing sheet / list reload, so the list can scroll to the row.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 350_000_000)
-            guard let self else { return }
-            // an older booking is not on the first page: load back to its day
-            if booking(withID: id) == nil, let day = try? vault?.bookingDate(bookingId: id) {
-                loadBookings(through: day)
+            guard let self, !Task.isCancelled, isCurrent(pin), request == AppModel.revealRequest else { return }
+            // an older booking is not on the first page: load back to its day. Only this path
+            // depends on the list generation; a loaded target is selected even when a load that
+            // started before the jump finished meanwhile.
+            if booking(withID: id) == nil {
+                guard generation == listGeneration else { return }
+                let filter = currentFilter
+                do {
+                    let count = try await pin.run { vault -> UInt32? in
+                        guard let day = try vault.bookingDate(bookingId: id) else { return nil }
+                        var narrowed = filter
+                        if narrowed.dateFrom.map({ $0 < day }) ?? true { narrowed.dateFrom = day }
+                        return try vault.countTransactions(filter: narrowed)
+                    }
+                    guard !Task.isCancelled, isCurrent(pin), request == AppModel.revealRequest,
+                          generation == listGeneration, let count else { return }
+                    listLimit = max(listLimit, count)
+                    startSelectionLoad()
+                    let loadGeneration = listGeneration
+                    await selectionLoadTask?.value
+                    guard !Task.isCancelled, isCurrent(pin), request == AppModel.revealRequest,
+                          loadGeneration == listGeneration else { return }
+                } catch {
+                    if isCurrent(pin), request == AppModel.revealRequest, generation == listGeneration {
+                        errorMessage = describe(error)
+                    }
+                    return
+                }
             }
+            guard booking(withID: id) != nil else { return }
             if selectedBookingID == id { selectedBookingID = nil }
             selectedBookingID = id
         }

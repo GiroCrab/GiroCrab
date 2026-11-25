@@ -483,7 +483,18 @@ struct SetupRequest: Identifiable {
     let keys: [String]
 }
 
-/// Form state of "Neue Überweisung" (kept while the TAN sheet is shown).
+/// How far a sync that reads a long history got (the rest comes with the next syncs).
+struct HistoryProgress: Equatable {
+    var remaining: Int
+    var total: Int
+    /// 0…1 of the timeline already read; 0 when the total is unknown.
+    var fraction: Double { total > 0 ? min(1, max(0, Double(total - remaining) / Double(total))) : 0 }
+    /// "noch ca. 600 von 2.900 Trades" – empty when the total is unknown.
+    var text: String {
+        total > 0 ? String(localized: "noch ca. \(remaining.formatted()) von \(total.formatted()) Trades") : ""
+    }
+}
+
 /// CSV handed to `.fileExporter`.
 struct CSVFileDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.commaSeparatedText] }
@@ -800,6 +811,25 @@ struct RunningLocalApi {
     weak var servedVault: Vault?
 }
 
+/// Told by the socket server (on its thread) that a client changed categories or
+/// tags; the model reloads on the main actor if it still shows that vault.
+final class LocalApiChangeListener: LocalApiListener, @unchecked Sendable {
+    private weak var model: AppModel?
+    private weak var servedVault: Vault?
+
+    init(model: AppModel, servedVault: Vault) {
+        self.model = model
+        self.servedVault = servedVault
+    }
+
+    func bookingsChanged() {
+        Task { @MainActor [weak model, weak servedVault] in
+            guard let model, let servedVault else { return }
+            model.localApiChangedBookings(in: servedVault)
+        }
+    }
+}
+
 /// What Return in a tag field does with the typed text (#228).
 enum TagEntryIntent: Equatable {
     case none
@@ -884,4 +914,23 @@ enum TagRenameIntent: Equatable {
 struct SelectionTotal: Equatable {
     let currency: String
     let cents: Int64
+}
+
+/// Period of a full fetch (#1043) as the setting `sync.days_back` stores it: `max` or days.
+extension HistoryRange {
+    init(setting: String) {
+        self = setting == "max" ? .maximum : .days(days: UInt32(setting) ?? 90)
+    }
+
+    var setting: String {
+        switch self {
+        case .maximum: return "max"
+        case .days(let days): return String(days)
+        }
+    }
+
+    /// The periods the pickers offer, shortest first.
+    static var pickerOptions: [(setting: String, title: LocalizedStringKey)] {
+        [("90", "90 Tage"), ("365", "1 Jahr"), ("730", "2 Jahre"), ("max", "Maximum")]
+    }
 }

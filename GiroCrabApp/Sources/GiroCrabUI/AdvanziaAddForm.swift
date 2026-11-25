@@ -52,10 +52,12 @@ final class AdvanziaAddState {
         guard model.isCurrent(pin), generation == token, !Task.isCancelled else { return nil }
         let username = login.trimmingCharacters(in: .whitespacesAndNewlines)
         let secret = password, method = method.rawValue, store = storePassword
+        let history = model.newLoginHistory
         guard !username.isEmpty, !secret.isEmpty else { return nil }
         do {
             let result = try await pin.run { vault -> (BankConnection, AdvanziaProfile) in
                 let id = try vault.addBankConnection(connector: .advanzia, displayName: "", loginName: username)
+                try AppModel.requestNewLoginHistory(history, for: id, in: vault)
                 try vault.setAdvanziaAuthMethod(connectionId: id, method: method)
                 let profile = try vault.advanziaProfile(connectionId: id)
                 guard let connection = try vault.listBankConnections().first(where: { $0.id == id }) else { throw AdvanziaBrowserError(code: "ACCOUNT") }

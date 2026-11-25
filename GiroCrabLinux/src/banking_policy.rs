@@ -394,6 +394,10 @@ pub fn display_name(id: &str) -> String {
         "equateplus" => "EquatePlus",
         "quirion" => "quirion",
         "sharinbox" => "Sharinbox",
+        "axashareplan" => "AXA Mitarbeiter Shareplan",
+        "unioninvestment" => "Union Investment",
+        "airplus" => "AirPlus",
+        "berghauscie" => "Berghaus & Cie (Weindepot)",
         "uberspace" => "Uberspace",
         "bitcoincore" => "Bitcoin Core",
         "schwaebischhall" => "Schwäbisch Hall",
@@ -403,8 +407,11 @@ pub fn display_name(id: &str) -> String {
         "opeldirektbank" => "Opel Direktbank",
         "hanseatic" => "Hanseatic Bank",
         "bhw" => "BHW Bausparkasse",
+        "edenred" => "Edenred",
         "kontist" => "Kontist",
         "monefit" => "Monefit SmartSaver",
+        "bitcoin" => "Bitcoin-Wallet",
+        "goandgrow" => "Go & Grow",
         other => other,
     };
     match tail {

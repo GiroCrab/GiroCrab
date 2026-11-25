@@ -9,8 +9,10 @@ mod bridge;
 mod bug_report;
 mod dispatch;
 mod i18n;
+mod local_api;
 mod ocr;
 mod qr_scan;
+mod refunds;
 mod search_terms;
 mod sessions;
 mod vault_key;
@@ -63,6 +65,9 @@ fn main() {
     }
     // SAFETY: the application object exists (created above).
     let code = unsafe { girocrab_exec_app() };
+    // Einstellungen › Analyse (#136): the socket file goes before `_exit` (a file left by a
+    // crash is replaced on the next start, see the core's lock file).
+    local_api::stop();
     // Normal quit: the decrypted QuickLook copies go too (start-up cleans up after a crash).
     dispatch::remove_quicklook_files();
     bug_report::clear_temp_dir();

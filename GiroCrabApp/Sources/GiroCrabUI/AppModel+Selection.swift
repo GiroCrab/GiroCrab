@@ -87,10 +87,99 @@ extension AppModel {
         #endif
     }
 
-    /// Bearbeiten › Alles auswählen (⌘A) in the booking list.
+    /// Bearbeiten › Alles auswählen (⌘A) in the booking list: every booking matching the
+    /// filter, not only the loaded pages (#1696). The rest loads in the background first,
+    /// so count, sum and every action on the selection cover all of them.
+    ///
+    /// State of a pending ⌘A:
+    /// - `isSelectingAllBookings`: the rest of the shown list is loading (`appendBookings`);
+    ///   its completion selects. Cleared by `dropPendingPage` (any full reload), a newer
+    ///   selection (`selectedBookingID` / `selectedBookingIDs` observers) and `dropMultiSelection`.
+    /// - `selectAllAfterReload`: ⌘A came while a new list loads (`isReloadingList`); `publish`
+    ///   runs `selectAllShownBookings` on that list. Cleared by a newer selection and by
+    ///   `dropMultiSelection` (kept for a status/search change, which narrows the same view).
+    /// Never both at once: the completion turns the first into the second when a reload started.
     func selectAllBookings() {
-        let ids = visibleBookings.map(\.id)
-        guard !ids.isEmpty else { return }
+        // the previous list may still show while the new one loads: never select its rows,
+        // select the new one's as soon as it is published
+        if isReloadingList {
+            selectAllAfterReload = true
+            return
+        }
+        selectAllShownBookings()
+    }
+
+    /// ⌘A on the list as published now (`publish` calls it for a ⌘A that waited for it).
+    func selectAllShownBookings() {
+        if hasMoreBookings {
+            guard !isSelectingAllBookings else { return }
+            isSelectingAllBookings = true
+            let started = appendBookings(limit: UInt32(remainingBookingCount)) { [weak self] error in
+                // superseded by a newer selection or a reload
+                guard let self, self.isSelectingAllBookings else { return }
+                self.isSelectingAllBookings = false
+                // a search or reload started meanwhile owns the list: never select the old rows,
+                // wait for the new list like a ⌘A pressed during the reload (#1696)
+                if self.isReloadingList {
+                    self.selectAllAfterReload = true
+                    return
+                }
+                // never a partial selection: the user would act on only some bookings
+                if let error {
+                    self.showError(String(localized: "Nicht alle Buchungen konnten ausgewählt werden"),
+                                   describe(error)) { [weak self] in self?.selectAllBookings() }
+                } else {
+                    self.selectLoadedBookings()
+                }
+            }
+            if !started { isSelectingAllBookings = false }
+            return
+        }
+        selectLoadedBookings()
+    }
+
+    /// A search ended without a reload of its own (e.g. the natural reading changed nothing): a ⌘A
+    /// that waited for a new list selects the one on screen. A reload still running keeps it
+    /// pending; its `publish` takes it (#1696).
+    func runPendingSelectAll() {
+        guard selectAllAfterReload, !isReloadingList else { return }
+        selectAllAfterReload = false
+        selectAllShownBookings()
+    }
+
+    /// A new list is on its way (selection, edit, scope or search): the rows on screen belong to the
+    /// previous filter, so ⌘A must neither select them nor append the new filter's tail to them.
+    var isReloadingList: Bool {
+        selectionLoadTask != nil || scopeLoadTask.map { !$0.isCancelled } == true
+            || searchTask.map { !$0.isCancelled } == true
+            || categoryRefreshTask.map { !$0.isCancelled } == true
+    }
+
+    /// Another account, group, category or period: a multiple selection made in the previous
+    /// list ends (like a folder change in Finder). Kept, it would cover only the rows of the
+    /// new list's first page that happen to be in both – neither „all“ nor what was chosen (#1696).
+    /// `keepingPendingSelectAll`: a status or search change narrows the same view, so a ⌘A
+    /// pressed before it selects the new list once it is published (only for a background reload).
+    func dropMultiSelection(keepingPendingSelectAll: Bool = false) {
+        let pending = keepingPendingSelectAll && (isSelectingAllBookings || selectAllAfterReload)
+        isSelectingAllBookings = false
+        selectAllAfterReload = false
+        if isMultiSelection {
+            selectedBookingIDs = selectedBookingID.map { [$0] } ?? []
+        }
+        // set after the selection change: its observer clears a pending ⌘A
+        if pending { selectAllAfterReload = true }
+    }
+
+    private func selectLoadedBookings() {
+        // a checked row kept in place no longer matches the filter (#1696)
+        let outside = lingeringRowOutsideFilterID
+        let ids = visibleBookings.map(\.id).filter { $0 != outside }
+        guard !ids.isEmpty else {
+            // only the lingering row is left: nothing matches, so nothing is selected
+            if outside != nil { selectedBookingID = nil }
+            return
+        }
         selectedBookingIDs = Set(ids)
         if selectedBookingID.map({ !selectedBookingIDs.contains($0) }) ?? true { selectedBookingID = ids.first }
     }
@@ -262,7 +351,7 @@ extension AppModel {
                 self.showSelection()
                 if self.streamTopPending { self.scrollStreamTop() }
                 let publish = Perf.signposter.beginInterval("publishSelection")
-                self.publish(loaded.page)
+                self.publish(loaded.page, filter: filter)
                 self.selectionFlow = (loaded.flow.consumptionCents, loaded.flow.investedCents, loaded.flow.incomeCents)
                 self.recurring = loaded.recurring.series
                 self.recurringHidden = loaded.recurring.ignored
@@ -288,6 +377,8 @@ extension AppModel {
     func failSelectionLoad(_ error: Error, cycleLoaded: Bool = false) {
         selectionLoadTask = nil
         endSelectionLoad()
+        // no new list: a ⌘A waiting for it ends with the error (#1696)
+        selectAllAfterReload = false
         if shownSelection != sidebarSelection || shownPeriod != requestedPeriod {
             showSelectionWithoutData()
         } else if !cycleLoaded {
@@ -357,6 +448,15 @@ extension AppModel {
         searchTask?.cancel()
         let query = searchText
         searchTask = Task { [weak self] in
+            // a newer search cancels this one first: not cancelled = still the current task
+            defer {
+                if !Task.isCancelled, let model = self {
+                    model.searchTask = nil
+                    // a reading that changed nothing published no new list: a ⌘A waiting for one
+                    // runs on the list on screen (#1696)
+                    model.runPendingSelectAll()
+                }
+            }
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled, let self else { return }
             guard self.naturalSearch?.query != query, query != self.literalSearchQuery,
@@ -527,11 +627,18 @@ extension AppModel {
     /// Switches to the user-defined period (GitHub #53); swaps the dates if needed.
     func applyCustomPeriod(from: Date, to: Date) {
         let (a, b) = from <= to ? (from, to) : (to, from)
+        let datesChanged = customPeriodFrom != DateText.iso(a) || customPeriodTo != DateText.iso(b)
         customPeriodFrom = DateText.iso(a)
         customPeriodTo = DateText.iso(b)
         AppDefaults.store.set(customPeriodFrom, forKey: "period.customFrom")
         AppDefaults.store.set(customPeriodTo, forKey: "period.customTo")
-        if period == .custom { periodDidChange() } else { period = .custom }
+        if period == .custom {
+            // new bounds are another period, like the `period` observer's change (#1696)
+            if datesChanged { dropMultiSelection() }
+            periodDidChange()
+        } else {
+            period = .custom
+        }
         rememberPeriod()
     }
 

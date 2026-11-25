@@ -18,28 +18,34 @@ QtObject {
     property var redoStack: []
     /// 0 = normal action, 1 = undoing, 2 = redoing.
     property int phase: 0
+    property bool busy: false
+    property int branch: 0
     readonly property string undoName: undoStack.length ? undoStack[undoStack.length - 1].name : ""
     readonly property string redoName: redoStack.length ? redoStack[redoStack.length - 1].name : ""
-    readonly property bool canUndo: undoStack.length > 0
-    readonly property bool canRedo: redoStack.length > 0
+    readonly property bool canUndo: !busy && undoStack.length > 0
+    readonly property bool canRedo: !busy && redoStack.length > 0
 
     /// Records `fn` (no arguments) as the undo of the action just done, shown as `name`.
-    function register(name, fn) {
+    function register(name, fn, recordedPhase, recordedBranch) {
+        const p = recordedPhase === undefined ? phase : recordedPhase
+        // a late undo completion of an abandoned branch is dropped; a redo completion always
+        // puts its inverse back on the undo stack
+        if (p === 1 && recordedBranch !== undefined && recordedBranch !== branch) return
         const entry = { name: name, fn: fn }
-        if (phase === 1) redoStack = redoStack.concat([entry])
+        if (p === 1) redoStack = redoStack.concat([entry])
         else {
             undoStack = undoStack.concat([entry])
-            if (phase === 0) redoStack = []
+            if (p === 0) { redoStack = []; branch++ }
         }
     }
     function undo() {
-        if (!undoStack.length || phase !== 0) return
+        if (busy || !undoStack.length || phase !== 0) return
         const e = undoStack[undoStack.length - 1]
         undoStack = undoStack.slice(0, -1)
         perform(e, 1)
     }
     function redo() {
-        if (!redoStack.length || phase !== 0) return
+        if (busy || !redoStack.length || phase !== 0) return
         const e = redoStack[redoStack.length - 1]
         redoStack = redoStack.slice(0, -1)
         perform(e, 2)
@@ -48,7 +54,7 @@ QtObject {
         phase = p
         try { e.fn() } catch (err) { AppModel.errorMessage = err.message } finally { phase = 0 }
     }
-    function clear() { undoStack = []; redoStack = [] }
+    function clear() { undoStack = []; redoStack = []; branch++ }
 
     /// Another vault (demo / own, lock, reset) or a restored backup: the recorded ids
     /// point at other data, nothing to undo.

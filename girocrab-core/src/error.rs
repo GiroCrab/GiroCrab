@@ -81,8 +81,10 @@ impl From<rusqlite::Error> for CoreError {
 
 impl From<reqwest::Error> for CoreError {
     fn from(e: reqwest::Error) -> Self {
+        // The URL of a failed request can carry session paths or query
+        // strings (FNZ): it never ends up in the error text, only the cause.
         CoreError::Network {
-            message: e.to_string(),
+            message: e.without_url().to_string(),
         }
     }
 }

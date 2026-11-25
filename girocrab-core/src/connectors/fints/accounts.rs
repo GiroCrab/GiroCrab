@@ -8,10 +8,21 @@ use super::syntax::{SegmentBuilder, escape};
 use super::{CONSORSBANK_BLZ, COUNTRY, FinTsConnector, SepaAccount, UpdAccount, fints_date, mt535};
 use crate::connectors::{ConnectContext, today};
 use crate::error::{CoreError, CoreResult};
-use crate::i18n::trf;
+use crate::i18n::{tr, trf};
 use crate::iban::normalize_iban;
 use crate::models::AccountKind;
 use crate::money::{cents, decimal};
+
+/// Why a depot fetch ended without any holdings statement: what the bank said instead.
+pub(super) fn no_holdings_message(codes: &[String]) -> String {
+    if codes.is_empty() {
+        return tr("Die Bank hat keinen Depotbestand geliefert.").to_string();
+    }
+    trf(
+        "Die Bank hat keinen Depotbestand geliefert ({0}).",
+        &[&codes.join("; ")],
+    )
+}
 
 pub(super) fn kind_from_code(code: u32) -> AccountKind {
     // FinTS Kontoart: 1-9 Kontokorrent, 10-19 Sparkonto, 20-29 Festgeld,
@@ -256,6 +267,9 @@ impl FinTsConnector {
         let v = self.version("HKWPD");
         let mut data = Vec::<u8>::new();
         let mut touchdown: Option<String> = None;
+        let mut seen_codes: Vec<String> = Vec::new();
+        // bytes of holdings statements received; the CRLF separators below do not count
+        let mut payload_len = 0usize;
         crate::depot_debug::log(&format!(
             "fints HKWPD: bpd HIWPDS versions={:?} (bank_supports={}), sending v{v} with KTV",
             self.st.versions.get("HKWPD"),
@@ -296,14 +310,31 @@ impl FinTsConnector {
             ));
             for s in r.all("HIWPD") {
                 if let Some(b) = s.binary(1) {
+                    payload_len += b.len();
                     data.extend_from_slice(b);
                     data.extend_from_slice(b"\r\n");
+                }
+            }
+            for c in &r.codes {
+                // 0010/0020 only say that the message arrived and ran
+                let note = format!("{} {}", c.0, c.2);
+                if !c.0.starts_with('9')
+                    && !matches!(c.0.as_str(), "0010" | "0020")
+                    && !seen_codes.contains(&note)
+                {
+                    seen_codes.push(note);
                 }
             }
             touchdown = r.code("3040").and_then(|c| c.3.first().cloned());
             if touchdown.is_none() {
                 break;
             }
+        }
+        // No error code, but no holdings statement either: the bank did not answer the order
+        // (#1743). That is not an empty depot, and its stored value must not look current.
+        // An HIWPD with a zero-length binary (`@0@`) carries no statement either.
+        if payload_len == 0 {
+            return Err(CoreError::protocol(no_holdings_message(&seen_codes)));
         }
         Ok(mt535::parse(&crate::text::decode_bank_bytes(&data)))
     }

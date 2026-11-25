@@ -841,7 +841,12 @@ struct MainSplitView: View {
                 .interactiveDismissDisabled(model.transferBusy)
         }
         .capturableSheet(isPresented: Binding(get: { model.splitBooking != nil }, set: { if !$0 { model.splitBooking = nil } })) {
-            if let b = model.splitBooking { SplitSheet(booking: b).environment(model) }
+            if let b = model.splitBooking { SplitSheet(booking: b, presetPercent: model.splitPresetPercent).environment(model) }
+        }
+        .capturableSheet(isPresented: Binding(get: { model.refundPickerBooking != nil }, set: { if !$0 { model.refundPickerBooking = nil } })) {
+            if let booking = model.refundPickerBooking {
+                RefundPickerSheet(booking: booking).environment(model).id("\(model.vaultRevision)|\(booking.id)")
+            }
         }
         .capturableSheet(item: $model.payeeCheck) { _ in
             PayeeCheckSheet()
@@ -861,6 +866,10 @@ struct MainSplitView: View {
                 else if c.connector == .equatePlus { EquatePlusWebSheet(connection: c) }
                 else if c.connector == .quirion { QuirionWebSheet(connection: c) }
                 else if c.connector == .sharinbox { SharinboxWebSheet(connection: c) }
+                else if c.connector == .axaShareplan { AxaShareplanWebSheet(connection: c) }
+                else if c.connector == .unionInvestment { UnionInvestmentWebSheet(connection: c) }
+                else if c.connector == .airPlus { AirPlusWebSheet(connection: c) }
+                else if c.connector == .berghausCie { BerghausCieWebSheet(connection: c) }
                 else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
             }

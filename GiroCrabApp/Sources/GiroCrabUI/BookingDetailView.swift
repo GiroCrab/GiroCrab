@@ -671,7 +671,7 @@ struct CategoryGridCard: View {
                     }
                 }
             }
-            Button { model.splitBooking = booking } label: {
+            Button { model.openSplit(booking) } label: {
                 Label("Umsatz aufteilen (Splitbuchung) …", systemImage: "arrow.triangle.branch").frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered).controlSize(.large)
