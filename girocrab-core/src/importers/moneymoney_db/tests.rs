@@ -6036,6 +6036,13 @@ fn category_only_reimport_keeps_explicit_roles_and_resets() {
     assert_eq!(advance.1, Some(CategoryRole::Neutral));
 
     local.set_category_role(outlay.0, None).unwrap();
+    let cleared = state(&local);
+    assert_eq!(cleared[0].1, None);
+    assert_eq!(cleared[0].2, CategoryRole::Consumption);
+    assert!(cleared[0].3 > 0);
+    import(false);
+    assert_eq!(state(&local), cleared);
+
     local
         .set_category_role(advance.0, Some(CategoryRole::Loan))
         .unwrap();
