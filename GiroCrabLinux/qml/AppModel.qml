@@ -1924,6 +1924,9 @@ QtObject {
     readonly property var syncBatchProgress: syncBatchTotal > 1 ? { current: syncBatchTotal - syncQueue.length, total: syncBatchTotal } : null
     readonly property bool canSkipInSyncBatch: syncQueue.length > 0
     property Timer pollTimer: Timer { property var connection; onTriggered: model.pollSession(connection) }
+    /// session_poll calls not answered yet: a step that arrives meanwhile (the answer to a TAN)
+    /// keeps `polling` set, so „TAN auslassen“ stays off until the poll has settled.
+    property int sessionPollsInFlight: 0
 
     function requestSync(connection) {
         withFreshBankingPolicy(() => {
@@ -2081,16 +2084,16 @@ QtObject {
         if (step.NeedsChallenge) {
             const c = step.NeedsChallenge.challenge
             activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "",
-                                canSkipOrder: step.fetching === true, polling: false }
+                                canSkipOrder: step.fetching === true, polling: sessionPollsInFlight > 0 }
             if (c.kind === "DecoupledPush" || c.kind === "Progress") schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.StillWaiting) {
             const c = step.StillWaiting.challenge
             activeChallenge = activeChallenge === null
                 ? { connection: connection, challenge: c, waiting: true, busy: false, error: "",
-                    canSkipOrder: step.fetching === true, polling: false }
+                    canSkipOrder: step.fetching === true, polling: sessionPollsInFlight > 0 }
                 // progress steps bring a new text
                 : Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false,
-                                                       canSkipOrder: step.fetching === true, polling: false })
+                                                       canSkipOrder: step.fetching === true, polling: sessionPollsInFlight > 0 })
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             const s = step.Finished.summary
@@ -2158,17 +2161,20 @@ QtObject {
         const id = activeSession
         if (id === null) return
         if (activeChallenge && activeChallenge.canSkipOrder) activeChallenge = Object.assign({}, activeChallenge, { polling: true })
+        sessionPollsInFlight++
         coreAsync("session_poll", { session: id }, step => {
+            sessionPollsInFlight--
             if (activeSession !== id) return   // skipped / cancelled meanwhile
             // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with Finished
             if (activeChallenge && activeChallenge.busy && !step.Finished) return
             handleStep(step, connection)
-        }, err => { if (activeSession === id) finishSync(err, connection) })
+        }, err => { sessionPollsInFlight--; if (activeSession === id) finishSync(err, connection) })
     }
     function submitCode(code) {
         if (activeTransfer !== null && activeChallenge) { submitTransferCode(code); return }
         const id = activeSession, ch = activeChallenge
         if (id === null || !ch) return
+        pollTimer.stop()   // as skipOrder: no new poll while the TAN is on its way
         activeChallenge = Object.assign({}, ch, { busy: true, error: "" })
         coreAsync("session_submit", { session: id, code: code }, step => { if (activeSession === id) handleStep(step, ch.connection) },
                   err => { if (activeSession === id) finishSync(err, ch.connection) })
