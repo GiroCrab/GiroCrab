@@ -36,48 +36,51 @@ pub struct PortalStatementItem {
 /// its JSON schema is undocumented and changes, so every object that carries a
 /// closing date and a PDF link is an entry (`{…, "date": "2026-10-15", "url":
 /// "…x.pdf", …}`) — the date sits on the list item, the link often one nesting
-/// level deeper (`files: [{"url": "…x.pdf"}]`). Duplicate `(date, path)` pairs
-/// and objects that carry no PDF link are left out.
+/// level deeper (`files: [{"url": "…x.pdf"}]`). A date is always paired with a
+/// PDF of the same entry, never with the link of a neighbour. Duplicate
+/// `(date, path)` pairs and entries without a complete pair are left out.
 pub fn parse_portal_statement_list(body: &str) -> Vec<PortalStatementItem> {
-    /// First closing date / PDF link of the subtree, direct fields first.
-    fn walk(v: &serde_json::Value) -> (Option<String>, Option<String>) {
-        fn object(
-            m: &serde_json::Map<String, serde_json::Value>,
-            mut out: (Option<String>, Option<String>),
-        ) -> (Option<String>, Option<String>) {
-            for v in m.values() {
-                if let Some(s) = v.as_str() {
-                    out.0 = out.0.or_else(|| closing_date(s));
-                    out.1 = out.1.or_else(|| pdf_link(s));
-                }
-            }
-            for v in m.values() {
-                if out.0.is_some() && out.1.is_some() {
-                    break;
-                }
-                let sub = walk(v);
-                out.0 = out.0.or(sub.0);
-                out.1 = out.1.or(sub.1);
-            }
-            out
-        }
+    /// First closing date of an object's direct fields.
+    fn own_date(m: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+        m.values().filter_map(|v| v.as_str()).find_map(closing_date)
+    }
+    /// First PDF link within `v`, without crossing into an object that
+    /// carries its own closing date — that is another list entry, so its PDF
+    /// belongs to that entry, not to ours.
+    fn pdf_in(v: &serde_json::Value) -> Option<String> {
         match v {
-            serde_json::Value::Object(m) => object(m, (None, None)),
-            serde_json::Value::Array(a) => a.iter().fold((None, None), |mut acc, i| {
-                let sub = walk(i);
-                acc.0 = acc.0.or(sub.0);
-                acc.1 = acc.1.or(sub.1);
-                acc
-            }),
-            _ => (None, None),
+            serde_json::Value::Object(m) if own_date(m).is_none() => m
+                .values()
+                .filter_map(|s| s.as_str())
+                .find_map(pdf_link)
+                .or_else(|| m.values().find_map(pdf_in)),
+            serde_json::Value::Array(a) => a.iter().filter_map(pdf_in).next(),
+            _ => None,
         }
+    }
+    /// One list entry: its closing date is a direct field of the entry, the
+    /// PDF link comes from the entry itself (`files` array included) — never
+    /// from another entry. An entry without a PDF and a PDF without a date
+    /// emit nothing instead of pairing with each other or with a neighbour.
+    fn entry(v: &serde_json::Value) -> Option<(String, String)> {
+        let m = match v {
+            serde_json::Value::Object(m) => m,
+            _ => return None,
+        };
+        let date = own_date(m)?;
+        let path = m
+            .values()
+            .filter_map(|v| v.as_str().and_then(pdf_link))
+            .chain(m.values().filter_map(pdf_in))
+            .next()?;
+        Some((date, path))
     }
     let Some(v) = serde_json::from_str::<serde_json::Value>(body).ok() else {
         return Vec::new();
     };
     let mut out: Vec<(String, String)> = Vec::new();
     fn collect(v: &serde_json::Value, out: &mut Vec<(String, String)>) {
-        if let (Some(date), Some(path)) = walk(v)
+        if let Some((date, path)) = entry(v)
             && !out.contains(&(date.clone(), path.clone()))
         {
             out.push((date, path));
@@ -401,6 +404,29 @@ mod statement_list_tests {
                     path: "https://docs.example.net/statement/S3.pdf".into()
                 },
             ]
+        );
+    }
+
+    /// An incomplete entry never borrows the date or the PDF of a neighbour
+    /// (finding of the PR review): the list reads only complete entries.
+    #[test]
+    fn a_date_never_pairs_with_the_pdf_of_another_entry() {
+        // first entry without a PDF, second without a date: nothing emitted
+        let body = r#"{"statements":[
+            {"id":"S1","statementDate":"2026-10-15"},
+            {"id":"S2","url":"/api/cards/C1/statements/S2.pdf"}]}"#;
+        assert!(parse_portal_statement_list(body).is_empty());
+        // the complete entry is read — and no pair of the incomplete ones
+        // ("date of the first, PDF of the second") is emitted
+        let body = r#"{"statements":[
+            {"id":"S1","statementDate":"2026-10-15"},
+            {"id":"S2","statementDate":"2026-09-14","url":"/api/cards/C1/statements/S2.pdf"}]}"#;
+        assert_eq!(
+            parse_portal_statement_list(body),
+            vec![PortalStatementItem {
+                date: "2026-09-14".into(),
+                path: "/api/cards/C1/statements/S2.pdf".into()
+            }]
         );
     }
 
