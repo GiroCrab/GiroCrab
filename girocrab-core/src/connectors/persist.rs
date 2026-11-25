@@ -2104,6 +2104,10 @@ impl Vault {
                 "Sammelüberweisungen sind nur für FinTS-Konten möglich.",
             )));
         }
+        // A savings account only books to own checking accounts: every payment counts (#1893).
+        for p in &request.payments {
+            self.ensure_savings_transfer_to_own_checking(request.account_id, &p.iban)?;
+        }
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2191,6 +2195,8 @@ impl Vault {
                 if !validate_iban(&recipient_iban) {
                     return Err(CoreError::invalid(tr("Die Empfänger-IBAN ist ungültig.")));
                 }
+                // Create/Change only; Delete stays possible so existing orders can be cancelled (#1893).
+                self.ensure_savings_transfer_to_own_checking(request.account_id, &recipient_iban)?;
                 if request.amount_cents <= 0 {
                     return Err(CoreError::invalid(tr("Der Betrag muss größer als 0 sein.")));
                 }
@@ -2410,9 +2416,6 @@ impl Vault {
 }
 
 impl Vault {
-    /// Debit account of a transfer: connection, IBAN, owner, connector and the
-    /// gate/kind checks shared by single and batch transfers.
-    #[allow(clippy::type_complexity)]
     /// A savings account (Tagesgeld) only books to the user's own active checking accounts (#582, #1893).
     /// Enforced here so no front end can send it to a third party.
     fn ensure_savings_transfer_to_own_checking(
@@ -2450,6 +2453,9 @@ impl Vault {
         }
     }
 
+    /// Debit account of a transfer: connection, IBAN, owner, connector and the
+    /// gate/kind checks shared by single and batch transfers.
+    #[allow(clippy::type_complexity)]
     pub(crate) fn transfer_source(
         &self,
         account_id: i64,

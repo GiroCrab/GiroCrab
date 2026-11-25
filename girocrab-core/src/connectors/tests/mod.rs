@@ -2206,6 +2206,52 @@ fn savings_transfer_only_goes_to_an_own_active_checking_account() {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn savings_batch_transfer_only_goes_to_own_active_checking_accounts() {
+    use crate::models::{BatchPaymentInput, BatchTransferRequest};
+    let (v, path) = demo_vault();
+    let accounts = v.list_accounts().unwrap();
+    let savings = accounts
+        .iter()
+        .find(|a| a.name == "Tagesgeld Plus" && a.connection_id.is_some())
+        .unwrap();
+    let own = accounts
+        .iter()
+        .find(|a| a.name == "Musterbank Girokonto" && a.connection_id.is_some())
+        .unwrap();
+    let payment = |iban: &str| BatchPaymentInput {
+        name: "Müller GmbH".into(),
+        iban: iban.into(),
+        bic: None,
+        amount_cents: 100,
+        purpose: "Test".into(),
+    };
+    let send = |ibans: &[&str]| {
+        v.clone().begin_batch_transfer(
+            BatchTransferRequest {
+                account_id: savings.id,
+                payments: ibans.iter().map(|i| payment(i)).collect(),
+                batch_booking: true,
+                execution_date: None,
+            },
+            "pin".into(),
+            true,
+        )
+    };
+    // A third party is refused, even when it is only one payment of the batch.
+    assert!(matches!(
+        send(&["DE02120300000000202051"]),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        send(&[own.iban.as_str(), "DE02120300000000202051"]),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    // Only own active checking accounts pass.
+    assert!(send(&[own.iban.as_str()]).is_ok());
+    let _ = std::fs::remove_file(path);
+}
+
 #[tokio::test(start_paused = true)]
 async fn demo_transfer_flow_adds_pending_booking_and_suggests_recipient() {
     let (v, path) = demo_vault();
