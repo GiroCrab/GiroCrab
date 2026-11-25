@@ -313,11 +313,15 @@ impl Vault {
 
 /// Removes the planned payments of `account_id` the bank has booked by now (#1881): the
 /// same IBAN (when both sides have one) and amount, booked on or after the day the order
-/// was placed. A booking settles one order only: only bookings imported at or after
-/// `since_unix` (the start of the current fetch) count, so a later fetch cannot use the same
-/// booking for a second order. Pending/held rows are no bookings. Orders the bank executes early or on
+/// was placed. A booking settles one order only: only the bookings this fetch inserted
+/// (`fetched`, their ids) count, so a later fetch, or a second call within the same second,
+/// cannot use the same booking for a second order. Pending/held rows are no bookings. Orders the bank executes early or on
 /// another day (weekend, holiday) would otherwise stay until their date has passed.
-pub(crate) fn drop_booked(db: &Connection, account_id: i64, since_unix: i64) -> CoreResult<()> {
+pub(crate) fn drop_booked(
+    db: &Connection,
+    account_id: i64,
+    fetched: &std::collections::HashSet<i64>,
+) -> CoreResult<()> {
     let mut q = db.prepare(
         "SELECT id, execution_date, recipient_iban, amount_cents, kind,
                 date(created_ms / 1000, 'unixepoch', 'localtime')
@@ -335,7 +339,7 @@ pub(crate) fn drop_booked(db: &Connection, account_id: i64, since_unix: i64) -> 
             ))
         })?
         .collect::<Result<_, _>>()?;
-    if orders.is_empty() {
+    if orders.is_empty() || fetched.is_empty() {
         return Ok(());
     }
     let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
@@ -343,7 +347,7 @@ pub(crate) fn drop_booked(db: &Connection, account_id: i64, since_unix: i64) -> 
     let mut find = db.prepare(
         "SELECT id, counterparty_iban FROM transactions
          WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
-           AND booking_date >= ?3 AND imported_unix >= ?4
+           AND booking_date >= ?3
            AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
          ORDER BY booking_date, id",
     )?;
@@ -356,12 +360,13 @@ pub(crate) fn drop_booked(db: &Connection, account_id: i64, since_unix: i64) -> 
             let (id, _date, iban, cents, kind, since) = &order;
             let signed = if kind == "debit" { *cents } else { -*cents };
             let cands: Vec<(i64, String)> = find
-                .query_map(params![account_id, signed, since, since_unix], |r| {
+                .query_map(params![account_id, signed, since], |r| {
                     Ok((r.get(0)?, r.get(1)?))
                 })?
                 .collect::<Result<_, _>>()?;
             let hit = cands.iter().find(|(tid, tiban)| {
                 !used.contains(tid)
+                    && fetched.contains(tid)
                     && if exact {
                         !iban.is_empty() && norm(iban) == norm(tiban)
                     } else {

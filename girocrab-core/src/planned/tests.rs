@@ -120,6 +120,23 @@ fn planned_payments_are_counted_without_past_ones() {
     assert_eq!(v.count_planned_payments().unwrap(), 2);
 }
 
+/// Ids of every booking in the vault, as if one fetch had inserted them all.
+fn all_booked(v: &Vault) -> std::collections::HashSet<i64> {
+    let db = v.db().unwrap();
+    let mut q = db.prepare("SELECT id FROM transactions").unwrap();
+    q.query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// `drop_booked` for a fetch that inserted every booking. The ids are read first: `v.db()`
+/// holds the vault lock, so `all_booked` must not run while its guard is alive.
+fn settle(v: &Vault, account: i64) {
+    let fetched = all_booked(v);
+    super::drop_booked(&v.db().unwrap(), account, &fetched).unwrap();
+}
+
 fn book(v: &Vault, acc: i64, ext: &str, date: &str, cents: i64, iban: &str) {
     v.db()
         .unwrap()
@@ -142,7 +159,7 @@ fn booked_order_leaves_the_list_once_per_booking() {
     // no booking yet, and an unrelated one (other amount, other IBAN): both stay
     book(&v, a, "x1", "2999-01-10", -1, "DE89370400440532013000");
     book(&v, a, "x2", "2999-01-10", -85_000, "DE02120300000000202051");
-    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 2);
     // one booking settles one order only
     book(
@@ -153,7 +170,7 @@ fn booked_order_leaves_the_list_once_per_booking() {
         -85_000,
         "DE89 3704 0044 0532 0130 00",
     );
-    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 1);
 }
 
@@ -164,7 +181,7 @@ fn booking_before_the_order_does_not_settle_it() {
     v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 500))
         .unwrap();
     book(&v, a, "old", "2000-01-01", -500, "DE89370400440532013000");
-    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 1);
 }
 
@@ -177,11 +194,11 @@ fn one_booking_does_not_settle_a_second_order_in_a_later_fetch() {
     v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 700))
         .unwrap();
     book(&v, a, "x1", "2999-01-10", -700, "DE89370400440532013000");
-    let now = crate::dates::now_ms() / 1000;
-    super::drop_booked(&v.db().unwrap(), a, now - 5).unwrap();
+    let fetched = all_booked(&v);
+    super::drop_booked(&v.db().unwrap(), a, &fetched).unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 1);
-    // the next fetch brings no new booking
-    super::drop_booked(&v.db().unwrap(), a, now + 60).unwrap();
+    // the next fetch inserts no new booking
+    super::drop_booked(&v.db().unwrap(), a, &Default::default()).unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 1);
 }
 
@@ -200,7 +217,7 @@ fn pending_rows_are_no_bookings() {
         "DE89370400440532013000",
     );
     book(&v, a, "advanzia-hold-1", "2999-01-10", -900, "");
-    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 1);
 }
 
@@ -212,7 +229,7 @@ fn booking_of_the_day_before_the_order_does_not_settle_it() {
         .unwrap();
     let yesterday = (crate::dates::today() - jiff::Span::new().days(1)).to_string();
     book(&v, a, "y", &yesterday, -300, "DE89370400440532013000");
-    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 1);
     book(
         &v,
@@ -222,7 +239,7 @@ fn booking_of_the_day_before_the_order_does_not_settle_it() {
         -300,
         "DE89370400440532013000",
     );
-    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 0);
 }
 
@@ -238,6 +255,6 @@ fn exact_iban_booking_is_reserved_before_empty_iban_fallback() {
     // the booking without an IBAN comes first, then the one of the first order
     book(&v, a, "n", "2999-01-10", -400, "");
     book(&v, a, "e", "2999-01-10", -400, "DE89370400440532013000");
-    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 0);
 }

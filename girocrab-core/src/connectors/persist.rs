@@ -215,7 +215,6 @@ pub(crate) fn store_fetch(
         {
             super::document_matching::warm_open_pdf_cache(&db, connection_id, &rules)?;
         }
-        let fetch_started_unix = crate::dates::now_ms() / 1000;
         let tx = db.unchecked_transaction()?;
         if kind == ConnectorKind::Advanzia {
             super::advanzia::prepare_import(&tx, connection_id, &mut data)?;
@@ -665,6 +664,8 @@ pub(crate) fn store_fetch(
         }
         let match_rules = super::document_matching::rules_for_connection(&tx, connection_id, kind)?;
         let mut new_booking_ids = HashSet::new();
+        // every booking this fetch inserted (settles planned payments, #1881)
+        let mut inserted_ids = HashSet::new();
         let mut changed_document_ids = HashSet::new();
         let mut imported = 0u32;
         let mut skipped_archived = 0u32;
@@ -752,6 +753,7 @@ pub(crate) fn store_fetch(
                             if match_rules.is_some() && !hold {
                                 new_booking_ids.insert(tx.last_insert_rowid());
                             }
+                            inserted_ids.insert(tx.last_insert_rowid());
                             imported += 1;
                             if t.checked {
                                 tx.prepare_cached(
@@ -1098,7 +1100,7 @@ pub(crate) fn store_fetch(
             )?;
         }
         for id in account_ids.values() {
-            crate::planned::drop_booked(&tx, *id, fetch_started_unix)?;
+            crate::planned::drop_booked(&tx, *id, &inserted_ids)?;
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = &data.state {
