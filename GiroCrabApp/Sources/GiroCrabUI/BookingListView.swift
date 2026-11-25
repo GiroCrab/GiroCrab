@@ -1464,7 +1464,7 @@ struct MainToolbar: ViewModifier {
             ToolbarItem(id: "scope", placement: .principal) {
                 ScopeToolbarControl()
             }
-            .defaultCustomization(.visible, options: .alwaysAvailable) // pinned: not draggable/removable, so the others keep their slots (#609)
+            .defaultCustomization(.visible, options: .alwaysAvailable) // always in the palette; SwiftUI still lets the user remove it from the bar (#609, #1832)
             ToolbarItem(id: "transfer", placement: .primaryAction) {
                 TransferToolbarButton()
             }
@@ -1518,7 +1518,7 @@ struct MainToolbar: ViewModifier {
 }
 
 #if os(macOS)
-/// The one pinned toolbar item: the filter of the view in the booking column.
+/// The scope toolbar item: the filter of the view in the booking column.
 private struct ScopeToolbarControl: View {
     @Environment(AppModel.self) private var model
 
