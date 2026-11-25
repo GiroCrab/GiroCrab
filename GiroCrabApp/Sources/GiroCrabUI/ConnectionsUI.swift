@@ -193,7 +193,7 @@ struct ConnectionEditSheet: View {
         case .kontist: return ["kontist.client_id", "kontist.client_secret"]
         case .payPal: return ["paypal.client_id", "paypal.client_secret", "paypal.environment"]
         case .tradeRepublic: return []
-        case .americanExpress, .amazonVisa, .advanzia: return []
+        case .americanExpress, .amazonVisa, .advanzia, .edenred: return []
         case .bunq: return ["bunq.environment"]
         case .bitcoinCore: return ["bitcoin_core.datadir", "bitcoin_core.rpc_url"]
         case .enableBanking: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
@@ -423,8 +423,9 @@ struct ConnectionEditSheet: View {
                     }
                 }
                 // Browser-only portals keep their session cookies in the app's web
-                // store: offer to remove them like for the card portals above.
-                if connection.connector == .schwaebischHall {
+                // store: offer to remove them like for the card portals above. For
+                // Edenred this revokes the remembered sign-in (SSO on edenred.io too).
+                if [.schwaebischHall, .edenred].contains(connection.connector) {
                     Section {
                         Button {
                             guard save() else { return }

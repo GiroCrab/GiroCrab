@@ -124,6 +124,7 @@ impl BankConnector for DemoConnector {
             },
             ConnectorKind::AmericanExpress
             | ConnectorKind::Advanzia
+            | ConnectorKind::Edenred
             | ConnectorKind::AmazonVisa
             | ConnectorKind::AmazonOrders
             | ConnectorKind::EquatePlus

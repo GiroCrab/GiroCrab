@@ -183,6 +183,7 @@ public struct BankingGate: Equatable, Sendable {
         case "opeldirektbank": base = "Opel Direktbank"
         case "hanseatic": base = "Hanseatic Bank"
         case "bhw": base = "BHW Bausparkasse"
+        case "edenred": base = "Edenred"
         case "finpension": base = "Finpension"
         case "kontist": base = "Kontist"
         case "monefit": base = "Monefit SmartSaver"

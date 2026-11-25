@@ -262,6 +262,12 @@ fn english(de: &str) -> Option<&'static str> {
             "Please sign in to Advanzia in the bank window and confirm the chosen approval method."
         }
         "Bitte Advanzia im Bankfenster abrufen." => "Please fetch Advanzia in the bank window.",
+        "Bitte im Portal-Fenster anmelden und abrufen." => {
+            "Please sign in and fetch in the portal window."
+        }
+        "Edenred-Benefitkarten (z. B. Essenszuschuss, Sachbezug): Guthaben und Kartenumsätze aus nutzer.edenred.de. Anmeldung im eingebetteten Browser-Fenster wie gewohnt. Inoffiziell: liest die Daten, die das Portal selbst lädt, Änderungen sind möglich." => {
+            "Edenred benefit cards (e.g. meal allowance, benefits in kind): balance and card transactions from nutzer.edenred.de. Sign in as usual in the embedded browser window. Unofficial: reads the data the portal loads itself, changes are possible."
+        }
         "Ungültige Konto-Zuordnung." => "Invalid account mapping.",
         "Bankzugang nicht gefunden." => "Bank connection not found.",
         "Falscher Bankzugang." => "Wrong bank connection.",

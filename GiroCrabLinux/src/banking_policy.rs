@@ -404,6 +404,7 @@ pub fn display_name(id: &str) -> String {
         "opeldirektbank" => "Opel Direktbank",
         "hanseatic" => "Hanseatic Bank",
         "bhw" => "BHW Bausparkasse",
+        "edenred" => "Edenred",
         "kontist" => "Kontist",
         "monefit" => "Monefit SmartSaver",
         other => other,
