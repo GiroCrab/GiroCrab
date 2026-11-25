@@ -67,13 +67,14 @@ final class SidebarFocusTests: XCTestCase {
     }
 
     /// A view takes the focus in the update after it appears: waits until nothing moved for 300 ms.
-    private func focusSettles() async throws {
+    private func focusSettles(file: StaticString = #filePath, line: UInt = #line) async throws {
         var last = window.firstResponder, unchanged = 0
         for _ in 0..<500 where unchanged < 30 {
             try await Task.sleep(for: .milliseconds(10))
             unchanged = window.firstResponder === last ? unchanged + 1 : 0
             last = window.firstResponder
         }
+        XCTAssertEqual(unchanged, 30, "the focus does not settle", file: file, line: line)
     }
 
     /// Selects `item` and waits for its data, for its view to appear and for the focus.
@@ -84,7 +85,7 @@ final class SidebarFocusTests: XCTestCase {
             self.model.selectionSettled && (item != .directDebits || !self.model.mandates.isEmpty)
                 && self.mainLists.contains { list in !before.contains { $0 === list } }
         }
-        try await focusSettles()
+        try await focusSettles(file: file, line: line)
     }
 
     private func focusSidebar() async throws {
