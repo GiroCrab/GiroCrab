@@ -298,6 +298,37 @@ mod tests {
     }
 
     #[test]
+    fn hnsha_keeps_pin_ending_in_plus_1726() {
+        // Same shape as dialog.rs: ctrl ref, empty custom signature, escaped PIN (+ TAN).
+        let pin = escape("test1+");
+        let seg = SegmentBuilder::new("HNSHA", 5, 2)
+            .raw("4711")
+            .raw("")
+            .raw(&pin)
+            .build();
+        assert_eq!(seg, b"HNSHA:5:2+4711++test1?+'".to_vec());
+        let parsed = parse(&seg).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].get(3, 0), "test1+");
+
+        let with_tan = SegmentBuilder::new("HNSHA", 5, 2)
+            .raw("4711")
+            .raw("")
+            .raw(&format!("{}:{}", escape("test1+"), escape("123456")))
+            .build();
+        assert_eq!(with_tan, b"HNSHA:5:2+4711++test1?+:123456'".to_vec());
+
+        // A PIN made only of '+' followed by empty trailing elements stays intact.
+        let only_plus = SegmentBuilder::new("HKTST", 2, 1)
+            .de(&["++"])
+            .raw("")
+            .raw("")
+            .build();
+        assert_eq!(only_plus, b"HKTST:2:1+?+?+'".to_vec());
+        assert_eq!(parse(&only_plus).unwrap()[0].get(1, 0), "++");
+    }
+
+    #[test]
     fn parses_response_codes() {
         let msg = b"HNHBK:1:3+000000000120+300+abc+1+abc:1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:4+3920::Zugelassene TAN-Verfahren:942:946+0020::OK'HNHBS:4:1+1'";
         let segs = parse_response(msg).unwrap();
