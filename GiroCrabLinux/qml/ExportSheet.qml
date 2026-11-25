@@ -406,6 +406,9 @@ Sheet {
                             Keys.onSpacePressed: toggle()
                             Keys.onReturnPressed: toggle()
                             Keys.onEnterPressed: toggle()
+                            // the sheet's Return/Enter shortcut (Exportieren) would take the key first
+                            Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Return
+                                                     || event.key === Qt.Key_Enter || event.key === Qt.Key_Space
                             Accessible.role: Accessible.Button
                             Accessible.name: qsTr("Konten") + ": " + AppModel.masking(sheet.accountSummary)
                             Accessible.onPressAction: toggle()
