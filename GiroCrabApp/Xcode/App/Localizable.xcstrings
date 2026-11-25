@@ -25196,6 +25196,17 @@
         }
       }
     },
+    "Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip only this request. The rest of the fetch is stored."
+          }
+        }
+      }
+    },
     "Nur eine Bewertung: %@ · %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30327,6 +30338,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Insert TAN 123456"
+          }
+        }
+      }
+    },
+    "TAN auslassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip this TAN"
           }
         }
       }

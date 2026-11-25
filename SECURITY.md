@@ -49,7 +49,11 @@ werden, steht im [Verification Plan](docs/verification-plan.md), der Vorschlag f
   enthalten den ganzen Tresor, also auch gespeicherte PINs.
 - **3DES:** nur zum Lesen externer FinTS-Schlüsseldateien (Profil RDH-10), nie für den Tresor
   ([#1796](https://github.com/GiroCrab/GiroCrab/issues/1796)).
-- **Android:** Der Alpha-Build öffnet noch keinen eigenen Tresor.
+- **Android:** Der Tresorschlüssel wird mit einem AES-GCM-Schlüssel aus dem `AndroidKeyStore` umhüllt
+  (`setUserAuthenticationRequired(true)`, `setInvalidatedByBiometricEnrollment(true)`) und über
+  `BiometricPrompt` mit `CryptoObject` freigegeben. Die App legt keinen eigenen Tresor an: Sie spielt eine
+  passwortgeschützte Desktop-Sicherung ein, erzeugt dabei einen eigenen Schlüssel und lässt den Kern den
+  Inhalt ersetzen; gespeicherte PINs und FinTS-Adressen übernimmt sie dabei nicht.
 
 ### Netzwerk
 
@@ -176,7 +180,11 @@ summary).
   vault, including stored PINs.
 - **3DES:** only for reading external FinTS key files (profile RDH-10), never for the vault
   ([#1796](https://github.com/GiroCrab/GiroCrab/issues/1796)).
-- **Android:** the alpha build does not open a vault of its own yet.
+- **Android:** the vault key is wrapped with an AES-GCM key from the `AndroidKeyStore`
+  (`setUserAuthenticationRequired(true)`, `setInvalidatedByBiometricEnrollment(true)`) and released through
+  `BiometricPrompt` with a `CryptoObject`. The app does not create a vault of its own: it imports a
+  password-protected desktop backup, creates its own key in the process and lets the core replace the
+  contents; stored PINs and FinTS addresses are not taken over.
 
 ### Network
 
