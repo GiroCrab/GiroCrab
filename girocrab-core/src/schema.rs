@@ -65,6 +65,8 @@
 //! - 40: refund links (#714): `refund_links` between bookings or their split parts.
 //! - 41: `transactions.date_ms` (#714): edit stamp of the date of a manual booking, so a date
 //!   edit syncs on its own (neither with the text nor with amount and splits).
+//! - 42: last single-account fetch (#1716): `accounts.last_fetch_unix` (NULL =
+//!   none; the login's `last_sync_unix` still counts for every account).
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -122,6 +124,7 @@ const STEPS: &[Step] = &[
     Step::Hook(crate::planning::stable_split_ids),             // 39 (#714)
     Step::Sql(REFUND_LINKS),                                   // 40 (#714)
     Step::Hook(manual_date_stamp),                             // 41 (#714)
+    Step::Hook(account_last_fetch),                            // 42 (#1716)
 ];
 
 /// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
@@ -1005,6 +1008,16 @@ fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// Step 42 (#1716): when an account was last fetched on its own ("<Konto>
+/// abrufen"). The login's `last_sync_unix` stays as it is then, so the other
+/// accounts do not count as fresh; the account shows the later of the two.
+fn account_last_fetch(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "last_fetch_unix")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN last_fetch_unix INTEGER;")?;
+    }
+    Ok(())
+}
+
 /// Step 37 (#1003): the sidebar's "by kind" view had one section for checking,
 /// savings, time deposit, cash and payment accounts. Each kind now has its own
 /// (`connectors::group_for`). The accounts of the old section move by `kind`
@@ -1227,7 +1240,24 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 41);
+        assert_eq!(SCHEMA_VERSION, 42);
+    }
+
+    /// #1716: a vault at version 41 gets the fetch time of step 42.
+    #[test]
+    fn vault_at_41_gets_last_fetch() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE accounts DROP COLUMN last_fetch_unix; PRAGMA user_version = 41;",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        assert!(has_column(&conn, "main", "accounts", "last_fetch_unix").unwrap());
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 42);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for
