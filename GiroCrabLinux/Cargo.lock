@@ -1461,6 +1461,7 @@ dependencies = [
  "hmac 0.13.0",
  "jiff",
  "jsonwebtoken",
+ "k256",
  "libc",
  "miniz_oxide",
  "p256",
@@ -1469,6 +1470,7 @@ dependencies = [
  "rand 0.9.5",
  "regex",
  "reqwest",
+ "ripemd",
  "rsa",
  "rusqlite",
  "rust_decimal",
@@ -2008,6 +2010,18 @@ dependencies = [
  "signature 3.0.0",
  "simple_asn1",
  "zeroize",
+]
+
+[[package]]
+name = "k256"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93f50113171a713f4a4231ef82eb26703607139b35dcb56241f0ceab2ae1f7d8"
+dependencies = [
+ "cpubits",
+ "elliptic-curve",
+ "primeorder",
+ "wnaf",
 ]
 
 [[package]]
@@ -2851,6 +2865,15 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "ripemd"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dd4211456b4172d7e44261920c25acf07367c4f04bb5f5d54fc21b090d9b159"
+dependencies = [
+ "digest 0.11.3",
 ]
 
 [[package]]

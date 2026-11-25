@@ -171,6 +171,10 @@ fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Booking)> {
             creditor_id: r.get(26)?,
             external_id: r.get(27)?,
             tags: Vec::new(),
+            refund_marker: "none".into(),
+            refund_cents: 0,
+            refunded_cents: 0,
+            split_count: 0,
         },
     ))
 }
@@ -251,6 +255,8 @@ pub(crate) fn attach_split_categories(
 /// names, merchant, flow (salary, own transfers, loans), domain overrides.
 /// Only depends on the vault's data, so `ListCache` keeps it between calls.
 pub(super) struct BookingFinisher {
+    /// Refund link markers (#714); documentation only, no effect on sums.
+    refunds: Arc<crate::refunds::Resolved>,
     language: crate::i18n::Lang,
     category_roles: HashMap<i64, CategoryRole>,
     paths: HashMap<i64, (String, String, String, String)>,
@@ -266,7 +272,11 @@ pub(super) struct BookingFinisher {
 }
 
 impl BookingFinisher {
-    fn load(db: &rusqlite::Connection, merchants: Arc<MerchantRules>) -> Result<Self, CoreError> {
+    fn load(
+        db: &rusqlite::Connection,
+        merchants: Arc<MerchantRules>,
+        refunds: Arc<crate::refunds::Resolved>,
+    ) -> Result<Self, CoreError> {
         let paths = Vault::category_paths(db)?;
         let category_roles = Vault::category_roles(db)?;
         let loan_links = crate::loans::link_map(db)?;
@@ -292,6 +302,7 @@ impl BookingFinisher {
                 .collect::<Result<_, _>>()?
         };
         Ok(Self {
+            refunds,
             language: crate::i18n::current(),
             category_roles,
             paths,
@@ -308,6 +319,18 @@ impl BookingFinisher {
     /// With `visible` accounts (local interface, #136), a payment linked to a
     /// loan outside them reads as a transfer: the loan itself must not show.
     fn finish(&self, t: &mut Booking, visible: Option<&[i64]>) {
+        // like loan links: with `visible` accounts only links between visible bookings count,
+        // so a refund on a hidden account never shows on a visible booking (CodeRabbit #1852)
+        let scoped = visible.map(|v| self.refunds.summary_within(t.id, v));
+        if let Some(s) = scoped
+            .as_ref()
+            .or_else(|| self.refunds.summaries.get(&t.id))
+        {
+            t.refund_marker = s.marker().into();
+            t.refund_cents = s.refund_cents;
+            t.refunded_cents = s.refunded_cents;
+            t.split_count = s.split_count;
+        }
         if let Some((name, path, color, sym)) = t.category_id.and_then(|c| self.paths.get(&c)) {
             t.category_name = name.clone();
             t.category_path = path.clone();
@@ -1071,7 +1094,11 @@ impl Vault {
         {
             return Ok(finisher);
         }
-        let finisher = Arc::new(BookingFinisher::load(db, self.merchant_rules(db)?)?);
+        let finisher = Arc::new(BookingFinisher::load(
+            db,
+            self.merchant_rules(db)?,
+            self.refund_markers(db)?,
+        )?);
         self.list_cache
             .keep(db, stamp, |s| s.finisher = Some(finisher.clone()));
         Ok(finisher)

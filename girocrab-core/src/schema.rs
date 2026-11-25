@@ -67,7 +67,9 @@
 //!   edit syncs on its own (neither with the text nor with amount and splits).
 //! - 42: last single-account fetch (#1716): `accounts.last_fetch_unix` (NULL =
 //!   none; the login's `last_sync_unix` still counts for every account).
-//! - 43: explicit category financial roles (#931): `categories.role` (NULL = inherit from
+//! - 43: settled scheduled orders (#1900): `planned_transfers.settled_ms` (NULL = open), date
+//!   index over `(execution_date, settled_ms)`.
+//! - 44: explicit category financial roles (#931): `categories.role` (NULL = inherit from
 //!   parent, root default `consumption`) and its sync stamp `categories.role_ms`, seeded
 //!   from `categories.builtin_role` with stamp 0 so user edits win on sync
 //!   ([`category_roles`]): `investment`, `loan` and `neutral` only where `builtin_role`
@@ -132,10 +134,11 @@ const STEPS: &[Step] = &[
     Step::Sql(REFUND_LINKS),                                   // 40 (#714)
     Step::Hook(manual_date_stamp),                             // 41 (#714)
     Step::Hook(account_last_fetch),                            // 42 (#1716)
-    Step::Hook(category_roles),                                // 43 (#931)
+    Step::Hook(crate::planned::planned_settled),               // 43 (#1900)
+    Step::Hook(category_roles),                                // 44 (#931)
 ];
 
-/// Step 43 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
+/// Step 44 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
 /// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
 /// explicit user choice on another device wins on sync. Idempotent.
 ///
@@ -155,8 +158,9 @@ const STEPS: &[Step] = &[
 /// differently than before (e.g. `Neutral` from an `Umbuchungen` root exactly 32 levels up);
 /// the step does not reproduce that bound.
 fn category_roles(conn: &Connection) -> CoreResult<()> {
-    // PR builds that used v42 for category roles lack the fetch-time column.
+    // Earlier PR builds used v42 or v43 for roles and could skip a mainline step.
     account_last_fetch(conn)?;
+    crate::planned::planned_settled(conn)?;
     for (col, def) in [("role", "TEXT"), ("role_ms", "INTEGER NOT NULL DEFAULT 0")] {
         if !has_column(conn, "main", "categories", col)? {
             conn.execute_batch(&format!("ALTER TABLE categories ADD COLUMN {col} {def};"))?;
@@ -1078,7 +1082,7 @@ fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
-/// Step 42 (#1716): when an account was last fetched on its own ("<Konto>
+/// Step 39 (#1716): when an account was last fetched on its own ("<Konto>
 /// abrufen"). The login's `last_sync_unix` stays as it is then, so the other
 /// accounts do not count as fresh; the account shows the later of the two.
 fn account_last_fetch(conn: &Connection) -> CoreResult<()> {
@@ -1310,7 +1314,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 43);
+        assert_eq!(SCHEMA_VERSION, 44);
     }
 
     /// #1716: a vault at version 41 gets the fetch time of step 42.
@@ -1352,7 +1356,29 @@ mod tests {
         assert_eq!(choice, (None, 55));
     }
 
-    /// #931: step 43 adds `categories.role` and `categories.role_ms` and seeds built-in
+    #[test]
+    fn category_role_preview_v43_gets_settlement_column_without_resetting_choices() {
+        let mut conn = schema_at(42);
+        conn.execute_batch(
+            "ALTER TABLE categories ADD COLUMN role TEXT;
+             ALTER TABLE categories ADD COLUMN role_ms INTEGER NOT NULL DEFAULT 0;
+             INSERT INTO categories(name, builtin_role, role, role_ms)
+                  VALUES ('Umbuchungen', 'Umbuchungen', NULL, 55);
+             PRAGMA user_version = 43;",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+
+        assert!(has_column(&conn, "main", "planned_transfers", "settled_ms").unwrap());
+        let choice: (Option<String>, i64) = conn
+            .query_row("SELECT role, role_ms FROM categories", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(choice, (None, 55));
+    }
+
+    /// #931: step 44 adds `categories.role` and `categories.role_ms` and seeds built-in
     /// categories from `builtin_role` with stamp 0, leaving custom categories `NULL`.
     #[test]
     fn category_roles_backfill_from_builtin_role() {
@@ -1403,9 +1429,9 @@ mod tests {
         assert_eq!(read(7), (Some("salary".into()), 0));
         assert_eq!(read(8), (None, 0));
         assert_eq!(read(9), (None, 0));
-        // Promoted to root before v43: preserves legacy investment classification.
+        // Promoted to root before v44: preserves legacy investment classification.
         assert_eq!(read(10), (Some("investment".into()), 0));
-        // Rearranged before v43: `Gehalt` under `Umbuchungen` stays inheriting
+        // Rearranged before v44: `Gehalt` under `Umbuchungen` stays inheriting
         // (`Neutral`), non-root `Sparen`/`Kredite` keep legacy root-only behaviour,
         // and nested `Umbuchungen` stays `Neutral`.
         assert_eq!(read(11), (None, 0));
@@ -1643,7 +1669,7 @@ mod tests {
         assert_eq!(n, 0);
     }
 
-    /// A duplicate that a v41 sync combined into another category gets no role from step 43
+    /// A duplicate that a v41 sync combined into another category gets no role from step 44
     /// (#931): when reading, its role would count for the survivor, and `Sparen & Investieren`
     /// moved under a custom folder would become an investment.
     #[test]
@@ -1670,7 +1696,7 @@ mod tests {
         assert_eq!(roles[&2], crate::models::CategoryRole::Consumption);
     }
 
-    /// The deliberate exception of step 43 (#931): the old walk looked at 32 categories and
+    /// The deliberate exception of step 44 (#931): the old walk looked at 32 categories and
     /// never reached an `Umbuchungen` root 32 levels up; the role resolver does, so the
     /// category at depth 32 resolves to `Neutral`. At depths 31 and 33, both agree.
     #[test]
@@ -1696,7 +1722,7 @@ mod tests {
         assert_eq!(roles[&34], crate::models::CategoryRole::Consumption);
     }
 
-    /// Step 43 (#931) keeps the v41 classification of every category, checked on random
+    /// Step 44 (#931) keeps the v41 classification of every category, checked on random
     /// v41 trees: built-ins (every starter name and `import:transfers`) at random places,
     /// custom categories and deleted ones, also between live ones. The v41 side is a copy of the
     /// old `category_flows` walk plus how `classify_by_kind`/`BookingFinisher::finish` used
@@ -1839,7 +1865,7 @@ mod tests {
                 assert_eq!(
                     after.get(id),
                     Some(effect),
-                    "tree {tree}, category {id}: v41 {effect:?}, after step 43 {:?}\n{}",
+                    "tree {tree}, category {id}: v41 {effect:?}, after step 44 {:?}\n{}",
                     after.get(id),
                     rows.join("\n")
                 );

@@ -14,6 +14,8 @@ Sheet {
     property var draft: null       // Rule being edited
     /// Rule waiting for the delete confirmation.
     property var ruleToDelete: null
+    /// The rule of „Speichern & anwenden“ while its scope question is open.
+    property var ruleToSave: null
     /// The list filter (#435): tokens with * and ?.
     property string searchText: ""
     readonly property bool isFiltering: searchText.trim() !== ""
@@ -56,8 +58,8 @@ Sheet {
     }, () => {})
     function select(rule) { selection = rule.id; draft = Object.assign({}, rule) }
     function newRule() { selection = null; draft = AppModel.newRuleDraft(null) }
-    function save(rule) {
-        const id = AppModel.saveRule(rule)
+    function save(rule, onlyUncategorized) {
+        const id = AppModel.saveRule(rule, onlyUncategorized)
         if (id !== null) {
             selection = id
             const r = AppModel.rules.find(r => r.id === id)
@@ -265,7 +267,7 @@ Sheet {
                         visible: editor.draft !== null
                         rule: editor.draft
                         onEdited: r => editor.draft = r
-                        onSaveRequested: r => editor.save(r)
+                        onSaveRequested: r => editor.ruleToSave = r
                         onDeleteRequested: r => editor.ruleToDelete = r
                     }
                     // ContentUnavailableView
@@ -342,5 +344,27 @@ Sheet {
         message: qsTr("Buchungen, die diese Regel kategorisiert hat, sind danach wieder ohne Kategorie. Das lässt sich nicht widerrufen.")
         actionTitle: qsTr("Löschen")
         onConfirmed: editor.remove(current)
+    }
+
+    // RuleForm: .confirmationDialog("Auf welche Buchungen soll die Regel angewendet werden?")
+    // { "Nur unkategorisierte Buchungen"; "Alle Buchungen" (.destructive with a category); "Abbrechen" }
+    ConfirmDialog {
+        id: saveScope
+        property var current: null
+        visible: editor.ruleToSave !== null
+        parent: Overlay.overlay
+        onAboutToShow: current = editor.ruleToSave
+        onClosed: editor.ruleToSave = null
+        heading: qsTr("Auf welche Buchungen soll die Regel angewendet werden?")
+        // only a category can overwrite one set by hand; a tag-only rule (#580) just adds tags
+        message: current !== null && current.category_id !== 0
+                 ? qsTr("Bei „Alle Buchungen“ kann die Regel auch manuell gesetzte Kategorien überschreiben.") : ""
+        secondaryTitle: qsTr("Nur unkategorisierte Buchungen")
+        // three long choices: a vertical list as on the Mac, fits at any text size
+        stackedButtons: true
+        actionTitle: qsTr("Alle Buchungen")
+        destructive: current !== null && current.category_id !== 0
+        onSecondary: editor.save(current, true)
+        onConfirmed: editor.save(current, false)
     }
 }

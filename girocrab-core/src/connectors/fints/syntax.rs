@@ -100,17 +100,24 @@ pub fn from_latin1(b: &[u8]) -> String {
 /// unless added with `raw`.
 pub struct SegmentBuilder {
     parts: Vec<u8>,
+    non_empty_len: usize,
 }
 
 impl SegmentBuilder {
     pub fn new(id: &str, number: u32, version: u32) -> Self {
+        let parts = format!("{id}:{number}:{version}").into_bytes();
+        let non_empty_len = parts.len();
         SegmentBuilder {
-            parts: format!("{id}:{number}:{version}").into_bytes(),
+            parts,
+            non_empty_len,
         }
     }
     pub fn with_ref(id: &str, number: u32, version: u32, reference: u32) -> Self {
+        let parts = format!("{id}:{number}:{version}:{reference}").into_bytes();
+        let non_empty_len = parts.len();
         SegmentBuilder {
-            parts: format!("{id}:{number}:{version}:{reference}").into_bytes(),
+            parts,
+            non_empty_len,
         }
     }
     /// Adds a data element made of escaped components (joined with ':').
@@ -121,13 +128,21 @@ impl SegmentBuilder {
             .map(|c| escape(c))
             .collect::<Vec<_>>()
             .join(":");
-        self.parts.extend(to_latin1(&joined));
+        let encoded = to_latin1(&joined);
+        if !encoded.is_empty() {
+            self.parts.extend(encoded);
+            self.non_empty_len = self.parts.len();
+        }
         self
     }
     /// Adds a data element verbatim (already escaped / structured).
     pub fn raw(mut self, raw: &str) -> Self {
         self.parts.push(b'+');
-        self.parts.extend(to_latin1(raw));
+        let encoded = to_latin1(raw);
+        if !encoded.is_empty() {
+            self.parts.extend(encoded);
+            self.non_empty_len = self.parts.len();
+        }
         self
     }
     /// Adds a binary data element `@len@bytes`.
@@ -135,13 +150,12 @@ impl SegmentBuilder {
         self.parts.push(b'+');
         self.parts.extend(format!("@{}@", data.len()).into_bytes());
         self.parts.extend_from_slice(data);
+        self.non_empty_len = self.parts.len();
         self
     }
     pub fn build(mut self) -> Vec<u8> {
-        // Trailing empty elements must be dropped.
-        while self.parts.last() == Some(&b'+') {
-            self.parts.pop();
-        }
+        // Trailing empty elements must be dropped without touching binary data or escaped `+`.
+        self.parts.truncate(self.non_empty_len);
         self.parts.push(b'\'');
         self.parts
     }
@@ -262,6 +276,25 @@ mod tests {
         assert_eq!(parsed[0].get(1, 1), "c:d");
         assert_eq!(parsed[0].binary(2), Some(&b"x'y"[..]));
         assert_eq!(parsed[0].get(3, 0), "z?");
+    }
+
+    #[test]
+    fn binary_and_escaped_trailing_plus_are_preserved() {
+        let bin = SegmentBuilder::new("HNVSD", 999, 1)
+            .binary(b"abc+")
+            .raw("")
+            .build();
+        assert_eq!(bin, b"HNVSD:999:1+@4@abc+'".to_vec());
+        let parsed = parse(&bin).unwrap();
+        assert_eq!(parsed[0].binary(1), Some(&b"abc+"[..]));
+
+        let esc = SegmentBuilder::new("HKTST", 2, 1)
+            .de(&["foo+"])
+            .raw("")
+            .build();
+        assert_eq!(esc, b"HKTST:2:1+foo?+'".to_vec());
+        let parsed_esc = parse(&esc).unwrap();
+        assert_eq!(parsed_esc[0].get(1, 0), "foo+");
     }
 
     #[test]

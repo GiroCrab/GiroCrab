@@ -15,7 +15,7 @@ QtObject {
         "doc": "document-new", "doc.text.magnifyingglass": "document-preview", "questionmark.folder": "folder",
         "questionmark": "dialog-question", "plus": "list-add", "minus": "list-remove", "folder.badge.plus": "folder-new",
         "folder": "folder", "lock": "object-locked", "lock.open": "object-unlocked", "lock.slash": "object-unlocked",
-        "theatermasks": "view-media-artist", "chevron.right": "go-next", "chevron.down": "go-down",
+        "theatermasks": "view-media-artist", "chevron.right": "go-next", "arrow.right.circle": "go-next", "chevron.down": "go-down",
         "calendar": "view-calendar", "line.3.horizontal.decrease": "view-filter", "magnifyingglass": "edit-find",
         "paperplane": "mail-send", "arrow.triangle.2.circlepath": "view-refresh", "sidebar.trailing": "sidebar-collapse-right",
         "checkmark": "dialog-ok",   // light Breeze has "checkmark" only as an emblem (a filled badge)
@@ -37,6 +37,7 @@ QtObject {
         "gamecontroller": "applications-games", "play.tv": "media-playback-start", "briefcase": "view-financial-account",
         "person.badge.shield.checkmark": "security-high", "sparkles": "games-hint", "paperclip": "mail-attachment",
         "xmark": "window-close", "iphone.radiowaves.left.and.right": "smartphone", "iphone": "smartphone",
+        "chart.bar.doc.horizontal": "office-chart-bar",
         "play.circle": "media-playback-start", "play": "media-playback-start", "lock.rotation": "object-locked",
         "qrcode.viewfinder": "view-barcode-qr", "qrcode": "view-barcode-qr", "square.and.pencil": "document-edit",
         "eye.slash": "view-hidden", "eye": "view-visible", "lock.shield": "security-high", "safari": "internet-services",

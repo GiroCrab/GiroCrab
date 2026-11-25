@@ -138,10 +138,18 @@ pub struct SplitDraft {
 
 /// Cents still to distribute: booking amount minus the parseable amounts typed so far.
 pub fn split_remaining(booking_cents: i64, drafts: &[SplitDraft]) -> i64 {
-    drafts
+    // summed wide, clamped once: mixed signs may cancel after a large intermediate value
+    let rest = drafts
         .iter()
         .filter_map(|d| parse_cents(&d.amount))
-        .fold(booking_cents, |rest, c| rest.saturating_sub(c))
+        .fold(i128::from(booking_cents), |rest, c| rest - i128::from(c));
+    rest.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+}
+
+/// What "Rest übernehmen" puts into a row: its own amount plus the rest; `None` when the sum does
+/// not fit into cents (the row then keeps what was typed and the sum check reports it).
+pub fn split_fill(own_cents: i64, rest_cents: i64) -> Option<i64> {
+    own_cents.checked_add(rest_cents)
 }
 
 /// Validates the split form. An empty (all rows blank) form removes the split.
@@ -462,11 +470,33 @@ mod tests {
     }
 
     #[test]
+    fn remaining_cancels_large_mixed_parts() {
+        let max = format_plain(i64::MAX);
+        let min = format_plain(-i64::MAX);
+        assert_eq!(
+            split_remaining(-1000, &[draft(0, &max), draft(0, &min), draft(0, "-10")]),
+            0
+        );
+    }
+
+    #[test]
     fn remaining_counts_valid_rows_only() {
         assert_eq!(
             split_remaining(-1000, &[draft(0, "-4"), draft(0, "x")]),
             -600
         );
+    }
+
+    #[test]
+    fn fill_rejects_an_out_of_range_sum() {
+        assert_eq!(split_fill(-400, -600), Some(-1000));
+        assert_eq!(split_fill(-i64::MAX, -i64::MAX), None);
+        assert_eq!(split_fill(i64::MAX, 1), None);
+        // balanced extreme drafts leave the plain rest, which fills an empty row
+        let max = format_plain(i64::MAX);
+        let min = format_plain(-i64::MAX);
+        let rest = split_remaining(-1000, &[draft(0, &max), draft(0, &min)]);
+        assert_eq!(split_fill(0, rest), Some(-1000));
     }
 
     #[test]

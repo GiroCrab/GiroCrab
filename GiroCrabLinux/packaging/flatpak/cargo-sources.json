@@ -2459,6 +2459,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/k256/k256-0.14.0.crate",
+        "sha256": "93f50113171a713f4a4231ef82eb26703607139b35dcb56241f0ceab2ae1f7d8",
+        "dest": "cargo/vendor/k256-0.14.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"93f50113171a713f4a4231ef82eb26703607139b35dcb56241f0ceab2ae1f7d8\", \"files\": {}}",
+        "dest": "cargo/vendor/k256-0.14.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/keyring/keyring-3.6.3.crate",
         "sha256": "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c",
         "dest": "cargo/vendor/keyring-3.6.3"
@@ -3559,6 +3572,19 @@
         "type": "inline",
         "contents": "{\"package\": \"a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7\", \"files\": {}}",
         "dest": "cargo/vendor/ring-0.17.14",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/ripemd/ripemd-0.2.0.crate",
+        "sha256": "4dd4211456b4172d7e44261920c25acf07367c4f04bb5f5d54fc21b090d9b159",
+        "dest": "cargo/vendor/ripemd-0.2.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"4dd4211456b4172d7e44261920c25acf07367c4f04bb5f5d54fc21b090d9b159\", \"files\": {}}",
+        "dest": "cargo/vendor/ripemd-0.2.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {

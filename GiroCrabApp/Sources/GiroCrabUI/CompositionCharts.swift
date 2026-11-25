@@ -288,7 +288,8 @@ struct CompositionTreemap: View {
     }
 
     private func tile(_ s: DepotSlice, _ r: CGRect) -> some View {
-        let ink = TileInk.color(on: s.color, in: environment)
+        let dimmed = selected != nil && selected != s.id
+        let ink = dimmed ? Color.primary : TileInk.color(on: s.color, in: environment)
         // what fits is judged by the length of the text (scaled with the font), not by fixed widths
         let inner = r.width - 16
         let share = shareText(s.cents, of: total)
@@ -301,7 +302,7 @@ struct CompositionTreemap: View {
         let shareOnly = !both && !nameOnly && shareFits && r.height > 18 * textScale
         let summary = detailText(s, total: total, currency: currency)
         return RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(s.color)
+            .fill(s.color.opacity(dimmed ? 0.35 : 1))
             .frame(width: max(r.width, 0), height: max(r.height, 0))
             .overlay(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -326,7 +327,6 @@ struct CompositionTreemap: View {
             .onHover { inside in
                 if inside { hovered = s.id } else if hovered == s.id { hovered = nil }
             }
-            .opacity(selected == nil || selected == s.id ? 1 : 0.35)
             .onTapGesture { select?(s) }
             .help(summary)
             .accessibilityElement(children: .ignore)

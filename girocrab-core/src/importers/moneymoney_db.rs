@@ -75,9 +75,9 @@ const MM_CLOSED: i64 = 16;
 /// Imported accounts whose archive state nobody chose (`accounts.archive_unknown`, ordered by
 /// id): the next import gives them MoneyMoney's. The #998 repair (schema step 38) reactivates
 /// accounts the import of v0.8.5 archived wrongly, and some of them are closed in MoneyMoney
-/// after all. The mark belongs to the archive state: the vault merge carries it with
-/// `archived_ms`, and every archive choice ends it ([`crate::user_groups::set_archived_inner`]).
-#[cfg(test)]
+/// after all. Until then a sync's takeover prefers the other accounts (#816). The mark belongs
+/// to the archive state: the vault merge carries it with `archived_ms`, and every archive
+/// choice ends it ([`crate::user_groups::set_archived_inner`]).
 pub(crate) fn archive_unknown(conn: &Connection) -> CoreResult<Vec<i64>> {
     Ok(conn
         .prepare("SELECT id FROM accounts WHERE archive_unknown != 0 ORDER BY id")?
@@ -928,6 +928,8 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
         Some(ConnectorKind::Bunq)
     } else if n.contains("monefit") {
         Some(ConnectorKind::Monefit)
+    } else if n.contains("go and grow") || n.contains("go & grow") || n.contains("bondora") {
+        Some(ConnectorKind::GoAndGrow)
     } else {
         None // incl. any other German bank with an 8-digit code
     }
@@ -2464,7 +2466,10 @@ pub(crate) fn adopt_account(
         // MoneyMoney stored for it – if it is the only one of its kind here.
         // includes soft-deleted rows: `store_fetch` revives or skips them;
         // archived (closed in MoneyMoney) accounts are never guessed, or an old
-        // card next to the active one would block the takeover (#816)
+        // card next to the active one would block the takeover (#816); nor are
+        // those the #998 repair reactivated while another one fits (they may
+        // be closed cards, too)
+        let unknown = archive_unknown(conn)?;
         let mut st = conn.prepare(
             "SELECT id, IFNULL(account_number, ''), replace(IFNULL(iban, ''), ' ', '') <> '',
                     upper(IFNULL(currency, ''))
@@ -2492,15 +2497,14 @@ pub(crate) fn adopt_account(
         // an IBAN of its own is otherwise never taken over without matching it
         let widen = kind == AccountKind::CreditCard
             || (kind == AccountKind::Checking && external_ref == "tr:cash");
-        let rows: Vec<_> = rows
-            .into_iter()
-            .filter(|(_, _, has_iban, _)| widen || !has_iban)
-            .collect();
+        // only accounts in the fetched currency ("" = any) are candidates, by card
+        // number or not: a card in another currency is never taken over
         let currency = currency.trim().to_uppercase();
-        // one account per currency (PayPal EUR/USD): another currency is never the same account
         let mut rows: Vec<_> = rows
             .into_iter()
-            .filter(|(_, _, _, cur)| currency.is_empty() || cur.is_empty() || *cur == currency)
+            .filter(|(_, _, has_iban, cur)| {
+                (widen || !has_iban) && (currency.is_empty() || cur.is_empty() || *cur == currency)
+            })
             .collect();
         if rows.iter().any(|r| own_ids.contains(&r.0)) {
             rows.retain(|r| own_ids.contains(&r.0));
@@ -2564,34 +2568,46 @@ pub(crate) fn adopt_account(
                 })
             });
             // a number that fits several imported cards, or a contested one: no
-            // guess at all, the fallback below would hand over an unrelated card
+            // guess at all, the fallback below would hand over an unrelated card.
+            // The known-state preference below deliberately does not apply here: two
+            // accounts with one number are duplicates of one card, and which of them is
+            // the card is not for the archive state to decide
             if contested || tie {
                 return Ok(None);
             }
             // else the only one of its kind (also a replacement card with a new
-            // number), preferring those without an IBAN; widened: the only one in
-            // that currency, with or without an IBAN. A card that another card of
-            // this fetch matches by number waits for that one, whatever the order.
+            // number), preferring those without an IBAN; widened: the only one,
+            // with or without an IBAN. In both those whose state is known first: a
+            // card the #998 repair reactivated never wins over a known one. A card
+            // that another card of this fetch matches by number waits for that one,
+            // whatever the order.
             let taken_by_number = |number: &str| {
                 card && fetched_cards
                     .iter()
                     .any(|fetched| same_card_number(number, fetched))
             };
-            let single = |widened: bool| {
-                unique(rows.iter().filter(|(_, number, has_iban, cur)| {
-                    if taken_by_number(number) {
-                        false
-                    } else if widened {
-                        currency.is_empty() || cur.is_empty() || *cur == currency
-                    } else {
-                        !has_iban
-                    }
+            let fits = |number: &str, has_iban: bool, widened: bool| {
+                !taken_by_number(number) && (widened || !has_iban)
+            };
+            let single = |widened: bool, known_only: bool| {
+                unique(rows.iter().filter(|(id, number, has_iban, _)| {
+                    fits(number, *has_iban, widened) && !(known_only && unknown.contains(id))
                 }))
                 .map(|(id, _, _, _)| *id)
             };
+            // a reactivated card is the fallback only when no known one fits at all;
+            // several known ones are ambiguous, not a reason to take it
+            let known_fits = rows.iter().any(|(id, number, has_iban, _)| {
+                fits(number, *has_iban, widen) && !unknown.contains(id)
+            });
             by_number
-                .or_else(|| single(false))
-                .or_else(|| if widen { single(true) } else { None })
+                .or_else(|| single(false, true))
+                .or_else(|| if widen { single(true, true) } else { None })
+                .or_else(|| match known_fits {
+                    true => None,
+                    false => single(false, false)
+                        .or_else(|| if widen { single(true, false) } else { None }),
+                })
         }
     } else {
         // Wallets in several currencies can share one IBAN (Finom EUR/USD):

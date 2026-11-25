@@ -273,11 +273,11 @@ fn fixture_vaults_open_and_match_a_fresh_vault() {
 }
 
 #[test]
-fn main_v42_keeps_last_fetch_when_upgrading_category_roles() {
-    let tmp = Tmp::new("category-roles-v42");
-    let path = tmp.path("v42.girocrab");
-    std::fs::copy(fixtures().join("vault-v42.girocrab"), &path).unwrap();
-    assert_eq!(user_version(&path), 42);
+fn main_v43_keeps_fetch_and_settlement_when_upgrading_category_roles() {
+    let tmp = Tmp::new("category-roles-v43");
+    let path = tmp.path("v43.girocrab");
+    std::fs::copy(fixtures().join("vault-v43.girocrab"), &path).unwrap();
+    assert_eq!(user_version(&path), 43);
     let fetch_time = 1_700_000_000;
     let account_id: i64 = raw(&path, &KEY)
         .query_row(
@@ -289,9 +289,25 @@ fn main_v42_keeps_last_fetch_when_upgrading_category_roles() {
         )
         .unwrap();
 
+    let settled_at = 1_700_000_000_000_i64;
+    raw(&path, &KEY)
+        .execute(
+            "INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date, amount_cents, settled_ms)
+             VALUES (?1, 'fixture-settled', '2026-01-01', 100, ?2)",
+            rusqlite::params![account_id, settled_at],
+        )
+        .unwrap();
+
     for _ in 0..2 {
         let v = Vault::open(path.clone(), KEY.to_vec()).unwrap();
-        assert_eq!(user_version(&path), 43);
+        assert_eq!(user_version(&path), 44);
+        assert_eq!(
+            count(
+                &path,
+                "SELECT settled_ms FROM planned_transfers WHERE end_to_end_id = 'fixture-settled'"
+            ),
+            settled_at
+        );
         let account = v
             .list_accounts()
             .unwrap()

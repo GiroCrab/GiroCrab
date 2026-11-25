@@ -1599,6 +1599,12 @@ pub(crate) fn merge_synced_twin(
         [mm_id],
         |r| r.get(0),
     )?;
+    let source_had_splits = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=?1)",
+        [bank_id],
+        |r| r.get(0),
+    )?;
+    crate::refunds::fold_booking(conn, bank_id, mm_id, true, source_had_splits)?;
     conn.execute(
         "UPDATE transactions SET external_id = external_id || '#merged-' || id WHERE id = ?1",
         [bank_id],
@@ -1688,6 +1694,10 @@ fn sample(r: &MmRow, i: i64, account_id: i64, merchants: &MerchantRules) -> Book
         creditor_id: r.creditor_id.clone(),
         external_id: String::new(),
         tags: Vec::new(),
+        refund_marker: "none".into(),
+        refund_cents: 0,
+        refunded_cents: 0,
+        split_count: 0,
     };
     // preview of an import: no connection yet, a payment service reads as before
     let paypal = b.account_kind == AccountKind::PaymentService;

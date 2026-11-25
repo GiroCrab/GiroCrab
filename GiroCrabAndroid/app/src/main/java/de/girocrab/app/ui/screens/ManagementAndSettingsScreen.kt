@@ -241,13 +241,25 @@ fun RuleEditorDialog(
     var maxText by remember { mutableStateOf(initial?.maxCents?.let { "%.2f".format(it / 100.0) }.orEmpty()) }
     var applied by remember { mutableStateOf<Int?>(null) }
 
-    val rule = Rule(id, field, kind, pattern.trim(), categoryId, tagIds, initial?.enabled ?: true, parseRuleCents(minText), parseRuleCents(maxText))
+    val rule = Rule(
+        // A regex keeps its whitespace like in the core; only the string match kinds are trimmed.
+        id, field, kind, if (kind == MatchKind.Regex) pattern else pattern.trim(), categoryId, tagIds, initial?.enabled ?: true,
+        parseRuleCents(minText), parseRuleCents(maxText),
+        // Keep what the dialog does not edit, or saving would widen the rule to all accounts.
+        caseSensitive = initial?.caseSensitive ?: false,
+        accountIds = initial?.accountIds ?: emptySet(),
+    )
     val scoped = state.scopedAccountIds
     val preview: List<Booking> = remember(rule, state.data.bookings, scoped) {
         state.data.bookings.filter { it.accountId in scoped && rule.matches(it) }
     }
     val uncategorized = preview.count { it.categoryId == null }
-    val valid = categoryId != null && (pattern.isNotBlank() || rule.minCents != null || rule.maxCents != null)
+    // An action is a category or at least one tag (core tag-only rules have no category).
+    val hasAction = categoryId != null || tagIds.isNotEmpty()
+    // An empty keyword list never matches in the core, not even with an amount range.
+    val hasCondition = rule.pattern.isNotEmpty() ||
+        (kind != MatchKind.Keyword && (rule.minCents != null || rule.maxCents != null))
+    val valid = hasAction && hasCondition
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -255,8 +267,16 @@ fun RuleEditorDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 EnumDropdown("Feld", field, RuleField.entries) { field = it }
-                EnumDropdown("Vergleich", kind, MatchKind.entries) { kind = it }
+                // Expression is the core's own search language; the app cannot evaluate it.
+                EnumDropdown("Vergleich", kind, MatchKind.entries.filter { it != MatchKind.Expression }) { kind = it }
                 OutlinedTextField(pattern, { pattern = it }, label = { Text("Muster") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (!rule.evaluableHere) {
+                    Text(
+                        "Dieses Muster kann die App nicht auswerten. Vorschau und Anwenden zeigen dafür keine Treffer.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         minText, { minText = it }, label = { Text("Betrag ab") }, singleLine = true,
@@ -267,6 +287,12 @@ fun RuleEditorDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f),
                     )
                 }
+                // The range is signed like in the core: expenses need negative bounds.
+                Text(
+                    "Ausgaben sind negativ: z. B. ab -100,00 bis -10,00 für Ausgaben zwischen 10 und 100 €.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text("Kategorie", style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScrollCompat(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     state.data.categories.forEach { c ->
@@ -298,7 +324,8 @@ fun RuleEditorDialog(
                     enabled = valid && uncategorized > 0,
                     onClick = { applied = onApplyUncategorized(rule) },
                 ) { Text("Auf unkategorisierte Treffer anwenden") }
-                applied?.let { Text("$it Buchungen kategorisiert.", style = MaterialTheme.typography.bodySmall) }
+                // A tag-only rule changes tags but sets no category, so "updated" covers both.
+                applied?.let { Text("$it Buchungen aktualisiert.",style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = { Button(enabled = valid, onClick = { onSave(rule); onDismiss() }) { Text("Speichern") } },

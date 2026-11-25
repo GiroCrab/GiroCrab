@@ -3,8 +3,31 @@
 //! Pure functions over core records, unit-tested on every platform; `main.rs` only draws it.
 
 use std::collections::HashSet;
+use std::sync::Mutex;
 
 use girocrab_core::{Account, AccountKind, BookingFilter, Category, UserGroup};
+
+/// Ids of the vault's offline accounts (#679), set by `show` from
+/// `Vault::list_offline_account_ids`. Kept here so every place that builds a `SidebarInput`
+/// gets the marker without carrying the set itself.
+static OFFLINE_ACCOUNTS: Mutex<Vec<i64>> = Mutex::new(Vec::new());
+
+/// Replaces the known offline account ids.
+pub fn set_offline_accounts(ids: impl IntoIterator<Item = i64>) {
+    if let Ok(mut known) = OFFLINE_ACCOUNTS.lock() {
+        *known = ids.into_iter().collect();
+    }
+}
+
+fn offline_accounts() -> HashSet<i64> {
+    OFFLINE_ACCOUNTS
+        .lock()
+        .map(|known| known.iter().copied().collect())
+        .unwrap_or_default()
+}
+
+/// Detail line of an offline account row (instead of the empty bank name).
+pub const OFFLINE_DETAIL: &str = "Offline-Konto";
 
 /// How the "Konten" section groups its accounts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -342,6 +365,16 @@ fn group_icon(label: &str) -> &'static str {
 
 /// Builds the whole sidebar. `money` formats cents with a currency, as everywhere in the app.
 pub fn build(input: &SidebarInput, money: &dyn Fn(i64, &str) -> String) -> Vec<SideRow> {
+    build_with(input, &offline_accounts(), money)
+}
+
+/// `build` with an explicit set of offline account ids: those rows are marked "Offline-Konto"
+/// and, in private mode, show the mask instead of their name (the key stays `acct:<id>`).
+fn build_with(
+    input: &SidebarInput,
+    offline: &HashSet<i64>,
+    money: &dyn Fn(i64, &str) -> String,
+) -> Vec<SideRow> {
     let hide = |text: String| {
         if input.privacy {
             crate::daily::MASK.to_string()
@@ -433,9 +466,20 @@ pub fn build(input: &SidebarInput, money: &dyn Fn(i64, &str) -> String) -> Vec<S
                 continue;
             }
             for a in members {
-                let mut r = SideRow::new(kind::ACCOUNT, Target::Account(a.id).key(), &a.name);
+                let is_offline = offline.contains(&a.id);
+                // Offline accounts carry only what the user typed in: mask the name too.
+                let label = if is_offline && input.privacy {
+                    crate::daily::MASK
+                } else {
+                    a.name.as_str()
+                };
+                let mut r = SideRow::new(kind::ACCOUNT, Target::Account(a.id).key(), label);
                 r.depth = 2;
-                r.detail = a.bank_name.clone();
+                r.detail = if is_offline {
+                    OFFLINE_DETAIL.to_string()
+                } else {
+                    a.bank_name.clone()
+                };
                 r.amount = hide(money(a.balance_cents, &a.currency));
                 r.negative = a.balance_cents < 0 && !input.privacy;
                 r.color_hex = a.color_hex.clone();
@@ -964,6 +1008,41 @@ mod tests {
             assert!(!r.negative);
         }
         assert!(rows.iter().any(|r| r.label == "Haushalt"));
+    }
+
+    #[test]
+    fn offline_accounts_are_marked_and_masked_in_private_mode() {
+        let accounts = [
+            account(1, "Giro", "Bank A", AccountKind::Checking, 1),
+            account(2, "Haushaltskasse", "", AccountKind::Cash, 2),
+        ];
+        let folded = HashSet::new();
+        let offline: HashSet<i64> = [2].into_iter().collect();
+        let row = |rows: &[SideRow], key: &str| {
+            rows.iter()
+                .find(|r| r.kind == kind::ACCOUNT && r.key == key)
+                .cloned()
+                .unwrap()
+        };
+        let open = build_with(
+            &input(&accounts, &[], &folded, GroupMode::Kind, ""),
+            &offline,
+            &money,
+        );
+        assert_eq!(row(&open, "acct:2").label, "Haushaltskasse");
+        assert_eq!(row(&open, "acct:2").detail, OFFLINE_DETAIL);
+        assert_eq!(row(&open, "acct:1").detail, "Bank A");
+        let mut inp = input(&accounts, &[], &folded, GroupMode::Kind, "");
+        inp.privacy = true;
+        let private = build_with(&inp, &offline, &money);
+        // Offline name masked, key unchanged so the row stays selectable.
+        assert_eq!(row(&private, "acct:2").label, crate::daily::MASK);
+        // Other accounts keep their label (privacy hides amounts only).
+        assert_eq!(row(&private, "acct:1").label, "Giro");
+        // Without known offline accounts nothing is marked.
+        let none = build_with(&inp, &HashSet::new(), &money);
+        assert_eq!(row(&none, "acct:2").label, "Haushaltskasse");
+        assert_eq!(row(&none, "acct:2").detail, "");
     }
 
     #[test]
