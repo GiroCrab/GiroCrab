@@ -522,7 +522,18 @@ impl BankConnector for ComdirectConnector {
                 balance_date: super::today(),
             });
             let mut ids = super::ContentIds::default();
-            for t in &self.booked(&id, &ctx.since).await? {
+            let booked = match self.booked(&id, &ctx.since).await {
+                Ok(booked) => booked,
+                // the bank refused the start date (#1043): once more with 90 days
+                Err(e) => {
+                    let since = super::history::retry_since(&ctx.since, ctx.full_fetch, e)?;
+                    let booked = self.booked(&id, &since).await?;
+                    out.warnings
+                        .push(super::history::refused_warning(&id, &since));
+                    booked
+                }
+            };
+            for t in &booked {
                 out.transactions.push(booked_transaction(t, &id, &mut ids));
             }
             // Not yet booked (card holds, pending transfers). Best effort: an error or a

@@ -107,13 +107,18 @@ CONNECTOR_DOCS = {
     "miles-and-more": ("Miles & More Kreditkarte (Deutsche Bank)", "Deutsche Bank / Miles & More"),
     "quirion": ("quirion", "quirion"),
     "scalable-capital": ("Scalable Capital", "Scalable Capital"),
+    "airplus": ("AirPlus Corporate Card", "AirPlus"),
     "trade-republic": ("Trade Republic", "Trade Republic"),
     "volkswagen-bank": ("Volkswagen Bank", "Volkswagen Bank"),
     "sharinbox": ("Sharinbox (Société Générale)", "Sharinbox (Société Générale)"),
+    "axashareplan": ("AXA Mitarbeiter Shareplan", "AXA"),
+    "unioninvestment": ("Union Investment", "Union Investment"),
+    "berghauscie": ("Berghaus & Cie (Weindepot)", "Berghaus & Cie (Weindepot)"),
     "uberspace": ("Uberspace", "Uberspace"),
     "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),
     "kontist": ("Kontist", "Kontist"),
     "monefit": ("Monefit SmartSaver", "Monefit"),
+    "goandgrow": ("Go & Grow", "Go & Grow"),
     "schwaebisch-hall": ("Schwäbisch Hall (Bausparen)", "Schwäbisch Hall"),
 }
 

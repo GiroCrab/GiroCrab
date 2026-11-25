@@ -4,13 +4,21 @@ import SwiftUI
 enum SidebarDensity: String, CaseIterable, Identifiable {
     /// Name, owner initials, new-bookings count and balance in one line.
     case spacious
-    /// Name and count above, bank and balance below.
+    /// Smaller signet and title, with the bank below the name when present.
     case compact
 
     static let defaultsKey = "sidebarDensity"
     /// The one-line row is the default (#884); compact is the option.
     static let defaultValue: SidebarDensity = .spacious
     var id: String { rawValue }
+
+    var usesTighterAccountSpacing: Bool {
+        #if os(macOS)
+        self == .compact
+        #else
+        false
+        #endif
+    }
 
     var title: String {
         switch self {

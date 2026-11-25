@@ -119,6 +119,26 @@ struct HttpPortal {
 }
 
 impl HttpPortal {
+    /// The booking list of account `number` from `from` (YYYY-MM-DD) to `today`.
+    async fn cash_flow(&mut self, number: &str, from: &str, today: Date) -> CoreResult<Value> {
+        let body = json!({
+            "accountNumber": number,
+            "dateFrom": format!("{from}Z"),
+            "dateTo": format!("{today}Z"),
+        });
+        let (flow, _) = self
+            .call(true, "CashFlowService/cashflow/list/get", Some(body), None)
+            .await?;
+        // the portal's own refusal (#1043); a missing status is a broken answer
+        match text(&flow, "Status") {
+            "Success" | "" => Ok(flow),
+            status => Err(CoreError::Bank {
+                code: status.to_string(),
+                message: bad_response().to_string(),
+            }),
+        }
+    }
+
     fn client(&mut self) -> CoreResult<reqwest::Client> {
         if self.client.is_none() {
             self.client = Some(http_client_same_host()?);
@@ -305,21 +325,21 @@ impl Portal for HttpPortal {
         let mut out = FetchResult::default();
         for account in accounts {
             if account.cash_flow {
-                let from = ctx.since_for(&account.remote.external_ref);
-                let (flow, _) = self
-                    .call(
-                        true,
-                        "CashFlowService/cashflow/list/get",
-                        Some(json!({
-                            "accountNumber": account.remote.account_number,
-                            "dateFrom": format!("{from}Z"),
-                            "dateTo": format!("{today}Z"),
-                        })),
-                        None,
-                    )
-                    .await?;
-                out.transactions
-                    .extend(parse_cashflow(&flow, &account.remote.external_ref)?);
+                let account_ref = &account.remote.external_ref;
+                let number = &account.remote.account_number;
+                let from = ctx.since_for(account_ref);
+                let flow = match self.cash_flow(number, from, today).await {
+                    Ok(flow) => flow,
+                    // the bank refused the start date (#1043): once more with 90 days
+                    Err(e) => {
+                        let from = super::history::retry_since(from, ctx.full_fetch, e)?;
+                        let flow = self.cash_flow(number, &from, today).await?;
+                        out.warnings
+                            .push(super::history::refused_warning(account_ref, &from));
+                        flow
+                    }
+                };
+                out.transactions.extend(parse_cashflow(&flow, account_ref)?);
             }
             out.accounts.push(account.remote);
         }
