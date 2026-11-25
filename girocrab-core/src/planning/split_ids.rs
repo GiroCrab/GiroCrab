@@ -17,6 +17,38 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// The identity of a booking for its parts: its sync key plus the raw account reference (keeps
+/// the switch marker the sync key drops) and the connection as sync sees it (`connection_key`:
+/// one comdirect login over either route).
+pub(crate) fn booking_identity(conn: &Connection, booking: i64) -> CoreResult<String> {
+    let key = crate::sync_merge::booking_key(conn, booking)?;
+    let (external_ref, connection): (String, Option<i64>) = conn.query_row(
+        "SELECT a.external_ref,a.connection_id FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.id=?1",
+        [booking],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let connection = match connection {
+        Some(id) => crate::sync_merge::connection_key(conn, id)?,
+        None => String::new(),
+    };
+    Ok(serde_json::to_string(&(key, (external_ref, connection))).expect("split booking identity"))
+}
+
+/// The UUID of the `occurrence`-th part with this content in the booking `identity`. One recipe
+/// for the schema 39 backfill and for imports, so the same part gets the same UUID either way.
+pub(crate) fn part_uuid(
+    identity: &str,
+    category_uuid: &Option<String>,
+    amount: i64,
+    note: &str,
+    occurrence: u64,
+) -> String {
+    let key = (identity, category_uuid, amount, note);
+    let content =
+        serde_json::to_vec(&("girocrab.split.v1", &key, occurrence)).expect("split identity");
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, &content).to_string()
+}
+
 fn backfill(conn: &Connection) -> CoreResult<()> {
     let rows = conn
         .prepare(
@@ -51,22 +83,7 @@ fn backfill(conn: &Connection) -> CoreResult<()> {
     let mut identities = HashMap::new();
     for (_, booking, ..) in &rows {
         if let std::collections::hash_map::Entry::Vacant(entry) = identities.entry(*booking) {
-            let key = crate::sync_merge::booking_key(conn, *booking)?;
-            // the raw account reference (keeps the switch marker the sync key drops) and the
-            // connection as sync sees it (`connection_key`: one comdirect login over either route)
-            let (external_ref, connection): (String, Option<i64>) = conn.query_row(
-                "SELECT a.external_ref,a.connection_id FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.id=?1",
-                [booking],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            let connection = match connection {
-                Some(id) => crate::sync_merge::connection_key(conn, id)?,
-                None => String::new(),
-            };
-            let discriminator = (external_ref, connection);
-            entry.insert(
-                serde_json::to_string(&(key, discriminator)).expect("split booking identity"),
-            );
+            entry.insert(booking_identity(conn, *booking)?);
         }
     }
     let mut occurrences = HashMap::new();
@@ -81,9 +98,7 @@ fn backfill(conn: &Connection) -> CoreResult<()> {
         // Identical parts are indistinguishable; their UUID set is always 0..count,
         // regardless of where other content occurs in the stored row order.
         let occurrence = occurrences.entry(key.clone()).or_insert(0u64);
-        let content =
-            serde_json::to_vec(&("girocrab.split.v1", &key, *occurrence)).expect("split identity");
-        let uuid = Uuid::new_v5(&Uuid::NAMESPACE_OID, &content).to_string();
+        let uuid = part_uuid(&key.0, &key.1, amount, &note, *occurrence);
         *occurrence += 1;
         let position = positions.entry(booking).or_insert(0i64);
         conn.execute(

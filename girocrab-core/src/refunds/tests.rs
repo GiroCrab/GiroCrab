@@ -3325,8 +3325,12 @@ fn review_moves_preserve_destination_unlinks_and_reject_collisions() {
             fold_booking(&db, old, new, true, true).unwrap();
         } else {
             move_booking(&db, old, new).unwrap();
+            // as a take-over does: the source booking goes
+            crate::sync_merge::soft_delete_booking(&db, old).unwrap();
         }
         drop(db);
+        // colliding moves keep both links where they were: visible, inactive
+        assert_eq!(f.v.refund_links(r).unwrap().len(), 2);
         if fold {
             let links = f.v.refund_links(r).unwrap();
             assert_eq!(links.len(), 2);
@@ -4280,4 +4284,103 @@ fn expired_pending_booking_cleanup_leaves_links_read_time_inactive() {
         ),
         0
     );
+}
+
+mod round9 {
+    use super::*;
+
+    fn allocated(v: &Vault, r: i64, original: i64) -> i64 {
+        v.refund_links(r)
+            .unwrap()
+            .iter()
+            .filter(|l| l.original_id == original)
+            .map(|l| l.allocated_cents)
+            .sum()
+    }
+
+    /// CodeRabbit (#1852): a whole-booking link without a matching survivor part stays on the
+    /// source booking instead of sitting on the survivor with an empty part key.
+    #[test]
+    fn fold_keeps_an_unmatched_whole_link_on_the_source() {
+        let f = Fixture::new();
+        let r = f.add("refund", 100);
+        let old = f.add("old", -100);
+        let keeper = f.add("keeper", -100);
+        f.split(keeper, &[-60, -40]);
+        f.link(r, "", old, "");
+        store::fold_booking(&f.v.db().unwrap(), old, keeper, true, false).unwrap();
+        let rows = State::load(&f.v.db().unwrap()).unwrap().rows;
+        assert!(
+            rows.iter()
+                .any(|l| l.key.original == Endpoint(old, String::new()))
+        );
+        assert!(!rows.iter().any(|l| l.key.original.0 == keeper));
+    }
+
+    /// CodeRabbit (#1852): an unlink retargeted to the survivor's part still blocks a successor
+    /// whose move chain passes the old key.
+    #[test]
+    fn retargeted_unlink_keeps_blocking_its_successor() {
+        let f = Fixture::new();
+        let r = f.add("refund", 100);
+        let old = f.add("old", -100);
+        let keeper = f.add("keeper", -150);
+        let succ = f.add("successor", -100);
+        f.split(keeper, &[-100, -50]);
+        f.link(r, "", old, "");
+        f.unlink(r, "", old, "");
+        f.link(r, "", succ, "");
+        raw(
+            &f.v,
+            &format!(
+                "UPDATE refund_links SET moved_from_refund_id={r},moved_from_refund_part='',moved_from_original_id={old},moved_from_original_part='',changed_ms=1 WHERE original_id={succ}"
+            ),
+        );
+        assert_eq!(allocated(&f.v, r, succ), 0);
+        store::fold_booking(&f.v.db().unwrap(), old, keeper, true, false).unwrap();
+        let rows = State::load(&f.v.db().unwrap()).unwrap().rows;
+        assert!(rows.iter().any(|l| l.key.original.0 == keeper
+            && !l.key.original.1.is_empty()
+            && l.deleted_ms.is_some()
+            && !l.moved));
+        assert_eq!(allocated(&f.v, r, succ), 0);
+    }
+
+    /// CodeRabbit (#1852): a direct link keeps its key against a folded row also when both
+    /// arrive in the same incoming batch (main holds neither).
+    #[test]
+    fn direct_link_wins_over_a_folded_row_from_the_same_batch() {
+        let f = Fixture::new();
+        let r = f.add("refund", 200);
+        let bank = f.add("bank", -100);
+        let twin = f.add("twin", -100);
+        let u = f.split(bank, &[-60, -40])[0].clone();
+        let v = f.split(twin, &[-60, -40])[0].clone();
+        f.link(r, "", twin, &v);
+        f.link(r, "", bank, &u);
+        let db = f.v.db().unwrap();
+        let direct = State::load(&db)
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|l| l.key.original.0 == bank)
+            .unwrap();
+        db.execute_batch(
+            "ATTACH DATABASE ':memory:' AS other;
+            CREATE TABLE other.refund_links AS SELECT * FROM main.refund_links;
+            CREATE TABLE other.transactions AS SELECT * FROM main.transactions;
+            CREATE TABLE other.transaction_splits AS SELECT * FROM main.transaction_splits;
+            DELETE FROM main.refund_links;",
+        )
+        .unwrap();
+        store::merge_folded(&db, &HashMap::from([(r, r), (twin, bank), (bank, bank)])).unwrap();
+        let rows = State::load(&db).unwrap().rows;
+        let kept = rows
+            .iter()
+            .find(|l| l.key.original == Endpoint(bank, u.clone()))
+            .unwrap();
+        assert_eq!(kept, &direct);
+        drop(db);
+        assert_eq!(allocated(&f.v, r, bank), 60);
+    }
 }

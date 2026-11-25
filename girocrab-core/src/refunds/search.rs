@@ -164,13 +164,14 @@ fn candidates(
         .map(|id| &p.state.books[id])
         .filter(|b| b.live && b.id != book.id && b.currency == book.currency);
     for b in books {
+        // suggestions look 62 days around the booking only: checked before any other work
+        if reason.is_some() && !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
+            continue;
+        }
         if b.check_capacity().is_err() {
             continue;
         }
         let merchant = &index.merchants[&b.id];
-        if reason.is_some() && !days_between(&book.date, &b.date).is_some_and(|d| d <= 62) {
-            continue;
-        }
         let tokens = if by_reference {
             reference_tokens(&format!("{} {}", b.purpose, b.reference))
         } else {

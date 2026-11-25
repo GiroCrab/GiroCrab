@@ -171,14 +171,9 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
                 if (row.deleted_ms.is_none() || !row.moved) && old.0 != target.0 {
                     match survivor_part(conn, "other", old, target.0, true)? {
                         Some(part) => target.1 = part,
-                        // a whole booking with another amount: a live link stays on the folded
-                        // twin booking, while an explicit unlink moves to the survivor booking
-                        None if old.1.is_empty() && row.deleted_ms.is_none() => {
-                            *target = old.clone()
-                        }
-                        None if row.deleted_ms.is_some() && !row.moved => {
-                            target.1.clear();
-                        }
+                        // a whole booking with another amount: the link (or its unlink) stays on
+                        // the folded twin booking (same vault, deleted with it)
+                        None if old.1.is_empty() => *target = old.clone(),
                         None => {}
                     }
                 }
@@ -194,12 +189,11 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
         rows.push(row);
     }
     if folded {
-        let occupied: HashSet<_> = load_rows(conn, "main")?
-            .into_iter()
-            .chain(direct.iter().cloned())
-            .filter(|r| r.deleted_ms.is_none())
-            .map(|r| r.key)
-            .collect();
+        let occupied = live_winners(
+            load_rows(conn, "main")?
+                .into_iter()
+                .chain(direct.iter().cloned()),
+        );
         rows.retain(|r| {
             !(r.deleted_ms.is_none() && remapped.contains(&r.key) && occupied.contains(&r.key))
         });
@@ -207,6 +201,22 @@ fn merge_mapped(conn: &Connection, bookings: &HashMap<i64, i64>, folded: bool) -
     }
     rows.extend(direct);
     merge_rows(conn, rows)
+}
+
+/// Keys whose winning row (by rank, across stored and incoming rows) is live: only those
+/// occupy a key, whatever order the rows come in (CodeRabbit #1852).
+fn live_winners(rows: impl Iterator<Item = Row>) -> HashSet<Key> {
+    let mut winners: HashMap<Key, Row> = HashMap::new();
+    for row in rows {
+        if winners.get(&row.key).is_none_or(|w| row.rank() > w.rank()) {
+            winners.insert(row.key.clone(), row);
+        }
+    }
+    winners
+        .into_iter()
+        .filter(|(_, r)| r.deleted_ms.is_none())
+        .map(|(k, _)| k)
+        .collect()
 }
 
 fn inactivate_collisions(rows: &mut Vec<Row>) {
@@ -292,8 +302,14 @@ fn is_split(conn: &Connection, schema: &str, id: i64) -> CoreResult<bool> {
 fn retire_part_key(conn: &Connection, row: &mut Row, previous: Key) -> CoreResult<Row> {
     let mut retired = row.clone();
     retired.key = previous.clone();
-    retired.deleted_ms = Some(row.changed_ms);
-    retired.moved = true;
+    // a retargeted user unlink also stays an unlink at its old key: a successor whose move
+    // chain passes that key stays blocked (CodeRabbit #1852)
+    let unlink = row.deleted_ms.is_some() && !row.moved;
+    retired.deleted_ms = Some(row.deleted_ms.unwrap_or(row.changed_ms));
+    retired.moved = !unlink;
+    if unlink {
+        retired.unlink_id = String::new();
+    }
     row.moved_from_key = source_key(conn, &previous)?;
     row.moved_from = Some(previous);
     Ok(retired)
@@ -375,11 +391,15 @@ pub(crate) fn fold_booking(
                 (&row.key.refund, &mut target.key.refund),
                 (&row.key.original, &mut target.key.original),
             ] {
-                if old.0 == from
-                    && !(source_had_splits && old.1.is_empty())
-                    && let Some(part) = survivor_part(conn, "main", old, to, keep_live)?
-                {
-                    *endpoint = Endpoint(to, part);
+                if old.0 != from || (source_had_splits && old.1.is_empty()) {
+                    continue;
+                }
+                match survivor_part(conn, "main", old, to, keep_live)? {
+                    Some(part) => *endpoint = Endpoint(to, part),
+                    // a whole booking without an equal counterpart stays on the source and goes
+                    // inactive with it, as in `move_booking` (CodeRabbit #1852)
+                    None if old.1.is_empty() => *endpoint = old.clone(),
+                    None => {}
                 }
             }
             if target.key != previous
@@ -404,12 +424,11 @@ pub(crate) fn fold_booking(
         }
     }
     // folded keys name `to`: only its rows can collide with them
-    let occupied: HashSet<_> = rows_of_booking(conn, to)?
-        .into_iter()
-        .chain(direct.iter().cloned())
-        .filter(|r| r.deleted_ms.is_none())
-        .map(|r| r.key)
-        .collect();
+    let occupied = live_winners(
+        rows_of_booking(conn, to)?
+            .into_iter()
+            .chain(direct.iter().cloned()),
+    );
     folded.retain(|r| r.deleted_ms.is_some() || !occupied.contains(&r.key));
     inactivate_collisions(&mut folded);
     folded.extend(direct);
@@ -448,6 +467,11 @@ pub(crate) fn move_endpoints(
         *counts.entry(key.clone()).or_insert(0usize) += 1;
     }
     for (row, key) in targets {
+        // two links would land on one key (e.g. a whole booking and its imported part both
+        // consolidated into one split): both stay where they are, visible and inactive
+        if counts[&key] > 1 {
+            continue;
+        }
         let mut row = row.clone();
         let mut target = row.clone();
         target.key = key;
@@ -456,10 +480,8 @@ pub(crate) fn move_endpoints(
         target.moved_from = Some(row.key.clone());
         target.moved_from_key = source_key(conn, &row.key)?;
         let destination = by_key.get(&target.key).copied();
-        if counts[&target.key] == 1
-            && destination.is_none_or(|d| {
-                d.deleted_ms.is_some() && (d.moved || d.changed_ms < row.changed_ms)
-            })
+        if destination
+            .is_none_or(|d| d.deleted_ms.is_some() && (d.moved || d.changed_ms < row.changed_ms))
         {
             moved.push(target);
         }

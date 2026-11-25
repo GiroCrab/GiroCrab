@@ -156,6 +156,11 @@ make the choice independent of part order and device-local ids. The persisted
 endpoint change syncs as a complete row. Canonical twin/duplicate folds preserve
 the original stamps and retain a moved tombstone at the old canonical part key,
 so an unlink from a peer still holding that part can suppress its successor.
+A user unlink that follows to the survivor's part leaves an unlink (not a moved
+tombstone) at its old key, so a successor whose move chain passes that key stays
+blocked. A whole-booking link without an equal counterpart stays on the folded
+booking, as in a move. A key counts as taken by a direct row only when the winning
+row for that key (by rank, over stored and incoming rows) is live.
 Booking merge installs the winning split vectors after merging all booking
 deletions. A UUID transferred to a live survivor is not also restored on its
 deleted former parent by a pre-fold peer snapshot.
