@@ -1121,6 +1121,7 @@ export component MainWindow inherits Window {
     callback save-note(string);
     callback apply-rules();
     callback privacy-changed();
+    callback print-request();
     callback lock();
     callback import-file();
     callback transfer-submit(int, string, string, string, string, bool, string);
@@ -1236,6 +1237,7 @@ export component MainWindow inherits Window {
         if (root.unlocked && event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p" || event.text == "\u{10}")) { root.privacy = !root.privacy; root.privacy-changed(); return accept; }
         if (root.unlocked && event.modifiers.control && (event.text == "," || event.text == ";")) { SettingsImportState.request(); return accept; }
         if (root.unlocked && !root.busy && event.modifiers.control && !event.modifiers.shift && (event.text == "e" || event.text == "\u{5}")) { SettingsImportState.request(); SettingsImportState.tab = 1; return accept; }
+        if (root.unlocked && !root.busy && event.modifiers.control && !event.modifiers.shift && (event.text == "p" || event.text == "\u{10}")) { root.print-request(); return accept; }
         if (root.shortcut(event.text, event.modifiers.control)) { return accept; }
         reject
     }
@@ -1271,12 +1273,13 @@ export component MainWindow inherits Window {
                 padding-right: 8px;
                 spacing: 2px;
                 MenuTitle {
-                    text: "Datei"; menu-height: 192px;
+                    text: "Datei"; menu-height: 220px;
                     MenuEntry { text: "Alle Konten abrufen"; hint: "Strg+R"; enabled: !root.busy; clicked => { root.sync(); } }
                     MenuEntry { text: "Neue Überweisung …"; hint: "Strg+N"; enabled: !root.busy; clicked => { root.transfer-start(); } }
                     MenuSep {}
                     MenuEntry { text: "Vorhandene Daten importieren …"; hint: "Strg+I"; enabled: !root.busy; clicked => { root.import-file(); } }
                     MenuEntry { text: "Umsätze exportieren …"; hint: "Strg+E"; enabled: !root.busy; clicked => { SettingsImportState.request(); SettingsImportState.tab = 1; } }
+                    MenuEntry { text: "Drucken …"; hint: "Strg+P"; enabled: !root.busy; clicked => { root.print-request(); } }
                     MenuSep {}
                     MenuEntry { text: "Tresor sperren"; hint: "Strg+L"; clicked => { root.lock(); } }
                 }
