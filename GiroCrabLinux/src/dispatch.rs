@@ -1667,6 +1667,8 @@ vault_methods! {
     // --- categorizer / rules ---
     list_rules() save_rule(rule) delete_rule(rule_id) preview_rule(rule, limit)
     apply_rules(only_uncategorized)
+    // „Speichern & anwenden“ with the scope the user chose (RuleEditorView.swift)
+    apply_rule(rule_id, only_uncategorized)
     update_category(id, name, parent_id, sf_symbol, color_hex) delete_category(id)
     // sidebar drag & drop of categories, „Nach oben“ / „Nach unten“ (#977)
     reorder_categories(parent_id, ids)
@@ -2520,6 +2522,99 @@ mod tests {
             .unwrap()
             .clone();
         assert!(row["booking_count"].as_u64().unwrap() > 0);
+        drop(v);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// „Auf welche Buchungen soll die Regel angewendet werden?“: `apply_rule` with only
+    /// uncategorised bookings keeps a category set by hand, with all bookings it replaces it.
+    #[test]
+    fn apply_rule_scopes() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-apply-rule-{}.girocrab",
+            std::process::id()
+        ));
+        let v = Vault::open(path.display().to_string(), vec![9; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let filter = json!({
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 0, "offset": 0, "scope": "All", "merchant_key": null, "direction": "All",
+            "checked": null, "whole_days": false, "tag_ids": [], "untagged_only": false });
+        let booking = |pick: &dyn Fn(&Value) -> bool| {
+            call("list_transactions", json!({ "filter": filter }))["transactions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|b| pick(b))
+                .expect("demo booking")
+                .clone()
+        };
+        let id = booking(&|b| b["purpose"] == json!("Konzertticket"))["id"].clone();
+        let cats = call("list_categories", json!({}));
+        let cats: Vec<Value> = cats
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["depth"] == json!(1))
+            .map(|c| c["id"].clone())
+            .collect();
+        let (old, new) = (cats[0].clone(), cats[1].clone());
+        call(
+            "set_transaction_category",
+            json!({ "transaction_id": id, "category_id": old }),
+        );
+        let rule = json!({ "id": 0, "name": "Konzert", "category_id": new, "field": "Purpose",
+            "match_kind": "Keyword", "pattern": "Konzertticket", "case_sensitive": false,
+            "min_amount_cents": null, "max_amount_cents": null, "account_ids": [], "priority": 0,
+            "enabled": true, "match_count": 0, "tag_ids": [] });
+        let rule_id = call("save_rule", json!({ "rule": rule }));
+        let apply = |only: bool| {
+            call(
+                "apply_rule",
+                json!({ "rule_id": rule_id, "only_uncategorized": only }),
+            )
+            .as_u64()
+            .unwrap()
+        };
+        // „Nur unkategorisierte Buchungen“: the manual category stays; the count is the
+        // other uncategorised bookings with that purpose (none in today's demo)
+        let others = call("list_transactions", json!({ "filter": filter }))["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|b| b["purpose"] == json!("Konzertticket") && b["category_id"].is_null())
+            .count() as u64;
+        assert_eq!(apply(true), others);
+        let b = booking(&|b| b["id"] == id);
+        assert_eq!(b["category_id"], old);
+        assert_eq!(b["category_source"], json!("Manual"));
+        // „Alle Buchungen“: the rule replaces it
+        assert!(apply(false) >= 1);
+        assert_eq!(apply(false), 0, "a second run changes nothing");
+        let b = booking(&|b| b["id"] == id);
+        assert_eq!(b["category_id"], new);
+        assert_eq!(b["category_source"], json!("Rule"));
+        // uncategorised again: the restricted scope reaches it
+        call(
+            "set_transaction_category",
+            json!({ "transaction_id": id, "category_id": null }),
+        );
+        assert_eq!(apply(true), 1, "just the booking set back to uncategorised");
+        assert_eq!(booking(&|b| b["id"] == id)["category_id"], new);
+        // an unknown rule changes nothing
+        assert_eq!(
+            call(
+                "apply_rule",
+                json!({ "rule_id": 999_999, "only_uncategorized": false })
+            ),
+            json!(0)
+        );
         drop(v);
         let _ = std::fs::remove_file(&path);
     }
