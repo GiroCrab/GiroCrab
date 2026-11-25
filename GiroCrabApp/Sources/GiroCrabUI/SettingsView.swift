@@ -649,6 +649,14 @@ struct ICloudSyncSection: View {
     /// Shown in the section: a toast would land in the main window, behind Settings on macOS.
     @State private var keyCopyError: String?
 
+    @ViewBuilder private var keychainTradeOff: some View {
+        if let text = KeychainSyncNote.tradeOff(available: VaultKeyManager.canShareViaICloudKeychain,
+                                                shared: keychainSync, syncEnabled: sync.isEnabled) {
+            Text(text).appFont(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     var body: some View {
         Section {
             Toggle("Tresor über iCloud synchronisieren", isOn: Bindable(sync).isEnabled)
@@ -662,6 +670,8 @@ struct ICloudSyncSection: View {
                         model.syncNow()
                     }
                 }
+            // before the switch is turned: it shares the key as well (#1798)
+            if !sync.isEnabled { keychainTradeOff }
             if sync.isEnabled {
                 LabeledContent("Ordner") { Text(sync.folderName ?? "iCloud Drive / GiroCrab").sensitive() }
                 if sync.folderNotice {
@@ -728,6 +738,7 @@ struct ICloudSyncSection: View {
                 if let note = KeychainSyncNote.text(available: VaultKeyManager.canShareViaICloudKeychain) {
                     Text(note).appFont(.caption).foregroundStyle(.secondary)
                 }
+                keychainTradeOff
                 HStack {
                     Button {
                         confirmKeyCopy = true
@@ -1007,8 +1018,21 @@ struct OwnProductIDField: View {
     }
 }
 
-/// Why the iCloud Keychain switch is off in this build (#909), or nil when it works.
+/// The notes on sharing the vault key via iCloud Keychain.
 enum KeychainSyncNote {
+    /// What sharing costs: a synchronizable keychain item cannot carry `userPresence` (#1798).
+    /// Nil when it can neither be on nor be turned on in this build.
+    static func tradeOff(available: Bool, shared: Bool, syncEnabled: Bool) -> String? {
+        guard available || shared else { return nil }
+        let cost = String(localized: "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Beim Entsperren fragt dann nur noch GiroCrab danach, nicht mehr der Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account.")
+        if syncEnabled { return cost } // below the key's own switch
+        let state = shared // turning the sync off does not unshare the key
+            ? String(localized: "Der Tresor-Schlüssel wird weiterhin über den iCloud-Schlüsselbund geteilt.")
+            : String(localized: "Beim Einschalten wird auch der Tresor-Schlüssel über den iCloud-Schlüsselbund geteilt.")
+        return state + " " + cost
+    }
+
+    /// Why the switch is off in this build (#909), or nil when it works.
     static func text(available: Bool) -> String? {
         available ? nil : String(localized: "In dieser Version nicht verfügbar. Übertragen Sie den Schlüssel mit „Tresor-Schlüssel kopieren“ und fügen Sie ihn auf dem anderen Gerät mit „Schlüssel einfügen …“ ein.")
     }

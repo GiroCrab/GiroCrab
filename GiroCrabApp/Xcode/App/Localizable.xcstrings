@@ -7162,6 +7162,17 @@
         }
       }
     },
+    "Beim Einschalten wird auch der Tresor-Schlüssel über den iCloud-Schlüsselbund geteilt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turning this on also shares the vault key via iCloud Keychain."
+          }
+        }
+      }
+    },
     "Beim Entsperren %@ verlangen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10808,6 +10819,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The vault key could not be saved in the keychain (error %d). The vault stays open until you quit – please do not quit GiroCrab, check the keychain (Keychain Access) and try again."
+          }
+        }
+      }
+    },
+    "Der Tresor-Schlüssel wird weiterhin über den iCloud-Schlüsselbund geteilt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The vault key is still shared via iCloud Keychain."
           }
         }
       }
@@ -16040,6 +16062,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Health"
+          }
+        }
+      }
+    },
+    "Geteilt ist der Schlüssel nicht an Touch ID, Face ID oder den Gerätecode gebunden: Beim Entsperren fragt dann nur noch GiroCrab danach, nicht mehr der Schlüsselbund. Umso wichtiger ist ein gut geschützter Apple Account." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "While shared, the key is not bound to Touch ID, Face ID or the device passcode: when unlocking, only GiroCrab asks for it, no longer the keychain. That makes a well-protected Apple Account all the more important."
           }
         }
       }
