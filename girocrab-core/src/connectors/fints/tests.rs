@@ -2436,6 +2436,25 @@ async fn a_depot_without_hkwpd_at_the_bank_is_a_hint_not_a_failed_sync() {
 }
 
 #[tokio::test]
+async fn a_depot_without_hkwpd_keeps_its_value_even_when_hksal_answers() {
+    // the HKSAL figure of a depot is not its value: the stored one stays (#1743)
+    let (url, _) = mock_bank(vec![SAL_A]);
+    let mut c = depot_connector(&url, false);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd[0].allowed.insert("HKSAL".into());
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert!(
+        r.hints
+            .iter()
+            .any(|h| h.contains("von der Bank nicht angeboten")),
+        "{:?}",
+        r.hints
+    );
+}
+
+#[tokio::test]
 async fn an_empty_depot_statement_is_a_finished_fetch_with_value_0() {
     let (url, _) = mock_bank(vec![WPD_WITH_DATA]);
     let r = depot_connector(&url, true)

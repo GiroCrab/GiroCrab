@@ -678,7 +678,9 @@ impl BankConnector for FinTsConnector {
             {
                 // a depot by its Kontoart: its value stays as it was, and the user is told (#1743).
                 // A hint, not a warning: there is nothing to fix, and a login with only this
-                // depot must not fail at every sync.
+                // depot must not fail at every sync. A HKSAL figure is no depot value: it must not
+                // replace the stored one.
+                balance = None;
                 not_offered.push(trf(
                     "{0}: Depotbestand (HKWPD) – von der Bank nicht angeboten",
                     &[&label],
