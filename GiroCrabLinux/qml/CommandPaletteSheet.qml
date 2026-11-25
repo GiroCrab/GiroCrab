@@ -119,6 +119,7 @@ Sheet {
                 Keys.onDownPressed: { sheet.index = Math.min(sheet.index + 1, Math.max(sheet.items.length - 1, 0)); results.positionViewAtIndex(sheet.index, ListView.Contain) }
                 Keys.onUpPressed: { sheet.index = Math.max(sheet.index - 1, 0); results.positionViewAtIndex(sheet.index, ListView.Contain) }
                 Keys.onEscapePressed: sheet.close()
+                Sensitive { when: query.text !== "" }
             }
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }

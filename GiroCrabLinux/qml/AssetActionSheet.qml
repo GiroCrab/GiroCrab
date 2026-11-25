@@ -139,7 +139,8 @@ Sheet {
                     visible: sheet.kind === "sell" && sheet.manual
                     label: qsTr("Verkaufspreis je Stück")
                     TextField { Layout.preferredWidth: 200; placeholderText: qsTr("optional")
-                                text: sheet.priceText; onTextEdited: sheet.priceText = text }
+                                text: sheet.priceText; onTextEdited: sheet.priceText = text
+                                Sensitive { amounts: true } }
                 }
             }
 
@@ -185,7 +186,8 @@ Sheet {
                     }
                     Text { visible: !sheet.canTotal; text: qsTr("Wert je Stück"); font.pixelSize: Theme.body; color: Theme.text }
                     TextField { Layout.fillWidth: true; Layout.minimumWidth: 90 * Theme.textScale; placeholderText: qsTr("Wert"); horizontalAlignment: TextInput.AlignRight
-                                text: sheet.entryText; onTextEdited: sheet.entryText = text }
+                                text: sheet.entryText; onTextEdited: sheet.entryText = text
+                                Sensitive { amounts: true } }
                     Button {
                         text: qsTr("Eintragen")
                         enabled: sheet.perPiece !== null

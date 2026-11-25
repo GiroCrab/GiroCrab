@@ -184,7 +184,7 @@ ColumnLayout {
                             Layout.preferredWidth: 320
                             textRole: "text"
                             model: [{ id: null, text: qsTr("Neues Konto aus der Datei") }]
-                                .concat(AppModel.allAccounts.map(a => ({ id: a.id, text: a.name + " · " + a.bank_name })))
+                                .concat(AppModel.allAccounts.map(a => ({ id: a.id, text: AppModel.masking(a.name) + " · " + a.bank_name })))
                             currentIndex: Math.max(0, model.findIndex(o => o.id === v.target))
                             onActivated: i => { v.target = model[i].id; v.refreshPreview() }
                         }
