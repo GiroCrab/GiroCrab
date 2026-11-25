@@ -86,6 +86,9 @@ pub enum ConnectorKind {
     HanseaticBank,
     /// Monefit SmartSaver savings account via the web app's JSON API (unofficial).
     Monefit,
+    /// Bitcoin wallet, watch-only from an extended public key (xpub / ypub /
+    /// zpub) via an Esplora server (mempool.space or the user's own).
+    Bitcoin,
 }
 
 impl ConnectorKind {
@@ -124,6 +127,7 @@ impl ConnectorKind {
             ConnectorKind::Bhw => "bhw",
             ConnectorKind::Finpension => "finpension",
             ConnectorKind::Kontist => "kontist",
+            ConnectorKind::Bitcoin => "bitcoin",
             ConnectorKind::HanseaticBank => "hanseatic",
             ConnectorKind::Monefit => "monefit",
         }
@@ -195,6 +199,7 @@ impl ConnectorKind {
             ConnectorKind::Finpension,
             ConnectorKind::Kontist,
             ConnectorKind::Monefit,
+            ConnectorKind::Bitcoin,
         ]
     }
 }

@@ -188,6 +188,7 @@ public struct BankingGate: Equatable, Sendable {
         case "finpension": base = "Finpension"
         case "kontist": base = "Kontist"
         case "monefit": base = "Monefit SmartSaver"
+        case "bitcoin": base = "Bitcoin-Wallet"
         default: base = parts.first ?? id
         }
         guard parts.count == 2 else { return base }

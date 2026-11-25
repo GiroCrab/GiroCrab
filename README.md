@@ -250,6 +250,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
 | Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
+| Bitcoin-Wallet (xpub/ypub/zpub) | REST-API | – | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verifiziert |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
@@ -522,6 +523,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
 | Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
+| Bitcoin-Wallet (xpub/ypub/zpub) | REST-API | – | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verified |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |

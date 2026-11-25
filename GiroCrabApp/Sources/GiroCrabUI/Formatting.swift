@@ -533,6 +533,7 @@ extension ConnectorKind {
         case .finpension: return "Finpension"
         case .kontist: return "Kontist"
         case .monefit: return "Monefit SmartSaver"
+        case .bitcoin: return "Bitcoin-Wallet (xpub)"
         }
     }
 
@@ -574,6 +575,7 @@ extension ConnectorKind {
         case .finpension: return "#00A68C"
         case .kontist: return "#2B2D73"
         case .monefit: return "#1F4E79"
+        case .bitcoin: return "#F7931A"
         }
     }
 
@@ -622,6 +624,7 @@ extension ConnectorKind {
         case .finpension: return "FP"
         case .kontist: return "KT"
         case .monefit: return "MS"
+        case .bitcoin: return "BTC"
         }
     }
 }

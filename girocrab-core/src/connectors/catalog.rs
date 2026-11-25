@@ -289,6 +289,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             required_settings: vec![],
             note: tr("Ford Money (Ford Bank): Tagesgeld- und Festgeldkonten mit Saldo und Umsätzen. Die Anmeldung wird in der Ford-Money-Security-App bestätigt. Kontoauszüge und weitere Dokumente aus der Postbox lassen sich abrufen; ungelesene Dokumente gelten danach bei Ford Money als gelesen. Inoffiziell: liest die Seiten des Online-Bankings, Änderungen sind möglich.").into(),
         },
+        ConnectorKind::Bitcoin => BankDescriptor {
+            kind,
+            name: "Bitcoin-Wallet (xpub)".into(),
+            protocol: tr("Bitcoin-Wallet (nur lesen, xpub/ypub/zpub)").into(),
+            bank_code: "".into(),
+            sf_symbol: "bitcoinsign.circle".into(),
+            login_label: tr("Erweiterter öffentlicher Schlüssel (xpub, ypub oder zpub)").into(),
+            secret_label: tr("(kein Passwort nötig)").into(),
+            required_settings: vec![],
+            note: tr("Nur lesen: Mit dem erweiterten öffentlichen Schlüssel des Wallet-Kontos (z. B. m/84'/0'/0') werden Empfangs- und Wechselgeld-Adressen abgeleitet; damit lässt sich nichts ausgeben. Die Umsätze kommen von mempool.space oder einem eigenen Esplora-Server (Einstellungen der Verbindung); dieser Server sieht alle Adressen des Wallets. Der Euro-Kurs kommt von mempool.space. Niemals den privaten Schlüssel (xprv) oder die Wiederherstellungswörter eingeben.").into(),
+        },
         ConnectorKind::Finpension => BankDescriptor {
             kind,
             name: "Finpension".into(),
@@ -803,6 +814,19 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Bitcoin-Wallet (xpub/ypub/zpub)",
+        kind: Some(ConnectorKind::Bitcoin),
+        interface: Interface::RestApi,
+        official: Some(true),
+        capabilities: &[
+            Capability::Balances,
+            Capability::Securities,
+            Capability::SecurityTransactions,
+        ],
+        status: Status::TestingWanted,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "Finpension",
         kind: Some(ConnectorKind::Finpension),
         interface: Interface::WebPortal,
@@ -1018,6 +1042,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::HanseaticBank => Box::new(hanseatic::HanseaticConnector::new()),
         ConnectorKind::Bhw => Box::new(bhw::BhwConnector::new()),
         ConnectorKind::Finpension => Box::new(finpension::FinpensionConnector::new()),
+        ConnectorKind::Bitcoin => Box::new(bitcoin::BitcoinConnector::new()),
         ConnectorKind::Kontist => Box::new(kontist::KontistConnector::new()),
         ConnectorKind::Monefit => Box::new(monefit::MonefitConnector::new()),
         ConnectorKind::ScalableCapital => Box::new(scalable::ScalableConnector::new()),
@@ -1152,6 +1177,7 @@ mod matrix_tests {
         assert_eq!(
             kinds,
             [
+                "Bitcoin",
                 "Comdirect",
                 "Ffb",
                 "Fnz",
