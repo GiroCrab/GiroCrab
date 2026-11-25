@@ -116,14 +116,21 @@ final class BookingDensityTests: XCTestCase {
         XCTAssertFalse(BookingRowClicks.opensNote(at: gap, regions: regions, textClick: true))
     }
 
-    func testCategoryTriggerDoesNotSelectOrDoubleClickBookingRow() {
-        let category = BookingRowClickRect(bounds: CGRect(x: 30, y: 4, width: 60, height: 18), region: .category)
-        let click = CGPoint(x: 50, y: 12)
-        let gap = CGPoint(x: 100, y: 12)
+    func testRowControlsHandleTheirClicksWithoutInvokingRowGestures() {
+        let category = BookingRowClickRect(bounds: CGRect(x: 30, y: 4, width: 60, height: 18), region: .control)
+        let orderItems = BookingRowClickRect(bounds: CGRect(x: 130, y: 4, width: 16, height: 18), region: .control)
+        let note = BookingRowClickRect(bounds: CGRect(x: 290, y: 4, width: 18, height: 16), region: .control)
+        let regions = [category, orderItems, note]
 
-        XCTAssertFalse(BookingRowClicks.selectsRow(at: click, regions: [category], textClick: false))
-        XCTAssertFalse(BookingRowClicks.opensNote(at: click, regions: [category], textClick: false))
-        XCTAssertTrue(BookingRowClicks.selectsRow(at: gap, regions: [category], textClick: false))
+        for control in regions {
+            let click = CGPoint(x: control.bounds.midX, y: control.bounds.midY)
+            XCTAssertFalse(BookingRowClicks.selectsRow(at: click, regions: regions, textClick: false))
+            XCTAssertFalse(BookingRowClicks.opensNote(at: click, regions: regions, textClick: false))
+        }
+
+        let gap = CGPoint(x: 100, y: 12)
+        XCTAssertTrue(BookingRowClicks.selectsRow(at: gap, regions: regions, textClick: false))
+        XCTAssertTrue(BookingRowClicks.opensNote(at: gap, regions: regions, textClick: false))
     }
 
     /// Exercises real SwiftUI layout with narrow widths, long text and large type.

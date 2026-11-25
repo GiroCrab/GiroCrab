@@ -20,13 +20,21 @@ final class PrivacyModeTests: XCTestCase {
         XCTAssertEqual(PrivacyMode.redaction(enabled: true, scope: .personal), [.personal, .amounts])
     }
 
-    func testBookingCopyIsDisabledInBothPrivacyScopesAndInRedactedReports() {
-        for scope in [PrivacyMode.Scope.amounts, .personal] {
-            XCTAssertTrue(PrivacyMode.redaction(enabled: false, scope: scope).allowsBookingCopy)
-            XCTAssertFalse(PrivacyMode.redaction(enabled: true, scope: scope).allowsBookingCopy)
-        }
-        XCTAssertFalse(ReportRedaction.labels.allowsBookingCopy)
-        XCTAssertFalse(LaunchOptions(arguments: ["app", "--privacy"]).redaction.allowsBookingCopy)
+    func testAmountsOnlyPrivacyAllowsVisibleTextButBlocksWholeBookingCopy() {
+        let disabled = PrivacyMode.redaction(enabled: false, scope: .amounts)
+        XCTAssertTrue(disabled.allowsBookingTextCopy)
+        XCTAssertTrue(disabled.allowsWholeBookingCopy)
+
+        let amounts = PrivacyMode.redaction(enabled: true, scope: .amounts)
+        XCTAssertTrue(amounts.allowsBookingTextCopy)
+        XCTAssertFalse(amounts.allowsWholeBookingCopy)
+    }
+
+    func testPersonalRedactionBlocksBothKindsOfBookingCopy() {
+        let personal = PrivacyMode.redaction(enabled: true, scope: .personal)
+        XCTAssertFalse(personal.allowsBookingTextCopy)
+        XCTAssertFalse(personal.allowsWholeBookingCopy)
+        XCTAssertFalse(ReportRedaction.labels.allowsWholeBookingCopy)
     }
 
     /// #1007: switching privacy mode on without picking a scope hides names and purposes too.

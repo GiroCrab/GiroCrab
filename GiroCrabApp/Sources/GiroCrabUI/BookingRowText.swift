@@ -34,7 +34,7 @@ struct BookingRowText: View {
             .lineLimit(wraps ? nil : 1)
         Group {
             #if os(macOS)
-            if let onSingleClick, redaction.allowsBookingCopy {
+            if let onSingleClick, redaction.allowsBookingTextCopy {
                 text.hidden().overlay {
                     SelectableBookingText(
                         value: value, wraps: wraps,
@@ -155,18 +155,20 @@ extension View {
         #endif
     }
 
-    #if os(macOS)
-    /// A click on the category picker must leave the row selection and density intact.
-    func bookingCategoryTriggerBounds() -> some View {
-        transformAnchorPreference(key: BookingRowClickAnchors.self, value: .bounds) { $0.append(($1, .category)) }
+    /// A control handles its own clicks without invoking the surrounding row gestures.
+    func bookingRowControl() -> some View {
+        #if os(macOS)
+        transformAnchorPreference(key: BookingRowClickAnchors.self, value: .bounds) { $0.append(($1, .control)) }
+        #else
+        self
+        #endif
     }
-    #endif
 }
 
 #if os(macOS)
 enum BookingRowClickRegion: Equatable {
     case occupied
-    case category
+    case control
 }
 
 private struct BookingRowClickAnchors: PreferenceKey {
@@ -195,7 +197,7 @@ struct BookingRowClicks: ViewModifier {
     @State private var regions: [BookingRowClickRect] = []
 
     static func selectsRow(at point: CGPoint, regions: [BookingRowClickRect], textClick: Bool) -> Bool {
-        !textClick && !regions.contains { $0.region == .category && $0.bounds.contains(point) }
+        !textClick && !regions.contains { $0.region == .control && $0.bounds.contains(point) }
     }
 
     static func opensNote(at point: CGPoint, regions: [BookingRowClickRect], textClick: Bool) -> Bool {
