@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 # macOS-only APIs (unavailable on iOS). Extend when another one bites.
-PATTERN='homeDirectoryForCurrentUser|NSWorkspace\.shared|NSOpenPanel|NSSavePanel|toggleStyle[(][.]checkbox[)]|buttonStyle[(][.]link[)]'
+PATTERN='homeDirectoryForCurrentUser|NSWorkspace\.shared|NSOpenPanel|NSSavePanel|toggleStyle[(][[:space:]]*[.]checkbox[[:space:]]*[)]|buttonStyle[(][[:space:]]*[.]link[[:space:]]*[)]'
 
 bad=$(find GiroCrabApp/Sources/GiroCrabUI -name '*.swift' -print0 | xargs -0 awk -v pat="$PATTERN" '
     FNR == 1 { depth = 0; mac = 0 }
