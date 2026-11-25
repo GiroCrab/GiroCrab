@@ -4444,7 +4444,7 @@ QtObject {
                 // the group editor is a sheet of the main window (Swift: showGroupManager)
                 showGroupManager = true
             } else {
-                const tabs = { general: "general", banks: "banks", security: "security" }
+                const tabs = { general: "general", banks: "banks", security: "security", external: "externalAccess" }
                 settingsTab = tabs[parts[0]] || "general"
                 demoSettingsSheet = parts.length > 1 ? parts[1] : ""
                 showSettings = true

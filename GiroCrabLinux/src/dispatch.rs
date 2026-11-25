@@ -150,6 +150,7 @@ fn reset_app() -> R {
         "reset_app in tests only with GIROCRAB_NO_KEYCHAIN and temporary XDG dirs"
     );
     crate::sessions::cancel_all();
+    crate::local_api::stop();
     set_active_vault(None);
     OWN.lock().unwrap().take();
     remove_quicklook_files();
@@ -310,6 +311,18 @@ fn own_vault() -> Result<Arc<Vault>, String> {
         .unwrap()
         .clone()
         .ok_or_else(|| crate::i18n::tr("Tresor ist gesperrt"))
+}
+
+/// `AppModel.localApiTarget`: the own vault while it is the one shown (never the demo).
+pub(crate) fn local_api_target() -> Result<Arc<Vault>, String> {
+    let own = OWN.lock().unwrap().clone();
+    let shown = VAULT.lock().unwrap().clone();
+    match (own, shown) {
+        (Some(own), Some(shown)) if Arc::ptr_eq(&own, &shown) => Ok(own),
+        _ => Err(crate::i18n::tr(
+            "Die externe Analyse ist nur mit Ihrem eigenen, entsperrten Tresor verfügbar – nicht mit den Demo-Daten.",
+        )),
+    }
 }
 
 /// A path from a QML file dialog (`file://…` URL or plain path).
@@ -645,14 +658,59 @@ fn call(method: &str, a: &Value) -> R {
         "lock" => {
             // endBankDialogsForLock: no bank dialog keeps running or writing into the vault.
             crate::sessions::cancel_all();
+            // the socket closes before the vault goes (AppModel+LocalApi.swift)
+            crate::local_api::stop();
             remove_quicklook_files();
             if let Some(v) = OWN.lock().unwrap().take() {
                 let _ = v.checkpoint();
             }
             set_active_vault(None);
+            // again once the vault is gone: a job running in between may have started it
+            crate::local_api::stop();
             ok(())
         }
         "is_unlocked" => ok(VAULT.lock().unwrap().is_some()),
+        // --- Einstellungen › Analyse (AppModel+LocalApi.swift, #136): only on the own vault
+        // while it is shown; each write is a job that ends by matching the socket to it ---
+        "local_api_scope" => ok(local_api_target()?
+            .local_api_scope()
+            .map_err(|e| e.to_string())?),
+        "local_api_reconcile" => ok(crate::local_api::job(local_api_target()?, |_| Ok(()))),
+        "set_local_api_scope" => {
+            let scope: girocrab_core::local_api::ShareScope = arg(a, "scope")?;
+            ok(crate::local_api::job(local_api_target()?, move |v| {
+                v.set_local_api_scope(scope)
+            }))
+        }
+        "create_local_api_token" => ok(crate::local_api::job(local_api_target()?, |v| {
+            v.create_local_api_token()
+        })),
+        "revoke_local_api_token" => ok(crate::local_api::job(local_api_target()?, |v| {
+            v.revoke_local_api_token()
+        })),
+        // in process, without a token (tests, the app itself)
+        "local_api_request" => {
+            ok(local_api_target()?.local_api_request(&arg::<String>(a, "request")?))
+        }
+        "local_api_stop" => {
+            crate::local_api::stop();
+            ok(())
+        }
+        "local_api_client_config" => ok(crate::local_api::helper_path().map(|h| {
+            crate::local_api::client_config(
+                &h.display().to_string(),
+                &crate::local_api::socket_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+                arg::<Option<String>>(a, "token").ok().flatten().as_deref(),
+            )
+        })),
+        // runs girocrab-mcp for up to 45 s: Core.callAsync only
+        "local_api_check" => ok(crate::local_api::check(arg(a, "token")?)),
+        "local_api_check_cancel" => {
+            crate::local_api::cancel_check();
+            ok(())
+        }
         // --- background loads (AppModel.loadOffMain) ---
         "supersede" => {
             supersede(arg(a, "channel")?, arg(a, "token")?);
@@ -1407,6 +1465,8 @@ pub fn remove_quicklook_files() {
 
 /// `AppModel.makeDemoVault`: throw-away vault in the temp dir with fixed key.
 fn open_demo() -> R {
+    // the socket never serves the demo (AppModel+LocalApi.swift › localApiTarget)
+    crate::local_api::stop();
     remove_quicklook_files();
     let path = std::env::temp_dir().join("GiroCrab-Demo.girocrab");
     for suffix in ["", "-wal", "-shm"] {
@@ -1416,6 +1476,9 @@ fn open_demo() -> R {
     let v = Vault::open(path.display().to_string(), key).map_err(|e| e.to_string())?;
     v.seed_demo_data().map_err(|e| e.to_string())?;
     set_active_vault(Some(v));
+    // again after the swap: a job that reconciled in the gap above may have started it
+    // on the own vault; from here on `local_api_target` sees the demo and refuses
+    crate::local_api::stop();
     ok(())
 }
 
@@ -4276,6 +4339,163 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as f64
+    }
+
+    /// Einstellungen › Analyse (#136, AppModel+LocalApi.swift): the socket starts only for the
+    /// own vault while it is shown, switched on and with a key; it answers with that key in
+    /// `$XDG_RUNTIME_DIR` (folder 0700, socket 0600) and closes for the demo, when switched
+    /// off (which revokes the key) and on lock.
+    #[test]
+    fn local_api_socket_round_trip() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::fs::PermissionsExt;
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        struct Cleanup {
+            run: std::path::PathBuf,
+            saved_xdg: Option<std::ffi::OsString>,
+            saved_flatpak: Option<std::ffi::OsString>,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                crate::local_api::stop();
+                *VAULT.lock().unwrap() = None;
+                *OWN.lock().unwrap() = None;
+                set_env("XDG_RUNTIME_DIR", self.saved_xdg.as_ref());
+                set_env("FLATPAK_ID", self.saved_flatpak.as_ref());
+                let _ = std::fs::remove_dir_all(&self.run);
+            }
+        }
+        // short: sun_path holds 108 bytes
+        let run = (0u32..)
+            .map(|n| std::path::PathBuf::from(format!("/tmp/gcl-{}-{n}", std::process::id())))
+            .find(|p| match std::fs::create_dir(p) {
+                Ok(()) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(e) => panic!("runtime dir {}: {e}", p.display()),
+            })
+            .expect("exclusive runtime dir");
+        std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let _guard = Cleanup {
+            run: run.clone(),
+            saved_xdg: std::env::var_os("XDG_RUNTIME_DIR"),
+            saved_flatpak: std::env::var_os("FLATPAK_ID"),
+        };
+        set_env("XDG_RUNTIME_DIR", Some(&run));
+        set_env("FLATPAK_ID", Option::<&str>::None);
+        let socket = run.join("girocrab/girocrab.sock");
+        let v = Vault::open(run.join("own.girocrab").display().to_string(), vec![9; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let request = |token: &str, method: &str| -> Value {
+            let mut s = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+            writeln!(s, "{}", json!({ "v": 1, "token": token, "method": method })).unwrap();
+            let mut line = String::new();
+            BufReader::new(s).read_line(&mut line).unwrap();
+            serde_json::from_str(&line).unwrap()
+        };
+
+        // nothing for the demo (own vault not in front)
+        call_ok("open_demo", json!({}));
+        *OWN.lock().unwrap() = Some(v.clone());
+        let demo: Value = serde_json::from_str(&call_json("local_api_reconcile", "{}")).unwrap();
+        assert!(demo.get("err").is_some(), "never the demo: {demo}");
+        *VAULT.lock().unwrap() = Some(v.clone());
+
+        let state = call_ok("local_api_reconcile", json!({}))["state"].clone();
+        assert_eq!(state["running"], json!(false), "off by default");
+        assert_eq!(state["scope"]["enabled"], json!(false));
+        assert_eq!(state["socket_path"], json!(socket.display().to_string()));
+        let account = call_ok("list_accounts", json!({}))[0]["id"].clone();
+        let mut scope = state["scope"].clone();
+        scope["enabled"] = json!(true);
+        scope["account_ids"] = json!([account]);
+        let r = call_ok("set_local_api_scope", json!({ "scope": scope }));
+        assert_eq!(r["error"], Value::Null);
+        assert_eq!(r["state"]["running"], json!(false), "no key yet");
+        let r = call_ok("create_local_api_token", json!({}));
+        let token = r["value"].as_str().unwrap().to_string();
+        assert!(token.starts_with("gcapi_"));
+        assert_eq!(r["state"]["running"], json!(true), "{r}");
+        assert_eq!(
+            r["state"]["scope"]["token_sha256"].as_str().unwrap().len(),
+            64
+        );
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&run.join("girocrab")), 0o700);
+        assert_eq!(mode(&socket), 0o600);
+
+        let info = request(&token, "info");
+        assert!(info.get("result").is_some(), "{info}");
+        let accounts = request(&token, "accounts");
+        assert_eq!(
+            accounts["result"].as_array().map(Vec::len),
+            Some(1),
+            "{accounts}"
+        );
+        assert_eq!(
+            request("gcapi_wrong", "info")["error"]["code"],
+            json!("unauthorized")
+        );
+        // in process, without a key
+        let inproc: Value = serde_json::from_str(
+            call_ok(
+                "local_api_request",
+                json!({ "request": r#"{"v":1,"method":"info"}"# }),
+            )
+            .as_str()
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(inproc.get("result").is_some(), "{inproc}");
+        // the entry for an MCP client names this socket
+        let config = call_ok("local_api_client_config", json!({ "token": null }));
+        if let Some(c) = config.as_str() {
+            assert!(c.contains(&socket.display().to_string()) && c.contains("gcapi_…"));
+            // „Verbindung testen“ with a built helper (`cargo build -p girocrab-mcp`)
+            let check = call_ok("local_api_check", json!({ "token": token }));
+            assert_eq!(check["result"], json!("works"), "{check}");
+            let check = call_ok("local_api_check", json!({ "token": null }));
+            assert_eq!(check["result"], json!("reachableWithoutKey"), "{check}");
+            let check = call_ok("local_api_check", json!({ "token": "gcapi_wrong" }));
+            assert_eq!(check["result"], json!("keyRejected"), "{check}");
+        }
+
+        // the demo in front closes the socket and removes its file
+        call_ok("open_demo", json!({}));
+        assert!(!socket.exists(), "closed for the demo");
+        *VAULT.lock().unwrap() = Some(v.clone());
+        assert_eq!(
+            call_ok("local_api_reconcile", json!({}))["state"]["running"],
+            json!(true)
+        );
+        assert!(socket.exists());
+
+        // switching off revokes the key (#811)
+        let mut off = call_ok("local_api_scope", json!({}));
+        off["enabled"] = json!(false);
+        let r = call_ok("set_local_api_scope", json!({ "scope": off }));
+        assert_eq!(r["state"]["running"], json!(false));
+        assert_eq!(r["state"]["scope"]["token_sha256"], json!(""));
+        assert!(!socket.exists());
+        let mut on = r["state"]["scope"].clone();
+        on["enabled"] = json!(true);
+        let r = call_ok("set_local_api_scope", json!({ "scope": on }));
+        assert_eq!(
+            r["state"]["running"],
+            json!(false),
+            "back on needs a new key"
+        );
+
+        // lock closes it as well
+        let token = call_ok("create_local_api_token", json!({}))["value"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(request(&token, "info")["v"], json!(1));
+        call_ok("lock", json!({}));
+        assert!(!socket.exists(), "closed on lock");
+        assert!(std::os::unix::net::UnixStream::connect(&socket).is_err());
+
+        drop(v);
     }
 }
 
