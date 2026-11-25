@@ -66,6 +66,7 @@ struct Ui {
     generation: u64,
     /// Incremented on lock so in-flight worker callbacks do not repopulate a locked session.
     lock_generation: u64,
+    sidebar_generation: u64,
     depot: Option<DepotData>,
     wealth: Option<WealthData>,
     series: Vec<RecurringSeries>,
@@ -97,10 +98,12 @@ impl Ui {
         let model = self.side_model.take();
         let generation = self.generation.wrapping_add(1);
         let lock_generation = self.lock_generation.wrapping_add(1);
+        let sidebar_generation = self.sidebar_generation.wrapping_add(1);
         *self = Self::default();
         self.side_model = model;
         self.generation = generation;
         self.lock_generation = lock_generation;
+        self.sidebar_generation = sidebar_generation;
     }
 }
 
@@ -213,7 +216,10 @@ pub fn set_accounts_now(win: &MainWindow, vault: &Vault) {
 
 pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
     let (weak, v) = (win.as_weak(), vault.clone());
-    let cached = with_ui(|u| u.planned_count);
+    let (cached, generation) = with_ui(|u| {
+        u.sidebar_generation += 1;
+        (u.planned_count, u.sidebar_generation)
+    });
     std::thread::spawn(move || {
         let accounts = v.list_accounts().unwrap_or_default();
         let user_groups = v.list_user_groups().unwrap_or_default();
@@ -226,6 +232,9 @@ pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
             .map_or(0, |d| d.len() as u32);
         let v2 = v.clone();
         let _ = weak.upgrade_in_event_loop(move |win| {
+            if !crate::is_current(&v2) || with_ui(|u| u.sidebar_generation) != generation {
+                return;
+            }
             with_ui(|u| {
                 u.accounts = accounts;
                 u.user_groups = user_groups;
@@ -290,6 +299,12 @@ pub fn sync_target(selected: Option<i64>) {
 
 /// A click on a sidebar row or on an account elsewhere.
 pub fn select_target(win: &MainWindow, vault: &Arc<Vault>, target: Target) {
+    crate::refunds_ui::cancel_reveal();
+    with_state(|st| st.reveal_limit = 0);
+    select_reveal_target(win, vault, target);
+}
+
+pub fn select_reveal_target(win: &MainWindow, vault: &Arc<Vault>, target: Target) {
     with_state(|st| st.target = target);
     win.set_side_selected(target.key().into());
     win.set_selected(match target {
@@ -1683,6 +1698,7 @@ mod tests {
         let mut u = Ui {
             generation: 4,
             lock_generation: 7,
+            sidebar_generation: 9,
             doc_rows: vec![11, 12],
             doc_unread: vec![12],
             selected_doc: Some(11),
@@ -1691,6 +1707,7 @@ mod tests {
         u.reset_for_lock();
         assert_eq!(u.generation, 5);
         assert_eq!(u.lock_generation, 8);
+        assert_eq!(u.sidebar_generation, 10);
         assert!(u.doc_rows.is_empty());
         assert!(u.doc_unread.is_empty());
         assert_eq!(u.selected_doc, None);

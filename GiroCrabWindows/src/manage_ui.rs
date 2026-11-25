@@ -88,6 +88,7 @@ fn modals(win: &MainWindow) -> Modals {
     Modals {
         tan: win.get_tan_open(),
         transfer: win.get_transfer_open(),
+        refunds: win.get_refunds_open(),
         add_bank: win.get_add_open(),
         account: win.get_acct_open(),
         offline: win.get_offline_open(),
@@ -107,6 +108,7 @@ fn close_modal(win: &MainWindow, m: Modal) {
             win.invoke_tan_cancel();
         }
         Modal::Transfer => win.set_transfer_open(false),
+        Modal::Refunds => win.invoke_refund_close(),
         Modal::AddBank => win.set_add_open(false),
         Modal::Account => {
             with_ui(|u| u.account_gate.reset());
