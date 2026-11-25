@@ -2,7 +2,8 @@
 # Front ends (own lockfiles), same policy (found in the manifest's parent directory):
 #   cargo deny --manifest-path GiroCrabLinux/Cargo.toml --workspace check
 #   cargo deny --manifest-path GiroCrabWindows/Cargo.toml --workspace check
-# Advisory exceptions mirror `.cargo/audit.toml`; keep both in sync.
+# Advisory exceptions for the core workspace mirror `.cargo/audit.toml`; keep both in sync.
+# `cargo audit` checks only the root lockfile, so front-end-only exceptions live here alone.
 
 [graph]
 # Run with `--workspace`: the root is a package too, without it only that one is checked.
@@ -16,6 +17,10 @@ ignore = [
     # basic-toml: unmaintained, only pulled in by askama_derive (UniFFI build-time codegen).
     # Same reason as in `.cargo/audit.toml`; remove with it.
     "RUSTSEC-2026-0374",
+    # Windows front end only: chrono comes in via i-slint-core (Slint 1.19), no safe upgrade
+    # exists. Pinned to this version so a chrono bump in GiroCrabWindows/Cargo.lock is reviewed
+    # again; remove once Slint drops chrono.
+    { crate = "chrono@0.4.45", reason = "transitive via Slint (Windows front end), no fixed version available" },
 ]
 
 [licenses]

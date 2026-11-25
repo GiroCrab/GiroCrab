@@ -126,11 +126,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@18101caa61cb89118e2ee749786f33c6d1f8a8cb # v2
         with:
           tool: cargo-deny
       - name: cargo deny (core workspace)
