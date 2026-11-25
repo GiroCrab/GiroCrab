@@ -456,7 +456,6 @@ final class PortalBrowser {
         let path = Self.maskedPath(url)
         seenPaths.append(path)
         if seenPaths.count > 200 { seenPaths.removeFirst(seenPaths.count - 200) }
-        let lower = url.lowercased()
         guard Self.relevantURLWords.contains(where: lower.contains),
               !Self.privateURLWords.contains(where: lower.contains) else { return }
         let key = Self.cardKey(card)
@@ -719,9 +718,10 @@ final class PortalBrowser {
                     return (date, path)
                 } ?? []
         }
-        guard onPortal, !onLoginPage, !items.isEmpty else {
-            return ("", "", [], items.count, 0)
-        }
+        guard onPortal, !onLoginPage else { return ("", "", [], items.count, 0) }
+        // neither a captured statement list nor visible PDF links: not readable
+        // (like Amex, a failure) — a captured but empty list stays failed=0
+        guard statementList != nil || !items.isEmpty else { return ("", "", [], 0, 1) }
         let card = Self.cardKey(statementList?.token ?? "")
         guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1) }
         let wanted = items
