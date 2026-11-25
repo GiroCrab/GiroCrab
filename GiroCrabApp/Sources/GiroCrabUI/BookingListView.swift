@@ -608,7 +608,15 @@ struct DayCardRow: View {
         Button("Regel für diesen Händler erstellen …", systemImage: "wand.and.stars") { model.openRuleEditor(from: b) }
         Button("Notiz bearbeiten …", systemImage: "note.text") { model.editNote(for: b) }
         TagsMenu(model: model, booking: b)
-        Button("Umsatz aufteilen (Splitbuchung) …", systemImage: "arrow.triangle.branch") { model.splitBooking = b }
+        // #1663: a common share opens the sheet with that share already in the second part
+        Menu("Umsatz aufteilen (Splitbuchung)", systemImage: "arrow.triangle.branch") {
+            ForEach(SplitMath.shares, id: \.self) { percent in
+                Button { model.openSplit(b, percent: percent) } label: { Text(verbatim: SplitMath.label(percent)) }
+            }
+            Divider()
+            Button("Andere Aufteilung …") { model.openSplit(b) }
+        }
+        RefundLinkMenu(model: model, booking: b)
         LoanAssignMenu(model: model, booking: b, hidesWhenUnavailable: true)
         OfflineBookingMenu(model: model, booking: b)
         Divider()
@@ -843,6 +851,7 @@ struct BookingRow: View {
                             .help("Wiederkehrende Buchung")
                             .accessibilityLabel("Wiederkehrend")
                     }
+                    RefundLinkMarker(booking: booking)
                     if isSingleLine && showsCategoryChip {
                         // Keep the name and amount first. Show the category only
                         // when its complete label fits; the purpose yields first.
@@ -1104,7 +1113,19 @@ private struct SelectionSummaryBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if model.isMultiSelection {
+        if model.isSelectingAllBookings || model.selectAllAfterReload {
+            // ⌘A loads the rest of the list first (#1696): no partial count or sum meanwhile
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Alle \(model.bookingCountLabel) Buchungen werden ausgewählt …")
+                    .appFont(.callout, weight: .medium, monospacedDigit: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+        } else if model.isMultiSelection {
             let totals = model.selectionTotals
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("\(model.selectedBookingIDs.count) Buchungen ausgewählt")
@@ -1372,7 +1393,7 @@ struct LoadMoreBookingsFooter: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("\(model.bookings.count) von \(model.bookings.count + model.remainingBookingCount) Buchungen geladen – ältere Buchungen sind noch nicht sichtbar.")
+            Text("\(model.loadedMatchingCount) von \(model.loadedMatchingCount + model.remainingBookingCount) Buchungen geladen – ältere Buchungen sind noch nicht sichtbar.")
                 .appFont(.caption).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             // always laid out, only faded: the footer keeps its height while a page loads

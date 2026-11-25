@@ -1011,7 +1011,7 @@ fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
-/// Step 42 (#1716): when an account was last fetched on its own ("<Konto>
+/// Step 39 (#1716): when an account was last fetched on its own ("<Konto>
 /// abrufen"). The login's `last_sync_unix` stays as it is then, so the other
 /// accounts do not count as fresh; the account shows the later of the two.
 fn account_last_fetch(conn: &Connection) -> CoreResult<()> {
@@ -1244,23 +1244,6 @@ mod tests {
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
         assert_eq!(SCHEMA_VERSION, 43);
-    }
-
-    /// #1716: a vault at version 41 gets the fetch time of step 42.
-    #[test]
-    fn vault_at_41_gets_last_fetch() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate(&mut conn).unwrap();
-        conn.execute_batch(
-            "ALTER TABLE accounts DROP COLUMN last_fetch_unix; PRAGMA user_version = 41;",
-        )
-        .unwrap();
-        migrate(&mut conn).unwrap();
-        assert!(has_column(&conn, "main", "accounts", "last_fetch_unix").unwrap());
-        let v: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(v, 43);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for

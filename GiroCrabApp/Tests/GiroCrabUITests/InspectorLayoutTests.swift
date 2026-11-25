@@ -102,6 +102,6 @@ final class InspectorLayoutTests: XCTestCase {
         // a layout the user changed keeps its order; the new card goes to the bottom
         let own = InspectorLayout(storageValue: "note,receipt,salary,recurring,categories,documents,merchantHistory,rawData")
         XCTAssertEqual(own.visible.first, .note)
-        XCTAssertEqual(own.visible.last, .tags)
+        XCTAssertEqual(Array(own.visible.suffix(2)), [.tags, .refunds])
     }
 }

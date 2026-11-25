@@ -372,11 +372,10 @@ impl FinTsConnector {
             self.st.caz_storage_days = days;
         }
         if crate::depot_debug::enabled() && reply.all("HIPINS").next().is_some() {
-            let card: Vec<String> = ["HKKKU", "DKKKU"]
-                .iter()
-                .filter_map(|t| self.st.tan_required.get(*t).map(|r| format!("{t}={r}")))
-                .collect();
-            crate::depot_debug::log(&format!("fints HIPINS cards: [{}]", card.join(",")));
+            let mut jobs: Vec<(&String, &bool)> = self.st.tan_required.iter().collect();
+            jobs.sort();
+            let jobs: Vec<String> = jobs.iter().map(|(t, r)| format!("{t}={r}")).collect();
+            crate::depot_debug::log(&format!("fints HIPINS: [{}]", jobs.join(",")));
         }
         for cazs in reply.all("HICAZS") {
             for el in &cazs.elements {
@@ -502,6 +501,13 @@ impl FinTsConnector {
                     .cloned()
                     .collect();
             let names = self.tan_method_names(reply);
+            // process variant 1 cannot take HKTAN process 4 (login, orders): only a last resort (#1876)
+            let single = Self::single_process_methods(reply);
+            let usable: Vec<String> = allowed
+                .iter()
+                .filter(|a| !single.contains(*a))
+                .cloned()
+                .collect();
             if !allowed.is_empty() {
                 // an init reply carries no HITANS unless the BPD changed: keep the names
                 let known: HashMap<String, String> =
@@ -518,7 +524,8 @@ impl FinTsConnector {
                 && (self.st.sec_func.is_empty() || !allowed.contains(&self.st.sec_func))
             {
                 // Prefer app based / decoupled methods.
-                let pick = choose_tan_function(&allowed, &names);
+                let pick =
+                    choose_tan_function(if usable.is_empty() { &allowed } else { &usable }, &names);
                 self.st.tan_method_name = names.get(&pick).cloned().unwrap_or_default();
                 self.st.sec_func = pick;
                 // a new function: the bank may take HKTAN in the init again (#1641)
@@ -539,6 +546,22 @@ impl FinTsConnector {
                 }
             }
         }
+    }
+
+    /// TAN functions whose HITANS entry has process variant 1 (code, process, …).
+    fn single_process_methods(reply: &BankReply) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        for s in reply.all("HITANS") {
+            if let Some(el) = s.elements.get(4) {
+                let t: Vec<&str> = el.iter().map(|v| v.text()).collect();
+                for i in 0..t.len().saturating_sub(1) {
+                    if t[i].len() == 3 && t[i].starts_with('9') && t[i + 1] == "1" {
+                        out.insert(t[i].to_string());
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// code -> human name, from HITANS (v6/v7: code, process, tech id, ZKA name, ZKA version, name …).

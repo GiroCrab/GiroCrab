@@ -124,11 +124,16 @@ impl BankConnector for DemoConnector {
             },
             ConnectorKind::AmericanExpress
             | ConnectorKind::Advanzia
+            | ConnectorKind::Edenred
             | ConnectorKind::AmazonVisa
             | ConnectorKind::AmazonOrders
             | ConnectorKind::EquatePlus
             | ConnectorKind::Quirion
             | ConnectorKind::Sharinbox
+            | ConnectorKind::AxaShareplan
+            | ConnectorKind::UnionInvestment
+            | ConnectorKind::AirPlus
+            | ConnectorKind::BerghausCie
             | ConnectorKind::SchwaebischHall
             | ConnectorKind::Fnz
             | ConnectorKind::EnableBanking => Challenge {
@@ -141,7 +146,7 @@ impl BankConnector for DemoConnector {
                 expires_in_seconds: Some(900),
                 poll_interval_seconds: 0,
             },
-            ConnectorKind::PayPal | ConnectorKind::Bunq | ConnectorKind::Ibkr | ConnectorKind::AlteLeipziger | ConnectorKind::Uberspace | ConnectorKind::BitcoinCore | ConnectorKind::Ffb | ConnectorKind::Finpension | ConnectorKind::Monefit => return Ok(Phase::Ready),
+            ConnectorKind::PayPal | ConnectorKind::Bunq | ConnectorKind::Ibkr | ConnectorKind::AlteLeipziger | ConnectorKind::Uberspace | ConnectorKind::BitcoinCore | ConnectorKind::Ffb | ConnectorKind::Finpension | ConnectorKind::Monefit | ConnectorKind::Bitcoin | ConnectorKind::GoAndGrow => return Ok(Phase::Ready),
         };
         self.challenge = Some(c.clone());
         Ok(Phase::Challenge(c))

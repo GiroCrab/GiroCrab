@@ -25,6 +25,49 @@ pub fn parse_amount_to_cents(text: String) -> Result<i64, CoreError> {
     parse_cents(&text)
 }
 
+/// `numerator / denominator` of `total_cents`, rounded toward zero, so the
+/// cent that does not divide stays with the rest of a split (#1663): half of
+/// 87,43 € is 43,71 €, the rest 43,72 €. `None` for a zero denominator or a
+/// share beyond `i64`.
+pub fn share_cents(total_cents: i64, numerator: i64, denominator: i64) -> Option<i64> {
+    if denominator == 0 {
+        return None;
+    }
+    i64::try_from(i128::from(total_cents) * i128::from(numerator) / i128::from(denominator)).ok()
+}
+
+/// A part typed into the split sheet (#1663): an amount read like
+/// [`parse_cents`] ("43,71") or a percentage of `total_cents` ("50 %",
+/// "33,3%"), rounded toward zero like [`share_cents`]. A percentage may carry
+/// any number of decimals; its lone separator is always the decimal one.
+pub fn parse_split_part(text: &str, total_cents: i64) -> CoreResult<i64> {
+    parse_split_part_with_direction(text, total_cents, false)
+}
+
+/// Read editor input in ledger sign, including the full magnitude of an i64::MIN expense.
+pub(crate) fn parse_split_part_in_ledger_sign(text: &str, booking_cents: i64) -> CoreResult<i64> {
+    parse_split_part_with_direction(text, booking_cents, booking_cents < 0)
+}
+
+fn parse_split_part_with_direction(
+    text: &str,
+    total_cents: i64,
+    reverse_amount: bool,
+) -> CoreResult<i64> {
+    let Some(percent) = text.trim().strip_suffix('%') else {
+        return parse_text(text, false, reverse_amount);
+    };
+    let invalid = || CoreError::InvalidInput {
+        message: trf("Kein gültiger Anteil: „{0}“", &[&text]),
+    };
+    let p = text_decimal(percent, Lone::Decimal).ok_or_else(invalid)?;
+    Decimal::from(total_cents)
+        .checked_mul(p)
+        .and_then(|d| d.checked_div(Decimal::ONE_HUNDRED))
+        .and_then(|d| d.trunc().to_i64())
+        .ok_or_else(invalid)
+}
+
 /// Parses an amount written for people ("1.234,56 €", "-12.5", "(5,00)",
 /// "12,30-", "EUR 1'234.50") into cents. More than two decimals are an error
 /// unless they are zeros.
@@ -40,7 +83,7 @@ pub fn parse_amount_to_cents(text: String) -> Result<i64, CoreError> {
 ///
 /// Grouped digits must come in groups of three.
 pub fn parse_cents(text: &str) -> CoreResult<i64> {
-    parse_text(text, false)
+    parse_text(text, false, false)
 }
 
 /// Like [`parse_cents`], but for prices and depot values: a lone separator is
@@ -48,10 +91,10 @@ pub fn parse_cents(text: &str) -> CoreResult<i64> {
 /// ("55,550"), and extra decimals round half away from zero instead of being
 /// rejected ("412.3871" -> 41239, "1.234,5678" -> 123457). Bookings stay strict.
 pub fn parse_cents_rounded(text: &str) -> CoreResult<i64> {
-    parse_text(text, true)
+    parse_text(text, true, false)
 }
 
-fn parse_text(text: &str, round: bool) -> CoreResult<i64> {
+fn parse_text(text: &str, round: bool, reverse_sign: bool) -> CoreResult<i64> {
     let invalid = |message| CoreError::InvalidInput { message };
     if text.trim().is_empty() {
         return Err(invalid(tr("Kein Betrag angegeben").into()));
@@ -62,6 +105,7 @@ fn parse_text(text: &str, round: bool) -> CoreResult<i64> {
     if !round && d.normalize().scale() > 2 {
         return Err(invalid(trf("Zu viele Nachkommastellen in „{0}“", &[&text])));
     }
+    let d = if reverse_sign { -d } else { d };
     if round { cents_rounded(d) } else { cents(d) }
         .ok_or_else(|| invalid(trf("Betrag zu groß: „{0}“", &[&text])))
 }
@@ -423,5 +467,62 @@ mod tests {
     fn formats() {
         assert_eq!(format_cents(-123456, "EUR".into()), "-1.234,56 EUR");
         assert_eq!(format_cents(5, "EUR".into()), "0,05 EUR");
+    }
+
+    /// #1663: the cent that does not divide stays with the rest, in either direction.
+    #[test]
+    fn shares_round_toward_zero() {
+        assert_eq!(share_cents(8_743, 1, 2), Some(4_371));
+        assert_eq!(share_cents(-8_743, 1, 2), Some(-4_371));
+        assert_eq!(share_cents(10_000, 1, 3), Some(3_333));
+        assert_eq!(share_cents(10_000, 2, 3), Some(6_666));
+        assert_eq!(share_cents(1, 1, 4), Some(0));
+        assert_eq!(share_cents(i64::MAX, 3, 2), None);
+        assert_eq!(share_cents(100, 1, 0), None);
+    }
+
+    #[test]
+    fn split_parts_read_amounts_and_percentages() {
+        let part = |s: &str| parse_split_part(s, 8_743).ok();
+        for (input, cents) in [
+            ("43,71", Some(4_371)),
+            ("1.500", Some(150_000)),
+            ("50 %", Some(4_371)),
+            ("50%", Some(4_371)),
+            (" 50 % ", Some(4_371)),
+            ("33,3 %", Some(2_911)),
+            ("33.333%", Some(2_914)),
+            ("100 %", Some(8_743)),
+            ("150 %", Some(13_114)),
+            ("−10 %", Some(-874)),
+            ("0 %", Some(0)),
+            ("%", None),
+            ("abc %", None),
+            ("50 %%", None),
+            ("", None),
+        ] {
+            assert_eq!(part(input), cents, "{input:?}");
+        }
+        assert_eq!(parse_split_part("50 %", -8_743).ok(), Some(-4_371));
+    }
+
+    /// #1663: a share's lone separator is always decimal ("1.500 %" is 1,5 %), negative shares
+    /// and amounts (the sheet writes them with U+2212) truncate toward zero, and the limits hold.
+    #[test]
+    fn split_part_edges() {
+        let part = |s: &str| parse_split_part(s, 8_743).ok();
+        for (input, cents) in [
+            ("1.500 %", Some(131)),
+            ("1,500 %", Some(131)),
+            ("1.234,5 %", Some(107_932)),
+            ("−33,3 %", Some(-2_911)),
+            ("−43,71", Some(-4_371)),
+            ("-43,71", Some(-4_371)),
+        ] {
+            assert_eq!(part(input), cents, "{input:?}");
+        }
+        assert_eq!(parse_split_part("50 %", 0).ok(), Some(0));
+        assert_eq!(parse_split_part("100 %", i64::MAX).ok(), Some(i64::MAX));
+        assert!(parse_split_part("100,01 %", i64::MAX).is_err());
     }
 }

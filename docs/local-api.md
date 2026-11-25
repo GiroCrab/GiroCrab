@@ -1,10 +1,11 @@
-# Externe Analyse: lokale, lesende Schnittstelle (#136)
+# Externe Analyse: lokale Schnittstelle (#136)
 
 Für Entwicklung, Bündelung und lokale Tests siehe [local-api-entwicklung.md](local-api-entwicklung.md).
 
 GiroCrab kann ausgewählte Konten, Buchungen, Kategorien und Summen für Programme auf demselben Mac
 lesbar machen, etwa für eigene Auswertungen oder einen KI-Assistenten. Die Schnittstelle ist
-standardmäßig aus und strikt lesend: keine Änderungen, keine Zahlungen, keine Zugangsdaten.
+standardmäßig aus und lesend: keine Zahlungen, keine Zugangsdaten. Ändern lassen sich nur Kategorien
+und Tags von Buchungen, und das nur, wenn es eigens erlaubt ist (siehe „Änderungen“).
 
 ## Einschalten
 
@@ -17,7 +18,8 @@ Einstellungen › Analyse:
    IBANs/Kontonummern und Notizen mitgehen. IBANs/Kontonummern und Notizen sind standardmäßig aus;
    dann werden IBANs und Ziffernfolgen ab sechs Stellen auch in Texten und Kontonamen unkenntlich
    gemacht.
-4. „Zugangsschlüssel erzeugen“ und den Schlüssel im Programm eintragen. Er wird nur einmal angezeigt;
+4. Optional unter „Änderungen“: „Kategorien und Tags ändern erlauben“ (standardmäßig aus).
+5. „Zugangsschlüssel erzeugen“ und den Schlüssel im Programm eintragen. Er wird nur einmal angezeigt;
    gespeichert wird nur sein Hash. „Zugriff widerrufen“, ein neuer Schlüssel oder das Ausschalten des Zugriffs sperren den alten sofort; zum erneuten Einschalten braucht es einen neuen Schlüssel.
 
 Programme wie KI-Assistenten können geteilte Daten an einen Cloud-Dienst übertragen. Teilen Sie nur,
@@ -50,8 +52,8 @@ einem Absturz liegen, erkennt der nächste Start sie über `girocrab.sock.lock` 
 ```
 
 Fehler: `{"v":1,"error":{"code":"…","message":"…"}}` mit `disabled`, `unauthorized`, `locked`,
-`unsupported_version`, `unknown_method`, `invalid_params`, `not_shared`, `busy` (zu viele
-Verbindungen, später erneut versuchen), `internal`. Ohne gültigen Schlüssel verrät keine Antwort etwas über die
+`unsupported_version`, `unknown_method`, `invalid_params`, `not_shared`, `read_only` (Änderungen sind
+nicht erlaubt), `busy` (zu viele Verbindungen, später erneut versuchen), `internal`. Ohne gültigen Schlüssel verrät keine Antwort etwas über die
 Freigabe oder die Daten: Anfragen mit gültigem Format erhalten `unauthorized`, auch wenn die Freigabe
 ausgeschaltet ist. Fehlerhafte oder zu große Anfragen, eine fremde Version, `busy` und `locked` werden vor der
 Schlüsselprüfung beantwortet.
@@ -60,15 +62,39 @@ Schlüsselprüfung beantwortet.
 
 | Methode | Parameter | Ergebnis |
 |---|---|---|
-| `info` | – | Version, Anzahl geteilter Konten, geteilte Felder, letzter Abruf |
+| `info` | – | Version, Anzahl geteilter Konten, geteilte Felder, `allows_edits`, letzter Abruf |
 | `accounts` | – | geteilte Konten mit Saldo, Art, Währung, letztem Abruf |
 | `categories` | – | Kategorienbaum (`id`, `parent_id`, `name`, `path`, `depth`) |
+| `tags` | – | Tags (`id`, `name`, `booking_count`: nur Buchungen geteilter Konten) |
 | `transactions` | `account_ids`, `date_from`, `date_to`, `category_id`, `include_subcategories`, `uncategorized_only`, `direction` (`income`/`expense`/`all`), `search`, `cursor`, `limit` (1–500, Standard 100; größere Werte werden auf 500 begrenzt) | Buchungen, neueste zuerst, mit `next_cursor` |
 | `summary` | `date_from`, `date_to` (höchstens drei Jahre), `account_ids` | Einnahmen/Ausgaben je Währung, Netto-Summen je Kategorie |
+| `set_category` | `transaction_ids` (1–500), `category_id` (`null` entfernt sie), `overwrite_manual` | je Buchung `status`, vorherige Kategorie und Quelle |
+| `set_tags` | `transaction_ids` (1–500), `add`, `remove` (Tag-Namen) | angelegte Tags, je Buchung `status` |
 
 Daten im Format `YYYY-MM-DD`, Beträge in Cent (`amount_cents`, negativ = Ausgang). Buchungs-IDs bleiben
 für die Lebensdauer einer Buchung gleich. Die Suche steht nur zur Verfügung, wenn Empfänger,
 Verwendungszweck und Kontonummern geteilt sind, weil sie auch diese Felder durchsucht.
+
+Jede Buchung nennt `category_source`: `none`, `rule` (von einer Regel gesetzt, die sie wieder ändern
+kann) oder `manual` (vom Nutzer gesetzt), dazu ihre `tags` als Namen.
+
+## Änderungen
+
+Nur mit „Kategorien und Tags ändern erlauben“, sonst antworten `set_category` und `set_tags` mit
+`read_only`. Beide wirken nur auf Buchungen geteilter Konten; jede andere ID (unbekannt, gelöscht, nicht
+geteilt) meldet `not_found`. Alle Änderungen einer Anfrage laufen in einer Transaktion und gehen wie
+Änderungen in der App per iCloud an die anderen Geräte.
+
+- `set_category`: Eine so gesetzte Kategorie gilt als vom Nutzer gesetzt (`manual`), Regeln ändern sie
+  nicht mehr (nur „Speichern & anwenden › Alle Buchungen“ einer Regel kann sie ersetzen). Das gilt auch,
+  wenn eine Regel schon dieselbe Kategorie vergeben hatte: Sie wird dann übernommen (`changed`). Eine von Hand gesetzte Kategorie bleibt (`skipped_manual`), außer mit
+  `"overwrite_manual": true`; eine von einer Regel gesetzte wird ersetzt. Aufgeteilte Buchungen melden
+  `split` (die Kategorie gehört zu den Teilen). Sonst `changed` oder `unchanged`.
+- `set_tags`: Tags nach Namen, ohne Unterschied von Groß- und Kleinschreibung. Ein Tag aus `add`, den es
+  noch nicht gibt, wird angelegt (`created_tags`); unbekannte Namen in `remove` werden übergangen. Derselbe
+  Tag in `add` und `remove` ist ein Fehler (`invalid_params`).
+
+Nach einer Änderung lädt GiroCrab die Anzeige neu.
 
 ## MCP-Adapter (`girocrab-mcp`)
 
@@ -110,8 +136,12 @@ Socket-Pfad lässt sich mit `--socket` oder `GIROCRAB_API_SOCKET` ändern.
 | `list_categories` | `categories` | Ergebnis als `items` in `structuredContent` |
 | `list_transactions` | `transactions` | gleiche Parameter wie die Methode |
 | `get_summary` | `summary` | `date_from` und `date_to` sind Pflicht |
+| `list_tags` | `tags` | Ergebnis als `items` in `structuredContent` |
+| `set_category` | `set_category` | nur mit erlaubten Änderungen |
+| `set_tags` | `set_tags` | nur mit erlaubten Änderungen |
 
-Alle Tools sind als nur lesend markiert (`readOnlyHint`); ihre Beschreibungen und Eingabeschemas liefert
+Alle Tools außer `set_category` und `set_tags` sind als nur lesend markiert (`readOnlyHint`); die beiden
+tragen `destructiveHint: true` (eine Kategorie kann ersetzt werden) und `idempotentHint: true`. Beschreibungen und Eingabeschemas liefert
 `tools/list`. Ist GiroCrab gesperrt, ausgeschaltet oder nicht gestartet, sind alle Verbindungen belegt
 (`busy`) oder passt bzw. fehlt der Schlüssel, liefert der Tool-Aufruf einen lesbaren Fehler (`isError`),
 den der Assistent weitergeben kann. Unterstützte MCP-Versionen: 2025-06-18, 2025-03-26, 2024-11-05.

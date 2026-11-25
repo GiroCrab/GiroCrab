@@ -14,9 +14,12 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use serde_json::Value;
+
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 use crate::models::ConnectorKind;
+use crate::secret::SecretJson;
 use crate::vault::Vault;
 
 /// Vault setting: how far the first fetch of a new login reaches back.
@@ -118,7 +121,14 @@ fn max_days(kind: ConnectorKind) -> i64 {
         | ConnectorKind::Finpension
         | ConnectorKind::SchwaebischHall
         | ConnectorKind::AmazonOrders
-        | ConnectorKind::BitcoinCore => LONGEST_DAYS,
+        | ConnectorKind::BitcoinCore
+        | ConnectorKind::AxaShareplan
+        | ConnectorKind::UnionInvestment
+        | ConnectorKind::BerghausCie
+        | ConnectorKind::Edenred
+        | ConnectorKind::Bitcoin
+        | ConnectorKind::GoAndGrow
+        | ConnectorKind::AirPlus => LONGEST_DAYS,
     }
 }
 
@@ -208,6 +218,28 @@ pub(crate) fn finish(db: &Connection, connection_id: i64, value: &str) -> CoreRe
     Ok(())
 }
 
+/// The connector state a full fetch starts from: a connector that remembers
+/// an account's whole history as fetched (Enable Banking: `history_done`, the
+/// first sync asks for the longest history the consent allows) asks again.
+/// Only this sync's copy changes; other states stay as they are.
+pub(crate) fn state_for_full_fetch(state: SecretJson) -> CoreResult<SecretJson> {
+    let reset = state.with_value(|v| {
+        let accounts = v.get_mut("accounts").and_then(Value::as_array_mut)?;
+        let mut changed = false;
+        for a in accounts.iter_mut().filter_map(Value::as_object_mut) {
+            if a.get("history_done") == Some(&Value::Bool(true)) {
+                a.insert("history_done".into(), Value::Bool(false));
+                changed = true;
+            }
+        }
+        changed.then(|| SecretJson::encode(v))
+    });
+    match reset {
+        Some(encoded) => Ok(encoded?),
+        None => Ok(state),
+    }
+}
+
 /// Forgets the pending full fetch of a deleted login.
 pub(crate) fn clear(db: &Connection, connection_id: i64) -> CoreResult<()> {
     db.execute("DELETE FROM settings WHERE key = ?1", [key(connection_id)])?;
@@ -239,6 +271,13 @@ impl Vault {
             });
         }
         Vault::set_setting_inner(&db, &key(connection_id), &range.setting_value())
+    }
+
+    /// No full fetch for this login: its next sync goes on from each
+    /// account's newest booking.
+    pub fn cancel_full_history(&self, connection_id: i64) -> Result<(), CoreError> {
+        let db = self.db()?;
+        clear(&db, connection_id)
     }
 
     /// The period the next full sync of this login reaches back, while that

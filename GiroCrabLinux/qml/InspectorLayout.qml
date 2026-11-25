@@ -12,6 +12,7 @@ QtObject {
     /// InspectorSection: the case order is the standard layout. The merchant history, whose
     /// stats load later and grow the card, comes after the category and document cards (#492).
     readonly property var sections: [
+        { id: "refunds", title: qsTr("Erstattungen"), symbol: "arrow.uturn.backward" },
         { id: "receipt", title: qsTr("Buchung"), symbol: "doc.text" },
         { id: "note", title: qsTr("Notiz"), symbol: "note.text" },
         { id: "tags", title: qsTr("Tags"), symbol: "number" },

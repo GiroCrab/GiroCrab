@@ -30,6 +30,19 @@ struct ParsedPayment: Equatable {
         set(\.purpose, purpose.map { String($0.prefix(140)) })
     }
 
+    /// The same for the standing order form (#1475).
+    func apply(to d: inout StandingDraft, onlyEmpty: Bool = false) {
+        func set(_ field: WritableKeyPath<StandingDraft, String>, _ value: String?) {
+            guard let value, !onlyEmpty || d[keyPath: field].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            d[keyPath: field] = value
+        }
+        set(\.name, name)
+        set(\.iban, iban.map(TransferSheetView.groupedIBAN))
+        set(\.bic, bic)
+        set(\.amountText, amountText)
+        set(\.purpose, purpose.map { String($0.prefix(140)) })
+    }
+
     /// Fictional payment of the transfer demos and screenshots.
     static var demo: ParsedPayment {
         ParsedPayment(name: "Stadtwerke München", iban: "DE89370400440532013000",
