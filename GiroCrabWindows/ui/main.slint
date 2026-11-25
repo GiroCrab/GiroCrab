@@ -1144,6 +1144,7 @@ export component MainWindow inherits Window {
     callback report-request();
     callback report-copy();
     callback report-open-issue();
+    callback report-close();
     // ---- Mehrere Tresore (#410) und Tresor-Synchronisation (Cloud-Ordner)
     in-out property <bool> vaults-open: false;
     in property <[string]> vault-names: ["Haupttresor"];
@@ -2288,7 +2289,7 @@ export component MainWindow inherits Window {
             alignment: end; spacing: 8px;
             Button { text: "In Zwischenablage kopieren"; enabled: !root.privacy && !root.report-busy && root.report-preview != ""; clicked => { root.report-copy(); } }
             Button { text: "Issue im Browser öffnen"; enabled: !root.privacy && !root.report-busy && root.report-preview != ""; clicked => { root.report-open-issue(); } }
-            Button { text: "Schließen"; primary: true; clicked => { root.report-open = false; root.refocus(); } }
+            Button { text: "Schließen"; primary: true; clicked => { root.report-close(); } }
         }
     }
 

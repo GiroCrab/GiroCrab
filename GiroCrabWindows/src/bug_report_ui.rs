@@ -75,6 +75,14 @@ pub(crate) fn install(ui: &MainWindow, source: Rc<dyn Fn() -> Option<ReportSourc
         ui.set_report_status(status.into());
     });
 
+    // Wie Esc: Beschreibung und Vorschau leeren, laufende Bereinigung verwerfen.
+    let weak = ui.as_weak();
+    ui.on_report_close(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        reset(&ui);
+        ui.invoke_refocus();
+    });
+
     let weak = ui.as_weak();
     ui.on_report_open_issue(move || {
         let Some(ui) = weak.upgrade() else { return };
