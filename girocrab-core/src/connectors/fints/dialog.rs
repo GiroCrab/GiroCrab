@@ -123,14 +123,15 @@ fn ends_hktan_retry(reply: &BankReply) -> bool {
     reply.has("9930") || stale_system_id(reply)
 }
 
-/// Dialog init refused with 9110 ("Falsche Segmentzusammenstellung", #1641). The one-step
-/// sync before it passed, so the part that differs is the HKTAN of the two-step init; the
-/// bank's text has to name it (a 9110 about another segment is not retried).
+/// Dialog init refused with 9110 ("Falsche Segmentzusammenstellung", #1641) or 9200 ("Zwei-Schritt-
+/// Verfahren nicht unterstützt", biw Bank, #1876). The one-step sync before it passed, so the part
+/// that differs is the HKTAN of the two-step init; the bank's text has to name it (a refusal about
+/// another segment is not retried).
 fn init_rejected_as_wrong_segments(reply: &BankReply) -> bool {
     reply
         .codes
         .iter()
-        .any(|c| c.0 == "9110" && c.2.to_uppercase().contains("HKTAN"))
+        .any(|c| (c.0 == "9110" || c.0 == "9200") && c.2.to_uppercase().contains("HKTAN"))
 }
 
 /// The bank code does not belong to the login: 9210 "Bankleitzahl passt nicht

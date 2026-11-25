@@ -511,6 +511,38 @@ fn chiptan_functions_prefer_qr_then_manual() {
     assert_eq!(codes, ["910", "911", "912"]);
 }
 
+/// biw Bank (#1876): 906 iTAN-Card has process variant 1 (no HKTAN process 4), 907 variant 2.
+const BIW_HITANS: &str = "HITANS:15:6:4+1+1+1+N:N:1:906:1:CR#3:::iTAN-Card:15:2:TAN:256:N:4:N:0:0:N:N:00:0:N:1:907:2:PPTAN:::flateXSecure:6:2:PPTAN:999:N:1:N:0:0:N:N:00:1:N:9'";
+const BIW_3920: &str = "HIRMS:3:2:3+3920::Zugelassene Zwei-Schritt-Verfahren:906:907'";
+
+#[test]
+fn process_variant_one_method_is_not_chosen_while_another_exists() {
+    let mut c = FinTsConnector::new("10130800");
+    c.learn_bpd(&reply(format!("{BIW_HITANS}{BIW_3920}").as_bytes()));
+    assert_eq!(c.st.sec_func, "907");
+    assert_eq!(c.st.tan_method_name, "flateXSecure");
+    // alone, variant 1 is still used
+    let mut only = FinTsConnector::new("10130800");
+    only.learn_bpd(&reply(
+        format!("{BIW_HITANS}HIRMS:3:2:3+3920::Zugelassene Zwei-Schritt-Verfahren:906'").as_bytes(),
+    ));
+    assert_eq!(only.st.sec_func, "906");
+}
+
+#[tokio::test]
+async fn dialog_init_9200_on_hktan_tries_the_other_function() {
+    const REJECT_9200: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9050::Teilweise fehlerhaft.'HIRMS:3:2:5+9200::[HKTAN #5] Gewähltes Zwei-Schritt-Verfahren nicht unterstüzt.'";
+    let (url, seen) = mock_bank(vec![REJECT_9200, ACCEPT]);
+    let state = state_with_functions("906", &[("906", "iTAN-Card"), ("907", "flateXSecure")]);
+    let mut c = two_step_connector(&url, state);
+    assert!(matches!(
+        c.open_dialog(&test_ctx()).await.unwrap(),
+        Phase::Ready
+    ));
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(c.sec(), "907");
+}
+
 #[test]
 fn secure_url_check_rejects_plain_http() {
     assert!(crate::connectors::ensure_secure_fints_url("https://bank.example/fints").is_ok());
