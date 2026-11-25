@@ -275,7 +275,7 @@ fn matches_all(haystack: &str, words: &[&str]) -> bool {
 const FINTS_ALIASES: &[(&str, &str)] = &[
     ("76030080", "dab bnp paribas"),
     ("50070439", "lufthansa mastercard"),
-    ("10130800", "vitrade biw flatexdegiro"),
+    ("10130800", "vitrade biw bank flatexdegiro"),
 ];
 
 fn fints_result(b: FinTsBankInfo) -> BankSearchResult {
