@@ -130,6 +130,8 @@ pub struct SyncSession {
     /// state (a TAN on its way, the rest of the fetch) sees it, sends nothing
     /// more to the bank and stores nothing.
     cancelled: CancelFlag,
+    /// The login is done and the fetch runs (a question now is for one order).
+    fetching: AtomicBool,
     /// `None` once the sync finished, failed or was cancelled, so every
     /// later step gets `SessionClosed`.
     state: AsyncMutex<Option<State>>,
@@ -151,6 +153,7 @@ impl SyncSession {
             kind,
             interactive: AtomicBool::new(true),
             cancelled: CancelFlag::default(),
+            fetching: AtomicBool::new(false),
             state: AsyncMutex::new(Some(State::Login(Box::new(Active { connector, ctx })))),
             history,
         }
@@ -233,6 +236,7 @@ impl SyncSession {
             mut connector,
             mut ctx,
         } = active;
+        self.fetching.store(true, Ordering::SeqCst);
         let (prompt, questions) = FetchPrompt::cancelled_by(self.cancelled.clone());
         ctx.cancelled = self.cancelled.clone();
         // a quiet fetch gets no prompt: its question channel stays empty and closed
@@ -355,6 +359,12 @@ impl SyncSession {
         }
         self.login_step(async |s| s.connector.respond(&s.ctx, ChallengeResponse::Poll).await)
             .await
+    }
+
+    /// Whether the login is done and the sync is fetching: a challenge from now
+    /// on is for one order of the fetch, which [`skip`](Self::skip) can leave out.
+    pub fn is_fetching(&self) -> bool {
+        self.fetching.load(Ordering::SeqCst)
     }
 
     /// Leaves out the order a TAN was asked for during the fetch (#1730): it is
