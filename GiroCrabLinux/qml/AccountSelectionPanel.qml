@@ -15,14 +15,19 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.margins: 20
         spacing: 6
+        /// several cards behind one login (#243)
+        readonly property bool cards: !!panel.connection && panel.connection.connector === "AmericanExpress"
+        readonly property string name: panel.connection ? AppModel.masking(panel.connection.display_name) : ""
         Text {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
-            text: qsTr("Konten auswählen – %1").arg(panel.connection ? panel.connection.display_name : "")
+            text: parent.cards ? qsTr("Welche Karten sollen abgerufen werden?") : qsTr("Konten auswählen – %1").arg(parent.name)
             font.pixelSize: Theme.title3; font.weight: Font.Bold; color: Theme.text
         }
         Text {
             Layout.fillWidth: true; wrapMode: Text.WordWrap
-            text: qsTr("Einige Konten sind bereits über einen anderen Zugang eingebunden. Wählen Sie, welche über diesen Zugang abgerufen werden sollen. Ohne Auswahl werden sie übersprungen.")
+            text: parent.cards
+                ? qsTr("Unter „%1“ gibt es mehrere Karten. Jede gewählte Karte wird ein eigenes Konto, nicht gewählte werden übersprungen.").arg(parent.name)
+                : qsTr("Einige Konten sind bereits über einen anderen Zugang eingebunden. Wählen Sie, welche über diesen Zugang abgerufen werden sollen. Ohne Auswahl werden sie übersprungen.")
             font.pixelSize: Theme.callout; color: Theme.secondary
         }
     }

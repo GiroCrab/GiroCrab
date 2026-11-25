@@ -434,6 +434,8 @@ fn english(de: &str) -> Option<&'static str> {
             "Sharinbox: document {0} rejected, field {1} invalid."
         }
         "Mitarbeiteraktien" => "Employee shares",
+        "Aktienrechte (noch nicht zugeteilt)" => "Share rights (not yet allotted)",
+        "noch nicht zugeteilt" => "not yet allotted",
         "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
             "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
         }
@@ -746,6 +748,20 @@ fn english(de: &str) -> Option<&'static str> {
         // ------------------------------------------------------------ connectors/fints
         "Bitte in der Banking-App freigeben" => "Approve in your banking app",
         "TAN eingeben" => "Enter TAN",
+        // TAN prompts during the fetch (#1730)
+        "TAN für {0}" => "TAN for {0}",
+        "{0} in der Banking-App freigeben" => "Approve {0} in your banking app",
+        "Saldo" => "balance",
+        "Umsätze" => "transactions",
+        "Kartenumsätze" => "card transactions",
+        "Depotbestand" => "holdings",
+        "Daueraufträge" => "standing orders",
+        "Kontoauszüge" => "statements",
+        "diesen Auftrag" => "this order",
+        "Die TAN-Eingabe für {0} wurde übersprungen." => "The TAN for {0} was skipped.",
+        "Die Bank hat die TAN für {0} nicht angenommen." => {
+            "The bank did not accept the TAN for {0}."
+        }
         "Dieses Konto oder diese Bank erlaubt keine Echtzeitüberweisungen per FinTS (HKIPZ). Bitte in der Banking-App überweisen." => {
             "This account or bank doesn’t allow instant transfers via FinTS (HKIPZ). Please make the transfer in your banking app."
         }
@@ -840,6 +856,12 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "{0}: Die Bank hat nur einen Teil des angeforderten Zeitraums geliefert (Rückmeldung 3997)." => {
             "{0}: the bank delivered only part of the requested period (return code 3997)."
+        }
+        "{0}: Die Bank hat den angeforderten Zeitraum abgelehnt. Abgerufen wurden nur die Umsätze ab dem {1}, ältere fehlen." => {
+            "{0}: the bank refused the requested period. Only transactions from {1} on were fetched, older ones are missing."
+        }
+        "{0}: Die Umsatzliste war länger als 50 Seiten und wurde nicht vollständig gelesen." => {
+            "{0}: the transaction list was longer than 50 pages and was not read completely."
         }
         // ------------------------------------------------------------ connectors/fints RAH-10 (bank_keys.rs, keyfile.rs, rah10.rs)
         "Ungültige Bankleitzahl." => "Invalid bank code.",
@@ -1200,6 +1222,35 @@ fn english(de: &str) -> Option<&'static str> {
         "Volkswagen Bank: Unerwartete Antwort auf die TAN-Abfrage." => {
             "Volkswagen Bank: unexpected answer to the TAN request."
         }
+        // ------------------------------------------------------------ connectors/monefit.rs
+        "Monefit: Unerwartete Antwort der API (HTTP {0})." => {
+            "Monefit: Unexpected API response (HTTP {0})."
+        }
+        "Monefit: Sitzung abgelaufen. Bitte erneut abrufen." => {
+            "Monefit: Session expired. Please sync again."
+        }
+        "Monefit: E-Mail-Adresse und Passwort erforderlich." => {
+            "Monefit: Email address and password required."
+        }
+        "Monefit: Der Anmeldedienst antwortet nicht (HTTP {0}). Bitte später erneut versuchen." => {
+            "Monefit: The login service is not responding (HTTP {0}). Please try again later."
+        }
+        "Monefit: Die Anmeldung verlangt einen zweiten Faktor; das wird noch nicht unterstützt." => {
+            "Monefit: The login requires a second factor, which is not supported yet."
+        }
+        "Monefit: Anmeldung fehlgeschlagen. Bitte E-Mail-Adresse und Passwort prüfen." => {
+            "Monefit: Login failed. Please check email address and password."
+        }
+        "Monefit: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen." => {
+            "Monefit: Incomplete booking in the response. No data was taken over."
+        }
+        "Monefit: Die Umsatzliste wurde nicht vollständig geliefert. Bitte den Abruf erneut starten." => {
+            "Monefit: The list of bookings was not delivered completely. Please start the sync again."
+        }
+        "Monefit SmartSaver: Saldo und alle Umsätze des Sparkontos. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich. Eine Anmeldung mit zweitem Faktor wird noch nicht unterstützt." => {
+            "Monefit SmartSaver: balance and all bookings of the savings account. Unofficial: uses the web app's interface, changes are possible. A login with a second factor is not supported yet."
+        }
+        "Web-App (Direkt-Login)" => "Web app (direct login)",
         // ------------------------------------------------------------ connectors/kontist.rs
         "Kontist GraphQL-API (OAuth2 + Freigabe in der App)" => {
             "Kontist GraphQL API (OAuth2 + approval in the app)"
@@ -1706,6 +1757,12 @@ fn english(de: &str) -> Option<&'static str> {
             "A split booking needs at least two non-zero parts."
         }
         "Die Teilbeträge sind zu groß." => "The split amounts are too large.",
+        "Die Teilbuchung existiert nicht oder wurde mehrfach angegeben." => {
+            "The split part does not exist or was specified more than once."
+        }
+        "Bitte passen Sie die Aufteilung zusammen mit dem Buchungsbetrag an." => {
+            "Please update the split together with the booking amount."
+        }
         "Die Teilbeträge ({0} ¢) ergeben nicht den Buchungsbetrag ({1} ¢)." => {
             "The parts ({0} ¢) do not add up to the booking amount ({1} ¢)."
         }
@@ -1876,9 +1933,9 @@ fn english(de: &str) -> Option<&'static str> {
             "Merchant logo provider: off, duckduckgo or google. Logos are cached encrypted; only the merchant domain (e.g. lidl.de) is sent. Default: off."
         }
         "Händler-Logos" => "Merchant logos",
-        "Tage beim ersten Abruf" => "Days on first sync",
-        "Ältere Umsätze werden nur einmal abgefragt." => {
-            "Older transactions are only fetched once."
+        "Zeitraum beim ersten Abruf" => "Period of the first fetch",
+        "max = so weit Bank und Anbindung es zulassen, sonst Anzahl Tage. Gilt für neue Zugänge und Konten ohne Umsätze." => {
+            "max = as far back as the bank and the connection allow, otherwise a number of days. Applies to new logins and to accounts without transactions."
         }
         "Allgemein" => "General",
         // ------------------------------------------------------------ vault.rs settings (same in both languages)
@@ -1900,6 +1957,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Gutschrift" => "Credit",
         "Bestellung" => "Order",
         "Erstattung" => "Refund",
+        "Zahlung" => "Payment",
         "Überweisung" => "Transfer",
         "Buchung" => "Transaction",
         "Ordner nicht gefunden: {0}" => "Folder not found: {0}",

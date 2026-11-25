@@ -1123,11 +1123,12 @@ fn parse_decimal(s: &str) -> CoreResult<f64> {
         (None, Some(_)) => t.replace(',', "."),
         _ => t,
     };
+    // Fixed text: the value comes from the export file and must not reach error texts or logs.
     normalized
         .parse::<f64>()
         .ok()
         .filter(|n| n.is_finite() && n.abs() < 1e12)
-        .ok_or_else(|| invalid(format!("invalid number '{s}'")))
+        .ok_or_else(|| invalid("invalid number".to_string()))
 }
 
 fn cents(x: f64) -> i64 {
@@ -1139,7 +1140,8 @@ fn currency(s: &str) -> CoreResult<String> {
     match c.to_ascii_uppercase().as_str() {
         "CHF" => Ok("CHF".into()),
         "EUR" => Ok("EUR".into()),
-        _ => Err(invalid(format!("unsupported currency '{c}'"))),
+        // Fixed text: the value comes from the export file and must not reach error texts or logs.
+        _ => Err(invalid("unsupported currency".to_string())),
     }
 }
 
@@ -1162,14 +1164,15 @@ fn build_holding(
     cur: &str,
 ) -> CoreResult<FinpensionHolding> {
     let isin = isin.to_ascii_uppercase();
+    // Fixed texts: the ISIN comes from the export file and must not reach error texts or logs.
     if !valid_isin(&isin) {
-        return Err(invalid(format!("invalid ISIN '{isin}'")));
+        return Err(invalid("invalid ISIN in a holding".to_string()));
     }
     if name.is_empty() {
-        return Err(invalid(format!("missing name for {isin}")));
+        return Err(invalid("missing name in a holding".to_string()));
     }
     if quantity < 0.0 || price < 0.0 || value < 0.0 {
-        return Err(invalid(format!("negative figures for {isin}")));
+        return Err(invalid("negative figures in a holding".to_string()));
     }
     Ok(FinpensionHolding {
         isin,
@@ -1204,9 +1207,10 @@ fn parse_date(s: &str) -> CoreResult<String> {
         .get(..10)
         .and_then(|p| jiff::civil::Date::strptime("%Y-%m-%d", p).ok())
         .or_else(|| jiff::civil::Date::strptime("%d.%m.%Y", s).ok());
+    // Fixed text: the value comes from the export file and must not reach error texts or logs.
     parsed
         .map(crate::dates::iso)
-        .ok_or_else(|| invalid(format!("invalid date '{s}'")))
+        .ok_or_else(|| invalid("invalid date".to_string()))
 }
 
 #[cfg(test)]
@@ -1224,6 +1228,47 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
     const TRANS_REPORT_CSV: &str = "Date;Category;\"Asset Name\";ISIN;\"Number of Shares\";\"Asset Currency\";\"Currency Rate\";\"Asset Price in CHF\";\"Cash Flow\";Balance\n\
 2024-01-15;Buy;\"Swisscanto (CH) IPF I\";CH0117044948;1.234;CHF;1.0;150.00;-185.10;1200.00\n\
 2024-01-20;Deposit;\"\";\"\";;CHF;1.0;;500.00;1700.00\n";
+
+    #[test]
+    fn value_errors_never_quote_file_content() {
+        // A colon plus a line break once let the Windows filter show the part after the colon.
+        let leak = "x:geheim\nrest";
+        let errors = [
+            currency(leak).err().unwrap().to_string(),
+            parse_date(leak).err().unwrap().to_string(),
+            build_holding(leak, "Fonds", 1.0, 1.0, 1.0, "CHF")
+                .err()
+                .unwrap()
+                .to_string(),
+            build_holding("CH0000000011", "Fonds", 1.0, 1.0, 1.0, leak)
+                .err()
+                .unwrap()
+                .to_string(),
+        ];
+        for e in &errors {
+            assert!(!e.contains("geheim") && !e.contains('\n'), "{e}");
+            assert!(!e.contains("x:"), "{e}");
+        }
+        assert!(errors[0].contains("unsupported currency"), "{}", errors[0]);
+        assert!(errors[1].contains("invalid date"), "{}", errors[1]);
+        assert!(errors[2].contains("invalid ISIN"), "{}", errors[2]);
+        // Supported currencies are unchanged.
+        assert_eq!(currency("").ok().as_deref(), Some("CHF"));
+        assert_eq!(currency("eur").ok().as_deref(), Some("EUR"));
+    }
+
+    #[test]
+    fn urls_accepted() {
+        for u in [
+            "https://finpension.ch/",
+            "https://finpension.ch/export?x=1",
+            "HTTPS://app.finpension.ch/api/v1",
+            "https://finpension.ch:443/a",
+            "https://a.b.finpension.ch#frag",
+        ] {
+            assert!(validate_finpension_url(u).is_ok(), "{u}");
+        }
+    }
 
     #[test]
     fn transaktions_report_csv_with_isin() {

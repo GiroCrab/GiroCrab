@@ -4,6 +4,28 @@
 
 use girocrab_core::{Category, TransactionSplitInput, TransferTemplate};
 
+/// `1` / `1.234` / `1.234.567` (same separator throughout, later groups of three digits).
+fn is_thousands_groups(prefix: &str, sep: &str) -> bool {
+    let mut groups = prefix.split(sep);
+    let first_ok = groups
+        .next()
+        .is_some_and(|g| !g.is_empty() && g.chars().all(|c| c.is_ascii_digit()));
+    first_ok && groups.all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Integer part in front of the decimal separator: plain digits (or empty, as in ",50"), or
+/// thousands groups of one separator kind that differs from the decimal one ("1.234,50",
+/// "1,234,567.89"). Rejects "12,34,56", "12.34.56" and "1.234.50".
+fn is_valid_int_part(int_part: &str, dec_sep: char) -> bool {
+    if int_part.is_empty() || int_part.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let Some(sep) = int_part.chars().find(|c| matches!(c, ',' | '.')) else {
+        return false;
+    };
+    sep != dec_sep && is_thousands_groups(int_part, &sep.to_string())
+}
+
 /// Parses a German or plain amount ("1.234,56", "12,5", "-3.20", "7") into cents.
 pub fn parse_cents(text: &str) -> Option<i64> {
     let t = text.trim().replace(['€', ' ', '\u{a0}'], "");
@@ -17,10 +39,14 @@ pub fn parse_cents(text: &str) -> Option<i64> {
     // The last separator is the decimal one when 1-2 digits follow it; the others group thousands.
     let dec_pos = t.rfind([',', '.']);
     let (int_part, frac) = match dec_pos {
-        Some(p) if t.len() - p - 1 <= 2 && (t.len() - p - 1 > 0) => (&t[..p], &t[p + 1..]),
-        Some(p) if t.len() - p - 1 == 3 && t[..p].chars().all(|c| c.is_ascii_digit()) => {
-            (&t[..], "")
+        Some(p)
+            if t.len() - p - 1 <= 2
+                && (t.len() - p - 1 > 0)
+                && is_valid_int_part(&t[..p], t.as_bytes()[p] as char) =>
+        {
+            (&t[..p], &t[p + 1..])
         }
+        Some(p) if t.len() - p - 1 == 3 && is_thousands_groups(&t[..p], &t[p..=p]) => (&t[..], ""),
         Some(_) => return None,
         None => (&t[..], ""),
     };
@@ -103,6 +129,7 @@ pub fn moved_order(ids: &[i64], index: usize, step: i32) -> Option<Vec<i64>> {
 /// One row of the split form as typed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SplitDraft {
+    pub uuid: Option<String>,
     /// 0 = no category, n = the n-th category (1-based).
     pub category_index: i32,
     pub amount: String,
@@ -140,12 +167,6 @@ pub fn build_splits(
         if cents == 0 {
             return Err(format!("Teilbetrag {} darf nicht 0 sein.", n + 1));
         }
-        if (cents < 0) != (booking_cents < 0) {
-            return Err(format!(
-                "Teilbetrag {} braucht dasselbe Vorzeichen wie die Buchung.",
-                n + 1
-            ));
-        }
         let category_id = match usize::try_from(d.category_index) {
             Ok(0) | Err(_) => None,
             Ok(i) => Some(
@@ -156,12 +177,17 @@ pub fn build_splits(
             ),
         };
         out.push(TransactionSplitInput {
+            uuid: d.uuid.clone(),
             category_id,
             amount_cents: cents,
             note: d.note.trim().to_string(),
         });
     }
-    let sum: i64 = out.iter().map(|s| s.amount_cents).sum();
+    // checked like the core: an overflowing sum must not pass as equal
+    let sum = out
+        .iter()
+        .try_fold(0i64, |acc, s| acc.checked_add(s.amount_cents))
+        .ok_or_else(|| "Die Teilbeträge sind zu groß.".to_string())?;
     if sum != booking_cents {
         return Err(format!(
             "Die Teilbeträge ({}) ergeben nicht den Buchungsbetrag ({}).",
@@ -382,6 +408,10 @@ mod tests {
         assert_eq!(parse_cents("7"), Some(700));
         assert_eq!(parse_cents("12,5 €"), Some(1250));
         assert_eq!(parse_cents("1.234"), Some(123_400));
+        assert_eq!(parse_cents("1.234.567"), Some(123_456_700));
+        assert_eq!(parse_cents("1.234.567,50"), Some(123_456_750));
+        assert_eq!(parse_cents("1.23.567"), None);
+        assert_eq!(parse_cents("1.234,567"), None);
         assert_eq!(parse_cents(",5"), Some(50));
         assert_eq!(parse_cents(""), None);
         assert_eq!(parse_cents("abc"), None);
@@ -422,6 +452,7 @@ mod tests {
 
     fn draft(c: i32, a: &str) -> SplitDraft {
         SplitDraft {
+            uuid: None,
             category_index: c,
             amount: a.into(),
             note: String::new(),
@@ -451,13 +482,54 @@ mod tests {
         );
         assert!(build_splits(&[draft(0, "-10")], &cats, -1000).is_err());
         assert!(build_splits(&[draft(0, "-4"), draft(0, "-5")], &cats, -1000).is_err());
-        assert!(build_splits(&[draft(0, "4"), draft(0, "-14")], &cats, -1000).is_err());
+        assert!(build_splits(&[draft(0, "4"), draft(0, "-14")], &cats, -1000).is_ok());
         assert!(build_splits(&[draft(0, "0"), draft(0, "-10")], &cats, -1000).is_err());
         assert!(build_splits(&[draft(0, "-4"), draft(3, "-6")], &cats, -1000).is_err());
         let ok = build_splits(&[draft(0, "-4"), draft(0, "-6")], &cats, -1000).unwrap();
         assert_eq!(ok.len(), 2);
         assert_eq!(ok[0].amount_cents, -400);
         assert_eq!(ok[0].category_id, None);
+    }
+
+    #[test]
+    fn round8_mixed_sign_splits_can_be_edited() {
+        let parts = build_splits(&[draft(0, "4"), draft(0, "-14")], &[], -1000).unwrap();
+        assert_eq!(
+            parts.iter().map(|p| p.amount_cents).collect::<Vec<_>>(),
+            [400, -1400]
+        );
+    }
+
+    /// Kept parts keep their UUID, also reordered and with equal amounts; new ones have none.
+    #[test]
+    fn split_drafts_keep_their_uuids() {
+        let with = |uuid: &str, amount: &str| SplitDraft {
+            uuid: Some(uuid.into()),
+            ..draft(0, amount)
+        };
+        let parts = build_splits(
+            &[
+                with("b", "-5"),
+                with("a", "-5"),
+                draft(0, "4"),
+                draft(0, "-4"),
+            ],
+            &[],
+            -1000,
+        )
+        .unwrap();
+        assert_eq!(
+            parts
+                .iter()
+                .map(|p| (p.uuid.as_deref(), p.amount_cents))
+                .collect::<Vec<_>>(),
+            [
+                (Some("b"), -500),
+                (Some("a"), -500),
+                (None, 400),
+                (None, -400)
+            ]
+        );
     }
 
     #[test]

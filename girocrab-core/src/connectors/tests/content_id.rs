@@ -48,7 +48,7 @@ fn since_is_per_account_with_a_common_floor() {
         ("B".to_string(), Some("2026-10-01".to_string())), // lagging behind
         ("C".to_string(), None),                           // no bookings (depot)
     ];
-    let (since, per) = since_window(d("2026-11-12"), 90, &newest);
+    let (since, per) = since_window(d("2026-11-12"), 90, &newest, None);
     assert_eq!(per["A"], "2026-10-22");
     assert_eq!(per["B"], "2026-09-21");
     assert_eq!(per["C"], "2026-08-14");
@@ -59,12 +59,13 @@ fn since_is_per_account_with_a_common_floor() {
         d("2026-11-12"),
         90,
         &[("A".to_string(), Some("2026-01-01".to_string()))],
+        None,
     );
     assert_eq!(
         (since.as_str(), per["A"].as_str()),
         ("2025-12-22", "2025-12-22")
     );
-    let (since, _) = since_window(d("2026-11-12"), 90, &[]);
+    let (since, _) = since_window(d("2026-11-12"), 90, &[], None);
     assert_eq!(since, "2026-08-14");
 }
 
@@ -274,6 +275,48 @@ fn refetch_names_a_stored_booking_without_counterparty() {
     };
     store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(vec![other])).unwrap();
     assert_eq!(counterparty(), "Beispielladen GmbH");
+}
+
+#[test]
+fn refetch_fills_an_empty_booking_text() {
+    // Hanseatic interest bookings were stored without any text before their
+    // booking key was read
+    let (v, conn) = setup();
+    let text = || -> String {
+        v.db()
+            .unwrap()
+            .query_row("SELECT booking_text FROM transactions", [], |r| r.get(0))
+            .unwrap()
+    };
+    let mut first = tx("2026-10-30", 1_972, "");
+    first.external_id = "t1".into();
+    store_fetch(
+        &v,
+        ConnectorKind::HanseaticBank,
+        conn,
+        fetch(vec![first.clone()]),
+    )
+    .unwrap();
+    let keyed = RemoteTransaction {
+        booking_text: "Abschluss".into(),
+        ..first
+    };
+    let s = store_fetch(
+        &v,
+        ConnectorKind::HanseaticBank,
+        conn,
+        fetch(vec![keyed.clone()]),
+    )
+    .unwrap();
+    assert_eq!(s.transactions_imported, 0);
+    assert_eq!(text(), "Abschluss");
+    // a stored text is never replaced by another one
+    let other = RemoteTransaction {
+        booking_text: "Anderer Text".into(),
+        ..keyed
+    };
+    store_fetch(&v, ConnectorKind::HanseaticBank, conn, fetch(vec![other])).unwrap();
+    assert_eq!(text(), "Abschluss");
 }
 
 /// A booking imported from a MoneyMoney export into the fetched account.

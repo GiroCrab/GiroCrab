@@ -60,6 +60,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           # rust-cache resolves these relative to the workspace root; the script
           # writes to <repo>/target/{android,host}, not into girocrab-core/.
           workspaces: |
@@ -142,6 +143,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             . -> target/android
             . -> target/host
