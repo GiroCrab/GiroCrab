@@ -118,8 +118,11 @@ fn stored_accounts(vault: &Vault) -> usize {
 #[tokio::test]
 async fn questions_during_the_fetch_come_as_challenges_and_the_answers_go_back() {
     let (s, vault, seen) = session(2);
+    assert!(!s.is_fetching());
     let step = s.start().await.unwrap();
     assert!(matches!(step, SyncStep::NeedsChallenge { .. }));
+    // the question is one of the fetch: the front end may offer to skip it
+    assert!(s.is_fetching());
     // nothing is stored while the fetch waits
     assert_eq!(stored_accounts(&vault), 0);
     let step = s.submit_code("123456".into()).await.unwrap();
