@@ -441,6 +441,12 @@ pub struct Account {
     #[uniffi(default = None)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub bank_label: Option<String>,
+    /// When this account was last fetched on its own (#1716), Unix seconds;
+    /// `None` = never. The login's last sync counts for it as well: the later
+    /// of the two is the account's last fetch. Merged by the later value.
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub last_fetch_unix: Option<i64>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
