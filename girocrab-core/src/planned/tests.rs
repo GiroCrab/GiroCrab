@@ -203,3 +203,25 @@ fn pending_rows_are_no_bookings() {
     super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 1);
 }
+
+#[test]
+fn booking_of_the_day_before_the_order_does_not_settle_it() {
+    let v = vault("planned-day-before");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 300))
+        .unwrap();
+    let yesterday = (crate::dates::today() - jiff::Span::new().days(1)).to_string();
+    book(&v, a, "y", &yesterday, -300, "DE89370400440532013000");
+    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+    book(
+        &v,
+        a,
+        "t",
+        &crate::dates::today_iso(),
+        -300,
+        "DE89370400440532013000",
+    );
+    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}

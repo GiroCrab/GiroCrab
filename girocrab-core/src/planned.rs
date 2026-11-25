@@ -320,7 +320,7 @@ impl Vault {
 pub(crate) fn drop_booked(db: &Connection, account_id: i64, since_unix: i64) -> CoreResult<()> {
     let mut q = db.prepare(
         "SELECT id, execution_date, recipient_iban, amount_cents, kind,
-                date(created_ms / 1000, 'unixepoch', '-1 day')
+                date(created_ms / 1000, 'unixepoch', 'localtime')
          FROM planned_transfers WHERE account_id = ?1 ORDER BY id",
     )?;
     let orders: Vec<(i64, String, String, i64, String, String)> = q
