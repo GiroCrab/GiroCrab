@@ -151,16 +151,36 @@ const BOOKING_WORDS: &[&str] = &[
     "kontoführung",
     "storno",
     "sepa",
+    "bank",
+    "konto",
+    "miete",
+    "steuer",
+    "transfer",
+    "visa",
+    "zins",
 ];
 
-/// Shortest counterparty name used as a term; shorter ones (initials, "DB")
-/// would match inside ordinary words of a log message.
-const MIN_COUNTERPARTY_CHARS: usize = 3;
+/// Shortest single-word counterparty used as a term; shorter ones (initials,
+/// "DB", "Max") would match inside ordinary words of a log message.
+const MIN_SINGLE_WORD_CHARS: usize = 4;
 
-/// Whether a counterparty name goes into the redaction terms.
+/// Whether a counterparty name goes into the redaction terms (rule of the
+/// Linux `counterparty_terms`): every name of two words or more, single words
+/// of four letters or more unless they are booking words. Better a blanked
+/// word than a published payee.
 fn redactable_counterparty(name: &str) -> bool {
-    let key = normalized(name);
-    key.chars().count() >= MIN_COUNTERPARTY_CHARS && !BOOKING_WORDS.contains(&key.as_str())
+    let words: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    match words.as_slice() {
+        [] => false,
+        [word] => {
+            word.chars().count() >= MIN_SINGLE_WORD_CHARS
+                && !BOOKING_WORDS.contains(&word.to_lowercase().as_str())
+        }
+        _ => true,
+    }
 }
 
 /// Trimmed, de-duplicated terms without bank/connector names (not personal).
@@ -198,18 +218,16 @@ pub fn known_terms(
     for c in &connections {
         terms.extend([c.display_name.clone(), c.login_name.clone()]);
     }
-    // Counterparties without booking words and very short names (as on Mac/Linux).
+    // Counterparties without booking words and short single words (rule as on Linux).
     terms.extend(
         counterparties
             .iter()
             .filter(|n| redactable_counterparty(n))
             .cloned(),
     );
-    let banks: HashSet<String> = catalog
-        .iter()
-        .map(|d| normalized(&d.name))
-        .chain(accounts.iter().map(|a| normalized(&a.bank_name)))
-        .collect();
+    // Only the catalog's provider names are public. `accounts.bank_name` is
+    // not: renaming a connection copies its own label there.
+    let banks: HashSet<String> = catalog.iter().map(|d| normalized(&d.name)).collect();
     Ok(public_terms_removed(terms, &banks))
 }
 
@@ -477,13 +495,50 @@ mod tests {
     }
 
     #[test]
+    fn custom_connection_label_in_bank_name_stays_a_term() {
+        let path =
+            std::env::temp_dir().join(format!("gc-bugreport-label-{}.db", std::process::id()));
+        let v = demo_vault(&path);
+        let connection = v
+            .list_bank_connections()
+            .expect("connections")
+            .into_iter()
+            .next()
+            .expect("demo connection");
+        // The rename also lands in `accounts.bank_name` of its accounts.
+        v.update_bank_connection(
+            connection.id,
+            "Erika Muster".to_string(),
+            connection.login_name.clone(),
+        )
+        .expect("rename");
+        let names = v.counterparty_names(5000).expect("names");
+        let terms = known_terms(&v, &names, &girocrab_core::bank_catalog()).expect("terms");
+        drop(v);
+        let _ = std::fs::remove_file(&path);
+        assert!(terms.iter().any(|t| t == "Erika Muster"), "{terms:?}");
+        let log = sanitized_log(
+            &[LogLine {
+                head: "h".into(),
+                message: "Login für Erika Muster fehlgeschlagen".into(),
+            }],
+            &terms,
+        );
+        assert!(!log[0].contains("Erika"), "{}", log[0]);
+        assert!(log[0].contains("fehlgeschlagen"), "{}", log[0]);
+    }
+
+    #[test]
     fn booking_words_and_short_counterparties_are_no_terms() {
         assert!(redactable_counterparty("Erika Muster"));
-        assert!(redactable_counterparty("Max"));
+        assert!(redactable_counterparty("Max Muster"));
+        assert!(redactable_counterparty("Müller"));
+        assert!(!redactable_counterparty("Max"));
         assert!(!redactable_counterparty("DB"));
         assert!(!redactable_counterparty("  "));
         assert!(!redactable_counterparty(" Lastschrift "));
         assert!(!redactable_counterparty("ÜBERWEISUNG"));
+        assert!(!redactable_counterparty("Miete"));
         let terms: Vec<String> = ["Lastschrift", "DB", "Erika Muster"]
             .iter()
             .map(|s| s.to_string())
