@@ -5,7 +5,8 @@ name: Nightly
 # --nightly), deliberately without Apple certificates in GitHub Secrets.
 # The zip is kept as a workflow artifact, never attached to a release.
 # Windows (#1778) is the exception: updates.rs reads the GitHub releases API, so each night gets a VERSIONED
-# pre-release vX.Y.Z-nightly.YYYYMMDD (X.Y.Z = last stable/beta tag) with the installer attached, never a rolling tag.
+# pre-release vX.Y.Z-nightly.YYYYMMDD with the installer attached, never a rolling tag. X.Y.Z = last stable/beta
+# tag + 1 patch: newer than that baseline for the updater, older than the next beta/stable of X.Y.Z.
 
 on:
   workflow_dispatch:
@@ -54,10 +55,14 @@ jobs:
     # One pre-release per UTC day; a re-run on the same day replaces its assets.
     runs-on: windows-latest
     timeout-minutes: 60
+    # Same-day runs share a tag: publish one after the other so all assets come from one build.
+    concurrency:
+      group: nightly-windows-release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: main
           fetch-depth: 0
@@ -68,8 +73,11 @@ jobs:
         run: |
           LAST="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-nightly.*' HEAD)" \
             || { echo "error: no previous v* tag" >&2; exit 1; }
-          BASE="$(echo "${LAST#v}" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
-          echo "tag=v${BASE}-nightly.$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          [[ "${LAST#v}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] \
+            || { echo "error: unexpected tag $LAST" >&2; exit 1; }
+          # Next patch: updates.rs ranks X.Y.Z-nightly below X.Y.Z and X.Y.Z-beta.N.
+          NEXT="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+          echo "tag=v${NEXT}-nightly.$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
       - run: scripts/set-windows-version.sh "${{ steps.ver.outputs.tag }}"
         shell: bash
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -92,8 +100,10 @@ jobs:
           FILES=(dist/girocrab-windows-x86_64.zip dist/girocrab-windows-x86_64-setup.exe dist/SHA256SUMS.txt)
           if gh release view "$TAG_NAME" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" "${FILES[@]}" --clobber --repo "$REPO"
+            # A hand-pushed tag left a draft (release.yml): publish it only after the upload succeeded.
+            gh release edit "$TAG_NAME" --draft=false --prerelease --latest=false --repo "$REPO"
           else
-            gh release create "$TAG_NAME" "${FILES[@]}" --target main --prerelease --latest=false \
+            gh release create "$TAG_NAME" "${FILES[@]}" --target "$(git rev-parse HEAD)" --prerelease --latest=false \
               --title "Nightly ${TAG_NAME#*-nightly.} (Windows)" \
               --notes "Windows-Nightly aus main (Alpha, nicht signiert). Prüfsummen: SHA256SUMS.txt." --repo "$REPO"
           fi

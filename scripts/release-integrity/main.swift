@@ -141,6 +141,7 @@ struct State: Codable {
     var policySequence: UInt64?
     var appcastSeen: Bool?
     var policySeen: Bool?
+    var windowsSeen: Bool?
 }
 var state = State()
 if let statePath, let d = FileManager.default.contents(atPath: statePath),
@@ -203,12 +204,18 @@ if sparkleKeys.isEmpty {
 // That catches a replaced or corrupted file but not an attacker who replaces both – see docs/release-integrity.md.
 switch fetch(latestBase + "/SHA256SUMS.txt") {
 case .notFound:
-    note("SHA256SUMS.txt not found on the latest release – Windows asset check skipped")
+    if state.windowsSeen == true {
+        finding("SHA256SUMS.txt is not reachable any more at \(latestBase)/SHA256SUMS.txt (404) – Windows assets unchecked")
+    } else {
+        note("SHA256SUMS.txt not published yet (no Windows release so far) – Windows asset check skipped")
+    }
 case .failed(let why):
     finding("SHA256SUMS.txt could not be downloaded: \(why)")
 case .ok(let sums):
+    state.windowsSeen = true
     var checked = 0
-    for line in String(decoding: sums, as: UTF8.self).split(separator: "\n") {
+    // package-windows.ps1 writes CRLF on Windows; "\r\n" is a single Character, so split on any newline.
+    for line in String(decoding: sums, as: UTF8.self).split(whereSeparator: \.isNewline) {
         let parts = line.split(separator: " ", omittingEmptySubsequences: true)
         guard parts.count == 2 else { finding("SHA256SUMS.txt: malformed line '\(line)'"); continue }
         let (hash, name) = (parts[0].lowercased(), String(parts[1]).trimmingCharacters(in: CharacterSet(charactersIn: "*")))

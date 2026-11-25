@@ -31,8 +31,13 @@ Ein Teil wird übersprungen, solange sein Schlüssel nicht eingetragen ist
 `BankingPolicy.publicKeys` oder Datei nicht vorhanden).
 
 Wurde eine Datei **noch nie** veröffentlicht (kein Release mit In-App-Updates,
-Policy noch nicht aktiviert), ist ein 404 nur ein Hinweis. Sobald ein Lauf sie
-einmal gesehen hat (gemerkt im Actions-Cache), ist ein späteres 404 ein Fund.
+kein Windows-Release mit `SHA256SUMS.txt`, Policy noch nicht aktiviert), ist ein
+404 nur ein Hinweis. Sobald ein Lauf sie einmal gesehen hat (gemerkt im
+Actions-Cache), ist ein späteres 404 ein Fund.
+
+Windows-Nightlies heißen `vX.Y.Z-nightly.JJJJMMTT` mit X.Y.Z = letzter Stable-
+oder Beta-Tag plus eine Patch-Version. So bietet der Updater sie Nutzern dieser
+Version an, und spätere Betas oder Stables von X.Y.Z sind wieder neuer.
 
 ## Meldungen
 
