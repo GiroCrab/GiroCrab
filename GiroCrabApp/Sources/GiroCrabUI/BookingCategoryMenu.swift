@@ -134,7 +134,7 @@ struct BookingCategoryPicker: View {
                             choose(category.id)
                         } label: {
                             option(title: String(localized: "Vorschlag übernehmen: \(category.name)"),
-                                   symbol: "clock.arrow.circlepath", color: Theme.secondary, sensitive: true)
+                                   symbol: "clock.arrow.circlepath", color: Theme.secondary)
                         }
                         Divider()
                     }
@@ -158,7 +158,7 @@ struct BookingCategoryPicker: View {
         let category = row.category
         let content = option(title: category.name, symbol: category.sfSymbol,
                              color: Color.readable(hex: category.colorHex),
-                             selected: booking.categoryId == row.id, sensitive: true, depth: row.depth)
+                             selected: booking.categoryId == row.id, depth: row.depth)
         if row.isGroup {
             content.accessibilityAddTraits(.isHeader)
         } else {
@@ -167,7 +167,7 @@ struct BookingCategoryPicker: View {
     }
 
     private func option(title: String, symbol: String, color: Color, selected: Bool = false,
-                        sensitive: Bool = false, depth: Int = 0) -> some View {
+                        depth: Int = 0) -> some View {
         HStack(spacing: 7) {
             Image(systemName: symbol)
                 .foregroundStyle(color)
@@ -175,7 +175,7 @@ struct BookingCategoryPicker: View {
                 .accessibilityHidden(true)
             Text(title)
                 .foregroundStyle(color)
-                .sensitive(sensitive ? .labels : [])
+                .sensitive(.labels)
                 .lineLimit(1)
             Spacer(minLength: 4)
             if selected {
