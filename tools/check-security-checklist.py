@@ -28,8 +28,11 @@ CRITICAL_PREFIXES = (
     "scripts/",
 )
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
-# Fenced code blocks (``` or ~~~); an unclosed fence runs to the end of the text, as in CommonMark.
-FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[ \t]*$|\Z)", re.S | re.M)
+# Fenced code blocks (``` or ~~~). As in CommonMark, the closing fence uses the opener's character and is at least
+# as long (```` closes ```, ``` does not close ````); an unclosed fence runs to the end of the text.
+FENCE_RE = re.compile(
+    r"^[ \t]*(?:(`{3,}).*?(?:^[ \t]*\1`*[ \t]*$|\Z)|(~{3,}).*?(?:^[ \t]*\2~*[ \t]*$|\Z))", re.S | re.M
+)
 # `- [x] **Security-Check:** <what was checked>` (also `* [X] Security-Check: ok`); an unticked `[ ]`, a plain
 # bullet or a ticked label without an explanation on the same line does not count.
 CHECKED_RE = re.compile(r"^[ \t]*[-*][ \t]*\[[xX]\][ \t]*\**[ \t]*Security-Check\b[*: \t]*[^\s*:]", re.M)

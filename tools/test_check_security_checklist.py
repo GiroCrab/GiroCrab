@@ -60,6 +60,18 @@ class SecurityChecklist(unittest.TestCase):
         body = "```\n- [ ] **Security-Check:** example\n```\n- [x] **Security-Check:** Nothing relevant: nur CI"
         self.assertTrue(chk.verdict(CRITICAL, body)[0])
 
+    def test_longer_closing_fence_closes_the_block(self):
+        for body in ("~~~\n- [ ] **Security-Check:** example\n~~~~\n- [x] **Security-Check:** Nothing relevant: nur CI",
+                     "```md\n- [ ] **Security-Check:** example\n`````\n- [x] **Security-Check:** Nothing relevant: nur CI"):
+            self.assertTrue(chk.verdict(CRITICAL, body)[0], body)
+        body = "~~~md\n- [x] **Security-Check:** example\n~~~~\n- [ ] **Security-Check:**"
+        self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
+
+    def test_shorter_or_other_fence_does_not_close_the_block(self):
+        for body in ("````\n- [ ] x\n```\n- [x] **Security-Check:** still inside the example",
+                     "~~~\n- [ ] x\n```\n- [x] **Security-Check:** still inside the example"):
+            self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
+
     def test_message_names_the_fix(self):
         msg = chk.verdict(["scripts/x.sh"], "")[1]
         self.assertIn("- [x] **Security-Check:**", msg)
