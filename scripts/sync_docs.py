@@ -103,6 +103,7 @@ CONNECTOR_DOCS = {
     "alte-leipziger": ("Alte Leipziger (Bausparen)", "Alte Leipziger"),
     "consorsbank": ("Consorsbank", "Consorsbank"),
     "easybank": ("easybank (ehem. Barclays)", "easybank"),
+    "flatex": ("flatex (flatexDEGIRO Bank)", "flatexDEGIRO Bank"),
     "fnz": ("FNZ Bank", "FNZ Bank"),
     "miles-and-more": ("Miles & More Kreditkarte (Deutsche Bank)", "Deutsche Bank / Miles & More"),
     "quirion": ("quirion", "quirion"),
