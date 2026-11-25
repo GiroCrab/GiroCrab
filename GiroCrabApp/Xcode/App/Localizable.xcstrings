@@ -3460,6 +3460,17 @@
         }
       }
     },
+    "Aktienrechte, die erst später zugeteilt werden, erscheinen als eigene Position im Depot. Aus: die Position wird entfernt und nicht mehr abgerufen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share rights that are allotted later appear as their own position in the depot. Off: the position is removed and no longer fetched."
+          }
+        }
+      }
+    },
     "Aktion" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24438,6 +24449,17 @@
         }
       }
     },
+    "Nicht zugeteilte Aktienrechte abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch share rights not yet allotted"
+          }
+        }
+      }
+    },
     "Nicht übernommen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25170,6 +25192,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Only the selected bookings. You don’t need accounts or a period here."
+          }
+        }
+      }
+    },
+    "Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip only this request. The rest of the fetch is stored."
           }
         }
       }
@@ -30309,6 +30342,17 @@
         }
       }
     },
+    "TAN auslassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip this TAN"
+          }
+        }
+      }
+    },
     "TAN-Medium" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32093,6 +32137,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total assets"
+          }
+        }
+      }
+    },
+    "Vermögenswerte ohne Immobilien" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Total assets excluding property"
           }
         }
       }

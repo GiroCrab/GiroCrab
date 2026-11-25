@@ -718,8 +718,13 @@ impl BankConnector for FinTsConnector {
                             // list; then MT940 is tried before giving up.
                             let empty_loan = kind == AccountKind::Loan && t.is_empty() && can_mt940;
                             txs = t;
-                            if balance.is_none() {
-                                balance = closing;
+                            if balance.is_none()
+                                && let Some(c) = closing
+                            {
+                                balance = Some(c.cents);
+                                if let Some(d) = c.date {
+                                    balance_date = d;
+                                }
                             }
                             done = !empty_loan;
                             ok_any = true;
@@ -745,8 +750,13 @@ impl BankConnector for FinTsConnector {
                             if !t.is_empty() || txs.is_empty() {
                                 txs = t;
                             }
-                            if balance.is_none() {
-                                balance = closing;
+                            if balance.is_none()
+                                && let Some(c) = closing
+                            {
+                                balance = Some(c.cents);
+                                if let Some(d) = c.date {
+                                    balance_date = d;
+                                }
                             }
                             ok_any = true;
                             if std::mem::take(&mut self.partial_statements) {

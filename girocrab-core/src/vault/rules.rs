@@ -601,11 +601,13 @@ mod split_rule_tests {
                 id,
                 vec![
                     TransactionSplitInput {
+                        uuid: None,
                         category_id: Some(cat),
                         amount_cents: -2000,
                         note: String::new(),
                     },
                     TransactionSplitInput {
+                        uuid: None,
                         category_id: None,
                         amount_cents: -350,
                         note: String::new(),
@@ -889,8 +891,8 @@ mod apply_rule_tests {
                     (1, 'stale', '2026-01-02', -100, 'Demo Stale', 2, 'rule', 1),
                     (1, 'unmatched', '2026-01-02', -100, 'Priority Only', NULL, 'none', NULL),
                     (1, 'same-category', '2026-01-02', -100, 'Demo Same', 1, 'rule', 4);
-             INSERT INTO transaction_splits(transaction_id, category_id, amount_cents)
-             VALUES (3, 2, -100);",
+             INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, uuid, position)
+             VALUES (3, 2, -100, '00000000-0000-4000-8000-000000000001', 0);",
             )
             .unwrap();
         let category = |id: &str| -> Option<i64> {
