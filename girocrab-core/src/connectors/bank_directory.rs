@@ -310,7 +310,7 @@ fn matches_all(haystack: &str, words: &[&str]) -> bool {
 const FINTS_ALIASES: &[(&str, &str)] = &[
     ("76030080", "dab bnp paribas"),
     ("50070439", "lufthansa mastercard"),
-    ("10130800", "vitrade biw flatexdegiro"),
+    ("10130800", "vitrade biw bank flatexdegiro"),
 ];
 
 fn fints_result(b: FinTsBankInfo) -> BankSearchResult {
@@ -861,6 +861,7 @@ mod tests {
             "degiro",
             "vitrade",
             "biw",
+            "biw bank",
             "10130800",
             "30330800",
             "DE11 1013 0800 1234 5678 90",
@@ -875,14 +876,17 @@ mod tests {
                 hit.name
             );
         }
-        // the alias row is not listed twice for "flatex"
-        assert_eq!(
-            search("flatex", vec![], 20)
-                .iter()
-                .filter(|b| b.blz == "10130800")
-                .count(),
-            1
-        );
+        // neither the alias nor the superseded "biw Bank" table row is listed twice
+        for query in ["flatex", "biw", "biw bank", "bank"] {
+            assert_eq!(
+                search(query, vec![], 20)
+                    .iter()
+                    .filter(|b| b.blz == "10130800")
+                    .count(),
+                1,
+                "{query}"
+            );
+        }
     }
 
     #[test]
