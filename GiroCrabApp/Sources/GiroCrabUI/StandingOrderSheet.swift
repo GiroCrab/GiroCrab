@@ -76,8 +76,14 @@ struct StandingOrderSheet: View {
     }
 
     private func report(_ p: ParsedPayment, token: UUID? = nil) {
+        // a late invoice (review begun, sheet closed or reopened) changes nothing and leaves no "Lese Rechnung …" behind
+        if let token, token != model.standingImportToken { importNote = nil; return }
         guard !p.isEmpty else { importNote = String(localized: "Nichts Erkennbares gefunden"); return }
-        if let token { guard model.fillStandingDraft(p, ifToken: token) else { return } } else { model.fillStandingDraft(p) }
+        if let token {
+            guard model.fillStandingDraft(p, ifToken: token) else { importNote = nil; return }
+        } else {
+            model.fillStandingDraft(p)
+        }
         importNote = String(localized: "Felder ausgefüllt – bitte prüfen")
     }
 
