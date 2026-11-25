@@ -32,9 +32,9 @@ Sheet {
     /// comdirect logins can switch between FinTS and comdirect's own API.
     readonly property bool isComdirect: kind === "Comdirect"
         || (kind === "FinTsGeneric" && ["20041111", "20041133", "20041144", "20041155"].indexOf(connection.bank_code) >= 0)
-    readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
+    readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank", "Bhw", "Kontist", "Monefit"].indexOf(kind) >= 0
     /// ConnectionsUI.swift › ConnectionEditSheet: these portals take a password, not a PIN
-    readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank", "Bhw", "Kontist"].indexOf(kind) >= 0
+    readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank", "Bhw", "Kontist", "Monefit"].indexOf(kind) >= 0
     /// AppModel+Rah.swift › usesRah10 (#460): the secret is the key file's password, the login is fixed.
     readonly property bool isRah10: !!connection && kind === "FinTsGeneric"
         && (AppModel.run(() => AppModel.core("connection_key", { connection_id: connection.id })) || "").endsWith(":rah10")
@@ -117,6 +117,8 @@ Sheet {
     }
     function save() {
         const l = isTR ? AppModel.core("normalize_phone_number", { input: login }) : login.trim()
+        // Advanzia: another login is another profile with its own session (AdvanziaConnectionSettingsState.save)
+        if (kind === "Advanzia" && l !== connection.login_name) AppModel.forgetWebCookies(connection.id)
         AppModel.updateConnection(connection.id, name, l)
         if (usesPin) {
             if (!storePin) AppModel.setConnectionPin(connection.id, null)
@@ -216,8 +218,10 @@ Sheet {
         id: confirmClear
         /// "portal" (web-portal cookies) or "tradeRepublic" (stored session + browser cookies).
         property string kind: "tradeRepublic"
-        heading: qsTr("Sitzung löschen?")
-        message: qsTr("Beim nächsten Abruf müssen Sie sich erneut anmelden und die Anmeldung in der App Ihrer Bank bestätigen.")
+        // AdvanziaConnectionFields: „Lokale Sitzung löschen?“
+        heading: sheet.kind === "Advanzia" ? qsTr("Lokale Sitzung löschen?") : qsTr("Sitzung löschen?")
+        message: sheet.kind === "Advanzia" ? qsTr("Beim nächsten Abruf ist eine neue Anmeldung mit dem gewählten Freigabeverfahren erforderlich.")
+                                           : qsTr("Beim nächsten Abruf müssen Sie sich erneut anmelden und die Anmeldung in der App Ihrer Bank bestätigen.")
         actionTitle: qsTr("Sitzung löschen")
         onConfirmed: {
             if (kind === "portal") { AppModel.clearPortalSession(sheet.kind, sheet.connection.id); return }
@@ -306,6 +310,17 @@ Sheet {
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
                              onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
                     Button { text: qsTr("Web-Sitzung (Cookies) löschen …"); palette.buttonText: Theme.negative
+                             onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
+                }
+                // AdvanziaConnectionFields (#935) without the saved password and release method: on
+                // Linux the user signs in and confirms in the browser window, nothing is filled in.
+                SettingsFormSection {
+                    visible: sheet.kind === "Advanzia"
+                    title: qsTr("Advanzia-Anmeldung")
+                    footer: qsTr("Melden Sie sich im Browser-Fenster bei Advanzia an und bestätigen Sie die Freigabe per SMS-Code oder in der Advanzia-App. GiroCrab speichert kein Passwort und trägt nichts ein; danach werden die Umsätze automatisch übernommen.")
+                    Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
+                    Button { text: qsTr("Web-Sitzung löschen …"); palette.buttonText: Theme.negative
                              onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
                 }
                 SettingsFormSection {

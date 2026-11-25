@@ -548,27 +548,29 @@ pub fn category_fold_id(key: &str) -> Option<String> {
     }
 }
 
-/// Moves `target_id` one place up (before its predecessor) or down (after its
-/// successor) in `ids`. Returns `false` when nothing changed (id missing or
-/// already at the edge).
-#[allow(dead_code)] // not wired into the UI yet; covered by tests
-pub fn move_category_in_order(ids: &mut [i64], target_id: i64, move_up: bool) -> bool {
-    let Some(pos) = ids.iter().position(|&id| id == target_id) else {
-        return false;
-    };
-    let other = if move_up {
-        match pos.checked_sub(1) {
-            Some(p) => p,
-            None => return false,
-        }
-    } else {
-        pos + 1
-    };
-    if other >= ids.len() {
-        return false;
+/// Moves category `id` by `delta` places (`-1` up, `+1` down) among its siblings, i.e. the
+/// categories with the same parent. `order` is the tree order as `(id, parent_id)`. Returns the
+/// parent and the complete new sibling order for `reorder_categories`; `None` for an unknown id,
+/// `delta == 0` or a move past the first/last sibling.
+pub fn move_category(
+    order: &[(i64, Option<i64>)],
+    id: i64,
+    delta: i32,
+) -> Option<(Option<i64>, Vec<i64>)> {
+    let parent = order.iter().find(|(c, _)| *c == id)?.1;
+    let mut siblings: Vec<i64> = order
+        .iter()
+        .filter(|(_, p)| *p == parent)
+        .map(|(c, _)| *c)
+        .collect();
+    let from = siblings.iter().position(|c| *c == id)?;
+    let to = from.checked_add_signed(isize::try_from(delta).ok()?)?;
+    if to == from || to >= siblings.len() {
+        return None;
     }
-    ids.swap(pos, other);
-    true
+    let moved = siblings.remove(from);
+    siblings.insert(to, moved);
+    Some((parent, siblings))
 }
 
 /// Sorts `items` by the user-defined order `ordered_ids`. Items whose id is not
@@ -645,6 +647,7 @@ pub(crate) mod testing {
             balance_derived: false,
             note: String::new(),
             bank_label: None,
+            last_fetch_unix: None,
         }
     }
 }
@@ -968,20 +971,50 @@ mod tests {
         assert_eq!(category_fold_id("acct:1"), None);
     }
 
+    /// Tree order: 1 (2, 3), 4 (5), 6.
+    const TREE: [(i64, Option<i64>); 6] = [
+        (1, None),
+        (2, Some(1)),
+        (3, Some(1)),
+        (4, None),
+        (5, Some(4)),
+        (6, None),
+    ];
+
     #[test]
-    fn test_move_category_in_order() {
-        let mut ids = vec![1, 2, 3];
-        assert!(move_category_in_order(&mut ids, 2, true));
-        assert_eq!(ids, [2, 1, 3]);
-        assert!(move_category_in_order(&mut ids, 2, false));
-        assert_eq!(ids, [1, 2, 3]);
-        // Edges and unknown ids leave the order untouched.
-        assert!(!move_category_in_order(&mut ids, 1, true));
-        assert!(!move_category_in_order(&mut ids, 3, false));
-        assert!(!move_category_in_order(&mut ids, 9, true));
-        assert_eq!(ids, [1, 2, 3]);
-        let mut empty: Vec<i64> = Vec::new();
-        assert!(!move_category_in_order(&mut empty, 1, false));
+    fn move_category_stays_among_siblings() {
+        // Top level: children of 1 and 4 in between do not count as neighbours.
+        assert_eq!(move_category(&TREE, 4, -1), Some((None, vec![4, 1, 6])));
+        assert_eq!(move_category(&TREE, 4, 1), Some((None, vec![1, 6, 4])));
+        // Sub-level: only the children of the same parent are returned.
+        assert_eq!(move_category(&TREE, 3, -1), Some((Some(1), vec![3, 2])));
+        assert_eq!(move_category(&TREE, 2, 1), Some((Some(1), vec![3, 2])));
+    }
+
+    #[test]
+    fn move_category_stops_at_the_edges() {
+        assert_eq!(move_category(&TREE, 1, -1), None);
+        assert_eq!(move_category(&TREE, 6, 1), None);
+        assert_eq!(move_category(&TREE, 2, -1), None);
+        assert_eq!(move_category(&TREE, 3, 1), None);
+        // An only child cannot move at all.
+        assert_eq!(move_category(&TREE, 5, -1), None);
+        assert_eq!(move_category(&TREE, 5, 1), None);
+    }
+
+    #[test]
+    fn move_category_rejects_unknown_ids_and_no_op_steps() {
+        assert_eq!(move_category(&TREE, 9, 1), None);
+        assert_eq!(move_category(&TREE, 1, 0), None);
+        assert_eq!(move_category(&TREE, 1, 3), None);
+        assert_eq!(move_category(&[], 1, 1), None);
+    }
+
+    #[test]
+    fn move_category_handles_wider_steps() {
+        let flat = [(1, None), (2, None), (3, None)];
+        assert_eq!(move_category(&flat, 1, 2), Some((None, vec![2, 3, 1])));
+        assert_eq!(move_category(&flat, 3, -2), Some((None, vec![3, 1, 2])));
     }
 
     #[test]
