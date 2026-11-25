@@ -294,6 +294,11 @@ pub struct ConnectContext {
     /// Per-account start (account external ref → YYYY-MM-DD): the account's
     /// own newest booking minus 10 days. Accounts not listed use `since`.
     pub since_by_account: HashMap<String, String>,
+    /// This sync runs the login's pending full fetch (#1043): `since` was set
+    /// by the period the user chose. Only then may a connector try a start
+    /// date the bank refuses again with a shorter one: in an ordinary sync
+    /// the bookings between would be skipped for good.
+    pub full_fetch: bool,
     /// Which documents (PDF statements, receipts, PostBox) this sync fetches.
     pub documents: Documents,
     /// Accounts (external refs) whose data this sync does not store: switched
