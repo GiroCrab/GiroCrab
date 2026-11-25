@@ -161,6 +161,8 @@ jobs:
         run: scripts/lint-brand-names.sh
       - name: Sheets and popovers captured by the bug report (redacted)
         run: scripts/lint-report-dialogs.sh
+      - name: Portal web views keep https-only guards and origin-bound scripts
+        run: scripts/lint-webview-security.sh
       - name: Swift tests with UserDefaults.standard marked serial, unique suite names
         run: scripts/lint-test-defaults.sh
       - name: String catalogs sorted (scripts/xcstrings.py format)

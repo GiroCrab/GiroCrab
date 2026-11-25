@@ -1122,6 +1122,14 @@ final class TRWebCoordinator: NSObject, WKNavigationDelegate {
     let phone: String
     init(phone: String) { self.phone = phone }
 
+    // Same rule as the portal guard: https only in the main frame (the saved phone number
+    // is filled in only on Trade Republic's own host, see below).
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        let ok = !(navigationAction.targetFrame?.isMainFrame ?? true) || ConsentRedirect.allowsMainFrame(navigationAction.request.url)
+        decisionHandler(ok ? .allow : .cancel)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // The phone number goes into Trade Republic's own form only (https).
         guard !phone.isEmpty, webView.url?.scheme == "https",

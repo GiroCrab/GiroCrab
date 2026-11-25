@@ -19,6 +19,12 @@ enum ConsentRedirect {
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         return items.contains { $0.name == "code" || $0.name == "error" }
     }
+
+    /// Main-frame pages of a consent or portal login: https only (the redirect is matched
+    /// before). Never http, file, javascript, data or app schemes.
+    static func allowsMainFrame(_ url: URL?) -> Bool {
+        url?.absoluteString == "about:blank" || url?.scheme?.lowercased() == "https"
+    }
 }
 
 /// The bank's consent page inside GiroCrab. Nothing is stored (non-persistent
@@ -59,6 +65,11 @@ final class ConsentBrowser: NSObject, WKNavigationDelegate, WKUIDelegate {
         if let u = navigationAction.request.url, ConsentRedirect.matches(u, redirect: redirect) {
             decisionHandler(.cancel)
             finish(u)
+            return
+        }
+        if navigationAction.targetFrame?.isMainFrame ?? true, !ConsentRedirect.allowsMainFrame(navigationAction.request.url) {
+            AppModel.debugLog("consent: blocked non-https main-frame navigation")
+            decisionHandler(.cancel)
             return
         }
         decisionHandler(.allow)

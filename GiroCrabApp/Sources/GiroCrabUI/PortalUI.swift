@@ -301,7 +301,7 @@ private final class PortalNavigationGuard: NSObject, WKNavigationDelegate {
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard navigationAction.targetFrame?.isMainFrame ?? true else { decisionHandler(.allow); return }
         let url = navigationAction.request.url
-        if url?.absoluteString == "about:blank" || url?.scheme?.lowercased() == "https" {
+        if ConsentRedirect.allowsMainFrame(url) {
             browser?.blockedHost = nil
             decisionHandler(.allow)
             return
