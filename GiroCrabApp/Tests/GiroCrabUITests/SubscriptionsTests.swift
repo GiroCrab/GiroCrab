@@ -306,6 +306,29 @@ final class SubscriptionsTests: XCTestCase {
     }
 
     @MainActor
+    func testEndedContractDoesNotPassItsFieldsToAnotherContractOfThePayee() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let s = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        model.setSubscription(s, marked: true)
+
+        // the marked contract is gone; the only series left is a much cheaper one that was never marked
+        var other = s
+        other.seriesKey = s.baseKey + "#7"; other.amountCents = s.amountCents / 5
+        model.recurring = model.recurring.filter { $0.seriesKey != s.seriesKey } + [other]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNil(model.subscriptionData.entries[other.seriesKey], "an unmarked contract must not become a subscription")
+        XCTAssertNotNil(model.subscriptionData.entries[s.seriesKey])
+
+        // a price rise of about 15 % is still the same contract
+        var risen = s
+        risen.seriesKey = s.baseKey + "#8"; risen.amountCents = s.amountCents * 115 / 100
+        model.recurring = [risen]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[risen.seriesKey])
+    }
+
+    @MainActor
     func testAmbiguousSeriesAreNotMatchedByGuessing() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         model.refreshRecurring()

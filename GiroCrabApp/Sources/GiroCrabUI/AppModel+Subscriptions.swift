@@ -79,7 +79,7 @@ extension AppModel {
     /// The series key follows the typical amount, so a price rise or a second contract of the same payee
     /// gives a marked series a new key: the entry would drop out of the list with its contract fields.
     /// Entries whose key is no longer there move to the series with the same base key, when that is
-    /// unambiguous (one unmarked candidate, or the one clearly nearest to the last known amount).
+    /// unambiguous (one unmarked candidate within half of the last known amount).
     /// Also keeps the identity fields of the live entries current. Only touches what is visible now:
     /// `recurring` covers the selected accounts, so an entry of another account is left alone.
     func reconcileSubscriptionKeys() {
@@ -92,9 +92,12 @@ extension AppModel {
                 $0.baseKey == base && data.entries[$0.seriesKey] == nil
                     && (d.accountId == nil || d.accountId == $0.accountId)
             }
+            // Never by payee alone: a contract that ended must not hand its fields to another, never marked
+            // contract of the same payee. The amount has to stay within half of the last known one
+            // (12.99 → 14.99 € is a price rise, 12.99 → 2.99 € is another contract).
             var target: RecurringSeries?
-            if free.count == 1 { target = free.first } else if free.count > 1, let last = d.lastAmountCents {
-                let near = free.filter { abs($0.amountCents - last) * 100 <= abs(last) * 15 }
+            if let last = d.lastAmountCents {
+                let near = free.filter { abs($0.amountCents - last) * 2 <= abs(last) }
                 if near.count == 1 { target = near.first }
             }
             guard let target else { continue }
