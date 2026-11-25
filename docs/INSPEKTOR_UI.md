@@ -18,6 +18,8 @@ Der Inspektor zeigt die Details der ausgewählten Buchung. Auf dem Mac und in br
 
 Mit „Anpassen“ lassen sich Abschnitte verschieben, aus- und einblenden und auf die Standardreihenfolge zurücksetzen. Die Einstellung gilt pro Gerät. Bei Mehrfachauswahl zeigt der Inspektor Anzahl, Summen je Währung und Sammelaktionen.
 
+Auf dem Mac öffnet ein Klick auf die Kategorie in der Buchungszeile eine scrollbare Liste mit Haupt- und Unterkategorien. Gehört die angeklickte Buchung zur Mehrfachauswahl, gilt die Änderung für alle ausgewählten Buchungen. „Ohne Kategorie“ entfernt die Zuordnung. In der Kompaktansicht öffnet der Klick auf die Kategorie die Auswahl und lässt die Zeilendetails in ihrem aktuellen Zustand.
+
 ## Darstellung und Prüfung
 
 - Abschnitte sitzen auf Systemflächen und werden durch Trennlinien gegliedert. Hervorhebungen kennzeichnen eine Auswahl oder einen Vorschlag.

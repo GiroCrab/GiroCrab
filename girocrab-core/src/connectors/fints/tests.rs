@@ -1717,6 +1717,20 @@ fn loan_sub_accounts_get_distinct_labels() {
 }
 
 #[test]
+fn transfers_use_the_dk_profile_when_the_bank_lists_only_that() {
+    // #1792: comdirect lists only pain.001.003.03 for HKCCS; the .001.03 we sent is not among
+    // its formats ("Sepa-Format nicht mehr gültig"), and .001.09 is answered with 9110.
+    let mut c = FinTsConnector::new("20041111");
+    c.st.pain_formats.insert(
+        "HKCCS".into(),
+        vec![sepa::PAIN_DK_03_DESCRIPTOR.to_string()],
+    );
+    let v = c.pain_version("HKCCS");
+    assert_eq!(v, Some(sepa::PainVersion::V03Dk));
+    assert!(v.unwrap().descriptor().ends_with("pain.001.003.03"));
+}
+
+#[test]
 fn transfers_use_pain_09_whenever_the_bank_offers_it() {
     // comdirect offers both and rejects .03 ("Sepa-Format nicht mehr gültig").
     let mut c = FinTsConnector::new("20041111");
