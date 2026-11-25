@@ -185,6 +185,8 @@ fn candidates(
                 let matches = match reason {
                     RefundMatch::SameAmount => other_amount.checked_abs() == amount.checked_abs(),
                     RefundMatch::SameMerchant => {
+                        // resolved merchants decide when both are known: two shops paid through
+                        // one payment service share the counterparty, not the merchant
                         let own_merchant = index
                             .merchants
                             .get(&own.0)

@@ -23,7 +23,9 @@ impl State {
                 let id=r.get(0)?;
                 let account=r.get(1)?;
                 let external:String=r.get(2)?;
-                Ok((id,Book{id,live:r.get(11)?,account_id:account,identity:format!("{}|{external}",accounts[&account]),date:r.get(3)?,amount:r.get(4)?,
+                // account key and external id as separate fields: a `|` in bank data cannot make
+                // two bookings sort alike (CodeRabbit #1852)
+                Ok((id,Book{id,live:r.get(11)?,account_id:account,identity:serde_json::to_string(&(&accounts[&account],&external)).expect("booking identity"),date:r.get(3)?,amount:r.get(4)?,
                     currency:r.get::<_,String>(5)?.to_ascii_uppercase(),category_id:r.get(6)?,counterparty:r.get(7)?,purpose:r.get(8)?,reference:r.get(9)?,label:r.get(10)?,parts:Vec::new()}))
             })?.collect::<Result<_,_>>()?;
         let mut stmt=conn.prepare("SELECT s.transaction_id,s.uuid,s.amount_cents,s.category_id,COALESCE(c.name,''),s.note FROM transaction_splits s LEFT JOIN categories c ON c.id=s.category_id ORDER BY s.position,s.id")?;
@@ -324,7 +326,8 @@ pub(crate) fn move_booking(conn: &Connection, from: i64, to: i64) -> CoreResult<
         return Ok(());
     }
     let mut endpoints = HashMap::new();
-    for row in load_rows(conn, "main")? {
+    // only rows that name `from` (`move_endpoints` reads the full table once)
+    for row in rows_of_booking(conn, from)? {
         for e in [row.key.refund, row.key.original] {
             if e.0 == from {
                 if from != to && e.1.is_empty() && is_split(conn, "main", from)? {

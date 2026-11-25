@@ -18,6 +18,8 @@ use crate::vault::Vault;
 pub(crate) struct DataStamp {
     generation: u64,
     changes: u64,
+    /// `PRAGMA data_version`: moves when another connection to the same file commits, which
+    /// `total_changes` of this connection never sees (CodeRabbit #1852).
     data_version: i64,
 }
 

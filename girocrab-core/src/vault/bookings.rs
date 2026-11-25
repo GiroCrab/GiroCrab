@@ -315,7 +315,13 @@ impl BookingFinisher {
     /// With `visible` accounts (local interface, #136), a payment linked to a
     /// loan outside them reads as a transfer: the loan itself must not show.
     fn finish(&self, t: &mut Booking, visible: Option<&[i64]>) {
-        if let Some(s) = self.refunds.summaries.get(&t.id) {
+        // like loan links: with `visible` accounts only links between visible bookings count,
+        // so a refund on a hidden account never shows on a visible booking (CodeRabbit #1852)
+        let scoped = visible.map(|v| self.refunds.summary_within(t.id, v));
+        if let Some(s) = scoped
+            .as_ref()
+            .or_else(|| self.refunds.summaries.get(&t.id))
+        {
             t.refund_marker = s.marker().into();
             t.refund_cents = s.refund_cents;
             t.refunded_cents = s.refunded_cents;
