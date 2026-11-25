@@ -329,10 +329,13 @@ impl Vault {
 
 /// Removes the planned payments of `account_id` the bank has booked by now (#1881): the
 /// same IBAN (when both sides have one) and amount, booked on or after the day the order
-/// was placed. A booking settles one order only: only the bookings this fetch inserted
-/// (`fetched`, their ids) count, so a later fetch, or a second call within the same second,
-/// cannot use the same booking for a second order. Pending/held rows are no bookings. Orders the bank executes early or on
-/// another day (weekend, holiday) would otherwise stay until their date has passed.
+/// was placed. Only orders with an execution date from today on are matched, earliest
+/// execution date first, so an order already past its date cannot take the booking of a
+/// listed one. Bookings with the exact IBAN are assigned before bookings without an IBAN.
+/// A booking settles one order only: only the bookings this fetch inserted (`fetched`,
+/// their ids) count, so a later fetch cannot use the same booking for a second order.
+/// Pending/held rows are no bookings. Orders the bank executes early or on another day
+/// (weekend, holiday) would otherwise stay until their date has passed.
 pub(crate) fn drop_booked(
     db: &Connection,
     account_id: i64,
