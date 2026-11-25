@@ -264,6 +264,14 @@ Sheet {
                     title: qsTr("Zugang")
                     SettingsFormRow { label: qsTr("Anzeigename")
                         TextField { text: sheet.name; onTextEdited: sheet.name = text; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
+                    // why a new name may not show in the sidebar (#1467)
+                    Text {
+                        readonly property int ownLabels: sheet.connection ? AppModel.accountsWithOwnBankLabel(sheet.connection.id) : 0
+                        visible: ownLabels > 0
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                        text: ownLabels === 1 ? qsTr("Ein Konto dieses Zugangs zeigt in der Seitenleiste einen eigenen Banknamen oder keinen (Kontoeinstellungen).")
+                            : qsTr("%1 Konten dieses Zugangs zeigen in der Seitenleiste einen eigenen Banknamen oder keinen (Kontoeinstellungen).").arg(ownLabels)
+                    }
                     SettingsFormRow { label: sheet.descriptor ? sheet.descriptor.login_label : qsTr("Benutzerkennung")
                         TextField { text: sheet.login; onTextEdited: sheet.login = text; enabled: !sheet.isRah10; Layout.fillWidth: true; Layout.preferredWidth: 300; Sensitive {} } }
                     SettingsFormRow { visible: sheet.isTR && sheet.login !== ""; label: qsTr("Gespeichert als"); personal: true

@@ -1357,14 +1357,15 @@ QtObject {
     function compactAccountIds(a) {
         return [a.iban || "", a.account_number || ""].map(x => x.replace(/\s/g, "").toLowerCase()).filter(x => x !== "")
     }
-    /// Account.matchesSidebarSearch: name, Kontoinhaber, bank, IBAN or account number.
+    /// Account.matchesSidebarSearch: name, Kontoinhaber, bank (or its label), IBAN or account number.
     function matchesSidebarSearch(a, raw) {
         const q = raw.trim()
         if (q === "") return true
         const ids = compactAccountIds(a)
         const compactQ = q.replace(/\s/g, "").toLowerCase()
         if (compactQ.length >= 3 && ids.some(x => x.includes(compactQ))) return true
-        const text = [a.name || "", a.owner || "", a.bank_name || ""].map(x => x.toLowerCase())
+        // the bank as stored and as the sidebar shows it (#1467)
+        const text = [a.name || "", a.owner || "", a.bank_name || "", sidebarBankName(a)].map(x => x.toLowerCase())
         return q.split(/\s+/).map(t => t.toLowerCase()).every(term =>
             text.some(x => x.includes(term)) || ids.some(x => x.includes(term)))
     }
@@ -2946,6 +2947,21 @@ QtObject {
     /// AppModel.swift › setAccountNote: empty clears it; synced like the name (#980).
     function setAccountNote(id, note) {
         if (run(() => { core("set_account_note", { account_id: id, note: note }); return true })) { reloadAccounts(); return true } else return false
+    }
+    /// AccountGroupsModel.swift › saveAccountEdits › setAccountBankLabel (#1467): `null` the bank
+    /// name, `""` none, else the user's own text; synced like the note.
+    function setAccountBankLabel(id, label) {
+        if (run(() => { core("set_account_bank_label", { account_id: id, label: label }); return true })) { reloadAccounts(); return true } else return false
+    }
+    /// Account.sidebarBankName (#1467): the bank in the sidebar row, the user's label, else the bank name.
+    function sidebarBankName(a) {
+        return a.bank_label !== null && a.bank_label !== undefined ? a.bank_label : (a.bank_name || "")
+    }
+    /// AccountGroupsModel.swift › accountsWithOwnBankLabel (#1467): accounts of a bank login whose
+    /// sidebar shows a label of their own or none, so the login's settings can say why a new
+    /// display name doesn't show there.
+    function accountsWithOwnBankLabel(connectionID) {
+        return allAccounts.filter(a => a.connection_id === connectionID && a.bank_label !== null && a.bank_label !== undefined).length
     }
     /// AccountGroupsModel.swift › setAccountKind (Kontoeinstellungen).
     function setAccountKind(id, kind) {

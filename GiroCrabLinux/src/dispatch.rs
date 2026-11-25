@@ -1641,6 +1641,8 @@ vault_methods! {
     set_account_symbol(account_id, sf_symbol) reset_account_symbol(account_id)
     set_account_kind(account_id, kind) set_account_owner(account_id, owner)
     set_account_note(account_id, note)
+    // Kontoeinstellungen › Bank in der Seitenleiste (#1467)
+    set_account_bank_label(account_id, label)
     // categories
     list_categories(date_from, date_to)
     create_category(name, parent_id, sf_symbol, color_hex)
@@ -4024,6 +4026,55 @@ mod tests {
         assert!(call("list_offline_account_ids", json!({})).is_array());
         drop(v);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Kontoeinstellungen › Bank in der Seitenleiste (#1467): an own name (trimmed),
+    /// hidden (`""`) and back to the bank name (`null`); `bank_name` stays as it was.
+    #[test]
+    fn account_bank_label_calls() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let account = |id: &Value| {
+            call_ok("list_accounts", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| &a["id"] == id)
+                .cloned()
+                .unwrap()
+        };
+        let id = call_ok("list_accounts", json!({}))[0]["id"].clone();
+        let bank = account(&id)["bank_name"].clone();
+        assert_eq!(
+            account(&id)["bank_label"],
+            Value::Null,
+            "the bank name by default"
+        );
+        call_ok(
+            "set_account_bank_label",
+            json!({ "account_id": id, "label": "  Haushalt " }),
+        );
+        let a = account(&id);
+        assert_eq!(a["bank_label"], "Haushalt");
+        assert_eq!(a["bank_name"], bank);
+        call_ok(
+            "set_account_bank_label",
+            json!({ "account_id": id, "label": "" }),
+        );
+        assert_eq!(account(&id)["bank_label"], "", "hidden");
+        call_ok(
+            "set_account_bank_label",
+            json!({ "account_id": id, "label": null }),
+        );
+        let a = account(&id);
+        assert_eq!(a["bank_label"], Value::Null, "the bank name again");
+        assert_eq!(a["bank_name"], bank);
+        let r: Value = serde_json::from_str(&call_json(
+            "set_account_bank_label",
+            &json!({ "account_id": -1, "label": null }).to_string(),
+        ))
+        .unwrap();
+        assert!(r.get("err").is_some(), "unknown account");
     }
 
     #[test]
