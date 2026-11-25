@@ -2244,6 +2244,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = render_header(&win, &v, sel);
             render_bookings(&win);
             views_ui::rerender(&win);
+            mandates_ui::render_batch(&win);
             apply_transfer_rule(&win, win.get_tr_account_index());
         });
     }
