@@ -41,7 +41,8 @@ const MODE_DOCUMENTS: i32 = 5;
 
 /// What a worker loaded for a view.
 enum Loaded {
-    Depot(Box<DepotData>),
+    /// The depot and its value history; the history is published only when the load is accepted.
+    Depot(Box<DepotData>, Vec<depot_chart::Point>),
     Wealth(WealthData),
     Planned(Vec<RecurringSeries>),
     Mandates(Vec<Mandate>),
@@ -315,6 +316,14 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
         return;
     }
     clear_table(win, "Wird geladen …");
+    // The chart must not show the curve of the previously selected depot while this one loads.
+    depot_chart::hide_unless_cached(
+        win,
+        match target {
+            Target::Account(id) => Some(id),
+            _ => None,
+        },
+    );
     // The old positions are gone: no history action until the new table is ready. The open
     // dialog stays, so a refresh of the same depot can reload it (`prepare(Some(..))`).
     crate::position_history_ui::loading(win);
@@ -339,7 +348,12 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
             match loaded {
                 Ok(l) => {
                     with_ui(|u| match l {
-                        Loaded::Depot(d) => u.depot = Some(*d),
+                        Loaded::Depot(d, history) => {
+                            // Only here, after the generation check: a superseded load must not
+                            // replace the series of the depot that is shown.
+                            depot_chart::store(d.account.id, history);
+                            u.depot = Some(*d);
+                        }
                         Loaded::Wealth(w) => u.wealth = Some(w),
                         Loaded::Planned(s) => u.series = s,
                         Loaded::Mandates(m) => u.mandates = m,
@@ -350,6 +364,8 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
                 }
                 Err(e) => {
                     clear_table(&win, "");
+                    // No curve beside the error text; the cached series is kept.
+                    depot_chart::hide(&win);
                     crate::position_history_ui::ready();
                     crate::position_history_ui::close(&win);
                     win.set_view_status(e.into());
@@ -359,7 +375,31 @@ pub fn apply_view(win: &MainWindow, vault: &Arc<Vault>) {
     });
 }
 
-fn depot_data(vault: &Vault, account: &Account, tangible: bool) -> Result<DepotData, String> {
+mod depot_chart;
+
+fn depot_data(
+    vault: &Vault,
+    account: &Account,
+    tangible: bool,
+) -> Result<(DepotData, Vec<depot_chart::Point>), String> {
+    // Value history of this one depot (its own currency, never summed across currencies);
+    // the range selector filters it in `render_view` without another vault call.
+    let history = if tangible {
+        Vec::new()
+    } else {
+        vault
+            .depot_value_history(vec![account.id], depot_chart::MAX_DAYS)
+            .map(|v| {
+                v.into_iter()
+                    .map(|p| depot_chart::Point {
+                        date: p.date,
+                        value_cents: p.value_cents,
+                        covered: p.covered_depots,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     let holdings = match vault.classified_assets(account.id) {
         Ok(v) => v
             .into_iter()
@@ -379,11 +419,14 @@ fn depot_data(vault: &Vault, account: &Account, tangible: bool) -> Result<DepotD
         Err(_) if tangible => Vec::new(),
         Err(e) => return Err(e.to_string()),
     };
-    Ok(DepotData {
-        account: account.clone(),
-        holdings,
-        transactions,
-    })
+    Ok((
+        DepotData {
+            account: account.clone(),
+            holdings,
+            transactions,
+        },
+        history,
+    ))
 }
 
 fn load(
@@ -400,7 +443,8 @@ fn load(
                 .iter()
                 .find(|a| a.id == id)
                 .ok_or("Konto nicht gefunden.")?;
-            depot_data(vault, account, tangible.contains(&id)).map(|d| Loaded::Depot(Box::new(d)))
+            depot_data(vault, account, tangible.contains(&id))
+                .map(|(d, history)| Loaded::Depot(Box::new(d), history))
         }
         Target::Wealth | Target::Depot => {
             let mut positions = Vec::new();
@@ -515,6 +559,9 @@ pub fn render_view(win: &MainWindow) {
     match mode {
         MODE_DEPOT => {
             let Some(data) = with_ui(|u| u.depot.take()) else {
+                // A redraw while the depot loads: hide the curve but keep the cached series
+                // (locking forgets it in `on_lock`).
+                depot_chart::hide(win);
                 return;
             };
             let cur = data.account.currency.clone();
@@ -548,6 +595,11 @@ pub fn render_view(win: &MainWindow) {
                 .collect();
             win.set_kpis(ModelRc::new(VecModel::from(kpis)));
             set_shares(win, &view.composition);
+            let selected = match with_state(|st| st.target) {
+                Target::Account(id) => Some(id),
+                _ => None,
+            };
+            depot_chart::render(win, data.account.id, selected, &cur_money, &date);
             match tab {
                 DepotTab::Positions => {
                     set_columns(win, &portfolio::POSITION_COLUMNS);
@@ -807,6 +859,8 @@ pub fn on_lock(win: &MainWindow) {
     crate::mandates_ui::on_lock(win);
     crate::settings_import_ui::on_lock(win);
     clear_table(win, "");
+    // Drops the cached value series and empties the chart properties.
+    depot_chart::reset(win);
 }
 
 // ------------------------------------------------------------------------------ documents
@@ -1517,9 +1571,13 @@ mod tests {
             .collect();
         for a in depots {
             match load(&vault, Target::Account(a.id), &accounts, &tangible, None).unwrap() {
-                Loaded::Depot(d) => {
+                Loaded::Depot(d, history) => {
                     let v = portfolio::depot_view(&d, Period::All, "2026-11-16", &eur, &date);
                     assert_eq!(v.kpis.len(), 4);
+                    // Sachwerte have no value history; the series travels with the result.
+                    if tangible.contains(&a.id) {
+                        assert!(history.is_empty());
+                    }
                 }
                 _ => panic!("depot expected"),
             }
