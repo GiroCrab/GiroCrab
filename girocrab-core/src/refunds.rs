@@ -360,6 +360,36 @@ impl Resolved {
     fn open(&self, e: &Endpoint) -> i64 {
         self.remaining.get(e).copied().unwrap_or(0)
     }
+
+    /// The summary of booking `id` from links whose both bookings sit in `visible` accounts
+    /// (local interface, #136): a link to a hidden account adds nothing.
+    pub(crate) fn summary_within(&self, id: i64, visible: &[i64]) -> Summary {
+        let shown = |booking: i64| {
+            self.state
+                .books
+                .get(&booking)
+                .is_some_and(|b| visible.contains(&b.account_id))
+        };
+        let mut s = Summary {
+            split_count: self.summaries.get(&id).map_or(0, |s| s.split_count),
+            ..Summary::default()
+        };
+        for a in &self.allocations {
+            let (Some(r), Some(o)) = (&a.refund, &a.original) else {
+                continue;
+            };
+            if (r.0 != id && o.0 != id) || !shown(r.0) || !shown(o.0) {
+                continue;
+            }
+            if r.0 == id {
+                s.refund_cents = s.refund_cents.saturating_add(a.cents);
+            }
+            if o.0 == id {
+                s.refunded_cents = s.refunded_cents.saturating_add(a.cents);
+            }
+        }
+        s
+    }
 }
 
 impl Vault {
@@ -367,7 +397,8 @@ impl Vault {
     /// row only the split counts are read, not the whole ledger after every write.
     pub(crate) fn refund_markers(&self, db: &Connection) -> CoreResult<Arc<Resolved>> {
         let any_link: bool =
-            db.query_row("SELECT EXISTS(SELECT 1 FROM refund_links)", [], |r| {
+            // tombstones alone allocate nothing: only a live link needs the whole ledger
+            db.query_row("SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL)", [], |r| {
                 r.get(0)
             })?;
         if any_link {
@@ -418,5 +449,69 @@ impl Vault {
             self.refunds.put(stamp, p.clone());
         }
         Ok(p)
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    fn book(id: i64, account_id: i64, amount: i64) -> Book {
+        Book {
+            live: true,
+            id,
+            identity: format!("{account_id}/{id}"),
+            account_id,
+            date: "2026-01-01".into(),
+            amount,
+            currency: "EUR".into(),
+            category_id: None,
+            parts: Vec::new(),
+            counterparty: String::new(),
+            purpose: String::new(),
+            reference: String::new(),
+            label: String::new(),
+        }
+    }
+
+    /// CodeRabbit (#1852): a refund on a hidden account leaves the markers of a visible
+    /// booking untouched, in either direction; links between visible bookings still show.
+    #[test]
+    fn scoped_markers_ignore_links_to_hidden_accounts() {
+        let row = Row {
+            key: Key {
+                refund: Endpoint(1, String::new()),
+                original: Endpoint(2, String::new()),
+            },
+            refund_cents: 100,
+            original_cents: 100,
+            created_ms: 1,
+            changed_ms: 1,
+            deleted_ms: None,
+            moved: false,
+            moved_from: None,
+            moved_from_key: String::new(),
+            unlink_id: String::new(),
+        };
+        let state = State {
+            books: [book(1, 10, 100), book(2, 20, -100)]
+                .into_iter()
+                .map(|b| (b.id, b))
+                .collect(),
+            rows: vec![row],
+        };
+        let p = Resolved::from_state(state).unwrap();
+        assert_eq!(p.summary_within(2, &[10, 20]).refunded_cents, 100);
+        assert_eq!(p.summary_within(1, &[10, 20]).marker(), "refund");
+        let hidden_refund = p.summary_within(2, &[20]);
+        assert_eq!(
+            (hidden_refund.marker(), hidden_refund.refunded_cents),
+            ("none", 0)
+        );
+        let hidden_original = p.summary_within(1, &[10]);
+        assert_eq!(
+            (hidden_original.marker(), hidden_original.refund_cents),
+            ("none", 0)
+        );
     }
 }

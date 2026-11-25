@@ -18,6 +18,9 @@ use crate::vault::Vault;
 pub(crate) struct DataStamp {
     generation: u64,
     changes: u64,
+    /// `PRAGMA data_version`: moves when another connection to the same file commits, which
+    /// `total_changes` of this connection never sees (CodeRabbit #1852).
+    external: i64,
 }
 
 impl Vault {
@@ -26,6 +29,9 @@ impl Vault {
         DataStamp {
             generation: self.data_generation.load(Ordering::SeqCst),
             changes: db.total_changes(),
+            external: db
+                .query_row("PRAGMA data_version", [], |r| r.get(0))
+                .unwrap_or(0),
         }
     }
 

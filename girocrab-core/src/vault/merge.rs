@@ -58,7 +58,10 @@ impl Vault {
         // bookings, splits and tag sets (newest edit per field wins, deletions stay)
         let booking_map =
             crate::sync_merge::merge_bookings(&tx, &acc_map, &cat_map, &rule_map, &mut st)?;
+        // refund links only write `refund_links`: the change delta is their count
+        let before = tx.total_changes();
         crate::refunds::merge_attached(&tx, &booking_map)?;
+        st.refund_links_updated = u32::try_from(tx.total_changes() - before).unwrap_or(u32::MAX);
         crate::loans::merge_attached(&tx, &acc_map)?;
         crate::opening_balance::merge_attached(&tx, &acc_map)?;
         crate::assets::merge_attached(&tx, &acc_map)?;
@@ -87,6 +90,11 @@ pub struct MergeStats {
     /// User groups and account fields taken over from the other vault (rows
     /// changed by `user_groups::merge_attached`).
     pub groups_updated: u32,
+    /// Refund-link rows taken over from the other vault (`refunds::merge_attached`): a merge
+    /// that changed only links still refreshes the booking markers.
+    #[uniffi(default = 0)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub refund_links_updated: u32,
     /// Rows this merge changed in the vault (part of [`Vault::change_count`]),
     /// so the app can tell its own changes from merged ones.
     pub changes: u64,
@@ -353,6 +361,40 @@ mod merge_tests {
         a.write_snapshot(snap.clone()).unwrap();
         assert!(Vault::open(snap.clone(), vec![7u8; 32]).is_err());
         assert!(Vault::open(snap, vec![9u8; 32]).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// CodeRabbit (#1852): a merge that brings only a refund link reports it on its own.
+    #[test]
+    fn merge_counts_refund_link_rows() {
+        let dir = temp_dir("merge-refunds");
+        let a = Vault::open(path_in(&dir, "a.db"), vec![7u8; 32]).unwrap();
+        let b = Vault::open(path_in(&dir, "b.db"), vec![7u8; 32]).unwrap();
+        let account = a
+            .create_offline_account(
+                "W".into(),
+                crate::models::AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let setup = |cents| crate::offline::ManualBookingSetup {
+            booking_date: "2026-01-10".into(),
+            amount_cents: cents,
+            counterparty: "Shop".into(),
+            purpose: String::new(),
+            category_id: None,
+            note: String::new(),
+        };
+        let o = a.save_manual_booking(account, None, setup(-100)).unwrap();
+        let r = a.save_manual_booking(account, None, setup(100)).unwrap();
+        let first = b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        assert_eq!(first.refund_links_updated, 0);
+        a.link_refund(r, String::new(), o, String::new()).unwrap();
+        let st = b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        assert!(st.refund_links_updated > 0);
+        let again = b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        assert_eq!(again.refund_links_updated, 0);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -161,9 +161,15 @@ impl Vault {
         row.deleted_ms = None;
         let restored = row.clone();
         let by_key = rows_by_key(&state.rows);
-        if !resolve(&state).iter().any(|a| {
-            descends_from(&by_key, &a.row, &key) && a.refund.is_some() && a.original.is_some()
-        }) {
+        let resolved = resolve(&state);
+        let active = |a: &Allocation| a.refund.is_some() && a.original.is_some();
+        // exactly one of them may allocate: the restored link itself, or (handover) a successor
+        // of it; never both for one assignment (CodeRabbit #1852)
+        let own = resolved.iter().any(|a| a.row.key == key && active(a));
+        let successor = resolved
+            .iter()
+            .any(|a| a.row.key != key && descends_from(&by_key, &a.row, &key) && active(a));
+        if own == successor {
             return Err(invalid());
         }
         write(&tx, &restored)?;
@@ -205,5 +211,52 @@ impl Vault {
                 }
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::models::AccountKind;
+    use crate::offline::ManualBookingSetup;
+
+    fn setup(cents: i64) -> ManualBookingSetup {
+        ManualBookingSetup {
+            booking_date: "2026-01-10".into(),
+            amount_cents: cents,
+            counterparty: "Shop".into(),
+            purpose: String::new(),
+            category_id: None,
+            note: String::new(),
+        }
+    }
+
+    /// The plain undo of an unmoved link still works after the successor check, and only once.
+    #[test]
+    fn undo_restores_an_unmoved_link_once() {
+        let v = Vault::open(
+            crate::test_support::thread_temp_path("refund-restore-once")
+                .to_string_lossy()
+                .into(),
+            vec![7u8; 32],
+        )
+        .unwrap();
+        let account = v
+            .create_offline_account("W".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let o = v.save_manual_booking(account, None, setup(-100)).unwrap();
+        let r = v.save_manual_booking(account, None, setup(100)).unwrap();
+        assert!(v.link_refund(r, String::new(), o, String::new()).unwrap());
+        let changed = v.refund_links(r).unwrap()[0].changed_ms;
+        let token = v
+            .unlink_refund(r, String::new(), o, String::new(), Some(changed))
+            .unwrap();
+        v.restore_refund(r, String::new(), o, String::new(), token.clone())
+            .unwrap();
+        assert_eq!(v.refund_links(r).unwrap()[0].allocated_cents, 100);
+        assert!(
+            v.restore_refund(r, String::new(), o, String::new(), token)
+                .is_err()
+        );
     }
 }
