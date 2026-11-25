@@ -2333,3 +2333,93 @@ async fn the_closing_balance_of_the_bookings_is_the_balance_with_its_date() {
     assert_eq!(r.accounts[0].balance_date, "2025-01-03");
     assert!(r.balances_unknown.is_empty(), "{:?}", r.balances_unknown);
 }
+
+/// An HKWPD answer that carries no holdings statement and no error (#1743).
+const WPD_WITHOUT_DATA: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+3050::UPD nicht mehr aktuell.'";
+const WPD_WITH_DATA: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+0020::Auftrag ausgefuehrt.'HIWPD:4:6:3+@10@:16R:GENL-'";
+
+#[tokio::test]
+async fn holdings_answer_without_a_statement_is_an_error_not_an_empty_depot() {
+    let (url, _) = mock_bank(vec![WPD_WITHOUT_DATA]);
+    let mut c = two_step_connector(&url, synced());
+    let e = c
+        .holdings(&test_ctx(), &sepa_acc(IBAN_A, "1234567"))
+        .await
+        .unwrap_err()
+        .to_string();
+    // what the bank said instead is named; the routine 0010 is not
+    assert!(e.contains("3050 UPD nicht mehr aktuell"), "{e}");
+    assert!(!e.contains("0010"), "{e}");
+}
+
+#[tokio::test]
+async fn holdings_answer_with_a_statement_is_read() {
+    let (url, _) = mock_bank(vec![WPD_WITH_DATA]);
+    let mut c = two_step_connector(&url, synced());
+    let st = c
+        .holdings(&test_ctx(), &sepa_acc(IBAN_A, "1234567"))
+        .await
+        .expect("a statement without positions is an empty depot");
+    assert!(st.holdings.is_empty());
+}
+
+#[test]
+fn no_holdings_message_is_translated() {
+    use crate::i18n::{Lang, with_language};
+    let msg = with_language(Lang::En, || no_holdings_message(&["3050 x".into()]));
+    assert_eq!(msg, "The bank did not deliver any holdings (3050 x).");
+    let none = with_language(Lang::En, || no_holdings_message(&[]));
+    assert_eq!(none, "The bank did not deliver any holdings.");
+}
+
+/// One depot (Kontoart 30) that allows only HKWPD; `supported` = the bank lists HKWPD in its BPD.
+fn depot_connector(url: &str, supported: bool) -> FinTsConnector {
+    let versions = if supported {
+        serde_json::json!({"HKWPD": [6]})
+    } else {
+        serde_json::json!({})
+    };
+    let mut state = synced();
+    state["versions"] = versions;
+    let mut c = two_step_connector(url, state);
+    let mut depot = upd_acc("0532013000", "", IBAN_A, "Direkt-Depot", &["HKWPD"]);
+    depot.kind_code = 30;
+    c.upd = vec![depot];
+    c
+}
+
+#[tokio::test]
+async fn a_depot_the_bank_does_not_answer_fails_the_fetch_with_the_banks_codes() {
+    // #1743: no error code, no statement: not an empty depot worth 0 (alone it fails the sync)
+    let (url, _) = mock_bank(vec![WPD_WITHOUT_DATA]);
+    let r = depot_connector(&url, true)
+        .fetch(&test_ctx())
+        .await
+        .unwrap_err();
+    // nothing else worked either: the sync fails and says why
+    assert!(r.to_string().contains("3050 UPD nicht mehr aktuell"), "{r}");
+}
+
+#[tokio::test]
+async fn a_depot_without_hkwpd_at_the_bank_is_warned_about() {
+    let (url, seen) = mock_bank(vec![WPD_WITHOUT_DATA]);
+    let e = depot_connector(&url, false)
+        .fetch(&test_ctx())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("von der Bank nicht angeboten"), "{e}");
+    assert!(seen.lock().unwrap().is_empty(), "HKWPD is not sent");
+}
+
+#[tokio::test]
+async fn an_empty_depot_statement_is_a_finished_fetch_with_value_0() {
+    let (url, _) = mock_bank(vec![WPD_WITH_DATA]);
+    let r = depot_connector(&url, true)
+        .fetch(&test_ctx())
+        .await
+        .unwrap();
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(r.accounts[0].balance_cents, 0);
+    assert!(r.balances_unknown.is_empty());
+}
