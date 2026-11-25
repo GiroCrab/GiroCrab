@@ -218,7 +218,7 @@ struct BookingStreamView: View {
         .onCommand(#selector(NSResponder.selectAll(_:))) { model.selectAllBookings() }
         // ⌘C copies the selected booking (Edit ▸ Copy)
         .onCopyCommand {
-            guard let b = model.selectedBooking else { return [] }
+            guard redaction.allowsBookingCopy, let b = model.selectedBooking else { return [] }
             return [NSItemProvider(object: b.clipboardLine as NSString)]
         }
         #endif
@@ -544,6 +544,7 @@ private extension View {
 struct DayCardRow: View {
     @Environment(\.textScale) private var textScale
     @Environment(\.bookingDensity) private var density
+    @Environment(\.reportRedaction) private var redaction
     @Environment(AppModel.self) private var model
     let booking: Booking
     let isLast: Bool
@@ -622,7 +623,11 @@ struct DayCardRow: View {
             .disabled(!model.canTransfer)
         Button("Als Dauerauftrag anlegen …", systemImage: "repeat") { model.newStandingOrder(from: b) }
             .disabled(!model.canMakeStandingOrder(from: b))
-        Button("Umsatz kopieren", systemImage: "doc.on.doc") { copyToPasteboard(b.clipboardLine) }
+        Button("Umsatz kopieren", systemImage: "doc.on.doc") {
+            guard redaction.allowsBookingCopy else { return }
+            copyToPasteboard(b.clipboardLine)
+        }
+        .disabled(!redaction.allowsBookingCopy)
         exportMenuButton(for: b)
         Divider()
         Button(b.checked ? "Als neu markieren" : "Als geprüft markieren", systemImage: "checkmark.circle") { model.setChecked(!b.checked, for: b) }
@@ -1036,13 +1041,11 @@ struct BookingRow: View {
                 if let source = model.amazonRefundSource(booking) {
                     Text("Erstattung zu:").appFont(.caption2).foregroundStyle(Theme.tertiary)
                     ForEach(source.list, id: \.self) { item in
-                        Text(item).sensitive().appFont(.callout).foregroundStyle(Theme.secondary)
-                            .textSelection(.enabled)
+                        orderItemText(item)
                     }
                 } else {
                     ForEach(ref.itemList, id: \.self) { item in
-                        Text(item).sensitive().appFont(.callout).foregroundStyle(Theme.secondary)
-                            .textSelection(.enabled)
+                        orderItemText(item)
                     }
                 }
             }
@@ -1067,6 +1070,16 @@ struct BookingRow: View {
         }
         // the row is reused for another booking (positional identity, `StreamItem`)
         .onChange(of: booking.id) { amazonExpanded = false }
+    }
+
+    @ViewBuilder
+    private func orderItemText(_ item: String) -> some View {
+        let text = Text(item).sensitive().appFont(.callout).foregroundStyle(Theme.secondary)
+        if redaction.allowsBookingCopy {
+            text.textSelection(.enabled)
+        } else {
+            text
+        }
     }
 }
 

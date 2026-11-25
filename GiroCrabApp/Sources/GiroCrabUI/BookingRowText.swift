@@ -34,7 +34,7 @@ struct BookingRowText: View {
             .lineLimit(wraps ? nil : 1)
         Group {
             #if os(macOS)
-            if let onSingleClick, redaction.effective.isDisjoint(with: .personal) {
+            if let onSingleClick, redaction.allowsBookingCopy {
                 text.hidden().overlay {
                     SelectableBookingText(
                         value: value, wraps: wraps,
@@ -74,6 +74,15 @@ private struct SelectableBookingText: NSViewRepresentable {
         view.isHorizontallyResizable = false
         view.isVerticallyResizable = false
         return view
+    }
+
+    static func dismantleNSView(_ view: BookingTextView, coordinator: ()) {
+        if let window = view.window, window.firstResponder === view {
+            window.makeFirstResponder(nil)
+        }
+        view.isSelectable = false
+        view.string = ""
+        view.onSingleClick = nil
     }
 
     func updateNSView(_ view: BookingTextView, context: Context) {

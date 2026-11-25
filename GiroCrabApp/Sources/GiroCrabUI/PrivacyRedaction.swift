@@ -27,6 +27,9 @@ public struct ReportRedaction: OptionSet, Sendable, Hashable {
         contains(.personal) ? union(.amounts) : self
     }
 
+    /// Booking list copy commands export the original values.
+    var allowsBookingCopy: Bool { isEmpty }
+
     /// Stands in for a hidden name inside a text, and for search text in
     /// the captured window.
     static let placeholder = "•••"
