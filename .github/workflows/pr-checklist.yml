@@ -1,0 +1,35 @@
+name: Zahlungspfad
+
+# Payment-path integrity (scripts/lint-transfer-integrity.sh, #1799, #946). Separate from ci.yml
+# because it also runs when the PR description is edited (ticking the checklist item must update
+# the result), and that must not restart the whole CI.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: payment-path-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  payment-path:
+    name: Payment path integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Payment path files exist and are owned in CODEOWNERS, no bypass; PR checklist ticked
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: scripts/lint-transfer-integrity.sh

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Payment-path integrity (#1799, #946):
 #   1. the central payment files exist,
-#   2. .github/CODEOWNERS covers each of them,
+#   2. .github/CODEOWNERS gives each of them an owner (the last matching rule counts, as on GitHub),
 #   3. they contain no bypass patterns (disabled TLS checks, skipped confirmation/validation),
-#   4. in a PR (GITHUB_BASE_REF set) that touches them, the security checklist in the PR body
-#      is ticked. Without PR context (local runs) this step only prints a note and never fails.
+#   4. in a PR (GITHUB_BASE_REF set) that touches them, the security checklist item in the PR
+#      body is ticked. Fails closed: an unreachable base or an empty body is an error.
+#      Without PR context (local runs) step 4 is skipped.
 #
 #   scripts/lint-transfer-integrity.sh     exits 1 and lists the problems
-#   PR_BODY="$body"                        PR description (set by ci.yml); unset = cannot check
+#   PR_BODY="$body"                        PR description (set by .github/workflows/pr-checklist.yml)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -17,26 +18,34 @@ PAYMENT_FILES=(
   girocrab-core/src/payment_input.rs
   girocrab-core/src/connectors/fints/sepa.rs
   girocrab-core/src/connectors/fints/transfer.rs
+  girocrab-core/src/connectors/fints/debit.rs
+  girocrab-core/src/connectors/fints/standing.rs
 )
 CODEOWNERS=.github/CODEOWNERS
+# The payment-path item of .github/pull_request_template.md, ticked (keep its text in sync).
+CHECKLIST_ITEM='^[[:space:]]*[-*] \[[xX]\] Zahlungspfad geprüft / payment path reviewed'
 fail=0
 err() { echo "lint-transfer-integrity: $*" >&2; fail=1; }
 
 [[ -f "$CODEOWNERS" ]] || { echo "lint-transfer-integrity: $CODEOWNERS missing" >&2; exit 1; }
 
-# Does a CODEOWNERS pattern (anchored, optional trailing `/` or `*`) cover the file?
+# Does CODEOWNERS give the file an owner? Like GitHub, the last matching rule wins; a rule
+# without owners (or with only a comment after the pattern) is an ownerless exception.
+# Patterns: anchored, optional trailing `/` or `*`.
 covered() {
-  local f=$1 pat
-  while read -r pat _; do
+  local f=$1 pat owners owned=1
+  while read -r pat owners || [[ -n "$pat" ]]; do
     [[ -z "$pat" || "$pat" == \#* ]] && continue
     pat=${pat#/}
     case "$pat" in
-      */) [[ "$f" == "$pat"* ]] && return 0 ;;
+      */) [[ "$f" == "$pat"* ]] || continue ;;
       *) # shellcheck disable=SC2254
-         case "$f" in $pat|$pat/*) return 0 ;; esac ;;
+         case "$f" in $pat|$pat/*) ;; *) continue ;; esac ;;
     esac
+    owners=${owners%%#*}
+    if [[ -n "${owners//[[:space:]]/}" ]]; then owned=0; else owned=1; fi
   done < "$CODEOWNERS"
-  return 1
+  return "$owned"
 }
 
 # Bypass patterns, excluding comment-only lines and test code after `#[cfg(test)]` is not
@@ -48,28 +57,29 @@ for f in "${PAYMENT_FILES[@]}"; do
   covered "$f" || err "$f is not covered by $CODEOWNERS"
   if hits=$(grep -nEi "$BYPASS" "$f"); then err "bypass pattern in $f:"$'\n'"$hits"; fi
 done
-for p in GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift girocrab-core/src/sys.rs .github/workflows/x.yml scripts/x.sh policy/x; do
+for p in GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift girocrab-core/src/sys.rs .github/CODEOWNERS .github/workflows/x.yml scripts/x.sh policy/x; do
   covered "$p" || err "$p is not covered by $CODEOWNERS"
 done
 
-# PR context: payment files touched -> security checklist must be ticked.
+# PR context: payment files touched -> the security checklist item must be ticked.
+# Fails closed: a base that cannot be fetched or diffed, or an empty PR body, is an error.
 if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
-  changed=""
-  if git fetch -q --no-tags --depth=1 origin "$GITHUB_BASE_REF" 2>/dev/null; then
-    changed=$(git diff --name-only FETCH_HEAD HEAD 2>/dev/null || true)
+  if ! git fetch -q --no-tags --depth=1 origin "$GITHUB_BASE_REF" 2>/dev/null; then
+    err "cannot fetch base '$GITHUB_BASE_REF': the PR's payment-path changes cannot be checked"
+  elif ! changed=$(git diff --name-only FETCH_HEAD HEAD); then
+    err "cannot diff against base '$GITHUB_BASE_REF': the PR's payment-path changes cannot be checked"
   else
-    echo "lint-transfer-integrity: note: cannot fetch base '$GITHUB_BASE_REF', PR checklist not checked"
-  fi
-  touched=()
-  for f in "${PAYMENT_FILES[@]}"; do
-    grep -qxF "$f" <<<"$changed" && touched+=("$f")
-  done
-  if (( ${#touched[@]} )); then
-    echo "lint-transfer-integrity: PR touches the payment path: ${touched[*]}"
-    if [[ -z "${PR_BODY:-}" ]]; then
-      echo "lint-transfer-integrity: note: PR_BODY not set, cannot check the security checklist"
-    elif ! grep -qiE '^\s*[-*] \[x\].*(Zahlungs|payment)' <<<"$PR_BODY"; then
-      err "PR touches the payment path: tick the payment-path security checklist item in the PR description"
+    touched=()
+    for f in "${PAYMENT_FILES[@]}"; do
+      grep -qxF "$f" <<<"$changed" && touched+=("$f")
+    done
+    if (( ${#touched[@]} )); then
+      echo "lint-transfer-integrity: PR touches the payment path: ${touched[*]}"
+      if [[ -z "${PR_BODY:-}" ]]; then
+        err "PR touches the payment path but has no description: add and tick the payment-path security checklist item"
+      elif ! grep -qE "$CHECKLIST_ITEM" <<<"$PR_BODY"; then
+        err "PR touches the payment path: tick the payment-path security checklist item in the PR description"
+      fi
     fi
   fi
 fi
