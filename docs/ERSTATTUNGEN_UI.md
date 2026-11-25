@@ -150,7 +150,10 @@ sind alte Zeilen nicht bedienbar. Nach Synchronisation, Split- und Kategorieänd
 und nach einer Linkänderung werden Buchungen, Kategorien, Analysen und Cockpit neu geladen
 (der gemeinsame Ladepfad); eine Linkänderung ändert dabei keine Summen.
 Beim Aktivieren des Datenschutzes verschwinden alte Dialoginhalte sofort;
-neu geladene Daten verwenden den aktuellen Datenschutzstatus.
+neu geladene Daten verwenden den aktuellen Datenschutzstatus. Vorschlagsgründe
+bleiben im Datenschutz verborgen. Ein Tresorwechsel behält den Datenschutzstatus.
+Lehnt der Kern ein Rückgängig ab, bleibt es angeboten; ein späterer Versuch entscheidet.
+Das Formular scrollt; „Fertig“ und „Aufheben rückgängig“ bleiben immer erreichbar.
 
 „Werte ausblenden“ aktiviert den Datenschutz auch im geöffneten Windows-Dialog;
 „Werte anzeigen“ beendet ihn wieder.

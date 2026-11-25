@@ -307,3 +307,12 @@ test("lock, vault swap, newer jump and changed list reject stale work", () => {
     const changed = fixture(); changed.jump(42); changed.fire(); changed.s.listGeneration++;
     changed.pending[0].apply(["2020-01-01"]); assert.equal(changed.pending.length, 1);
 });
+
+test("failed backup restore refreshes the refund card", () => {
+    const backup = readFileSync(new URL("../qml/BackupModel.qml", import.meta.url), "utf8");
+    const restore = backup.slice(backup.indexOf('AppModel.coreAsync("restore_backup"'));
+    const failure = restore.slice(restore.indexOf("err => {"));
+    const handler = failure.slice(0, failure.indexOf("})"));
+    assert.match(handler, /AppModel\.refundBooking = null/);
+    assert.match(handler, /AppModel\.refundLinksRevision\+\+/);
+});

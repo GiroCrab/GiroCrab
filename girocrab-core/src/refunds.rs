@@ -366,10 +366,13 @@ impl Vault {
     /// What the booking rows show (markers, allocated cents, split counts). Without any link
     /// row only the split counts are read, not the whole ledger after every write.
     pub(crate) fn refund_markers(&self, db: &Connection) -> CoreResult<Arc<Resolved>> {
-        let any_link: bool =
-            db.query_row("SELECT EXISTS(SELECT 1 FROM refund_links)", [], |r| {
-                r.get(0)
-            })?;
+        // tombstones alone allocate nothing: only a live link needs the full projection (which
+        // still loads the tombstones, so an ancestor unlink keeps blocking its successor)
+        let any_link: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL)",
+            [],
+            |r| r.get(0),
+        )?;
         if any_link {
             return self.refund_projection(db);
         }
@@ -418,5 +421,47 @@ impl Vault {
             self.refunds.put(stamp, p.clone());
         }
         Ok(p)
+    }
+}
+
+#[cfg(test)]
+mod marker_probe_tests {
+    use super::*;
+
+    /// CodeRabbit (#1855): only unlink tombstones left: the markers skip the full ledger load.
+    #[test]
+    fn only_tombstones_skip_the_full_projection() {
+        let dir = std::env::temp_dir().join(format!(
+            "gc-refund-probe-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![5u8; 32]).unwrap();
+        {
+            let c = v.db().unwrap();
+            c.execute_batch(
+                "INSERT INTO account_groups(name) VALUES ('G');
+                 INSERT INTO accounts(group_id, external_ref, name)
+                     VALUES ((SELECT id FROM account_groups), 'A', 'K');
+                 INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES ((SELECT id FROM accounts), 'r', '2025-01-01', 100),
+                            ((SELECT id FROM accounts), 'o', '2025-01-01', -100);
+                 INSERT INTO refund_links(refund_id, refund_part, original_id, original_part,
+                     refund_cents, original_cents, created_ms, changed_ms, deleted_ms)
+                     VALUES ((SELECT id FROM transactions WHERE external_id = 'r'), '',
+                             (SELECT id FROM transactions WHERE external_id = 'o'), '',
+                             100, -100, 1, 2, 2);",
+            )
+            .unwrap();
+            assert!(v.refund_markers(&c).unwrap().state.books.is_empty());
+            c.execute("UPDATE refund_links SET deleted_ms = NULL", [])
+                .unwrap();
+            let p = v.refund_markers(&c).unwrap();
+            assert!(!p.state.books.is_empty());
+            assert!(p.allocations.iter().any(|a| a.cents == 100));
+        }
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

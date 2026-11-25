@@ -532,6 +532,20 @@ pub(crate) fn store_splits(
     id: i64,
     lines: &[TransactionSplitInput],
 ) -> Result<(), CoreError> {
+    // a part never names a deleted category: its row stays, so the foreign key alone lets it
+    // pass (CodeRabbit #1855)
+    for category in lines.iter().filter_map(|l| l.category_id) {
+        let live: bool = conn
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM categories WHERE id = ?1 AND deleted_ms IS NULL)",
+            )?
+            .query_row([category], |r| r.get(0))?;
+        if !live {
+            return Err(CoreError::NotFound {
+                what: trf("Kategorie {0}", &[&category]),
+            });
+        }
+    }
     let existing = conn
         .prepare_cached("SELECT uuid FROM transaction_splits WHERE transaction_id=?1")?
         .query_map([id], |r| r.get::<_, String>(0))?
@@ -556,10 +570,12 @@ pub(crate) fn store_splits(
         )?
         .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, bool>(2)?)))?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut removed = std::collections::HashMap::<i64, Vec<(String, bool)>>::new();
+    // only removed parts a refund link names compete for an inheritance: an unreferenced removed
+    // part of the same amount does not make it ambiguous (CodeRabbit #1855)
+    let mut removed = std::collections::HashMap::<i64, Vec<String>>::new();
     for (uuid, amount, referenced) in referenced {
-        if !kept.contains(&uuid) {
-            removed.entry(amount).or_default().push((uuid, referenced));
+        if referenced && !kept.contains(&uuid) {
+            removed.entry(amount).or_default().push(uuid);
         }
     }
     let mut added = std::collections::HashMap::<i64, Vec<usize>>::new();
@@ -567,7 +583,7 @@ pub(crate) fn store_splits(
         added.entry(line.amount_cents).or_default().push(position);
     }
     for (amount, old) in removed {
-        if let ([(uuid, true)], Some(new)) = (old.as_slice(), added.get(&amount))
+        if let ([uuid], Some(new)) = (old.as_slice(), added.get(&amount))
             && let [position] = new.as_slice()
         {
             uuids[*position] = uuid.clone();
@@ -839,6 +855,71 @@ mod tests {
             derive_split_uuids(&db, id).unwrap();
         }
         assert_eq!(v.list_transaction_splits(id).unwrap()[2].uuid, linked);
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// CodeRabbit (#1855): A (−40, linked) and B (−40, unlinked) become one new −40 part, C goes
+    /// from −20 to −60. The new part inherits A's UUID; B is gone.
+    #[test]
+    fn unreferenced_removed_parts_do_not_block_uuid_inheritance() {
+        let (v, dir) = vault();
+        let id = tx(&v, "inherit", "2025-01-01", -100, None);
+        let part = |uuid, amount| TransactionSplitInput {
+            uuid,
+            category_id: None,
+            amount_cents: amount,
+            note: String::new(),
+        };
+        v.set_transaction_splits(id, vec![part(None, -40), part(None, -40), part(None, -20)])
+            .unwrap();
+        let parts = v.list_transaction_splits(id).unwrap();
+        let refund = tx(&v, "inherit-refund", "2025-01-05", 40, None);
+        v.db()
+            .unwrap()
+            .execute(
+                "INSERT INTO refund_links(refund_id, refund_part, original_id, original_part,
+                     refund_cents, original_cents, created_ms, changed_ms)
+                 VALUES (?1, '', ?2, ?3, 40, 40, 1, 1)",
+                params![refund, id, parts[0].uuid],
+            )
+            .unwrap();
+        v.set_transaction_splits(
+            id,
+            vec![part(None, -40), part(Some(parts[2].uuid.clone()), -60)],
+        )
+        .unwrap();
+        let after = v.list_transaction_splits(id).unwrap();
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].uuid, parts[0].uuid);
+        assert!(after.iter().all(|p| p.uuid != parts[1].uuid));
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// CodeRabbit (#1855): a part never names a soft-deleted category.
+    #[test]
+    fn parts_never_name_a_deleted_category() {
+        let (v, dir) = vault();
+        let gone = cat(&v, "Test-Weg", None);
+        let id = tx(&v, "deleted-cat", "2025-01-01", -100, None);
+        v.db()
+            .unwrap()
+            .execute("UPDATE categories SET deleted_ms = 1 WHERE id = ?1", [gone])
+            .unwrap();
+        let part = |category, amount| TransactionSplitInput {
+            uuid: None,
+            category_id: category,
+            amount_cents: amount,
+            note: String::new(),
+        };
+        assert!(
+            v.set_transaction_splits(id, vec![part(Some(gone), -40), part(None, -60)])
+                .is_err()
+        );
+        assert!(v.list_transaction_splits(id).unwrap().is_empty());
+        v.set_transaction_splits(id, vec![part(None, -40), part(None, -60)])
+            .unwrap();
         drop(v);
         let _ = std::fs::remove_dir_all(dir);
     }

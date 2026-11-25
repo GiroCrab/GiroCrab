@@ -1,5 +1,5 @@
 // docs/ERSTATTUNGEN_UI.md
-import { Button, ListView, LineEdit, ComboBox } from "std-widgets.slint";
+import { Button, ListView, LineEdit, ComboBox, ScrollView } from "std-widgets.slint";
 
 export struct RefundRow { index: int, kind: int, title: string, detail: string, reason: string, amount: string, share: string, blocked: bool }
 
@@ -38,49 +38,62 @@ export component RefundsPanel inherits FocusScope {
     }
     VerticalLayout {
     spacing: 10px;
-    Text { text: root.from-refund ? (root.english ? "Assign original transaction" : "Ursprüngliche Buchung zuordnen") : (root.english ? "Assign refund" : "Erstattung zuordnen"); color: root.ink; font-size: 18px; font-weight: 700; }
-    Text { text: root.booking-title + " · " + root.booking-amount; color: root.ink; font-size: 12px; overflow: elide; }
-    search-edit := LineEdit { enabled: !root.pending; input-type: root.privacy ? InputType.password : InputType.text; placeholder-text: root.english ? "Search name or purpose" : "Name oder Verwendungszweck suchen"; edited(t) => { root.search(t); } }
-    Text { text: root.english ? "Assignments do not change transactions, splits or balances." : "Die Zuordnung ändert keine Buchungen, Splits oder Kontostände."; color: root.muted; font-size: 12px; wrap: word-wrap; }
-    if root.parts.length > 0: HorizontalLayout {
-        Text { text: root.from-refund ? (root.english ? "Refund from" : "Erstattung aus") : (root.english ? "Refund for" : "Erstattung für"); color: root.ink; vertical-alignment: center; }
-        ComboBox { enabled: !root.pending && !root.loading; model: root.parts; current-index <=> root.part-index; selected => { root.part-picked(self.current-index); } }
-    }
-    Text { text: root.sums; color: root.muted; font-size: 12px; }
-    Rectangle {
-        min-height: 120px;
-        preferred-height: 340px;
+    // the form scrolls as a whole (split picker, search feedback, a wrapped error); the footer
+    // with Done and Undo stays reachable at the smallest window height
+    form := ScrollView {
         vertical-stretch: 1;
-        border-width: 1px;
-        border-color: root.line;
-        border-radius: 8px;
-        clip: true;
-        if root.rows.length == 0: Text { text: root.loading ? (root.english ? "Loading …" : "Laden …") : (root.english ? "No matching transactions" : "Keine passenden Buchungen"); color: root.muted; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-        ListView {
-            for r in root.rows: Rectangle {
-                height: r.kind == 0 ? 26px : 64px;
-                opacity: r.blocked ? 0.45 : 1;
-                if r.kind == 0: Text { x: 10px; text: r.title; color: root.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
-                if r.kind != 0: HorizontalLayout {
-                    padding: 8px;
-                    spacing: 8px;
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        Text { text: r.title; color: root.ink; font-size: 13px; font-weight: 700; overflow: elide; }
-                        Text { text: r.detail; color: root.muted; font-size: 11px; overflow: elide; }
-                        Text { text: r.reason; color: root.accent; font-size: 11px; }
+        min-height: 160px;
+        viewport-width: self.visible-width;
+        viewport-height: max(self.visible-height, form-layout.preferred-height);
+        form-layout := VerticalLayout {
+        width: form.visible-width;
+        height: form.viewport-height;
+        spacing: 10px;
+        Text { text: root.from-refund ? (root.english ? "Assign original transaction" : "Ursprüngliche Buchung zuordnen") : (root.english ? "Assign refund" : "Erstattung zuordnen"); color: root.ink; font-size: 18px; font-weight: 700; }
+        Text { text: root.booking-title + " · " + root.booking-amount; color: root.ink; font-size: 12px; overflow: elide; }
+        search-edit := LineEdit { enabled: !root.pending; input-type: root.privacy ? InputType.password : InputType.text; placeholder-text: root.english ? "Search name or purpose" : "Name oder Verwendungszweck suchen"; edited(t) => { root.search(t); } }
+        Text { text: root.english ? "Assignments do not change transactions, splits or balances." : "Die Zuordnung ändert keine Buchungen, Splits oder Kontostände."; color: root.muted; font-size: 12px; wrap: word-wrap; }
+        if root.parts.length > 0: HorizontalLayout {
+            Text { text: root.from-refund ? (root.english ? "Refund from" : "Erstattung aus") : (root.english ? "Refund for" : "Erstattung für"); color: root.ink; vertical-alignment: center; }
+            ComboBox { enabled: !root.pending && !root.loading; model: root.parts; current-index <=> root.part-index; selected => { root.part-picked(self.current-index); } }
+        }
+        Text { text: root.sums; color: root.muted; font-size: 12px; }
+        Rectangle {
+            min-height: 120px;
+            preferred-height: 340px;
+            vertical-stretch: 1;
+            border-width: 1px;
+            border-color: root.line;
+            border-radius: 8px;
+            clip: true;
+            if root.rows.length == 0: Text { text: root.loading ? (root.english ? "Loading …" : "Laden …") : (root.english ? "No matching transactions" : "Keine passenden Buchungen"); color: root.muted; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            ListView {
+                for r in root.rows: Rectangle {
+                    height: r.kind == 0 ? 26px : 64px;
+                    opacity: r.blocked ? 0.45 : 1;
+                    if r.kind == 0: Text { x: 10px; text: r.title; color: root.muted; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                    if r.kind != 0: HorizontalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: r.title; color: root.ink; font-size: 13px; font-weight: 700; overflow: elide; }
+                            Text { text: r.detail; color: root.muted; font-size: 11px; overflow: elide; }
+                            Text { text: r.reason; color: root.accent; font-size: 11px; }
+                        }
+                        VerticalLayout {
+                            Text { text: r.amount; color: root.ink; font-size: 13px; horizontal-alignment: right; }
+                            Text { text: r.share; color: root.muted; font-size: 11px; horizontal-alignment: right; }
+                        }
+                        Button { text: r.kind == 1 ? (root.english ? "Unlink" : "Aufheben") : (root.english ? "Assign" : "Zuordnen"); enabled: !root.pending && !root.loading && !r.blocked; clicked => { root.toggle(r.index); } }
                     }
-                    VerticalLayout {
-                        Text { text: r.amount; color: root.ink; font-size: 13px; horizontal-alignment: right; }
-                        Text { text: r.share; color: root.muted; font-size: 11px; horizontal-alignment: right; }
-                    }
-                    Button { text: r.kind == 1 ? (root.english ? "Unlink" : "Aufheben") : (root.english ? "Assign" : "Zuordnen"); enabled: !root.pending && !root.loading && !r.blocked; clicked => { root.toggle(r.index); } }
                 }
             }
         }
+        if root.search-empty && !root.loading && root.rows.length > 0: Text { text: root.english ? "No matching transactions" : "Keine passenden Buchungen"; color: root.muted; font-size: 12px; }
+        Text { text: root.status; color: root.muted; font-size: 12px; wrap: word-wrap; }
+        }
     }
-    if root.search-empty && !root.loading && root.rows.length > 0: Text { text: root.english ? "No matching transactions" : "Keine passenden Buchungen"; color: root.muted; font-size: 12px; }
-    Text { text: root.status; color: root.muted; font-size: 12px; wrap: word-wrap; }
     HorizontalLayout {
         if root.can-undo: Button { text: root.english ? "Undo unlink" : "Aufheben rückgängig"; enabled: !root.pending && !root.loading; clicked => { root.undo-unlink(); } }
         Button { text: root.privacy ? (root.english ? "Show values" : "Werte anzeigen") : (root.english ? "Hide values" : "Werte ausblenden"); clicked => { root.privacy-toggle(); } }

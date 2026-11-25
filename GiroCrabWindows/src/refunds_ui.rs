@@ -83,16 +83,10 @@ impl Ui {
         self.loaded = None;
         self.actions.clear();
     }
-    fn edit_failed(&mut self, error: String, restoring: bool) {
+    fn edit_failed(&mut self, error: String) {
         self.invalidate();
-        // A restore the core rejects as not possible has a stale token (a newer change won):
-        // offering the same undo again cannot succeed. Other errors (e.g. a locked vault) keep it.
-        if restoring
-            && (error.contains("Diese Erstattungszuordnung ist nicht möglich")
-                || error.contains("This refund assignment is not possible"))
-        {
-            self.undo = None;
-        }
+        // The undo stays: the core reports a stale token and an endpoint that does not resolve
+        // right now (e.g. a sign change) with one error; a later attempt decides (CodeRabbit #1855).
         self.edit_error = error;
     }
     fn edit_succeeded(&mut self, action: &Edit, undo: Option<(Pair, String)>) {
@@ -457,6 +451,12 @@ fn search_empty(d: &Loaded, query: &str) -> bool {
     !query.trim().is_empty() && !d.search_matches
 }
 
+/// The match reason of a suggestion; hidden in privacy mode, where it would tell that two masked
+/// amounts are equal or that two bookings share a reference (CodeRabbit #1855).
+fn shown_reason(reason: &str, privacy: bool) -> &str {
+    if privacy { "" } else { reason }
+}
+
 fn render(win: &MainWindow) {
     let privacy = crate::privacy_on(win);
     let mask = |s: &str| daily::mask(s, privacy);
@@ -566,7 +566,7 @@ fn render(win: &MainWindow) {
                     })
                     .into(),
                     detail: mask(&format!("{} · {}", c.booking_date, c.part_label)).into(),
-                    reason: reason.into(),
+                    reason: shown_reason(reason, privacy).into(),
                     amount: mask(&money(c.amount_cents, &c.currency)).into(),
                     share: format!(
                         "{}: {}",
@@ -779,8 +779,8 @@ fn mutate(win: &MainWindow, v: Arc<Vault>, action: Edit) {
                         refresh(&win, v);
                         return;
                     }
-                    with_ui(|u| u.edit_failed(e, matches!(action, Edit::Restore(..))));
-                    // a cleared (stale) undo disappears at once, not only after the reload
+                    with_ui(|u| u.edit_failed(e));
+                    // the undo stays offered: a later attempt decides whether it still applies
                     win.set_rf_can_undo(with_ui(|u| u.undo.is_some()));
                     refresh(&win, v);
                 }
@@ -1165,7 +1165,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        ui.edit_failed("database is busy".into(), true);
+        ui.edit_failed("database is busy".into());
         assert!(ui.undo.is_some());
     }
 
@@ -1183,9 +1183,9 @@ mod tests {
             )),
             ..Default::default()
         };
-        ui.edit_failed("unrelated failure".into(), false);
+        ui.edit_failed("unrelated failure".into());
         assert!(ui.undo.is_some());
-        ui.edit_failed("stale token".into(), true);
+        ui.edit_failed("stale token".into());
         ui.invalidate();
         assert_eq!(ui.edit_error, "stale token");
         assert!(ui.undo.is_some());
@@ -1716,5 +1716,58 @@ mod tests {
             original_part: String::new(),
         };
         assert!(edit(&v, &Edit::Link(bad)).is_err());
+    }
+
+    /// CodeRabbit (#1855): the core reports a stale token and an endpoint that does not resolve
+    /// right now with one error, so the undo stays; privacy mode hides the match reasons.
+    #[test]
+    fn not_possible_restore_keeps_undo_and_privacy_hides_reasons() {
+        let mut ui = Ui {
+            undo: Some((
+                Pair {
+                    refund: 1,
+                    refund_part: String::new(),
+                    original: 2,
+                    original_part: String::new(),
+                },
+                "token".into(),
+            )),
+            ..Default::default()
+        };
+        ui.edit_failed("Diese Erstattungszuordnung ist nicht möglich.".into());
+        assert!(ui.undo.is_some());
+        ui.edit_failed("This refund assignment is not possible.".into());
+        assert!(ui.undo.is_some());
+        assert_eq!(shown_reason("Gleicher Betrag", true), "");
+        assert_eq!(shown_reason("Gleicher Betrag", false), "Gleicher Betrag");
+    }
+
+    /// CodeRabbit (#1855): a vault switch keeps the privacy toggle, an explicit pick ends the
+    /// reveal, and the refund form scrolls above a fixed footer.
+    #[test]
+    fn vault_switch_selection_and_dialog_layout() {
+        let main = include_str!("main.rs");
+        let show = main
+            .split("fn show(win: &MainWindow")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(show.contains("if !switching {"));
+        assert!(!show.contains("k.set(None));\n        win.set_privacy(false);"));
+        let select = main
+            .split("win.on_select_booking(")
+            .nth(1)
+            .unwrap()
+            .split("});")
+            .next()
+            .unwrap();
+        assert!(select.contains("st.reveal_limit = 0"));
+        let panel = include_str!("../ui/refunds_dialog.slint");
+        let scroll = panel.find("ScrollView {").unwrap();
+        let status = panel.find("text: root.status;").unwrap();
+        let done = panel.find("root.english ? \"Done\"").unwrap();
+        assert!(scroll < status && status < done);
     }
 }
