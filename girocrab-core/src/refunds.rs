@@ -17,7 +17,7 @@ mod tests;
 
 pub(crate) use store::{fold_booking, merge_attached, merge_folded, move_booking, move_endpoints};
 
-/// One stored link between a refund and an original (docs/adr/0003-refund-links.md).
+/// One stored link between a refund and an original (docs/adr/0004-refund-links.md).
 ///
 /// An endpoint is a booking plus a part: `""` = the whole (unsplit) booking, otherwise the
 /// UUID of a split part. `refund_*`/`original_*` are the stored key, used for

@@ -1,4 +1,4 @@
-# 0003 – Refund links and stable split identities
+# 0004 – Refund links and stable split identities
 
 **Status** · Proposed\
 **Date** · 2026-11-22\

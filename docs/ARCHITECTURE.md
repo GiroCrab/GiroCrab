@@ -140,7 +140,7 @@ cached by vault data revision, not persisted as additional financial truth.
 Links are documentation only: no report reads them; allocated cents appear
 only as row markers, in the refund card and in the assignment dialog.
 
-See [ADR 0003](adr/0003-refund-links.md) for the rules, rejected
+See [ADR 0004](adr/0004-refund-links.md) for the rules, rejected
 alternatives and test evidence, and the [refund UI guide](ERSTATTUNGEN_UI.md)
 for platform entry points and privacy behavior.
 
