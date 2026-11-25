@@ -138,6 +138,15 @@ extension AppModel {
         selectLoadedBookings()
     }
 
+    /// A search ended without a reload of its own (e.g. the natural reading changed nothing): a ⌘A
+    /// that waited for a new list selects the one on screen. A reload still running keeps it
+    /// pending; its `publish` takes it (#1696).
+    func runPendingSelectAll() {
+        guard selectAllAfterReload, !isReloadingList else { return }
+        selectAllAfterReload = false
+        selectAllShownBookings()
+    }
+
     /// A new list is on its way (selection, edit, scope or search): the rows on screen belong to the
     /// previous filter, so ⌘A must neither select them nor append the new filter's tail to them.
     var isReloadingList: Bool {
@@ -436,7 +445,14 @@ extension AppModel {
         let query = searchText
         searchTask = Task { [weak self] in
             // a newer search cancels this one first: not cancelled = still the current task
-            defer { if !Task.isCancelled { self?.searchTask = nil } }
+            defer {
+                if !Task.isCancelled, let model = self {
+                    model.searchTask = nil
+                    // a reading that changed nothing published no new list: a ⌘A waiting for one
+                    // runs on the list on screen (#1696)
+                    model.runPendingSelectAll()
+                }
+            }
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled, let self else { return }
             guard self.naturalSearch?.query != query, query != self.literalSearchQuery,
