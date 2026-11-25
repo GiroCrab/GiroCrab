@@ -469,16 +469,22 @@ struct MainSplitView: View {
     @Environment(AppModel.self) private var model
     @AppStorage(EnableBankingKeySync.noticeSuppressedKey) private var enableBankingNoticeSuppressed = false
     @Environment(\.textScale) private var textScale
+    @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
     #if os(macOS)
     @State private var columns: NavigationSplitViewVisibility = .all
-    @AppStorage(ViewLayout.inspectorKey) private var showInspector = true
     @State private var inspectorWidth: CGFloat = InspectorWidth.standard
     @State private var inspectorDragStart: CGFloat?
     @State private var splitterHovered = false
     @State private var splitterCursorPushed = false
     @Environment(\.openSettings) private var openSettings
     #else
-    @State private var columns: NavigationSplitViewVisibility = .automatic
+    /// The sidebar opens on request (toolbar button): next to the detail column
+    /// the booking column needs the width.
+    @State private var columns: NavigationSplitViewVisibility = .detailOnly
+    @Environment(\.horizontalSizeClass) private var hSize
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var span = WindowSpan()
     #endif
 
     private var sidebar: some View {
@@ -521,9 +527,9 @@ struct MainSplitView: View {
         } detail: {
             HStack(spacing: 0) {
                 bookingColumn
-                // Belege & Postbox has its own preview; the booking inspector would show whatever
-                // booking was selected last, whichever document is open.
-                if showInspector, model.mainColumn != .documents {
+                // Belege & Postbox has its own preview and Vermögen no booking list (#1808): the booking
+                // inspector has nothing to show there.
+                if showInspector, model.mainColumn.hasInspector {
                     inspectorSplitter
                     InspectorView()
                         .frame(width: inspectorWidth * textScale)
@@ -534,8 +540,8 @@ struct MainSplitView: View {
             // min widths: 240 (sidebar) + 560 + 280 (inspector) keep the minimum window size.
             // Must not depend on `inspectorWidth`: the split view re-lays out whenever these
             // change, which made the column jump while the splitter was dragged (#828).
-            .macColumnWidth(min: showInspector && model.mainColumn != .documents ? 560 + InspectorWidth.minimum * textScale : 560,
-                            ideal: showInspector && model.mainColumn != .documents ? 700 + InspectorWidth.standard * textScale : 700)
+            .macColumnWidth(min: showInspector && model.mainColumn.hasInspector ? 560 + InspectorWidth.minimum * textScale : 560,
+                            ideal: showInspector && model.mainColumn.hasInspector ? 700 + InspectorWidth.standard * textScale : 700)
         }
         .navigationSplitViewStyle(.balanced)
         .sidebarDividerToTop()
@@ -590,21 +596,149 @@ struct MainSplitView: View {
         }
     }
     #else
+    /// iOS/iPadOS: the booking column is the main area at every width, the
+    /// booking detail sits next to it when the window is wide enough and opens
+    /// as a sheet otherwise. The width decides, not the size class: a
+    /// three-column split shows only its (empty) detail column in a regular
+    /// but narrow window such as an unfolded iPhone Duo held upright, and the
+    /// system `.inspector` shows neither column nor sheet there.
+    @Environment(\.reportRedaction) private var reportRedaction
+
+    /// iPhone sheet title: the merchant, else the booking text like the list row, else
+    /// "Buchung" (an empty name left the title blank).
+    private var bookingSheetTitle: String {
+        guard let b = model.selectedBooking else { return String(localized: "Buchung") }
+        let name = b.merchant.name.isEmpty ? b.bookingText : b.merchant.name
+        return name.isEmpty ? String(localized: "Buchung") : name
+    }
+
     private var splitView: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            sidebar
-        } content: {
-            bookingColumn
-        } detail: {
-            if model.mainColumn == .documents {
-                // the documents view has its own preview
-                Color.clear
-            } else {
+        HStack(spacing: 0) {
+            NavigationSplitView(columnVisibility: $columns) {
+                sidebar
+            } detail: {
+                bookingColumn
+                    .toolbar {
+                        // Only where the column has room: in a narrower window the
+                        // detail is a sheet anyway and the switch would do nothing.
+                        if inspectorFits {
+                            ToolbarItem(placement: .primaryAction) { inspectorToggle }
+                        }
+                    }
+            }
+            .navigationSplitViewStyle(.balanced)
+            if inspectorShown {
+                Divider().ignoresSafeArea()
                 InspectorView()
+                    .frame(width: inspectorWidth)
                     .frame(minHeight: 0, maxHeight: .infinity)
+                    .background(Theme.systemBackground.ignoresSafeArea())
             }
         }
-        .navigationSplitViewStyle(.balanced)
+        .onGeometryChange(for: WindowSpan.self) {
+            WindowSpan(width: $0.size.width, leading: $0.safeAreaInsets.leading, trailing: $0.safeAreaInsets.trailing)
+        } action: { span = $0 }
+        .capturableSheet(isPresented: Binding(
+            get: { !inspectorShown && model.showBookingSheet && hasDetailSelection },
+            // Only a dismissal by the user ends it: when the window gets wide
+            // enough the sheet gives way to the column and returns with the
+            // same booking once the window is narrow again.
+            set: { if !$0, !inspectorShown { model.showBookingSheet = false } }
+        )) {
+            // Title + "Fertig" (UI-Audit INS-3); the merchant is personal, so the
+            // title is masked in the bug report (a parameter text, no `.sensitive()`).
+            NavigationStack {
+                InspectorView()
+                    .navigationTitle(reportRedaction.masking(bookingSheetTitle))
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Fertig") { model.showBookingSheet = false }
+                        }
+                    }
+            }
+            // The presentation can retain the dark launch appearance while
+            // the booking list has already switched to its effective scheme.
+            .preferredColorScheme(colorScheme)
+            .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        // Unfolding or widening the window (compact → regular) would otherwise
+        // bring the sidebar back as an overlay on top of the booking column.
+        .onChange(of: hSize) { _, new in
+            if new == .regular { columns = .detailOnly }
+        }
+        // Turning an iPad upright keeps a sidebar that was open as a column of its own,
+        // which leaves the booking column too little room next to the detail column.
+        .onChange(of: span.full < 1000) { _, narrow in
+            if narrow { columns = .detailOnly }
+        }
+        // In such a window the open sidebar takes its width from the main column (the
+        // documents view no longer fits beside it), so choosing an entry closes it again,
+        // as the push to the detail does on an iPhone.
+        .background(SidebarSelectionWatcher {
+            if span.full < 1000 { columns = .detailOnly }
+        })
+    }
+
+    /// Room for the booking column (about a phone's width) next to the detail
+    /// column. The documents view has its own preview, and „Vermögen“ has nothing to
+    /// select: the column would show the booking picked last in another list.
+    private var inspectorFits: Bool {
+        model.mainColumn != .documents && model.mainColumn != .wealth && span.full >= 760 * textScale
+    }
+
+    /// The detail column is on screen: there is room for it and the user has not
+    /// hidden it. Hidden, the detail opens as a sheet like in a narrow window (#1746).
+    private var inspectorShown: Bool { showInspector && inspectorFits }
+
+    /// Hides or shows the detail column; the choice is kept like on the Mac
+    /// (`ViewLayout.inspectorKey`, the same switch as „Informationen ausblenden“ there).
+    private var inspectorToggle: some View {
+        Button {
+            // A booking tapped while the column was showing asked for no sheet:
+            // hiding the column must not open one for it.
+            if showInspector { model.showBookingSheet = false }
+            showInspector.toggle()
+        } label: {
+            Label(showInspector ? "Informationen ausblenden" : "Informationen einblenden", systemImage: "sidebar.trailing")
+        }
+    }
+
+    /// The list in the booking column has a selection the detail sheet can show.
+    private var hasDetailSelection: Bool {
+        switch model.mainColumn {
+        case .bookings: model.selectedBookingID != nil
+        case .planned: model.selectedPlannedID != nil
+        case .directDebits: model.selectedMandateID != nil
+        case .documents, .wealth: false
+        }
+    }
+
+    /// Up to about 1000 pt the two columns meet on the centre line of the window,
+    /// which is the fold of an open iPhone Duo; wider windows give the list more.
+    private var inspectorWidth: CGFloat {
+        if span.full < 1000 { return span.width - (span.full / 2 - span.leading) }
+        return min(max(span.width * 0.4, 320 * textScale), 440 * textScale)
+    }
+
+    /// Reports a new sidebar selection without making the split view read it: a body that
+    /// depends on the selection re-lays out every column on each change (`AppModel.mainColumn`).
+    private struct SidebarSelectionWatcher: View {
+        @Environment(AppModel.self) private var model
+        let changed: () -> Void
+
+        var body: some View {
+            Color.clear.onChange(of: model.sidebarSelection) { changed() }
+        }
+    }
+
+    /// Width inside the safe area plus the horizontal insets around it.
+    private struct WindowSpan: Equatable {
+        var width: CGFloat = 0
+        var leading: CGFloat = 0
+        var trailing: CGFloat = 0
+        var full: CGFloat { width + leading + trailing }
     }
     #endif
 
