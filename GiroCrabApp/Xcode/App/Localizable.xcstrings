@@ -179,6 +179,17 @@
         }
       }
     },
+    "%@ abspalten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split off %@"
+          }
+        }
+      }
+    },
     "%@ beibehalten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5058,6 +5069,17 @@
         }
       }
     },
+    "Andere Aufteilung …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Other split…"
+          }
+        }
+      }
+    },
     "Andere Datei …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7667,6 +7689,17 @@
         }
       }
     },
+    "Bekommt automatisch, was die anderen Teile übrig lassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatically gets what the other parts leave"
+          }
+        }
+      }
+    },
     "Belastung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8395,6 +8428,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Amount in the menu bar"
+          }
+        }
+      }
+    },
+    "Betrag oder Anteil, z. B. „50 %“" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount or share, e.g. “50%”"
           }
         }
       }
@@ -11151,6 +11195,17 @@
         }
       }
     },
+    "Der Rest in der ersten Zeile ist negativ und bucht die anderen Teile gegen. Ist das nicht gewollt, bitte die Beträge prüfen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The rest in the first row is negative and offsets the other parts. If that is not intended, please check the amounts."
+          }
+        }
+      }
+    },
     "Der SMS-Code konnte nicht sicher übermittelt werden. Bitte die Bankseite öffnen und dort bestätigen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11927,6 +11982,17 @@
         }
       }
     },
+    "Die Buchung ist schon aufgeteilt, deshalb wurde „%@“ nicht eingetragen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This booking is already split, so “%@” was not added."
+          }
+        }
+      }
+    },
     "Die Buchung wird aus dem Konto entfernt und der Saldo neu berechnet. Das lässt sich nicht widerrufen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12301,17 +12367,6 @@
         }
       }
     },
-    "Die Teilbeträge müssen zusammen %@ ergeben (Restbetrag: %@), erst dann lässt sich speichern." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The parts must add up to %@ (remaining: %@) before you can save."
-          }
-        }
-      }
-    },
     "Die Teilbeträge müssen zusammen %@ ergeben, erst dann lässt sich speichern." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12511,6 +12566,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Export the entire document collection, regardless of the filters"
+          }
+        }
+      }
+    },
+    "Die gespeicherten Teile ergeben nicht mehr den Betrag der Buchung. Die erste Zeile gleicht die Differenz aus; bitte vor dem Speichern prüfen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The saved parts no longer add up to the booking's amount. The first row makes up the difference; please check before saving."
           }
         }
       }
@@ -29247,13 +29313,13 @@
         }
       }
     },
-    "Rest zuweisen" : {
+    "Rest" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Assign remainder"
+            "value" : "Remainder"
           }
         }
       }
@@ -29276,17 +29342,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Restaurant"
-          }
-        }
-      }
-    },
-    "Restbetrag: %@" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Remaining: %@"
           }
         }
       }
@@ -32608,6 +32663,17 @@
         }
       }
     },
+    "Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Parts are amounts like “43.71” or shares like “50%”."
+          }
+        }
+      }
+    },
     "Teilerstattung" : {
       "localizations" : {
         "de" : {
@@ -33086,17 +33152,6 @@
         }
       }
     },
-    "Trägt den Restbetrag im letzten Teil ein" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Puts the remaining amount into the last part"
-          }
-        }
-      }
-    },
     "Trägt den Startsaldo ein, mit dem der Kontostand diesem Betrag entspricht, z. B. dem Saldo auf dem letzten Kontoauszug. Gespeichert wird erst mit „Speichern“." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33230,6 +33285,17 @@
       }
     },
     "Umsatz aufteilen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Split booking"
+          }
+        }
+      }
+    },
+    "Umsatz aufteilen (Splitbuchung)" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {

@@ -474,6 +474,13 @@ fn arg<T: DeserializeOwned>(a: &Value, name: &str) -> Result<T, String> {
         .map_err(|e| format!("argument `{name}`: {e}"))
 }
 
+fn split_cents(a: &Value, name: &str) -> Result<i64, String> {
+    match a.get(name).and_then(Value::as_str) {
+        Some(cents) => cents.parse().map_err(|e| format!("argument `{name}`: {e}")),
+        None => arg(a, name),
+    }
+}
+
 fn ok<T: serde::Serialize>(v: T) -> R {
     serde_json::to_value(v).map_err(|e| e.to_string())
 }
@@ -525,6 +532,39 @@ fn call(method: &str, a: &Value) -> R {
         }
         "parse_amount_to_cents" => {
             ok(girocrab_core::parse_amount_to_cents(arg(a, "text")?).map_err(|e| e.to_string())?)
+        }
+        // SplitSheet (#1663): an amount or a share ("50 %") of the booking; the quick picks
+        "parse_split_part_to_cents" => ok(girocrab_core::money::parse_split_part(
+            &arg::<String>(a, "text")?,
+            arg(a, "total_cents")?,
+        )
+        .map_err(|e| e.to_string())?),
+        "split_share_cents" => {
+            let share = girocrab_core::money::share_cents(
+                split_cents(a, "total_cents")?,
+                arg(a, "numerator")?,
+                arg(a, "denominator")?,
+            );
+            if a["total_cents"].is_string() {
+                ok(share.map(|cents| cents.to_string()))
+            } else {
+                ok(share)
+            }
+        }
+        "calculate_split_draft" => {
+            let texts: Vec<String> = arg(a, "split_off_texts")?;
+            let draft = girocrab_core::planning::calculate_split_draft(
+                split_cents(a, "booking_cents")?,
+                &texts,
+            );
+            // QML JSON numbers are doubles. Preserve exact cents through preview and Save.
+            ok(json!({
+                "split_off_cents": draft.split_off_cents.iter().map(|c| c.map(|c| c.to_string())).collect::<Vec<_>>(),
+                "rest_cents": draft.rest_cents.map(|c| c.to_string()),
+                "rest_is_negative": draft.rest_is_negative,
+                "problem": draft.problem,
+                "amounts_to_save": draft.amounts_to_save.map(|parts| parts.iter().map(i64::to_string).collect::<Vec<_>>()),
+            }))
         }
         "open_demo" => open_demo(),
         "connector_kind_key" => ok(girocrab_core::banking_gate::connector_kind_key(arg(
@@ -1613,8 +1653,46 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
                 crate::refunds::edit(v, a)
             }
         })()),
+        "split_editor_data" => Some(split_editor_data(v, a)),
+        "set_transaction_splits" => Some(set_transaction_splits(v, a)),
         _ => dispatch_vault_methods(v, method, a),
     }
+}
+
+fn split_editor_data(v: &Vault, a: &Value) -> R {
+    let (booking_cents, parts) = v
+        .split_editor_data(arg(a, "transaction_id")?)
+        .map_err(|e| e.to_string())?;
+    let stored_parts_differ = !parts.is_empty()
+        && !girocrab_core::planning::split_amounts_match(
+            booking_cents,
+            parts.iter().map(|part| part.amount_cents),
+        );
+    let parts: Vec<_> = parts
+        .into_iter()
+        .map(|part| {
+            json!({
+                "uuid": part.uuid, "category_id": part.category_id,
+                "amount_cents": part.amount_cents.to_string(), "note": part.note,
+            })
+        })
+        .collect();
+    ok(json!({
+        "booking_cents": booking_cents.to_string(),
+        "parts": parts,
+        "stored_parts_differ": stored_parts_differ,
+    }))
+}
+
+fn set_transaction_splits(v: &Vault, a: &Value) -> R {
+    let mut splits: Vec<Value> = arg(a, "splits")?;
+    for part in &mut splits {
+        part["amount_cents"] = json!(split_cents(part, "amount_cents")?);
+    }
+    let splits = serde_json::from_value(Value::Array(splits)).map_err(|e| e.to_string())?;
+    v.set_transaction_splits(arg(a, "transaction_id")?, splits)
+        .map_err(|e| e.to_string())?;
+    ok(())
 }
 
 fn cashflow_by_period_totals(v: &Vault, a: &Value) -> R {
@@ -1739,7 +1817,7 @@ vault_methods! {
     // sidebar drag & drop of categories, „Nach oben“ / „Nach unten“ (#977)
     reorder_categories(parent_id, ids)
     set_category_budget(category_id, budget_cents)
-    list_transaction_splits(transaction_id) set_transaction_splits(transaction_id, splits)
+    list_transaction_splits(transaction_id)
     // --- import / export ---
     export_bookings_csv(filter)
     // --- transfer ---
@@ -2506,12 +2584,22 @@ mod tests {
             json!({ "id": cat["id"], "name": "Umbenannt", "parent_id": null,
             "sf_symbol": "tag", "color_hex": "#2563EB" }),
         );
-        let amount = b["amount_cents"].as_i64().unwrap();
+        let editor = call("split_editor_data", json!({ "transaction_id": b["id"] }));
+        assert_eq!(editor["booking_cents"], b["amount_cents"].to_string());
+        assert_eq!(editor["parts"], json!([]));
+        let draft: Value = serde_json::from_str(&call_json(
+            "calculate_split_draft",
+            &json!({ "booking_cents": editor["booking_cents"], "split_off_texts": ["50 %"] })
+                .to_string(),
+        ))
+        .unwrap();
+        let amounts = &draft["ok"]["amounts_to_save"];
+        assert!(amounts[0].is_string());
         call(
             "set_transaction_splits",
             json!({ "transaction_id": b["id"], "splits": [
-            { "category_id": cat["id"], "amount_cents": amount - amount / 2, "note": "" },
-            { "category_id": null, "amount_cents": amount / 2, "note": "x" }] }),
+            { "category_id": cat["id"], "amount_cents": amounts[0], "note": "" },
+            { "category_id": null, "amount_cents": amounts[1], "note": "x" }] }),
         );
         assert_eq!(
             call(
@@ -2523,15 +2611,76 @@ mod tests {
             .len(),
             2
         );
+        let saved = call("split_editor_data", json!({ "transaction_id": b["id"] }));
+        assert_eq!(saved["parts"][0]["amount_cents"], amounts[0]);
+        assert_eq!(saved["parts"][1]["amount_cents"], amounts[1]);
+        assert_eq!(saved["stored_parts_differ"], false);
         call("delete_category", json!({ "id": cat["id"] }));
         assert_eq!(
             call_json("parse_amount_to_cents", r#"{"text":"1.234,56"}"#),
             r#"{"ok":123456}"#
         );
+        assert_eq!(
+            call_json(
+                "parse_split_part_to_cents",
+                r#"{"text":"50 %","total_cents":8743}"#
+            ),
+            r#"{"ok":4371}"#
+        );
+        assert_eq!(
+            call_json(
+                "split_share_cents",
+                r#"{"total_cents":10000,"numerator":1,"denominator":3}"#
+            ),
+            r#"{"ok":3333}"#
+        );
+        // #1663: SplitSheet.qml reads an error as null (unreadable part) and relies on `None` → null
+        let unreadable: Value = serde_json::from_str(&call_json(
+            "parse_split_part_to_cents",
+            r#"{"text":"halb","total_cents":8743}"#,
+        ))
+        .unwrap();
+        assert!(unreadable.get("err").is_some(), "{unreadable}");
+        assert_eq!(
+            call_json(
+                "split_share_cents",
+                r#"{"total_cents":100,"numerator":1,"denominator":0}"#
+            ),
+            r#"{"ok":null}"#
+        );
         drop(v);
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    #[test]
+    fn split_editor_bridge_preserves_i64_precision_and_reports_overflow() {
+        let evaluate = |texts: [&str; 2]| {
+            let result: Value = serde_json::from_str(&call_json(
+                "calculate_split_draft",
+                &json!({ "booking_cents": "1", "split_off_texts": texts }).to_string(),
+            ))
+            .unwrap();
+            result["ok"].clone()
+        };
+        let valid = evaluate(["90071992547409,93", "-90071992547409,93"]);
+        assert_eq!(valid["rest_cents"], "1");
+        assert_eq!(
+            valid["amounts_to_save"],
+            json!(["1", "9007199254740993", "-9007199254740993"])
+        );
+        let overflowing = evaluate(["92233720368547758,07", "-92233720368547758,08"]);
+        assert_eq!(overflowing["rest_cents"], "2");
+        assert_eq!(overflowing["problem"], "OutOfRange");
+        assert!(overflowing["amounts_to_save"].is_null());
+        assert_eq!(
+            call_json(
+                "split_share_cents",
+                r#"{"total_cents":"-9223372036854775808","numerator":1,"denominator":2}"#
+            ),
+            r#"{"ok":"-4611686018427387904"}"#
+        );
     }
 
     /// Kategorie-Vorschläge (#664, CategorySuggestions.qml) and Regeln vergeben Tags (#580,

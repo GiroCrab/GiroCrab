@@ -900,7 +900,10 @@ public final class AppModel {
     var transferUnknown: TransferUnknownNotice?
     /// The user cancelled, but the bank did not confirm it (re-check or retry).
     var transferCancelNotice: UnconfirmedTransferCancel?
-    var splitBooking: Booking?
+    /// The booking whose SplitSheet is open; closing it drops the preset share.
+    var splitBooking: Booking? { didSet { if splitBooking == nil { splitPresetPercent = nil } } }
+    /// Share of the booking the sheet puts into the second part (#1663, row menu `SplitMath.shares`).
+    var splitPresetPercent: Int64?
     var refundPickerBooking: Booking?
     var refundUndo: RefundUndo?
     weak var refundUndoHistoryStep: RefundHistoryStep?
@@ -1190,6 +1193,9 @@ public final class AppModel {
             if let c = categories.first(where: { $0.depth == 0 }) {
                 newCategoryRequest = NewCategoryRequest(parent: c.id)
             }
+        case "split":
+            // "Umsatz aufteilen" › „50 %“ of the first expense (#1663)
+            if let b = bookings.first(where: { $0.amountCents < 0 }) { openSplit(b, percent: 50) }
         case "export":
             // Export dialog on the current view's demo bookings.
             period = Period.previousMonth()

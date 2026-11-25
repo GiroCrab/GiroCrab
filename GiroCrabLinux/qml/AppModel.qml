@@ -3157,8 +3157,14 @@ QtObject {
     property var budgetCategoryID: null
     /// Category whose "Symbol & Farbe" popover is open.
     property var iconColorCategoryID: null
-    /// The booking whose SplitSheet is open.
+    /// The booking whose SplitSheet is open; closing it drops the preset share.
     property var splitBooking: null
+    onSplitBookingChanged: if (splitBooking === null) splitPresetPercent = null
+    /// Share of the booking the sheet puts into the second part (#1663, row menu `splitShares`).
+    property var splitPresetPercent: null
+    /// SplitMath.shares: the shares offered in one click (row menu under „Umsatz aufteilen“ and the
+    /// buttons in the sheet), in percent of the booking's amount: plain shares, not the VAT in it.
+    readonly property var splitShares: [7, 19, 50]
     property var refundBooking: null
     property int refundLinksRevision: 0
     property bool refundEditing: false
@@ -3322,8 +3328,8 @@ QtObject {
         try { return core("parse_amount_to_cents", { text: text }) } catch (e) { return null }
     }
     /// `done(null)` = could not be read – not the same as "not split".
-    function splits(booking, done) {
-        coreAsync("list_transaction_splits", { transaction_id: booking.id }, r => done(r), () => done(null))
+    function splitEditorData(booking, done) {
+        coreAsync("split_editor_data", { transaction_id: booking.id }, done, () => done(null))
     }
     /// Error text, or "" on success.
     function saveSplits(parts, booking) {
@@ -3331,6 +3337,19 @@ QtObject {
         refundLinksRevision++
         reloadBookings(); reloadCategories(); reloadAccounts(); reloadPlanning()
         return ""
+    }
+    /// openSplit(_:percent:) (#1663): opens „Umsatz aufteilen“; `percent` puts that share of the
+    /// booking into the second part of a booking that is not split yet.
+    function openSplit(b, percent) {
+        splitPresetPercent = percent === undefined ? null : percent
+        splitBooking = b
+    }
+    /// Amounts cross the QML bridge as strings to preserve exact cents.
+    function splitDraft(bookingCents, texts) {
+        return coreOrNull("calculate_split_draft", { booking_cents: bookingCents, split_off_texts: texts })
+    }
+    function splitShareCents(total, numerator, denominator) {
+        return coreOrNull("split_share_cents", { total_cents: total, numerator: numerator, denominator: denominator })
     }
 
     function newRuleDraft(booking) {
@@ -4500,6 +4519,12 @@ QtObject {
             break
         }
         case "category": if (top) newCategoryRequest = { parent: top.id }; break
+        // "Umsatz aufteilen" › „50 %“ of the first expense (#1663)
+        case "split": {
+            const b = bookings.find(x => x.amount_cents < 0)
+            if (b) openSplit(b, 50)
+            break
+        }
         // Konten › Tags verwalten … (#228)
         // `tags-accounts`: the first tag's bookings per account (TagManagerSheet.qml)
         case "tags": case "tags-accounts": TagManager.open(); break

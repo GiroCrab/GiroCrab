@@ -132,7 +132,7 @@ von der nativen Installation wechselt, kopiert `tresor.girocrab` in den neuen Or
 | BookingCategoryMenu | BookingCategoryMenu.qml, BookingDrag.qml, BookingDropTarget.qml, BookingStreamView.qml, SidebarView.qml | Kontextmenü „Kategorie“ mit Kategorienbaum, „Kategorisieren …“, „Kategorie entfernen“; Buchungen auf eine Kategorie der Seitenleiste ziehen (#366) |
 | BalanceHeaderView, ViewLayout (compactHeader) | StreamHeaderCard.qml, KPI.qml, BalanceChart.qml, HoldingsCard.qml, Main.qml | Titel, Saldo, Saldoverlauf als Linie oder Balken (BalanceBars → BalanceChartPrefs.qml, QSettings `[chart]` `balanceStyle`/`balanceBarUnit`, Rechtsklick wechselt), KPIs, Filterzeile, Depot-Positionen. Kopfbereich minimieren per Pfeil oder Darstellung › Kopfbereich minimieren (QSettings `compactHeader`, #358). Kategorie-Ansichten: Menü „Konten: Alle“ grenzt Liste, Kennzahlen und Diagramm auf Konten ein (nur solange die App läuft, #406). Zeitraum je Kategorie gemerkt (QSettings `period/byCategory`, #425). |
 | CategorySumChart | CategorySumChart.qml, StreamHeaderCard.qml, AppModel.qml | Monatssummen der gewählten Kategorie samt Unterkategorien statt des Kontoverlaufs (`category_history_by_unit`, Monate; #502) |
-| PlanningUI | CashflowCard.qml, BudgetProgressCard.qml, BudgetEditorSheet.qml, SplitSheet.qml, CustomPeriodForm.qml | Karten, Budget-Editor, Umsatz aufteilen, eigener Zeitraum (QSettings `period/customFrom`, `period/customTo`) |
+| PlanningUI | CashflowCard.qml, BudgetProgressCard.qml, BudgetEditorSheet.qml, SplitSheet.qml, CustomPeriodForm.qml | Karten, Budget-Editor, Umsatz aufteilen (erste Zeile behält den Rest, Anteile wie „50 %“, Schnellwahl 7 % / 19 % / 50 %, #1663), eigener Zeitraum (QSettings `period/customFrom`, `period/customTo`) |
 | BookingDetailView | InspectorView.qml | Beleg (mit Gegenkonto „⇄ Name (IBAN)“, #523), Notiz, Tags, Gehalt, Wiederkehrend, Händler-Historie, Kategorie-Raster, Rohdaten, Belege, Mehrfachauswahl |
 | AmazonOrderRef | AmazonOrderRef.qml, BookingStreamView.qml (BookingRow), InspectorView.qml (ReceiptCard, RawDataCard), Theme.qml | Amazon-Buchungen (#333, #349, #354): Zeile mit den ersten zwei Artikeln, „+N weitere“, „Abo“, Bestellnummer und Aufklapp-Pfeil für alle Artikel (bei Erstattungen die der erstatteten Bestellung), Betrag ohne Vorzeichen als roter bzw. grüner Badge; im Detail ein Artikel je Zeile, Artikel mit ASIN öffnen die Produktseite, „Erstattung zu: …“ springt zur Bestellung; Rohdaten mit Bestellnummer als Link zur Bestellung und Bestelltyp |
 | RecurringUI | InspectorView.qml (RecurringCard), RecurringSheet.qml, CustomDatesSheet.qml | Karte mit „Individuell …“, Übersicht „Wiederkehrende Buchungen“ (Kontextmenü einer Serie mit „Wiederkehrend“-Intervall, #581), ausgeblendete Serien |
@@ -244,7 +244,8 @@ cargo run -- --screenshot /tmp/a.png         # Fenster rendern, als PNG speicher
 `standing-order-delete`, `moneymoney`, `moneymoney-db`, `recurring`, `print`, `rules`, `palette` (Befehlspalette),
 `categorizer`, `payee-match`, `payee-close`, `payee-nomatch`, `error` (Abruf-Fehler mit Alternativen zur
 FinTS-Registrierung), `rule-edit`, `icon-color` (Symbol & Farbe des ersten Kontos), `category` (neue Unterkategorie),
-`icon-color-category`, `asset` (neuer Sachwert), `asset-edit`, `asset-values`, `asset-quantities` (das Auto der Demo).
+`icon-color-category`, `asset` (neuer Sachwert), `asset-edit`, `asset-values`, `asset-quantities` (das Auto der Demo),
+`split` (Umsatz aufteilen der ersten Ausgabe).
 
 `--screenshot` zusammen mit `--demo-settings` speichert das Einstellungen-Fenster (außer bei `groups`).
 `--demo-settings documents` der Mac-App entfällt: Linux hat keinen Reiter „Dokumente“.

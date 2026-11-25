@@ -216,8 +216,10 @@ enum Money {
         plain(cents).replacingOccurrences(of: "−", with: "-")
     }
 
-    static func plain(_ cents: Int64) -> String {
-        (decimal.string(from: (Decimal(cents) / 100) as NSDecimalNumber) ?? "\(cents)").replacingOccurrences(of: "-", with: "−")
+    static func plain(_ cents: Int64) -> String { plainCents(Decimal(cents)) }
+
+    static func plainCents(_ cents: Decimal) -> String {
+        (decimal.string(from: (cents / 100) as NSDecimalNumber) ?? "\(cents)").replacingOccurrences(of: "-", with: "−")
     }
 
     /// User input -> cents ("1.234,56", "1,234.56", "1.500"), or nil when it

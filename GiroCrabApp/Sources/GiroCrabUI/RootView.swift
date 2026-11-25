@@ -841,7 +841,7 @@ struct MainSplitView: View {
                 .interactiveDismissDisabled(model.transferBusy)
         }
         .capturableSheet(isPresented: Binding(get: { model.splitBooking != nil }, set: { if !$0 { model.splitBooking = nil } })) {
-            if let b = model.splitBooking { SplitSheet(booking: b).environment(model) }
+            if let b = model.splitBooking { SplitSheet(booking: b, presetPercent: model.splitPresetPercent).environment(model) }
         }
         .capturableSheet(isPresented: Binding(get: { model.refundPickerBooking != nil }, set: { if !$0 { model.refundPickerBooking = nil } })) {
             if let booking = model.refundPickerBooking {

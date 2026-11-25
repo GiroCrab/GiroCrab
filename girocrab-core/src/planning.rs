@@ -233,15 +233,7 @@ impl Vault {
         splits: Vec<TransactionSplitInput>,
     ) -> Result<(), CoreError> {
         let mut db = self.db()?;
-        let amount: i64 = db
-            .query_row(
-                "SELECT amount_cents FROM transactions WHERE id = ?1 AND deleted_ms IS NULL",
-                [transaction_id],
-                |r| r.get(0),
-            )
-            .map_err(|_| CoreError::NotFound {
-                what: trf("Buchung {0}", &[&transaction_id]),
-            })?;
+        let amount = split_booking_amount(&db, transaction_id)?;
         validate_splits(amount, &splits)?;
         // a 0-€ booking exists only through its parts: removing them all would leave an empty
         // booking that no editor can save again (CodeRabbit #1851)
@@ -261,24 +253,7 @@ impl Vault {
         transaction_id: i64,
     ) -> Result<Vec<TransactionSplit>, CoreError> {
         let db = self.db()?;
-        let mut stmt = db.prepare(
-            "SELECT s.id, s.transaction_id, s.category_id, s.amount_cents, s.note, s.uuid FROM transaction_splits s
-             JOIN transactions t ON t.id = s.transaction_id AND t.deleted_ms IS NULL
-             WHERE s.transaction_id = ?1 ORDER BY s.position, s.id",
-        )?;
-        let rows = stmt
-            .query_map([transaction_id], |r| {
-                Ok(TransactionSplit {
-                    id: r.get(0)?,
-                    uuid: r.get(5)?,
-                    transaction_id: r.get(1)?,
-                    category_id: r.get(2)?,
-                    amount_cents: r.get(3)?,
-                    note: r.get(4)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        read_transaction_splits(&db, transaction_id)
     }
 
     // ----------------------------------------------------------- cashflow
@@ -500,6 +475,154 @@ pub(crate) fn cashflow_for(
         .collect())
 }
 
+impl Vault {
+    /// Read the exact booking amount and its stored splits for the split editor.
+    pub fn split_editor_data(
+        &self,
+        transaction_id: i64,
+    ) -> Result<(i64, Vec<TransactionSplit>), CoreError> {
+        let db = self.db()?;
+        let amount = split_booking_amount(&db, transaction_id)?;
+        Ok((amount, read_transaction_splits(&db, transaction_id)?))
+    }
+}
+
+fn split_booking_amount(db: &rusqlite::Connection, transaction_id: i64) -> Result<i64, CoreError> {
+    db.query_row(
+        "SELECT amount_cents FROM transactions WHERE id = ?1 AND deleted_ms IS NULL",
+        [transaction_id],
+        |row| row.get(0),
+    )
+    .map_err(|_| CoreError::NotFound {
+        what: trf("Buchung {0}", &[&transaction_id]),
+    })
+}
+
+fn read_transaction_splits(
+    db: &rusqlite::Connection,
+    transaction_id: i64,
+) -> Result<Vec<TransactionSplit>, CoreError> {
+    let mut stmt = db.prepare(
+        "SELECT s.id, s.transaction_id, s.category_id, s.amount_cents, s.note, s.uuid FROM transaction_splits s
+         JOIN transactions t ON t.id = s.transaction_id AND t.deleted_ms IS NULL
+         WHERE s.transaction_id = ?1 ORDER BY s.position, s.id",
+    )?;
+    Ok(stmt
+        .query_map([transaction_id], |r| {
+            Ok(TransactionSplit {
+                id: r.get(0)?,
+                uuid: r.get(5)?,
+                transaction_id: r.get(1)?,
+                category_id: r.get(2)?,
+                amount_cents: r.get(3)?,
+                note: r.get(4)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?)
+}
+
+#[derive(Debug, PartialEq, Eq, uniffi::Enum)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum SplitDraftProblem {
+    Unreadable,
+    ZeroPart,
+    OutOfRange,
+}
+
+#[derive(Debug, PartialEq, Eq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SplitDraft {
+    /// Parsed inputs in ledger sign, for displaying an entered percentage as money.
+    pub split_off_cents: Vec<Option<i64>>,
+    /// Remainder in ledger sign, even when the draft has a zero part or an invalid running sum.
+    pub rest_cents: Option<i64>,
+    pub rest_is_negative: bool,
+    pub problem: Option<SplitDraftProblem>,
+    /// Ledger amounts in save order. Only present when the vault's amount rules pass.
+    pub amounts_to_save: Option<Vec<i64>>,
+}
+
+/// Interpret the split-off fields and allocate the remainder to the first part.
+/// An empty field previews as zero. An untouched draft has no validation hint.
+pub fn calculate_split_draft(booking_cents: i64, split_off_texts: &[String]) -> SplitDraft {
+    let split_off_cents = split_off_texts
+        .iter()
+        .map(|text| {
+            if text.trim().is_empty() {
+                Some(0)
+            } else {
+                crate::money::parse_split_part_in_ledger_sign(text, booking_cents).ok()
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut draft = SplitDraft {
+        split_off_cents,
+        rest_cents: None,
+        rest_is_negative: false,
+        problem: None,
+        amounts_to_save: None,
+    };
+    let Some(split_off) = draft
+        .split_off_cents
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>()
+    else {
+        draft.problem = Some(SplitDraftProblem::Unreadable);
+        return draft;
+    };
+
+    // The remainder depends on the mathematical sum. The vault checks intermediate
+    // i64 sums separately, starting with the remainder in save order.
+    let rest = i128::from(booking_cents) - split_off.iter().copied().map(i128::from).sum::<i128>();
+    draft.rest_cents = i64::try_from(rest).ok();
+    draft.rest_is_negative = draft
+        .rest_cents
+        .is_some_and(|rest| rest != 0 && (rest < 0) != (booking_cents < 0));
+    if split_off_texts.iter().all(|text| text.trim().is_empty()) {
+        return draft;
+    }
+
+    let Some(rest) = draft.rest_cents else {
+        draft.problem = Some(SplitDraftProblem::OutOfRange);
+        return draft;
+    };
+    let amounts = std::iter::once(rest).chain(split_off).collect::<Vec<_>>();
+    match check_split_amounts(booking_cents, amounts.iter().copied()) {
+        Ok(()) => draft.amounts_to_save = Some(amounts),
+        Err(SplitAmountError::ZeroPart) => draft.problem = Some(SplitDraftProblem::ZeroPart),
+        Err(_) => draft.problem = Some(SplitDraftProblem::OutOfRange),
+    }
+    draft
+}
+
+/// Whether the stored amounts still add up to the booking, for the editor's warning.
+pub fn split_amounts_match(booking_cents: i64, amounts: impl IntoIterator<Item = i64>) -> bool {
+    amounts.into_iter().map(i128::from).sum::<i128>() == i128::from(booking_cents)
+}
+
+enum SplitAmountError {
+    ZeroPart,
+    Overflow,
+    WrongTotal(i64),
+}
+
+fn check_split_amounts(
+    amount: i64,
+    mut amounts: impl ExactSizeIterator<Item = i64> + Clone,
+) -> Result<(), SplitAmountError> {
+    if amounts.len() < 2 || amounts.clone().any(|part| part == 0) {
+        return Err(SplitAmountError::ZeroPart);
+    }
+    let sum = amounts
+        .try_fold(0i64, i64::checked_add)
+        .ok_or(SplitAmountError::Overflow)?;
+    if sum != amount {
+        return Err(SplitAmountError::WrongTotal(sum));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_splits(
     amount: i64,
     splits: &[TransactionSplitInput],
@@ -507,22 +630,16 @@ pub(crate) fn validate_splits(
     if splits.is_empty() {
         return Ok(());
     }
-    if splits.len() < 2 || splits.iter().any(|s| s.amount_cents == 0) {
-        return Err(CoreError::invalid(tr(
+    check_split_amounts(amount, splits.iter().map(|s| s.amount_cents)).map_err(|err| match err {
+        SplitAmountError::ZeroPart => CoreError::invalid(tr(
             "Eine Splitbuchung braucht mindestens zwei Teilbeträge ungleich 0.",
-        )));
-    }
-    let sum = splits
-        .iter()
-        .try_fold(0i64, |acc, s| acc.checked_add(s.amount_cents))
-        .ok_or_else(|| CoreError::invalid(tr("Die Teilbeträge sind zu groß.")))?;
-    if sum != amount {
-        return Err(CoreError::invalid(trf(
+        )),
+        SplitAmountError::Overflow => CoreError::invalid(tr("Die Teilbeträge sind zu groß.")),
+        SplitAmountError::WrongTotal(sum) => CoreError::invalid(trf(
             "Die Teilbeträge ({0} ¢) ergeben nicht den Buchungsbetrag ({1} ¢).",
             &[&sum, &amount],
-        )));
-    }
-    Ok(())
+        )),
+    })
 }
 
 /// Replaces the splits of booking `id`, retaining the identities of kept parts,
@@ -662,6 +779,89 @@ pub(crate) fn clear_split_category(conn: &rusqlite::Connection, id: i64) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn draft(booking_cents: i64, texts: &[&str]) -> SplitDraft {
+        calculate_split_draft(
+            booking_cents,
+            &texts.iter().map(|text| (*text).into()).collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn split_draft_reports_input_problems_and_keeps_the_odd_cent() {
+        let blank = draft(8_743, &[" "]);
+        assert_eq!(blank.rest_cents, Some(8_743));
+        assert_eq!(blank.problem, None);
+        assert_eq!(blank.amounts_to_save, None);
+        assert_eq!(
+            draft(8_743, &["half"]).problem,
+            Some(SplitDraftProblem::Unreadable)
+        );
+        assert_eq!(
+            draft(8_743, &["50%", ""]).problem,
+            Some(SplitDraftProblem::ZeroPart)
+        );
+        assert_eq!(
+            draft(8_743, &["87,43"]).problem,
+            Some(SplitDraftProblem::ZeroPart)
+        );
+        assert_eq!(
+            draft(8_743, &["43,71"]).amounts_to_save,
+            Some(vec![4_372, 4_371])
+        );
+        assert_eq!(
+            draft(-8_743, &["50%"]).amounts_to_save,
+            Some(vec![-4_372, -4_371])
+        );
+
+        let counter = draft(-5_900, &["200"]);
+        assert!(counter.rest_is_negative);
+        assert_eq!(counter.rest_cents, Some(14_100));
+        assert_eq!(counter.amounts_to_save, Some(vec![14_100, -20_000]));
+    }
+
+    #[test]
+    fn split_draft_checks_the_vaults_signed_addition_order() {
+        let overflowing = draft(1, &["92233720368547758,07", "-92233720368547758,08"]);
+        assert_eq!(overflowing.rest_cents, Some(2));
+        assert_eq!(overflowing.problem, Some(SplitDraftProblem::OutOfRange));
+        assert_eq!(overflowing.amounts_to_save, None);
+        assert_eq!(
+            draft(1, &["92233720368547758", "92233720368547758"]).problem,
+            Some(SplitDraftProblem::OutOfRange)
+        );
+
+        // The vault accepts this signed order even though subtracting the sum of the
+        // later parts in i64 would overflow.
+        let (v, dir) = vault();
+        let id = tx(&v, "extreme-split", "2026-01-01", i64::MIN, None);
+        for text in ["100%", "92233720368547758,08"] {
+            let draft = draft(i64::MIN, &[text, "0,01"]);
+            let amounts = draft.amounts_to_save.unwrap();
+            assert_eq!(amounts, vec![1, i64::MIN, -1]);
+            v.set_transaction_splits(
+                id,
+                amounts
+                    .into_iter()
+                    .map(|amount_cents| TransactionSplitInput {
+                        uuid: None,
+                        category_id: None,
+                        amount_cents,
+                        note: String::new(),
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        }
+        let (amount, parts) = v.split_editor_data(id).unwrap();
+        assert_eq!(amount, i64::MIN);
+        assert!(split_amounts_match(
+            amount,
+            parts.iter().map(|part| part.amount_cents)
+        ));
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn vault() -> (std::sync::Arc<Vault>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
