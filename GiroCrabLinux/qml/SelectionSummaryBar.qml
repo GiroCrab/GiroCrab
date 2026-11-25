@@ -29,7 +29,7 @@ Rectangle {
         spacing: 12
         Text {
             Layout.alignment: Qt.AlignTop
-            text: qsTr("%1 Buchungen ausgewählt").arg(Object.keys(AppModel.selectedBookingIDs).length)
+            text: qsTr("%1 Buchungen ausgewählt").arg(AppModel.selectedBookings.length)
             font.pixelSize: Theme.callout; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text
         }
         Item { Layout.fillWidth: true; Layout.minimumWidth: 12 }

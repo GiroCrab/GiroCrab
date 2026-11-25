@@ -34,8 +34,14 @@ QtObject {
     /// listHasBalances: the list shows running balances.
     readonly property bool listHasBalances: shown && selectionHasBalances
 
-    /// balanceCurrency: one account's own currency, else EUR (the core sums only EUR accounts).
-    readonly property string currency: AppModel.selectedAccount ? (AppModel.selectedAccount.currency || "EUR") : "EUR"
+    /// balanceCurrency: the core's page_balances uses the account's own currency whenever exactly
+    /// one account is chosen (whether directly, via the account filter or a one-account group), else EUR.
+    readonly property string currency: {
+        const ids = (AppModel.showsAccountFilter && AppModel.categoryAccountIDs.length)
+            ? AppModel.categoryAccountIDs : AppModel.selectionAccountIDs()
+        const a = ids.length === 1 ? AppModel.accountsByID[ids[0]] : null
+        return a ? (a.currency || "EUR") : "EUR"
+    }
 
     /// ListBalances.bookings / days: booking id → text, day → text (formatted once, RunningBalance).
     property var bookings: ({})
@@ -57,6 +63,7 @@ QtObject {
     function clear() { reset(null) }
     /// loadMoreBookings: a further page adds its balances.
     function merge(page) {
+        if (!listHasBalances) return
         const rows = page.running_balances || [], dayRows = page.day_balances || []
         if (!rows.length && !dayRows.length) return
         const b = Object.assign({}, bookings), d = Object.assign({}, days)

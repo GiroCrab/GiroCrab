@@ -40,11 +40,14 @@ Item {
 
     // GiroCode.png(for:): the code at `pixelsPerModule` (10) pixels per module, quiet zone
     // included, large enough to scan. Drawn once into a canvas of that size outside the
-    // window, grabbed and written to `path`; `done(ok)`.
+    // window, grabbed and written to `path`; `done(ok)`. The job keeps the matrix of this moment:
+    // a payload changed before the deferred paint must not end up in this file.
     readonly property int pixelsPerModule: 10
     function savePng(path, done) {
         if (!matrix) { done(false); return }
-        exportCanvas.pending = { path: path, done: done }
+        const previous = exportCanvas.pending
+        exportCanvas.pending = { path: path, done: done, matrix: matrix }
+        if (previous) previous.done(false)
         exportCanvas.width = matrix.width * pixelsPerModule
         exportCanvas.height = exportCanvas.width
         exportCanvas.requestPaint()
@@ -59,8 +62,8 @@ Item {
         onPaint: {
             const ctx = getContext("2d")
             ctx.reset()
-            const m = root.matrix
-            if (!m || !pending) return
+            const m = pending ? pending.matrix : null
+            if (!m) return
             const n = m.width, s = root.pixelsPerModule
             ctx.fillStyle = "white"
             ctx.fillRect(0, 0, n * s, n * s)
@@ -73,7 +76,7 @@ Item {
             const job = pending
             if (!job) return
             pending = null
-            grabToImage(r => job.done(r.saveToFile(job.path)), Qt.size(width, height))
+            if (!grabToImage(r => job.done(r.saveToFile(job.path)), Qt.size(width, height))) job.done(false)
         }
     }
 }

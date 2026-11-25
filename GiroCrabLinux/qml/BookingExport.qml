@@ -248,7 +248,7 @@ QtObject {
     /// column, only for a selection of accounts, as in the list; `done(rows, { bookingID: cents }, tagNote)`.
     function loadExportBookings(accountIDs, preset, bookingIDs, o, ignoreListFilters, done, failed, withBalances) {
         const filter = exportFilter(accountIDs, preset, o, ignoreListFilters)
-        filter.with_balances = !!withBalances && ListBalances.selectionHasBalances
+        filter.with_balances = !!withBalances
         // the tag note of exactly this query, taken when it starts (`exportReport`)
         const tagNote = TagFilter.noteFor(filter)
         AppModel.coreAsync("list_transactions", { filter: filter }, page => {

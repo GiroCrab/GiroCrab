@@ -400,6 +400,20 @@ Sheet {
                             id: accountButton
                             implicitWidth: accountRow.implicitWidth; implicitHeight: accountRow.implicitHeight + 4
                             Layout.maximumWidth: 260
+                            function toggle() { accountPicker.visible ? accountPicker.close() : accountPicker.open() }
+                            // a Button on the Mac: Tab reaches it, Space / Return opens the popover
+                            activeFocusOnTab: true
+                            Keys.onSpacePressed: toggle()
+                            Keys.onReturnPressed: toggle()
+                            Keys.onEnterPressed: toggle()
+                            Accessible.role: Accessible.Button
+                            Accessible.name: qsTr("Konten") + ": " + AppModel.masking(sheet.accountSummary)
+                            Accessible.onPressAction: toggle()
+                            Rectangle {
+                                visible: accountButton.activeFocus
+                                anchors.fill: parent; anchors.margins: -3
+                                radius: 5; color: "transparent"; border.width: 2; border.color: Theme.accent
+                            }
                             RowLayout {
                                 id: accountRow
                                 anchors.verticalCenter: parent.verticalCenter
@@ -410,7 +424,7 @@ Sheet {
                                 Text { text: "▾"; font.pixelSize: Theme.caption; color: Theme.secondary }   // chevron.up.chevron.down
                             }
                             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                        onClicked: accountPicker.visible ? accountPicker.close() : accountPicker.open() }
+                                        onClicked: accountButton.toggle() }
                             ExportAccountPicker {
                                 id: accountPicker
                                 groups: sheet.accountsByBank
