@@ -11,6 +11,13 @@ struct TransferSheetView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.textScale) private var textScale
+    @Environment(\.dynamicTypeSize) private var typeSize
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    private var isCompact: Bool { sizeClass == .compact }
+    #else
+    private var isCompact: Bool { false }
+    #endif
     @State private var step: Step = .form
     @State private var exportingGiroCode: PNGFileDocument?
     @State private var suggestions: [KnownRecipient] = []
@@ -167,7 +174,10 @@ struct TransferSheetView: View {
             switch step {
             case .form:
                 form(draft: $model.transferDraft)
+                #if os(macOS)
                 demoHint($model.transferDraft)
+                    .padding(.horizontal, 20).padding(.bottom, 12)
+                #endif
             case .review: sendConfirmation
             case .giroCode: giroCodeView
             }
@@ -276,29 +286,42 @@ struct TransferSheetView: View {
         }
     }
 
-    /// Title left, the helpers (templates, recipients, paste) as small actions right.
+    /// Title left, the helpers (templates, recipients, paste) as small actions right; below the
+    /// title where they do not fit beside it (iPhone, large text, #1527).
     private var header: some View {
-        HStack(spacing: 12) {
-            Text(title).appFont(.title2, weight: .semibold)
-            Spacer()
-            if step == .form {
-                TransferTemplatesMenu()
-                Button { managingRecipients = true } label: { Label("Empfänger", systemImage: "person.2") }
-                    .help("Empfänger verwalten: veraltete IBANs nicht mehr vorschlagen")
-                    #if os(iOS)
-                    .labelStyle(.iconOnly)
-                    #endif
-                #if os(macOS)
-                Button { pasteFromClipboard() } label: { Label("Einfügen", systemImage: "doc.on.clipboard") }
-                    .keyboardShortcut("v", modifiers: [.command, .shift])
-                    .help("Erkennt IBAN, Betrag, Empfänger und Zweck (⇧⌘V; ⌘V außerhalb von Textfeldern). Rechnung (PDF, ZUGFeRD, GiroCode) hierher ziehen.")
-                #else
-                PaymentPasteButton { report(PaymentParser.parseText($0)) }
-                    .labelStyle(.iconOnly)
-                #endif
+        let title = Text(title).appFont(.title2, weight: .semibold)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                title
+                Spacer()
+                headerActions
             }
+            VStack(alignment: .leading, spacing: 8) {
+                title
+                HStack(spacing: 12) { headerActions }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
+    }
+
+    @ViewBuilder private var headerActions: some View {
+        if step == .form {
+            TransferTemplatesMenu()
+            Button { managingRecipients = true } label: { Label("Empfänger", systemImage: "person.2") }
+                .help("Empfänger verwalten: veraltete IBANs nicht mehr vorschlagen")
+                #if os(iOS)
+                .labelStyle(.iconOnly)
+                #endif
+            #if os(macOS)
+            Button { pasteFromClipboard() } label: { Label("Einfügen", systemImage: "doc.on.clipboard") }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+                .help("Erkennt IBAN, Betrag, Empfänger und Zweck (⇧⌘V; ⌘V außerhalb von Textfeldern). Rechnung (PDF, ZUGFeRD, GiroCode) hierher ziehen.")
+            #else
+            PaymentPasteButton { report(PaymentParser.parseText($0)) }
+                .labelStyle(.iconOnly)
+            #endif
+        }
     }
 
     /// The form was filled from a `girocrab://transfer` link (`PaymentLink`): another app or a
@@ -341,10 +364,9 @@ struct TransferSheetView: View {
 
             Section {
                 if ownTransfer {
-                    Picker("Zielkonto", selection: Binding(get: { ownTargetID }, set: { ownTargetID = $0; applyOwnTarget($0) })) {
-                        ForEach(ownTargets) { a in
-                            Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id)).sensitive()
-                        }
+                    LabeledContent("Zielkonto") {
+                        SourceAccountPicker(label: "Zielkonto", selection: Binding(get: { ownTargetID }, set: { ownTargetID = $0; applyOwnTarget($0) }),
+                                            accounts: ownTargets)
                     }
                     LabeledContent("Empfänger") {
                         Text(draft.wrappedValue.name).appFont(.body).sensitive()
@@ -446,6 +468,12 @@ struct TransferSheetView: View {
                     }
                 }
             }
+            #if os(iOS)
+            // scrolls with the form: below it, it took the room of the fields (#1527)
+            Section { demoHint(draft) }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            #endif
         }
         .formStyle(.grouped)
         // The list floats over the form below the name field (a row would clip
@@ -464,13 +492,12 @@ struct TransferSheetView: View {
         .reportsFormFit($formFit)
     }
 
-    /// Demo PIN under the form, outside it: inside a section it would be a box
-    /// in a box (HIG), in a footer macOS makes it narrower than the sections.
-    /// Same 20 pt margins as the sections and the error lines below.
+    /// Demo PIN. macOS: under the form, outside it: inside a section it would be a box in a
+    /// box (HIG), in a footer macOS makes it narrower than the sections; same 20 pt margins as
+    /// the sections and the error lines below. iOS: a section without a background of its own.
     @ViewBuilder private func demoHint(_ draft: Binding<TransferDraft>) -> some View {
         if canSend && (model.isDemo || isMagicDemoAccount) {
             DemoHintBanner(style: .pinAndTan, buttonTitle: "PIN 12345 einfügen") { draft.pin.wrappedValue = "12345" }
-                .padding(.horizontal, 20).padding(.bottom, 12)
         }
     }
 
@@ -636,8 +663,11 @@ struct TransferSheetView: View {
     private var giroCodeView: some View {
         let d = model.transferDraft
         let payload = giroCodePayload
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 16) {
+        // iPhone: the rows below the code, beside it they had room for one letter per line (#1527)
+        let layout = isCompact ? AnyLayout(VStackLayout(alignment: .center, spacing: 16))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+        let content = VStack(alignment: .leading, spacing: 14) {
+            layout {
                 Group {
                     if let payload, let cg = GiroCode.image(for: payload) {
                         Image(decorative: cg, scale: 1)
@@ -675,8 +705,11 @@ struct TransferSheetView: View {
             }
         }
         .padding(20)
+        #if os(iOS)
+        return ScrollView { content }
+        #else
+        return content
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        #if os(macOS)
         .fileExporter(isPresented: Binding(get: { exportingGiroCode != nil }, set: { if !$0 { exportingGiroCode = nil } }),
                       document: exportingGiroCode, contentType: .png, defaultFilename: "GiroCode.png") { _ in }
         #endif
@@ -758,7 +791,7 @@ struct TransferSheetView: View {
     /// Rows of the GiroCode review: all of them are personal.
     private func summaryRow(_ k: LocalizedStringKey, _ v: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(k).foregroundStyle(Theme.secondary).frame(width: 90 * textScale, alignment: .leading)
+            Text(k).foregroundStyle(Theme.secondary).fixedSize().frame(minWidth: 90 * textScale, alignment: .leading)
             Text(v).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).sensitive()
             Spacer(minLength: 0)
         }
@@ -785,41 +818,47 @@ struct TransferSheetView: View {
 
     // MARK: buttons
 
-    private var buttons: some View {
-        HStack {
-            switch step {
-            case .giroCode:
-                Button("Zurück") { step = .form }
-                Spacer()
-                Button("Fertig") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-            case .review:
-                // Back and the approval only: HIG, never Cancel, Back and Done
-                // together. Esc goes back to the form; it closes from there.
-                Button("Zurück") { step = .form }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button(isBunq ? "In der bunq-App freigeben" : "Jetzt mit TAN freigeben") { model.startTransfer() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.transferBusy)
-            case .form:
-                Button("Abbrechen", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                if canSend {
-                    // nothing is sent, so no PIN needed
-                    Button("Als GiroCode anzeigen") { leaveForm(to: .giroCode) }
-                        .disabled(!canReview || giroCodePayload == nil)
-                }
-                let next: Step = canSend ? .review : .giroCode
-                Button(next == .review ? "Weiter" : "GiroCode erstellen") { leaveForm(to: next) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canReview || (canSend && !pinStored && model.transferDraft.pin.isEmpty)
-                              || (!canSend && giroCodePayload == nil))
+    @ViewBuilder private var buttons: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(spacing: 10) { buttonItems }.fixedSize(horizontal: false, vertical: true)
+        } else {
+            HStack { buttonItems }
+        }
+    }
+
+    @ViewBuilder private var buttonItems: some View {
+        switch step {
+        case .giroCode:
+            Button("Zurück") { step = .form }
+            Spacer()
+            Button("Fertig") { dismiss() }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+        case .review:
+            // Back and the approval only: HIG, never Cancel, Back and Done
+            // together. Esc goes back to the form; it closes from there.
+            Button("Zurück") { step = .form }
+                .keyboardShortcut(.cancelAction)
+            Spacer()
+            Button(isBunq ? "In der bunq-App freigeben" : "Jetzt mit TAN freigeben") { model.startTransfer() }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(model.transferBusy)
+        case .form:
+            Button("Abbrechen", role: .cancel) { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Spacer()
+            if canSend {
+                // nothing is sent, so no PIN needed
+                Button("Als GiroCode anzeigen") { leaveForm(to: .giroCode) }
+                    .disabled(!canReview || giroCodePayload == nil)
             }
+            let next: Step = canSend ? .review : .giroCode
+            Button(next == .review ? "Weiter" : "GiroCode erstellen") { leaveForm(to: next) }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(!canReview || (canSend && !pinStored && model.transferDraft.pin.isEmpty)
+                          || (!canSend && giroCodePayload == nil))
         }
     }
 
@@ -879,22 +918,53 @@ struct TransferSheetView: View {
     }
 }
 
-/// "Von Konto" of the transfer, standing order and batch forms: the picker
+/// "Von Konto" of the transfer, standing order and batch forms, "Zielkonto" of the transfer: the picker
 /// draws the selected account's name and IBAN itself (an iOS menu picker),
 /// so it is covered as a whole; the label beside it stays readable.
 struct SourceAccountPicker: View {
+    var label: LocalizedStringKey = "Von Konto"
     let selection: Binding<Int64?>
     let accounts: [Account]
+    /// A form row grows with a name on several lines; the batch sheet's columns do not.
+    var inForm = true
 
     var body: some View {
-        Picker("Von Konto", selection: selection) {
+        #if os(iOS)
+        if inForm { menu } else { picker.sensitive() }
+        #else
+        picker.sensitive()
+        #endif
+    }
+
+    #if os(iOS)
+    /// With its own label: the menu-style picker's row cut off a name on several lines, with
+    /// larger text (#1527).
+    private var menu: some View {
+        Menu { picker } label: {
+            HStack(spacing: 6) {
+                Text(accounts.first { $0.id == selection.wrappedValue }.map(title) ?? "–")
+                    .appFont(.body)
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .sensitive()
+                Image(systemName: "chevron.up.chevron.down").appFont(.footnote)
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(Color.secondary) // not the secondary shade of the tint
+        }
+    }
+    #endif
+
+    private var picker: some View {
+        Picker(label, selection: selection) {
             ForEach(accounts) { a in
-                Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id))
+                Text(title(a)).tag(Optional(a.id))
             }
         }
         .labelsHidden()
-        .sensitive()
     }
+
+    private func title(_ a: Account) -> String { "\(a.name) · \(formatIBAN(a.iban))" }
 }
 
 /// The recipient's bank under the IBAN field of the transfer, standing order and
