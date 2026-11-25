@@ -225,3 +225,19 @@ fn booking_of_the_day_before_the_order_does_not_settle_it() {
     super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 0);
 }
+
+#[test]
+fn exact_iban_booking_is_reserved_before_empty_iban_fallback() {
+    let v = vault("planned-exact-first");
+    let a = account(&v, "Giro");
+    let mut other = job("E2", Some("2999-02-15"), 400);
+    other.recipient_iban = "DE02120300000000202051".into();
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 400))
+        .unwrap();
+    v.record_planned_transfer(a, &other).unwrap();
+    // the booking without an IBAN comes first, then the one of the first order
+    book(&v, a, "n", "2999-01-10", -400, "");
+    book(&v, a, "e", "2999-01-10", -400, "DE89370400440532013000");
+    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}

@@ -347,21 +347,35 @@ pub(crate) fn drop_booked(db: &Connection, account_id: i64, since_unix: i64) -> 
            AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
          ORDER BY booking_date, id",
     )?;
-    for (id, _date, iban, cents, kind, since) in orders {
-        let signed = if kind == "debit" { cents } else { -cents };
-        let cands: Vec<(i64, String)> = find
-            .query_map(params![account_id, signed, since, since_unix], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })?
-            .collect::<Result<_, _>>()?;
-        let hit = cands.iter().find(|(tid, tiban)| {
-            !used.contains(tid)
-                && (iban.is_empty() || tiban.is_empty() || norm(&iban) == norm(tiban))
-        });
-        if let Some((tid, _)) = hit {
-            used.insert(*tid);
-            db.execute("DELETE FROM planned_transfers WHERE id = ?1", [id])?;
+    // Two passes: an exact IBAN match first, so an order without a better booking cannot take
+    // the booking of another order; then bookings without an IBAN on either side.
+    let mut open = orders;
+    for exact in [true, false] {
+        let mut left = Vec::new();
+        for order in open {
+            let (id, _date, iban, cents, kind, since) = &order;
+            let signed = if kind == "debit" { *cents } else { -*cents };
+            let cands: Vec<(i64, String)> = find
+                .query_map(params![account_id, signed, since, since_unix], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?
+                .collect::<Result<_, _>>()?;
+            let hit = cands.iter().find(|(tid, tiban)| {
+                !used.contains(tid)
+                    && if exact {
+                        !iban.is_empty() && norm(iban) == norm(tiban)
+                    } else {
+                        iban.is_empty() || tiban.is_empty() || norm(iban) == norm(tiban)
+                    }
+            });
+            if let Some((tid, _)) = hit {
+                used.insert(*tid);
+                db.execute("DELETE FROM planned_transfers WHERE id = ?1", [id])?;
+            } else {
+                left.push(order);
+            }
         }
+        open = left;
     }
     Ok(())
 }
