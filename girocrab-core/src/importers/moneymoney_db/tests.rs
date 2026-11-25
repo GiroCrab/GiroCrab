@@ -4513,6 +4513,191 @@ fn portal_sync_adopts_the_active_card_next_to_closed_ones() {
 }
 
 #[test]
+fn portal_sync_prefers_cards_whose_state_is_known() {
+    // #816 after the #998 repair: the old cards are active again until the next
+    // import says whether they are closed
+    amex_portal_sync_adopts_the_active_card(3, |v| {
+        let old: Vec<i64> = ["Amex Alt 1", "Amex Alt 2"]
+            .iter()
+            .map(|n| account_by_name(v, n).id)
+            .collect();
+        note_archive_unknown(&v.db().unwrap(), &old).unwrap();
+    });
+}
+
+#[test]
+fn a_known_card_with_an_iban_wins_over_a_reactivated_one_without() {
+    // the known-state preference spans both lookups: the reactivated old card is the only
+    // one without an IBAN, the active card has the IBAN MoneyMoney stored for it
+    let v = vault();
+    let conn_id = v
+        .add_bank_connection(
+            ConnectorKind::AmazonVisa,
+            String::new(),
+            "visa-login".into(),
+        )
+        .unwrap();
+    let db = v.db().unwrap();
+    let gid = Vault::ensure_group(&db, "Kreditkarten", "creditcard", 1).unwrap();
+    let card = |ext: &str, iban: &str| -> i64 {
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
+             VALUES (?1, ?2, ?3, ?3, ?4, 'EUR', 'credit_card', 0)",
+            params![conn_id, gid, ext, iban],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    let old = card("moneymoney-db:30:aaaa", "");
+    let active = card("moneymoney-db:32:bbbb", "DE89370400440532013000");
+    let adopt = || {
+        adopt_account(
+            &db,
+            conn_id,
+            "visa:1",
+            "",
+            "",
+            "EUR",
+            AccountKind::CreditCard,
+            &[],
+        )
+        .unwrap()
+    };
+    // without the note the card without an IBAN is the one (#1114)
+    assert_eq!(adopt(), Some(old));
+    db.execute(
+        "UPDATE accounts SET external_ref = 'moneymoney-db:30:aaaa' WHERE id = ?1",
+        [old],
+    )
+    .unwrap();
+    note_archive_unknown(&db, &[old]).unwrap();
+    assert_eq!(adopt(), Some(active));
+    // a card without an IBAN in another currency is never taken, known or not
+    db.execute_batch(
+        "UPDATE accounts SET external_ref = 'moneymoney-db:32:bbbb' WHERE external_ref = 'visa:1';",
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE accounts SET archive_unknown = 0 WHERE id = ?1",
+        [old],
+    )
+    .unwrap();
+    db.execute("UPDATE accounts SET currency = 'USD' WHERE id = ?1", [old])
+        .unwrap();
+    assert_eq!(adopt(), Some(active));
+}
+
+/// A login with imported cards for the `adopt_account` tests: (vault, connection id, credit card group id).
+fn cards_login() -> (Arc<Vault>, i64, i64) {
+    let v = vault();
+    let conn_id = v
+        .add_bank_connection(
+            ConnectorKind::AmazonVisa,
+            String::new(),
+            "visa-login".into(),
+        )
+        .unwrap();
+    let gid = Vault::ensure_group(&v.db().unwrap(), "Kreditkarten", "creditcard", 1).unwrap();
+    (v, conn_id, gid)
+}
+
+fn insert_card(
+    db: &Connection,
+    conn_id: i64,
+    gid: i64,
+    ext: &str,
+    iban: &str,
+    number: &str,
+    currency: &str,
+) -> i64 {
+    db.execute(
+        "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, account_number, currency, kind, balance_cents)
+         VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, 'credit_card', 0)",
+        params![conn_id, gid, ext, iban, number, currency],
+    )
+    .unwrap();
+    db.last_insert_rowid()
+}
+
+#[test]
+fn a_reactivated_card_is_no_fallback_while_known_ones_are_ambiguous() {
+    // two known cards with an IBAN fit equally well: no guess, and certainly not the
+    // reactivated one without an IBAN (it may be a closed card)
+    let (v, conn_id, gid) = cards_login();
+    let db = v.db().unwrap();
+    let old = insert_card(&db, conn_id, gid, "moneymoney-db:30:aaaa", "", "", "EUR");
+    insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:31:bbbb",
+        "DE89370400440532013000",
+        "",
+        "EUR",
+    );
+    insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:32:cccc",
+        "DE02120300000000202051",
+        "",
+        "EUR",
+    );
+    note_archive_unknown(&db, &[old]).unwrap();
+    let adopted = adopt_account(
+        &db,
+        conn_id,
+        "visa:1",
+        "",
+        "",
+        "EUR",
+        AccountKind::CreditCard,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(adopted, None);
+}
+
+#[test]
+fn a_card_number_in_another_currency_is_not_taken_over() {
+    // the number matches the USD card, the fetch is in EUR: the EUR card is the one
+    let (v, conn_id, gid) = cards_login();
+    let db = v.db().unwrap();
+    let usd = insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:40:dddd",
+        "",
+        "4871000011112222",
+        "USD",
+    );
+    let eur = insert_card(
+        &db,
+        conn_id,
+        gid,
+        "moneymoney-db:41:eeee",
+        "",
+        "5232000033334444",
+        "EUR",
+    );
+    let adopted = adopt_account(
+        &db,
+        conn_id,
+        "visa:2",
+        "",
+        "4871000011112222",
+        "EUR",
+        AccountKind::CreditCard,
+        &["4871000011112222"],
+    )
+    .unwrap();
+    assert_ne!(adopted, Some(usd));
+    assert_eq!(adopted, Some(eur));
+}
+
+#[test]
 fn a_foreign_closed_account_leaves_the_repair_note_of_its_target() {
     // #998: the closed Visa-Karte is merged into another account the repair noted; that
     // one's state comes from its own MoneyMoney account, not from this one
