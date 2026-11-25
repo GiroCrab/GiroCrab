@@ -3,6 +3,7 @@
 Ein UI-Audit prüft **eine** Ansicht und macht daraus wenige, gut abgrenzbare Aufgaben. Ziel ist nicht, die ganze
 App auf einmal zu bewerten, sondern Schritt für Schritt nachvollziehbare Verbesserungen zu sammeln. Hintergrund
 und Diskussion: RFC #1673; erster Pilot: [`docs/ui-audits/buchungs-inspektor.md`](ui-audits/buchungs-inspektor.md).
+Laufende Nachprüfungen und fehlende Ansichten stehen in der [Audit-Übersicht](ui-audits/README.md).
 
 Werkzeug ist [Impeccable](#mit-impeccable). Maßstab sind [`PRODUCT.md`](../PRODUCT.md) (wofür und für wen) und
 [`DESIGN.md`](../DESIGN.md) (wie es heute aussieht, mit den GiroCrab-Regeln unter „Do's and Don'ts“); Impeccable
@@ -10,26 +11,61 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
 
 ## Ablauf
 
-1. **Ansicht wählen.** Ein Bereich pro Audit, z. B. „Buchungs-Inspektor“ oder „Seitenleiste“, mit den Dateien,
-   die ihn bauen. Vorher in den offenen Issues mit `[UI-Audit]` nachsehen, ob schon jemand daran arbeitet.
-2. **Impeccable ausführen:** `critique` und `audit` auf die Hauptdatei der Ansicht (siehe unten). Den Skill
-   wirklich laufen lassen; ein Durchgang „im Sinne von“ Impeccable ersetzt ihn nicht.
-3. **Ergänzend prüfen,** was Impeccable nicht kennt: [GiroCrab-Regeln](#was-impeccable-nicht-kennt).
-4. **Bestätigen.** Jede Beobachtung im Code und in Screenshots mit Demo-Daten nachweisen, auf **macOS und
-   iPhone** ([Screenshots](#screenshots)). Was sich nicht bestätigen lässt, kommt nicht in den Bericht.
-5. **Bericht schreiben** in `docs/ui-audits/<bereich>.md` ([Vorlage](#vorlage-für-den-bericht)). Jede Beobachtung
-   bekommt eine ID aus Kürzel und Nummer, z. B. `INS-1`; der Kopf nennt Werkzeug und Scores.
-6. **Sortieren.** Jedes Finding bekommt genau einen Weg:
+1. **Ansicht und Stand festlegen.** Pro Bericht eine Ansicht, ihren Einstieg in der App und die Hauptdateien
+   festhalten. In der [Audit-Übersicht](ui-audits/README.md) und auf GitHub nach dem Namen der Ansicht sowie
+   nach `[UI-Audit]` in Issues und PRs suchen. Vorhandene Berichte fortschreiben. Den geprüften Commit mit
+   `git rev-parse --short HEAD` erfassen und lokale Patches angeben, falls die Prüfung sie braucht.
+2. **Demo-Fall festlegen.** Startargumente, Konto oder Buchung, Klickfolge und Vergleichszustände vor dem
+   Durchgang festhalten. Bei relativen Zeiträumen auch das Datum der Aufnahme nennen. Bei einem Sheet den
+   Elternbildschirm und den Auslöser nennen. Für Dialoge oder
+   Fehlermeldungen simulierte Fälle mit Demo-Daten verwenden. Die [Prüfmatrix](#prüfmatrix) durchgehen und
+   pro Plattform Betriebssystem, Gerät und Abweichungen festhalten.
+3. **Impeccable ausführen.** Native `critique` und `audit` auf die Hauptdatei der Ansicht anwenden, mit
+   `PRODUCT.md` und `DESIGN.md` als Kontext. Dazu die [GiroCrab-Regeln](#was-impeccable-nicht-kennt) prüfen.
+   Die Bewertungen, den geprüften Zustand und Einschränkungen beim Lauf dokumentieren.
+4. **Befunde bestätigen.** Code-Stelle und Demo-Aufnahme für jeden Befund belegen. Auf macOS und iPhone
+   prüfen, sofern die Ansicht dort verfügbar ist. Für iPad-spezifische Befunde das passende Gerät ergänzen.
+   Im Bericht die Startargumente, Interaktionen sowie erwartetes und beobachtetes
+   Ergebnis nennen. Fälle ohne Nachweis als ausstehende Prüfung in die Übersicht aufnehmen.
+5. **Bericht schreiben.** Die [Vorlage](#vorlage-für-den-bericht) nach `docs/ui-audits/<bereich>.md` kopieren.
+   Jeder bestätigte Befund bekommt eine bleibende ID aus Kürzel und Nummer, z. B. `INS-1`. Bei Nachprüfungen
+   die ID und die ursprünglichen Scores beibehalten. Neue Befunde bekommen die nächste freie Nummer.
+   Die Tabelle fasst jeden Befund in einer Zeile zusammen. Unter „Prüfnachweis“ reichen die Schritte,
+   die speziell für diese Ansicht gelten. Die allgemeine Prüfmatrix steht hier in der Anleitung.
+6. **Sortieren.** Jeder Befund bekommt genau einen Weg:
    - **Fix:** klein und unstrittig → direkt im Audit-PR beheben.
    - **Issue:** klar, aber eigene Arbeit → höchstens fünf Issues pro Audit, Titel
      `[UI-Audit] <Bereich>: <Beobachtung>`, ggf. `good first issue` / `help wanted`.
    - **Entscheidung:** betrifft mehrere Ansichten (gemeinsame Abstände, Radien, Betragsgrößen) →
      bleibt im Bericht und wird im RFC-Issue zur Diskussion gestellt, nicht nebenbei geändert.
    - **Verworfen:** nach Prüfung kein Problem → mit Begründung im Bericht lassen.
-7. **Nachvollziehbar halten.** Commit-Nachricht und PR nennen die IDs der behobenen Findings; der Bericht nennt
-   für jedes Finding den Status bzw. das Issue. Ändert sich `main` an der Ansicht, bevor der PR gemergt ist:
-   neu aufsetzen und Findings, Zeilenangaben und Screenshots erneut prüfen. Eine kurze Zusammenfassung kommt als
-   Kommentar ins RFC-Issue.
+7. **Nachprüfen und abschließen.** Den Demo-Fall bei einem Fix im selben Zustand auf dem Ausgangsstand und
+   auf dem Fix-Stand wiederholen. Datum, Commit, Plattform, Ergebnis und Beleg im Bericht ergänzen. Im PR die
+   IDs der behobenen Befunde nennen und Vorher/Nachher-Aufnahmen anhängen. Der Bericht verlinkt
+   den zuständigen PR oder das Issue und führt pro Befund genau einen Status:
+   `open` für offene Befunde (auch teilweise behobene), `fixed` für vollständig behobene und nachgeprüfte
+   Befunde, deren Fix auf `main` liegt oder im selben PR mitgeliefert wird,
+   `decision` für ausstehende gemeinsame Entscheidungen und `dismissed` für verworfene Befunde.
+   Ändert sich `main` an der Ansicht, bevor der PR gemergt ist:
+   die betroffenen Fälle auf dem neuen Stand erneut prüfen. Die Übersicht aktualisieren und
+   `scripts/lint-ui-audits.sh` ausführen. Der lokale Check prüft die Vorlage und die Berichte. Eine kurze Zusammenfassung
+   kommt bei Veröffentlichung als Kommentar ins RFC-Issue.
+
+## Prüfmatrix
+
+Die Standardaufnahme dient auf jeder Plattform als Referenz. Für alle Varianten dieselben Demo-Daten, Filter,
+Sprache und Auswahl verwenden. Die Mindestbreite des Fensters kann die verlangte Breite überschreiben. Dann die
+tatsächlich erreichte Breite festhalten.
+
+| Umgebung | Zustände |
+|---|---|
+| macOS | Hell und dunkel, „Sehr groß“, schmale Fensterbreite, `--redact` und bei eigenen Kategorien, Gruppen oder Wertpapieren `--redact=labels`. Tastaturpfad und Fokus bei interaktiven Ansichten prüfen. |
+| iPhone | Hell und dunkel, „Accessibility XL“, `--redact` bzw. `--redact=labels`. Bei Sheets Öffnen, Schließen und Platz für die Inhalte prüfen. |
+| iPad | Prüfen, wenn sich Navigation, Spaltenaufteilung oder Darstellung von iPhone unterscheiden. Größe und Ausrichtung nennen. |
+| Zustände der Ansicht | Soweit vorhanden Auswahl, leere Ansicht oder keine Treffer, Fehler samt nächstem Schritt und „Bewegung reduzieren“ bei sichtbaren Übergängen. |
+
+Im Bericht zu jeder geprüften oder ausstehenden Variante kurz das Ergebnis notieren. Bei einem Fix denselben
+Fall einschließlich Fenstergröße, Schriftstufe, Farben und Schwärzung vor und nach der Änderung aufnehmen.
 
 ## Mit Impeccable
 
@@ -66,15 +102,17 @@ Schnelle Code-Hinweise (Treffer sind Kandidaten, keine Befunde):
 
 ```bash
 cd GiroCrabApp/Sources/GiroCrabUI
-grep -n '\.font(\.system(' <Datei>.swift                    # Text, der der Schriftgröße nicht folgt
-grep -n 'frame(width:\|frame(height:\|minHeight:\|minimum:' <Datei>.swift   # feste Maße: mit textScale?
-grep -n 'navigationTitle\|\.help(' <Datei>.swift            # Parametertexte: sensible Inhalte ersetzt?
-grep -n 'withAnimation(\|\.animation(' <Datei>.swift | grep -v Motion   # Animation ohne „Bewegung reduzieren“
+TARGET=BookingDetailView.swift   # bei anderen Ansichten ersetzen
+rg -n '\.font\(\.system\(' "$TARGET"                         # feste Schriftgröße
+rg -n 'frame\((width|height):|minHeight:|minimum:' "$TARGET"   # feste Maße mit textScale?
+rg -n 'navigationTitle|\.help\(' "$TARGET"                    # sensible Parametertexte
+rg -n 'withAnimation\(|\.animation\(' "$TARGET"              # Bewegung reduzieren über Motion?
 ```
 
 ## Screenshots
 
-Immer mit Demo-Daten und ohne Banner (Demo-Hinweis, Mitteilungen wie die FinTS-Registrierung). `--pick <Text>`
+Immer mit Demo-Daten und ohne Banner aufnehmen. In der Demo-App unter „Einstellungen › Allgemein ›
+Mitteilungen“ die Projektmitteilungen ausstellen. `--screenshot` blendet den Demo-Hinweis aus. `--pick <Text>`
 wählt die erste Buchung, deren Händler oder Gegenpartei den Text enthält, `--select <Konto>` ein Konto.
 Screenshots gehören in den PR oder das Issue, nicht ins Repository.
 
@@ -83,12 +121,16 @@ Stand des Branches, „vorher“ aus `main` in einem eigenen Worktree, damit im 
 Worktree nutzt das xcframework des Branches mit (bei UI-Audits ist der Core unverändert):
 
 ```bash
-git worktree add /tmp/girocrab-main upstream/main
-ln -s "$PWD/generated" /tmp/girocrab-main/generated
-(cd /tmp/girocrab-main/GiroCrabApp && swift build -q && \
-  .build/debug/GiroCrabMac --demo-seed --pick rewe --screenshot /tmp/vorher-standard.png)
-# iPhone: im Worktree genauso mit xcodebuild aus /tmp/girocrab-main/GiroCrabApp/Xcode/ (siehe unten)
-git worktree remove --force /tmp/girocrab-main   # erst nach macOS und iPhone
+BASE_SHA=$(git rev-parse upstream/main)   # diese SHA im Bericht erfassen
+BASE_DIR=$(mktemp -d /tmp/girocrab-ui-base.XXXXXX)
+git worktree add --detach "$BASE_DIR" "$BASE_SHA"
+ln -s "$PWD/generated" "$BASE_DIR/generated"
+(cd "$BASE_DIR/GiroCrabApp" && swift build -q && \
+  .build/debug/GiroCrabMac --demo-seed --pick rewe --light --text-size standard --screenshot /tmp/vorher-standard.png)
+# iPhone: denselben Worktree unter "$BASE_DIR/GiroCrabApp/Xcode" bauen (siehe unten).
+# Erst nach allen Aufnahmen den selbst angelegten Link und Worktree entfernen.
+rm "$BASE_DIR/generated"
+git worktree remove "$BASE_DIR"
 ```
 
 ### macOS
@@ -97,41 +139,65 @@ Aus `GiroCrabApp/` nach `swift build -q` (`--screenshot` blendet den Demo-Hinwei
 
 ```bash
 APP=.build/debug/GiroCrabMac
-$APP --demo-seed --pick rewe --screenshot /tmp/audit-standard.png
-$APP --demo-seed --pick rewe --screenshot /tmp/audit-larger.png --text-size larger
-$APP --demo-seed --pick rewe --screenshot /tmp/audit-dark.png --dark
-$APP --demo-seed --pick rewe --screenshot /tmp/audit-redact.png --redact
-$APP --demo-seed --pick rewe --screenshot /tmp/audit-narrow.png --window-width 900
-$APP --demo-seed --pick rewe --screenshot /tmp/audit-tall.png --window-height 1900   # ganze Spalte
+"$APP" --demo-seed --pick rewe --screenshot /tmp/audit-standard.png --light --text-size standard
+"$APP" --demo-seed --pick rewe --screenshot /tmp/audit-larger.png --light --text-size larger
+"$APP" --demo-seed --pick rewe --screenshot /tmp/audit-dark.png --dark --text-size standard
+"$APP" --demo-seed --pick rewe --screenshot /tmp/audit-redact.png --light --redact
+"$APP" --demo-seed --pick rewe --screenshot /tmp/audit-narrow.png --light --window-width 900
+"$APP" --demo-seed --pick rewe --screenshot /tmp/audit-tall.png --light --window-height 1900
 ```
 
 ### iPhone
 
-Auf dem iPhone schreibt `--screenshot` kein Bild, blendet aber wie auf dem Mac den Demo-Hinweis aus; aufgenommen
-wird mit `simctl`. Mitteilungen einmal pro Simulator abschalten. `--pick` öffnet auf dem iPhone auch das
-Buchungs-Sheet, das sonst nur durch Antippen erscheint. Aus `GiroCrabApp/Xcode/`, nach `./build-xcframework.sh`
-(iOS-Teil):
+Auf dem iPhone schreibt `--screenshot` kein Bild. Es blendet den Demo-Hinweis aus, damit `simctl` das Bild
+aufnehmen kann. `--pick` öffnet auf dem iPhone das Buchungs-Sheet. Das Beispiel in Bash läuft aus
+`GiroCrabApp/Xcode/`, sobald das xcframework für iOS vorliegt. `simctl list devices booted` zeigt die IDs der
+laufenden Geräte. Die separate Bundle-ID isoliert die Demo-App. Die Simulator-Einstellungen werden beim
+Verlassen des Skripts wiederhergestellt.
 
 ```bash
-UDID=$(xcrun simctl list devices booted | grep -Eo '[0-9A-F-]{36}' | head -1)   # oder Simulator starten
+(
+set -e
+UDID='<ID des iPhone-Simulators>'
+APP_ID=de.girocrab.app.uiaudit
+DD=$(mktemp -d /tmp/girocrab-ui-audit.XXXXXX)
+OLD_APPEARANCE=$(xcrun simctl ui "$UDID" appearance)
+OLD_SIZE=$(xcrun simctl ui "$UDID" content_size)
+restore_simulator() {
+  xcrun simctl terminate "$UDID" "$APP_ID" >/dev/null 2>&1 || true
+  xcrun simctl ui "$UDID" appearance "$OLD_APPEARANCE"
+  xcrun simctl ui "$UDID" content_size "$OLD_SIZE"
+}
+trap restore_simulator EXIT
 xcodebuild -quiet -project GiroCrab.xcodeproj -scheme GiroCrab -destination "id=$UDID" \
-  -derivedDataPath /tmp/girocrab-dd CODE_SIGNING_ALLOWED=NO build
-xcrun simctl install "$UDID" /tmp/girocrab-dd/Build/Products/Debug-iphonesimulator/GiroCrab.app
-xcrun simctl spawn "$UDID" defaults write de.girocrab.app announcements.enabled -bool NO   # keine Mitteilungs-Banner
+  -derivedDataPath "$DD" PRODUCT_BUNDLE_IDENTIFIER="$APP_ID" CODE_SIGNING_ALLOWED=NO build
+xcrun simctl install "$UDID" "$DD/Build/Products/Debug-iphonesimulator/GiroCrab.app"
+# Vor der Aufnahme einmal als Demo starten und wie oben beschrieben Mitteilungen ausstellen.
+SIMCTL_CHILD_GIROCRAB_DEMO_SEED=1 xcrun simctl launch "$UDID" "$APP_ID" --demo-seed
+read -r -p 'Mitteilungen in der Demo-App ausstellen, dann Eingabetaste drücken. ' _
 
 shot() {  # shot <Datei> [Argumente …]
-  xcrun simctl terminate "$UDID" de.girocrab.app >/dev/null 2>&1 || true
-  SIMCTL_CHILD_GIROCRAB_DEMO_SEED=1 xcrun simctl launch "$UDID" de.girocrab.app --demo-seed \
-    --screenshot /dev/null "${@:2}" >/dev/null   # --screenshot: ohne Demo-Hinweis
-  sleep 10   # Start mit Demo-Daten dauert; ein zu früher Screenshot zeigt den Startbildschirm
+  xcrun simctl terminate "$UDID" "$APP_ID" >/dev/null 2>&1 || true
+  SIMCTL_CHILD_GIROCRAB_DEMO_SEED=1 xcrun simctl launch "$UDID" "$APP_ID" --demo-seed \
+    --screenshot /dev/null "${@:2}" >/dev/null
+  sleep 15
   xcrun simctl io "$UDID" screenshot "$1"
 }
+xcrun simctl ui "$UDID" appearance light
+xcrun simctl ui "$UDID" content_size large
 shot /tmp/ios-standard.png --pick rewe
 shot /tmp/ios-redact.png --pick rewe --redact
-xcrun simctl ui "$UDID" appearance dark && shot /tmp/ios-dark.png --pick rewe; xcrun simctl ui "$UDID" appearance light
-xcrun simctl ui "$UDID" content_size accessibility-extra-large && shot /tmp/ios-larger.png --pick rewe
-xcrun simctl ui "$UDID" content_size large
+xcrun simctl ui "$UDID" appearance dark
+shot /tmp/ios-dark.png --pick rewe
+xcrun simctl ui "$UDID" appearance light
+xcrun simctl ui "$UDID" content_size accessibility-extra-large
+shot /tmp/ios-larger.png --pick rewe
+)
 ```
+
+Jede Aufnahme ansehen. Ist noch der Startbildschirm sichtbar, die App fertig laden lassen und `simctl io …
+screenshot` ohne Neustart wiederholen. Wo ein Schritt Tippen oder Scrollen braucht, den Zustand vor der Aufnahme
+herstellen und die genaue Folge im Bericht notieren.
 
 ## Vorlage für den Bericht
 
@@ -141,15 +207,29 @@ xcrun simctl ui "$UDID" content_size large
 - **Datum / Stand:** <Datum>, `main` @ <Commit>
 - **Ansicht:** <was genau, auf welchen Plattformen>
 - **Dateien:** `GiroCrabApp/Sources/GiroCrabUI/<Datei>.swift`
-- **Werkzeug:** Impeccable `critique` (<n>/<max>) und `audit` (<n>/20), dazu GiroCrab-Regeln von Hand
-- **Nachweis:** macOS (Standard, „Sehr groß“, dunkel, schmal, `--redact`), iPhone (Simulator, normal, `--redact`)
+- **Werkzeug:** Impeccable `critique` und `audit` (nativ), dazu GiroCrab-Regeln von Hand
+- **Nachweis:** <Plattformen, geprüfte Varianten und Demo-Screenshots>
 
-| ID | Kriterium | Plattform | Beobachtung | Weg | Status |
-|---|---|---|---|---|---|
-| XYZ-1 | Barrierefreiheit | macOS | … | Fix | behoben |
-| XYZ-2 | Konsistenz | beide | … | Issue | #… |
-| XYZ-3 | Konsistenz | beide | … | Entscheidung | im RFC |
+## Befunde
 
-## XYZ-1: <kurzer Titel>
-**Ort:** `<Datei>.swift:<Zeile>` · **Beobachtung:** … · **Vorschlag:** … · **Prüfung:** woran man die Verbesserung erkennt.
+| ID | Priorität | Kriterium | Plattform | Beobachtung | Weg | Status |
+|---|---|---|---|---|---|---|
+| XYZ-1 | P1 | Barrierefreiheit | macOS | … | Fix | `fixed` |
+| XYZ-2 | P2 | Konsistenz | macOS, iOS | … | Issue | `open` |
+| XYZ-3 | P2 | Konsistenz | macOS, iOS | … | Entscheidung | `decision` |
+| XYZ-4 | – | Datenschutz | macOS, iOS | … | Verworfen | `dismissed` |
+
+## Impeccable-Bewertung
+
+**Critique <n>/<max> · Technisches Audit <n>/20.** <Wichtigstes Ergebnis in einem Satz>
+
+## Prüfnachweis
+
+- **Datum / Stand:** <Datum und Commit einer Nachprüfung, falls vorhanden>
+- **Umgebung:** <Plattformen, Versionen, Geräte, Sprache, geprüfte Varianten und Abweichungen von der Prüfmatrix>
+- **Demo-Einstieg:** <Startargumente, Auswahl und Bedienfolge>
+- **XYZ-2:** <Code-Stelle, Ergebnis, erwartetes Verhalten, Beleg und ggf. Issue oder PR>
 ```
+
+Wenn die Prüfung keine Befunde ergibt, bleibt die Tabelle leer und darunter steht „Keine Befunde.“ In älteren
+Audits steht `–` in der Spalte „Priorität“, wenn der ursprüngliche Durchgang keine Einstufung festgehalten hat.
