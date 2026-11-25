@@ -249,6 +249,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
 | FinTS-Bank (BLZ + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
+| flatex (flatexDEGIRO Bank) | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
 | ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
@@ -279,6 +280,8 @@ Weitere deutsche Banken mit FinTS 3.0 (PIN/TAN) lassen sich über BLZ und FinTS-
 quirion: Einrichtung, technische Details und geprüfter Umfang stehen in [docs/quirion-connector.md](docs/quirion-connector.md).
 
 FNZ Bank / ebase / finvesto: Einrichtung, Konto- und Depotumsätze, Fondspositionen, PDF-Archiv und Einschränkungen stehen in [docs/fnz-connector.md](docs/fnz-connector.md).
+
+flatex (flatexDEGIRO Bank): Bankcodes, FinTS-Server und offene Testpunkte stehen in [docs/flatex-connector.md](docs/flatex-connector.md).
 
 Eine neue Bank anzubinden dauert meist unter 100 Zeilen: siehe
 [`connectors/template.rs`](girocrab-core/src/connectors/template.rs) und [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -525,6 +528,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verified |
 | FinTS bank (bank code + URL) | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
+| flatex (flatexDEGIRO Bank) | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verified |
 | ING | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#313](https://github.com/GiroCrab/GiroCrab/issues/313) |
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |

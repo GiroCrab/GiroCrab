@@ -310,6 +310,7 @@ fn matches_all(haystack: &str, words: &[&str]) -> bool {
 const FINTS_ALIASES: &[(&str, &str)] = &[
     ("76030080", "dab bnp paribas"),
     ("50070439", "lufthansa mastercard"),
+    ("10130800", "vitrade biw flatexdegiro"),
 ];
 
 fn fints_result(b: FinTsBankInfo) -> BankSearchResult {
@@ -850,6 +851,38 @@ mod tests {
             assert_eq!(r[0].url, fints_directory::COMDIRECT_FINTS_URL);
             assert_eq!(r[1].mode, BankAccessMode::OwnApi);
         }
+    }
+
+    #[test]
+    fn flatex_degiro_offers_fints_under_every_bank_code() {
+        for query in [
+            "flatex",
+            "flatexdegiro",
+            "degiro",
+            "vitrade",
+            "biw",
+            "10130800",
+            "30330800",
+            "DE11 1013 0800 1234 5678 90",
+        ] {
+            let r = search(query, vec![], 10);
+            let hit = r.iter().find(|b| b.mode == BankAccessMode::FinTs);
+            let hit = hit.unwrap_or_else(|| panic!("{query}: no FinTS row"));
+            assert_eq!(hit.url, fints_directory::FLATEX_FINTS_URL, "{query}");
+            assert!(
+                hit.name.starts_with("flatexDEGIRO"),
+                "{query}: {}",
+                hit.name
+            );
+        }
+        // the alias row is not listed twice for "flatex"
+        assert_eq!(
+            search("flatex", vec![], 20)
+                .iter()
+                .filter(|b| b.blz == "10130800")
+                .count(),
+            1
+        );
     }
 
     #[test]

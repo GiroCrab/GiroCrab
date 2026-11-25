@@ -113,6 +113,7 @@ CONNECTOR_DOCS = {
     "consorsbank": ("Consorsbank", "Consorsbank"),
     "easybank": ("easybank (ehem. Barclays)", "easybank"),
     "equateplus": ("EquatePlus", "EquatePlus"),
+    "flatex": ("flatex (flatexDEGIRO Bank)", "flatexDEGIRO Bank"),
     "fnz": ("FNZ Bank", "FNZ Bank"),
     "goandgrow": ("Go & Grow", "Go & Grow"),
     "kontist": ("Kontist", "Kontist"),

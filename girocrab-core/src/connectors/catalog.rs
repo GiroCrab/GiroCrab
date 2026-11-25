@@ -572,6 +572,19 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[313],
     },
     MatrixEntry {
+        name: "flatex (flatexDEGIRO Bank)",
+        kind: None,
+        interface: Interface::Fints,
+        official: Some(true),
+        capabilities: &[
+            Capability::Transactions,
+            Capability::Balances,
+            Capability::Securities,
+        ],
+        status: Status::Verified,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "Consorsbank",
         kind: None,
         interface: Interface::Fints,
