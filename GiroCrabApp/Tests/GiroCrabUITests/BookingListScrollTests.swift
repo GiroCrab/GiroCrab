@@ -50,7 +50,7 @@ final class BookingListScrollTests: XCTestCase {
     }
 
     /// Waits until the list has stood still for 300 ms.
-    private func scrollSettles() async throws {
+    private func scrollSettles(file: StaticString = #filePath, line: UInt = #line) async throws {
         var last = try offset(), unchanged = 0
         for _ in 0..<500 where unchanged < 30 {
             try await Task.sleep(for: .milliseconds(10))
@@ -58,14 +58,17 @@ final class BookingListScrollTests: XCTestCase {
             unchanged = now == last ? unchanged + 1 : 0
             last = now
         }
+        XCTAssertEqual(unchanged, 30, "the list does not stand still", file: file, line: line)
     }
 
+    /// The main column's list is the widest one. Not the largest: on a small screen (CI) the window
+    /// shrinks, and the inspector next to it has more area.
     private func list() throws -> NSScrollView {
         func scrollViews(_ view: NSView) -> [NSScrollView] {
             (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
         }
         let candidates = scrollViews(try XCTUnwrap(window.contentView)).filter { !($0.documentView is NSTableView) }
-        return try XCTUnwrap(candidates.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
+        return try XCTUnwrap(candidates.max { $0.frame.width < $1.frame.width })
     }
 
     private func offset() throws -> CGFloat { try list().contentView.bounds.minY }
@@ -76,10 +79,11 @@ final class BookingListScrollTests: XCTestCase {
         XCTAssertEqual(try offset(), 0)
         model.moveSelection(.max)
         try await scrollSettles()
-        XCTAssertGreaterThan(try offset(), 0)
+        let end = try offset()
+        XCTAssertGreaterThan(end, 0)
         model.moveSelection(-.max)
         try await scrollSettles()
-        XCTAssertLessThan(try offset(), try list().contentView.bounds.height)
+        XCTAssertLessThan(try offset(), end / 2)
     }
 
     /// Key repeat: the list is where the selection is, not only once the key is released.
