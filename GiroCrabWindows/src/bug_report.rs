@@ -128,6 +128,12 @@ fn normalized(term: &str) -> String {
     term.trim().to_lowercase()
 }
 
+/// Line breaks become spaces. Log messages and redaction terms both pass
+/// through here, so a name with an internal line break still matches.
+fn single_line(text: &str) -> String {
+    text.replace('\n', " ")
+}
+
 /// Counterparty names that are booking words, not people or firms: as terms
 /// they would blank out the wording of ordinary log messages (lower case).
 const BOOKING_WORDS: &[&str] = &[
@@ -188,7 +194,7 @@ fn public_terms_removed(terms: Vec<String>, banks: &HashSet<String>) -> Vec<Stri
     let mut seen = HashSet::new();
     terms
         .into_iter()
-        .map(|t| t.trim().to_string())
+        .map(|t| single_line(t.trim()))
         .filter(|t| {
             let key = normalized(t);
             !key.is_empty() && !banks.contains(&key) && seen.insert(key)
@@ -294,7 +300,7 @@ fn log_lines(
             }
             LogLine {
                 head,
-                message: e.message.replace('\n', " "),
+                message: single_line(&e.message),
             }
         })
         .collect()
@@ -492,6 +498,32 @@ mod tests {
         assert!(log[0].contains("PayPal"));
         assert!(log[0].contains("nicht erreichbar"));
         assert!(!log[0].contains("Erika"));
+    }
+
+    #[test]
+    fn multiline_names_are_redacted_like_the_message_text() {
+        let banks: HashSet<String> = ["paypal".to_string()].into();
+        let terms = public_terms_removed(
+            vec![
+                "Erika\nMuster".to_string(),
+                "Max Mustermann".to_string(),
+                "PayPal".to_string(),
+            ],
+            &banks,
+        );
+        assert!(terms.contains(&"Erika Muster".to_string()), "{terms:?}");
+        // the message goes through the same normalization as in `log_lines`
+        let log = sanitized_log(
+            &[LogLine {
+                head: "h".into(),
+                message: single_line("PayPal: Erika\nMuster und Max Mustermann nicht erreichbar"),
+            }],
+            &terms,
+        );
+        assert!(log[0].contains("PayPal"), "{}", log[0]);
+        assert!(log[0].contains("nicht erreichbar"), "{}", log[0]);
+        assert!(!log[0].contains("Erika"), "{}", log[0]);
+        assert!(!log[0].contains("Mustermann"), "{}", log[0]);
     }
 
     #[test]
