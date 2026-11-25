@@ -793,6 +793,8 @@ component Dialog inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
+    /// "Letzten Abruf anzeigen" (#815): off by default, as in the reference app.
+    in-out property <bool> show-fetched: false;
     in property <string> window-title: "GiroCrab";
     title: window-title;
     icon: @image-url("../../docs/assets/app-icon.png");
@@ -1283,13 +1285,14 @@ export component MainWindow inherits Window {
                     MenuEntry { text: "Tresor sperren"; hint: "Strg+L"; clicked => { root.lock(); } }
                 }
                 MenuTitle {
-                    text: "Ansicht"; menu-height: 262px;
+                    text: "Ansicht"; menu-height: 302px;
                     MenuEntry { text: "Übersicht (Alle Konten)"; clicked => { root.side-click("all"); } }
                     MenuEntry { text: "Neue Buchungen"; clicked => { root.side-click("new"); } }
                     MenuEntry { text: "Geplante Zahlungen"; clicked => { root.side-click("planned"); } }
                     MenuEntry { text: "Vermögen"; clicked => { root.side-click("wealth"); } }
                     MenuEntry { text: "Lastschriften"; clicked => { root.side-click("mandates"); } }
                     MenuEntry { text: "Dokumente"; clicked => { root.side-click("docs"); } }
+                    MenuEntry { text: root.show-fetched ? "✓ Letzten Abruf anzeigen" : "Letzten Abruf anzeigen"; clicked => { root.show-fetched = !root.show-fetched; } }
                     MenuSep {}
                     MenuEntry { text: root.privacy ? "Datenschutzmodus ausschalten" : "Datenschutzmodus einschalten"; hint: "Strg+Umschalt+P"; clicked => { root.privacy = !root.privacy; root.privacy-changed(); } }
                     MenuEntry { text: root.demo-active ? "Demo-Daten beenden" : "Demo-Daten ansehen"; clicked => { root.demo-switch(); } }
@@ -1497,7 +1500,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         bal := Text { text: (root.selected == 0 && root.show-liquid) ? root.liquid-balance : root.selected-balance; font-size: 18px; font-weight: 700; color: Theme.text; vertical-alignment: bottom; overflow: elide; wrap: no-wrap; }
-                        if root.selected-fetched != "": Text {
+                        if root.show-fetched && root.selected-fetched != "": Text {
                             text: root.selected-fetched;
                             font-size: 11px;
                             color: Theme.muted;

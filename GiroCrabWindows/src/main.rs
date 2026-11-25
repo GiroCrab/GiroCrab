@@ -1373,6 +1373,13 @@ mod fetched_label_tests {
     const NOW: i64 = 1_700_000_000_000;
 
     #[test]
+    fn locked_vault_hides_label() {
+        let privacy = crate::daily::effective_privacy(false, false);
+        assert_eq!(fetched_text(NOW, Some(None), privacy), "");
+        assert_eq!(fetched_text(NOW, Some(Some(NOW - 60_000)), privacy), "");
+    }
+
+    #[test]
     fn never_synced_connection_says_so() {
         assert_eq!(fetched_text(NOW, Some(None), false), "Noch nie abgerufen");
         // A zero timestamp is not a real fetch either.
@@ -1452,8 +1459,8 @@ fn render_header(
     win.set_selected_name(cur.0.into());
     win.set_selected_balance(cur.1.into());
     win.set_selected_currency(cur.2.into());
-    // "Alle Konten" (0) has no entry, so it stays empty; privacy mode hides it.
-    let privacy = win.get_privacy();
+    // "Alle Konten" (0) has no entry, so it stays empty; privacy mode and a locked vault hide it.
+    let privacy = daily::effective_privacy(win.get_privacy(), win.get_unlocked());
     win.set_selected_fetched(
         sel.map(|id| fetched_label(id, privacy))
             .unwrap_or_default()
