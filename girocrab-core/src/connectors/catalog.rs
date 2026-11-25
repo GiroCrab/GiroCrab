@@ -14,6 +14,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     match kind {
         ConnectorKind::Advanzia => advanzia::bank_descriptor(kind),
+        ConnectorKind::AirPlus => airplus::bank_descriptor(kind),
         ConnectorKind::VolksbankKasselGoettingen => BankDescriptor {
             kind,
             name: "Volksbank Kassel Göttingen".into(),
@@ -900,6 +901,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         status: Status::TestingWanted,
         issues: &[],
     },
+    MatrixEntry {
+        name: "AirPlus Corporate Card",
+        kind: Some(ConnectorKind::AirPlus),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[Capability::Transactions, Capability::Balances],
+        status: Status::TestingWanted,
+        issues: &[],
+    },
 ];
 
 pub fn make_connector(kind: ConnectorKind, demo: bool) -> Box<dyn BankConnector> {
@@ -934,6 +944,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::AmazonOrders => Box::new(crate::importers::amazon_orders::WebOnlyConnector),
         ConnectorKind::Fnz => Box::new(fnz::WebOnlyConnector),
         ConnectorKind::Advanzia => Box::new(advanzia::WebOnlyConnector),
+        ConnectorKind::AirPlus => Box::new(airplus::WebOnlyConnector),
         ConnectorKind::Ibkr => Box::new(ibkr::IbkrConnector::new()),
         ConnectorKind::Quirion => Box::new(quirion::WebOnlyConnector),
         ConnectorKind::Sharinbox => Box::new(sharinbox::WebOnlyConnector),

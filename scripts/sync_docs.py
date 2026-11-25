@@ -107,6 +107,7 @@ CONNECTOR_DOCS = {
     "miles-and-more": ("Miles & More Kreditkarte (Deutsche Bank)", "Deutsche Bank / Miles & More"),
     "quirion": ("quirion", "quirion"),
     "scalable-capital": ("Scalable Capital", "Scalable Capital"),
+    "airplus": ("AirPlus Corporate Card", "AirPlus"),
     "trade-republic": ("Trade Republic", "Trade Republic"),
     "volkswagen-bank": ("Volkswagen Bank", "Volkswagen Bank"),
     "sharinbox": ("Sharinbox (Société Générale)", "Sharinbox (Société Générale)"),

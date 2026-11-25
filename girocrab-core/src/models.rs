@@ -79,6 +79,9 @@ pub enum ConnectorKind {
     HanseaticBank,
     /// Monefit SmartSaver savings account via the web app's JSON API (unofficial).
     Monefit,
+    /// AirPlus Corporate Card (#1143): booked card bookings via the business travel portal,
+    /// authenticated inside the embedded browser (SMS TAN).
+    AirPlus,
 }
 
 impl ConnectorKind {
@@ -116,6 +119,7 @@ impl ConnectorKind {
             ConnectorKind::Kontist => "kontist",
             ConnectorKind::HanseaticBank => "hanseatic",
             ConnectorKind::Monefit => "monefit",
+            ConnectorKind::AirPlus => "airplus",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -182,6 +186,7 @@ impl ConnectorKind {
             ConnectorKind::Finpension,
             ConnectorKind::Kontist,
             ConnectorKind::Monefit,
+            ConnectorKind::AirPlus,
         ]
     }
 }
@@ -404,6 +409,10 @@ pub struct Account {
     /// Original loan amount ("Ursprünglicher Kreditbetrag", positive cents).
     /// Auto-derived from statement history, editable by the user.
     pub initial_balance_cents: Option<i64>,
+    /// Credit line the card issuer reports (positive cents), `None` = unknown (#1143).
+    #[uniffi(default = None)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub credit_limit_cents: Option<i64>,
     /// User-defined group ("Nach Gruppe" view); `None` = "Ohne Gruppe".
     pub user_group_uuid: Option<String>,
     /// The account's own switch for the overall money totals (#337): whether

@@ -636,6 +636,7 @@ pub(crate) mod testing {
             uncategorized_count: 0,
             new_count: 0,
             initial_balance_cents: None,
+            credit_limit_cents: None,
             user_group_uuid: None,
             include_in_total: true,
             in_total: true,

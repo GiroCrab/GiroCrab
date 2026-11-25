@@ -530,6 +530,7 @@ extension ConnectorKind {
         case .finpension: return "Finpension"
         case .kontist: return "Kontist"
         case .monefit: return "Monefit SmartSaver"
+        case .airPlus: return "AirPlus"
         }
     }
 
@@ -568,6 +569,7 @@ extension ConnectorKind {
         case .finpension: return "#00A68C"
         case .kontist: return "#2B2D73"
         case .monefit: return "#1F4E79"
+        case .airPlus: return "#003A70"
         }
     }
 
@@ -613,6 +615,7 @@ extension ConnectorKind {
         case .finpension: return "FP"
         case .kontist: return "KT"
         case .monefit: return "MS"
+        case .airPlus: return "AP"
         }
     }
 }
