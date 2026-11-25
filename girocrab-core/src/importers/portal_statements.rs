@@ -4,6 +4,7 @@
 //! account and closing date: the portal's own statement ids change with every
 //! login.
 
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -141,9 +142,8 @@ fn entry(v: &serde_json::Value) -> Option<(String, String)> {
 /// `readable` is only true for a recognized statements list — including an
 /// empty one. An unreadable or unrelated response (a balance summary that
 /// only carries "statement" in its URL) is no list: the download must count
-/// it as a failure instead of "nothing new". `rejected` counts its entries
-/// that carry a PDF but no usable closing date — an incomplete retrieval,
-/// no "nothing new".
+/// it as a failure instead of "nothing new". `rejected` counts its PDF links
+/// that no dated entry claims — an incomplete retrieval, no "nothing new".
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PortalStatementListing {
@@ -154,8 +154,8 @@ pub struct PortalStatementListing {
 
 /// `parse_portal_statement_list` plus the response's shape: `readable` tells
 /// a verifiably empty statement list (no failure) apart from an unrelated
-/// captured response (a failure), `rejected` counts the captured entries
-/// whose PDF has no closing date (failures, like undated visible links).
+/// captured response (a failure), `rejected` counts the captured PDFs without
+/// a usable closing date (failures, like undated visible links).
 pub fn parse_portal_statement_listing(body: &str) -> PortalStatementListing {
     let Some(v) = serde_json::from_str::<serde_json::Value>(body).ok() else {
         return PortalStatementListing {
@@ -166,16 +166,19 @@ pub fn parse_portal_statement_listing(body: &str) -> PortalStatementListing {
     };
     let items = parse_statement_entries(&v);
     let readable = !items.is_empty() || looks_like_list(&v);
+    // failures only for a recognized list: an unrelated response is one
+    // failure as a whole, its PDFs are no statements of ours
+    let rejected = if readable {
+        let mut rejected = HashSet::new();
+        rejected_entries(&v, false, &mut rejected);
+        rejected.len() as u32
+    } else {
+        0
+    };
     PortalStatementListing {
         items,
         readable,
-        // failures only for a recognized list: an unrelated response is one
-        // failure as a whole, its PDFs are no statements of ours
-        rejected: if readable {
-            rejected_entries(&v, false)
-        } else {
-            0
-        },
+        rejected,
     }
 }
 
@@ -224,28 +227,24 @@ fn field_name(k: &str) -> String {
         .collect()
 }
 
-/// The entries of `v` that carry a PDF link but no usable closing date and are
-/// attributed to no enclosing entry (`covered`): each a statement that cannot
-/// be identified — a failure, like an undated visible link. A dated entry
-/// absorbs its nested file objects, and a rejected candidate swallows its own
-/// children (one PDF group, one rejection).
-fn rejected_entries(v: &serde_json::Value, covered: bool) -> u32 {
+/// The PDF links of `v` that no dated entry claims (`under_entry` when beneath
+/// a dated one): each unidentified statement is a failure, like an undated
+/// visible link — one link once, and PDFs of a dated entry belong to its date.
+fn rejected_entries(v: &serde_json::Value, under_entry: bool, out: &mut HashSet<String>) {
     match v {
         serde_json::Value::Object(m) => {
-            let dated = own_date(m).is_some();
-            let carries_pdf = m
-                .values()
-                .filter_map(|s| s.as_str())
-                .any(|s| pdf_link(s).is_some())
-                || m.values().find_map(pdf_in).is_some();
-            let candidate = !covered && !dated && carries_pdf;
-            candidate as u32
-                + m.values()
-                    .map(|val| rejected_entries(val, covered || dated || candidate))
-                    .sum::<u32>()
+            let under = under_entry || own_date(m).is_some();
+            for path in m.values().filter_map(|s| s.as_str()).filter_map(pdf_link) {
+                if !under {
+                    out.insert(path.to_string());
+                }
+            }
+            m.values().for_each(|val| rejected_entries(val, under, out));
         }
-        serde_json::Value::Array(a) => a.iter().map(|val| rejected_entries(val, covered)).sum(),
-        _ => 0,
+        serde_json::Value::Array(a) => a
+            .iter()
+            .for_each(|val| rejected_entries(val, under_entry, out)),
+        _ => {}
     }
 }
 
@@ -705,6 +704,11 @@ mod statement_list_tests {
         // identified — an incomplete retrieval, no "nothing new"
         let l = parse_portal_statement_listing(r#"{"statements":[{"url":"/S1.pdf"}]}"#);
         assert!(l.readable && l.items.is_empty() && l.rejected == 1, "{l:?}");
+        // two undated entries in one wrapper: each unidentified statement
+        // counts, the wrapper does not swallow them into one
+        let l =
+            parse_portal_statement_listing(r#"{"statements":[{"url":"/a.pdf"},{"url":"/b.pdf"}]}"#);
+        assert!(l.readable && l.items.is_empty() && l.rejected == 2, "{l:?}");
         // a dated entry next to a rejected one: the one won, the other failed
         let l = parse_portal_statement_listing(
             r#"{"statements":[{"date":"2026-10-15","url":"/a/1.pdf"},{"url":"/S2.pdf"}]}"#,
