@@ -2455,6 +2455,36 @@ async fn a_depot_without_hkwpd_keeps_its_value_even_when_hksal_answers() {
 }
 
 #[tokio::test]
+async fn a_depot_whose_holdings_were_not_delivered_does_not_take_the_hksal_figure() {
+    // HKSAL answers, HKWPD gets no statement: the cash figure is not the depot value (#1743)
+    let (url, _) = mock_bank(vec![SAL_A, WPD_WITHOUT_DATA]);
+    let mut c = depot_connector(&url, true);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd[0].allowed.insert("HKSAL".into());
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+}
+
+#[tokio::test]
+async fn a_depot_without_hkwpd_does_not_take_the_closing_balance_of_its_bookings() {
+    // the MT940 fallback must not fill in what the unsupported HKWPD left unknown (#1743)
+    let mt940 = ":20:STARTUMSE\r\n:25:52090000/0012345678\r\n:28C:00000/001\r\n:60F:C250101EUR1000,00\r\n\
+        :61:2501020102DR23,45NDDTNONREF\r\n:86:105?00FOLGELASTSCHRIFT?20Einkauf REWE?32REWE Markt GmbH\r\n\
+        :62F:C250103EUR3476,55\r\n";
+    let (url, seen) = mock_bank(vec![reply_with_binary("HIKAZ:3:7:3+", mt940)]);
+    let mut c = depot_connector(&url, false);
+    c.st.versions.insert("HKKAZ".into(), vec![7]);
+    c.upd[0].allowed.insert("HKKAZ".into());
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert!(
+        seen.lock().unwrap().iter().flatten().any(|i| i == "HKKAZ"),
+        "the bookings are still fetched"
+    );
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+}
+
+#[tokio::test]
 async fn an_empty_depot_statement_is_a_finished_fetch_with_value_0() {
     let (url, _) = mock_bank(vec![WPD_WITH_DATA]);
     let r = depot_connector(&url, true)
