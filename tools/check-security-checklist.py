@@ -17,6 +17,7 @@ import sys
 CRITICAL_PREFIXES = (
     "girocrab-core/src/vault",
     "girocrab-core/src/secret",
+    "girocrab-core/src/lib.rs",  # generate_master_key(): the SQLCipher master key
     "girocrab-core/src/sepa.rs",
     "girocrab-core/src/payment_input.rs",
     "girocrab-core/src/connectors/",
@@ -27,8 +28,11 @@ CRITICAL_PREFIXES = (
     "scripts/",
 )
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
-# `- [x] **Security-Check:** …` (also `* [X] Security-Check`); an unticked `[ ]` or a plain bullet does not count.
-CHECKED_RE = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*\**\s*Security-Check\b", re.M)
+# Fenced code blocks (``` or ~~~); an unclosed fence runs to the end of the text, as in CommonMark.
+FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[ \t]*$|\Z)", re.S | re.M)
+# `- [x] **Security-Check:** <what was checked>` (also `* [X] Security-Check: ok`); an unticked `[ ]`, a plain
+# bullet or a ticked label without an explanation on the same line does not count.
+CHECKED_RE = re.compile(r"^[ \t]*[-*][ \t]*\[[xX]\][ \t]*\**[ \t]*Security-Check\b[*: \t]*[^\s*:]", re.M)
 
 
 def critical_paths(paths):
@@ -36,8 +40,10 @@ def critical_paths(paths):
 
 
 def has_checked_security_check(body):
-    """HTML comments are template hints, so a ticked box inside one does not count."""
-    return bool(CHECKED_RE.search(HTML_COMMENT_RE.sub("", body or "")))
+    """HTML comments are template hints and fenced blocks are examples, so a ticked box inside either does not
+    count; the ticked box needs an explanation after the label."""
+    text = FENCE_RE.sub("", HTML_COMMENT_RE.sub("", body or ""))
+    return bool(CHECKED_RE.search(text))
 
 
 def verdict(paths, body):
@@ -49,7 +55,7 @@ def verdict(paths, body):
         return True, f"{len(hits)} security-critical file(s) changed; Security-Check is ticked."
     shown = "\n".join(f"  - {p}" for p in hits[:20]) + ("\n  - …" if len(hits) > 20 else "")
     return False, (
-        "This PR changes security-critical files but its description has no ticked Security-Check.\n"
+        "This PR changes security-critical files but its description has no ticked and explained Security-Check.\n"
         f"{shown}\n"
         "Add this line to the PR description (under '### 🤖 AI Process Reflection' or on its own) and say what "
         "you checked (secrets/personal data, new network/process/file access, dependencies), "
