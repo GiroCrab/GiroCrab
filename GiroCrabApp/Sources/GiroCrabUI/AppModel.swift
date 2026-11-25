@@ -850,6 +850,8 @@ public final class AppModel {
     /// Standing orders (#496): sheet, the order being edited, the bank's orders, and whether the running session is one.
     var showStandingSheet = false { didSet { if !showStandingSheet { resumePaymentLink() } } }
     var standingDraft = StandingDraft()
+    /// Changes whenever the sheet opens or closes: a result that arrives later (invoice import) checks it.
+    var standingDraftToken = UUID()
     var standingOrders: [StandingOrderInfo] = []
     /// What the bank of the order being edited allows (nil = unknown, the form offers everything).
     var standingLimits: StandingOrderLimits?
