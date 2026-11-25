@@ -687,12 +687,12 @@ pub(crate) fn store_splits(
         )?
         .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, bool>(2)?)))?
         .collect::<Result<Vec<_>, _>>()?;
-    // only removed parts a refund link names compete for an inheritance: an unreferenced removed
-    // part of the same amount does not make it ambiguous (CodeRabbit #1855)
-    let mut removed = std::collections::HashMap::<i64, Vec<String>>::new();
+    // all removed parts compete for an inheritance, referenced or not (ADR 0004): another removed
+    // part of the same amount makes it ambiguous
+    let mut removed = std::collections::HashMap::<i64, Vec<(String, bool)>>::new();
     for (uuid, amount, referenced) in referenced {
-        if referenced && !kept.contains(&uuid) {
-            removed.entry(amount).or_default().push(uuid);
+        if !kept.contains(&uuid) {
+            removed.entry(amount).or_default().push((uuid, referenced));
         }
     }
     let mut added = std::collections::HashMap::<i64, Vec<usize>>::new();
@@ -700,7 +700,7 @@ pub(crate) fn store_splits(
         added.entry(line.amount_cents).or_default().push(position);
     }
     for (amount, old) in removed {
-        if let ([uuid], Some(new)) = (old.as_slice(), added.get(&amount))
+        if let ([(uuid, true)], Some(new)) = (old.as_slice(), added.get(&amount))
             && let [position] = new.as_slice()
         {
             uuids[*position] = uuid.clone();
@@ -1059,10 +1059,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// CodeRabbit (#1855): A (−40, linked) and B (−40, unlinked) become one new −40 part, C goes
-    /// from −20 to −60. The new part inherits A's UUID; B is gone.
+    /// ADR 0004: A (−40, linked) and B (−40, unlinked) become one new −40 part, C goes from −20
+    /// to −60. Two removed parts of that amount: no inheritance, A's link goes inactive.
     #[test]
-    fn unreferenced_removed_parts_do_not_block_uuid_inheritance() {
+    fn unreferenced_removed_parts_still_make_uuid_inheritance_ambiguous() {
         let (v, dir) = vault();
         let id = tx(&v, "inherit", "2025-01-01", -100, None);
         let part = |uuid, amount| TransactionSplitInput {
@@ -1091,8 +1091,11 @@ mod tests {
         .unwrap();
         let after = v.list_transaction_splits(id).unwrap();
         assert_eq!(after.len(), 2);
-        assert_eq!(after[0].uuid, parts[0].uuid);
-        assert!(after.iter().all(|p| p.uuid != parts[1].uuid));
+        assert!(
+            after
+                .iter()
+                .all(|p| p.uuid != parts[0].uuid && p.uuid != parts[1].uuid)
+        );
         drop(v);
         let _ = std::fs::remove_dir_all(dir);
     }

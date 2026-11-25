@@ -167,12 +167,14 @@ impl Vault {
                 return Err(invalid());
             }
             // a live successor moved from this key already holds the link: restoring the
-            // ancestor would allocate the one link twice, so the undo fails (CodeRabbit #1855)
-            if state
-                .rows
-                .iter()
-                .any(|r| r.deleted_ms.is_none() && r.key != key && descends_from(&by_key, r, &key))
-            {
+            // ancestor would allocate the one link twice, so the undo fails (CodeRabbit #1855).
+            // A successor this very unlink still blocks holds nothing: the undo reactivates it.
+            if state.rows.iter().any(|r| {
+                r.deleted_ms.is_none()
+                    && r.key != key
+                    && !move_blocked(&by_key, r)
+                    && descends_from(&by_key, r, &key)
+            }) {
                 return Err(invalid());
             }
         }

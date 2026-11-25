@@ -2984,5 +2984,7 @@ async fn a_tan_skipped_before_the_bookings_does_not_leave_out_the_balance() {
     drop(ctx);
     assert_eq!(asked.await.unwrap().len(), 3);
     assert_eq!(business_requests(&seen.lock().unwrap()), ["HKKAZ", "HKSAL"]);
-    assert_eq!(r.accounts[0].balance_cents, 123_456);
+    // the late HKSAL was asked for; but the depot's holdings were not read (#1743), so no other
+    // figure stands in for its value: the stored balance stays
+    assert_eq!(r.balances_unknown, vec![IBAN_A.to_string()]);
 }
