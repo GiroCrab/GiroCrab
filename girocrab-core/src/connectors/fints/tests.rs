@@ -274,6 +274,25 @@ async fn dialog_init_9010_with_stale_system_id_does_not_fall_back() {
 }
 
 #[tokio::test]
+async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
+    const LOGIN_REFUSED: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Dialoginitialisierung abgebrochen.'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.'";
+    let (url, seen) = mock_bank(vec![LOGIN_REFUSED]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    let Err(CoreError::Bank { code, message }) = c.open_dialog(&test_ctx()).await else {
+        panic!("expected a bank error");
+    };
+    assert_eq!(code, "9040");
+    assert!(
+        message.contains("PIN") && message.contains("sperrt"),
+        "{message}"
+    );
+    assert!(message.contains("Anmeldung fehlgeschlagen"), "{message}");
+    // a refused login must not be sent again: every attempt counts towards the lock
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn failed_single_step_retry_is_not_remembered() {
     let (url, seen) = mock_bank(vec![REJECT_9010]);
     let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});

@@ -11690,6 +11690,17 @@
         }
       }
     },
+    "Deutsche Bank: Als Anmeldename die Deutsche Bank ID verwenden. Wo GiroCrab nach der PIN fragt, das Kennwort der Deutsche Bank ID eingeben, nicht die Online Banking PIN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deutsche Bank: use the Deutsche Bank ID as login name. Wherever GiroCrab asks for the PIN, enter the password of the Deutsche Bank ID, not the online banking PIN."
+          }
+        }
+      }
+    },
     "Diagnose" : {
       "extractionState" : "manual",
       "localizations" : {

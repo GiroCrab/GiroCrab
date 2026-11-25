@@ -894,6 +894,21 @@ impl FinTsConnector {
             if reply.has("9931") || reply.has("9942") || reply.has("9010") {
                 self.st.system_id.clear();
             }
+            // 9040: login name or PIN/password refused. Say which fields to check and
+            // warn that further attempts lock the access; keep the bank's text.
+            if reply.has("9040")
+                && let CoreError::Bank { message, .. } = &e
+            {
+                return Err(CoreError::Bank {
+                    code: "9040".into(),
+                    message: format!(
+                        "{} ({message})",
+                        tr(
+                            "Anmeldename oder PIN wurden abgelehnt. Bei manchen Banken ist die PIN das Kennwort des Online-Bankings (z. B. Deutsche Bank: Kennwort der Deutsche Bank ID). Bitte prüfen, bevor Sie es erneut versuchen: Nach mehreren Fehlversuchen sperrt die Bank den Zugang."
+                        )
+                    ),
+                });
+            }
             return Err(e);
         }
         if let Some(p) = self.challenge_from(&reply)? {

@@ -291,6 +291,9 @@ Sheet {
             readonly property bool known: prefill !== null && found !== null
             readonly property string lc: (found ? found.name : bankName).toLowerCase()
             readonly property bool isPostbank: lc.indexOf("postbank") >= 0
+            // Deutsche Bank accounts (not the Miles & More cards, BLZ 50070439): login with the
+            // Deutsche Bank ID; wherever the app asks for the "PIN" it means that ID's password.
+            readonly property bool isDeutscheBank: blz !== "50070439" && lc.indexOf("deutsche bank") >= 0
             readonly property bool needsMediumHint: isPostbank || lc.indexOf("deutsche bank") >= 0 || lc.indexOf("norisbank") >= 0
             readonly property bool canAdd: blzValid && urlValid && login.text.trim() !== ""
             function lookup() {
@@ -349,7 +352,7 @@ Sheet {
             GridLayout {
                 columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
                 Text { text: qsTr("Anmeldename"); color: Theme.text }
-                TextField { id: login; Layout.fillWidth: true; placeholderText: ff.isPostbank ? qsTr("Postbank ID") : qsTr("z. B. VR-NetKey oder Kontonummer") }
+                TextField { id: login; Layout.fillWidth: true; placeholderText: ff.isPostbank ? qsTr("Postbank ID") : ff.isDeutscheBank ? qsTr("Deutsche Bank ID") : qsTr("z. B. VR-NetKey oder Kontonummer") }
                 Text { text: qsTr("TAN-Medium"); color: Theme.text }
                 TextField { id: tanMedium; Layout.fillWidth: true; placeholderText: qsTr("Optional") }
             }
@@ -357,6 +360,7 @@ Sheet {
             DemoHintBanner { visible: AppModel.demoActive || ff.blz === "99999999"; Layout.fillWidth: true; onFill: login.text = "demo" }
             AddFormFooter {
                 lines: [ff.isPostbank ? qsTr("Postbank: Als Anmeldename die Postbank ID verwenden, nicht die Kontonummer.") : "",
+                        ff.isDeutscheBank ? qsTr("Deutsche Bank: Als Anmeldename die Deutsche Bank ID verwenden. Wo GiroCrab nach der PIN fragt, das Kennwort der Deutsche Bank ID eingeben, nicht die Online Banking PIN.") : "",
                         ff.needsMediumHint ? qsTr("Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein, z. B. SO:Gerätename.")
                                            : qsTr("Das TAN-Medium brauchen Sie nur, wenn die Bank danach fragt.")]
             }
