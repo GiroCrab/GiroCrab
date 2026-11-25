@@ -65,8 +65,8 @@ ApplicationWindow {
             Action { text: qsTr("Neue Hauptkategorie …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.newCategoryRequest = { parent: null } }
             AppMenuSeparator {}
             Action { text: qsTr("Vorhandene Daten importieren …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.openMoneyMoneyImport() }
-            Action { text: qsTr("Umsätze exportieren …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.openBookingExport(false) }
-            Action { text: qsTr("Umsätze als CSV exportieren …"); enabled: AppModel.isUnlocked; onTriggered: AppModel.exportFilteredBookingsCSV() }
+            // RootView.swift: one export command (#831), ⇧⌘E
+            Action { text: qsTr("Umsätze exportieren …"); shortcut: "Ctrl+Shift+E"; enabled: AppModel.isUnlocked; onTriggered: AppModel.openBookingExport(false) }
             AppMenuSeparator {}
             Action { text: qsTr("Drucken …"); shortcut: "Ctrl+P"; enabled: AppModel.isUnlocked; onTriggered: AppModel.showPrintSheet = true }
             AppMenuSeparator {}
@@ -299,7 +299,7 @@ ApplicationWindow {
             }
             // bookingColumn: Belege, Vermögen, Geplant or Lastschriften replace the booking list
             StackLayout {
-                SplitView.minimumWidth: Math.max(360, Math.min(560, window.width - sidebarPane.width - (AppModel.showInspector ? 280 : 0) - 2))
+                SplitView.minimumWidth: Math.max(360, Math.min(560, window.width - sidebarPane.width - (inspectorPane.visible ? 280 : 0) - 2))
                 SplitView.fillWidth: true
                 currentIndex: DepotState.presentation === "securities" ? 5
                               : ({ documents: 1, wealth: 2, planned: 3, directDebits: 4 })[AppModel.sidebarSelection] ?? 0
@@ -319,7 +319,10 @@ ApplicationWindow {
                 }
             }
             InspectorView {
-                visible: AppModel.showInspector
+                id: inspectorPane
+                // RootView.swift (#934): Belege & Postbox has its own preview; the booking inspector
+                // would show whatever booking was selected last
+                visible: AppModel.showInspector && AppModel.sidebarSelection !== "documents"
                 SplitView.minimumWidth: 280; SplitView.preferredWidth: 320; SplitView.maximumWidth: 380
             }
         }
@@ -556,21 +559,7 @@ ApplicationWindow {
             }
         }
     }
-    // .fileExporter(… defaultFilename: "GiroCrab-Buchungen")
-    FileDialog {
-        id: csvExporter
-        title: qsTr("Buchungen als CSV exportieren")
-        fileMode: FileDialog.SaveFile
-        defaultSuffix: "csv"
-        nameFilters: [qsTr("CSV-Dateien (*.csv)")]
-        currentFolder: StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
-        selectedFile: currentFolder + "/GiroCrab-Buchungen.csv"
-        visible: AppModel.showCSVExporter
-        onAccepted: { AppModel.showCSVExporter = false; AppModel.writeFilteredBookingsCSV(AppModel.localPath(selectedFile)) }
-        onRejected: AppModel.showCSVExporter = false
-    }
-
-    // Umsätze exportieren (ExportSheet.swift); „Unter …“ asks here, after the sheet has closed.
+    // Umsätze exportieren (ExportSheet.swift); the save panel opens here, after the sheet has closed.
     Loader { active: AppModel.showExportSheet; sourceComponent: Component { ExportSheet { visible: AppModel.showExportSheet } } }
     FileDialog {
         readonly property var request: AppModel.exportSaveRequest
@@ -585,6 +574,16 @@ ApplicationWindow {
         visible: request !== null
         onAccepted: BookingExport.saveExportRequest(AppModel.localPath(selectedFile))
         onRejected: BookingExport.saveExportRequest(null)
+    }
+    // AppModel+Printing.swift › presentExportFiles: NSOpenPanel for the folder of the per-account files
+    FolderDialog {
+        readonly property var files: AppModel.exportFolderRequest
+        title: qsTr("Ordner für %1 Dateien wählen").arg(files ? files.length : 0)
+        acceptLabel: qsTr("Sichern")
+        currentFolder: "file://" + BookingExport.preferredDirectory()
+        visible: files !== null
+        onAccepted: BookingExport.saveExportFiles(AppModel.localPath(selectedFolder))
+        onRejected: BookingExport.saveExportFiles(null)
     }
 
     TransferSheet {}

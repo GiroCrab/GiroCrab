@@ -125,7 +125,7 @@ QtObject {
     function switchToSingleTransfer() {
         showBatchSheet = false
         AppModel.transferError = ""
-        Qt.callLater(AppModel.openTransfer)
+        Qt.callLater(AppModel.presentTransfer) // keeps the draft (Umbuchung chosen in the batch sheet)
     }
     /// Segmented control of the single form: on to the batch sheet.
     function switchToBatchTransfer() {

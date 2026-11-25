@@ -2717,9 +2717,32 @@ QtObject {
         if (linked && bookingID === null) toast = qsTr("Zuordnung aufgehoben")
     }
     function deleteDocument(d) { run(() => core("delete_document", { doc_id: d.id })); documentsChanged() }
-    function exportAllDocuments(folderPath) {
-        const n = run(() => core("export_all_documents", { dest_dir: folderPath }))
-        if (n !== undefined) toast = qsTr("%1 Belege nach „%2/GiroCrab-Belege“ exportiert").arg(n).arg(folderPath.split("/").pop())
+    /// Exports the whole collection, or only the documents with `ids` (the list the user filtered).
+    /// The year folders go straight into `folderPath`, or into `subfolder` inside it (the account).
+    function exportAllDocuments(folderPath, ids, subfolder) {
+        const n = run(() => core("export_documents", { dest_dir: folderPath, doc_ids: ids || [], subfolder: subfolder || "" }))
+        const folder = folderPath.split("/").pop()
+        if (n !== undefined) toast = qsTr("%1 Belege nach „%2“ exportiert").arg(n).arg(subfolder ? folder + "/" + subfolder : folder)
+    }
+    /// Marks documents read or unread (opened in the list, or by hand, #934).
+    function markDocumentsSeen(ids, seen) {
+        if (!isUnlocked || !ids.length) return
+        run(() => core("mark_documents_seen", { doc_ids: ids, seen: seen }))
+        documentsVersion++   // → SidebarModel.refreshCounts()
+    }
+    /// Marks every unread document read (sidebar: „Belege & Postbox“).
+    function markAllDocumentsSeen() {
+        if (!isUnlocked) return
+        run(() => core("mark_all_documents_seen", { account_id: null }))
+        documentsVersion++   // → SidebarModel.refreshCounts()
+    }
+    /// Writes the document to the temp directory and copies the file path to the clipboard
+    /// (without opening the file manager or the document). The copy is deleted on lock and quit.
+    function copyDocumentPath(d) {
+        const path = run(() => core("document_temp_file", { doc_id: d.id, mime_type: d.mime_type }))
+        if (!path) return
+        copyToClipboard(path)
+        toast = qsTr("Pfad kopiert")
     }
     function localPath(url) { return decodeURIComponent(String(url).replace(/^file:\/\//, "")) }
     function attach(urls, b) {
@@ -3397,14 +3420,15 @@ QtObject {
     /// accounts to link to the user's application.
     property var psd2LinkHints: []
     property bool showPrintSheet: false
-    property bool showCSVExporter: false
     // Umsatz-Export (PDF / CSV / CAMT.053): ExportSheet.qml, logic in BookingExport.qml.
     property bool showExportSheet: false
     /// When set, the export sheet defaults to these booking ids (context menu).
     property var exportBookingIDs: null
     property bool exportPreferSelection: false
-    /// A built export file waiting for the save dialog („Unter …“, Main.qml).
+    /// A built export file waiting for the save dialog (Main.qml).
     property var exportSaveRequest: null
+    /// Built export files (one per account) waiting for the folder dialog (Main.qml).
+    property var exportFolderRequest: null
     /// Opens the export dialog; `selection`: use the current multi-/single selection (context menu).
     function openBookingExport(selection) {
         if (!isUnlocked) return
@@ -3439,18 +3463,6 @@ QtObject {
         if (r.psd2_connections.length) psd2LinkHints = r.psd2_connections
         toast = qsTr("Import: %1 Buchungen in %2 Konten importiert").arg(r.bookings_new).arg(r.accounts_created + r.accounts_merged)
             + (r.bookings_duplicates > 0 ? qsTr(", %1 bereits vorhanden").arg(r.bookings_duplicates) : "")
-    }
-
-    /// Exports every booking matching the current list filter as Excel-friendly
-    /// CSV: the save dialog (Main.qml) calls `writeFilteredBookingsCSV`.
-    function exportFilteredBookingsCSV() { if (isUnlocked) showCSVExporter = true }
-    function writeFilteredBookingsCSV(path) {
-        try {
-            core("export_bookings_csv_file", { filter: currentFilter(), path: path })
-        } catch (e) {
-            errorTitle = qsTr("Export fehlgeschlagen")
-            errorMessage = e.message
-        }
     }
 
     // Printing (GitHub #53)
@@ -3629,7 +3641,10 @@ QtObject {
     /// TransferDraft (AppModel.swift). Replaced as a whole (`setDraft`) so bindings update.
     function newTransferDraft(accountID) {
         const t = new Date(); t.setDate(t.getDate() + 1)
-        return { account_id: accountID === undefined ? null : accountID, name: "", iban: "", bic: "", amountText: "",
+        return { account_id: accountID === undefined ? null : accountID,
+                 // Umbuchung: name and IBAN come from an own account (#881); kept in the draft so the
+                 // batch sheet's switch can open the form in this mode.
+                 ownTransfer: false, name: "", iban: "", bic: "", amountText: "",
                  purpose: "", pin: "",
                  // SEPA Instant: off by default; if the bank declines, nothing is sent automatically.
                  instant: false,
@@ -3661,15 +3676,32 @@ QtObject {
     /// ConnectorKind.offersInstantChoice: FinTS banks; bunq decides on its own.
     function offersInstantChoice(connector) { return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(connector) >= 0 }
     /// Checking accounts that are connected via FinTS (HKCCS-capable banks) or bunq.
-    readonly property var transferAccounts: allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null
-        && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Bunq"].indexOf(a.connector) >= 0)
+    readonly property var transferAccounts: sendableAccounts("Checking")
+    /// Savings accounts (Tagesgeld) the bank lets us book from, but only as an internal transfer
+    /// (Umbuchung) to an own account (#582). Kept apart from `transferAccounts` so standing orders,
+    /// batches and direct debits do not offer them.
+    readonly property var savingsTransferSources: sendableAccounts("Savings")
+    /// AppModel+Transfer.swift › sendableAccounts(of:): accounts of `kind` with an IBAN that a
+    /// connected, write-capable bank can send from.
+    function sendableAccounts(kind) {
+        return allAccounts.filter(a => a.kind === kind && a.iban !== "" && a.archived_unix === null
+            && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Bunq"].indexOf(a.connector) >= 0)
+    }
+    /// AppModel+Transfer.swift › internalTransferTargets(from:): own accounts a savings account may
+    /// transfer to – checking accounts only, the bank's own reference account (same login) first.
+    function internalTransferTargets(source) {
+        const all = allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null && a.id !== source.id)
+        const same = a => a.connection_id !== null && a.connection_id === source.connection_id
+        return all.filter(same).concat(all.filter(a => !same(a)))
+    }
     /// Checking accounts GiroCrab cannot send from (e.g. C24 via Enable Banking):
     /// the form ends with a GiroCode to scan in the bank's app instead of a TAN.
     readonly property var giroCodeAccounts: allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null
         && !transferAccounts.some(t => t.id === a.id))
     /// Accounts offered in the transfer form: sending ones first.
-    readonly property var transferFormAccounts: transferAccounts.concat(giroCodeAccounts)
-    function canSendTransfer(accountID) { void bankingPolicy; return transferAccounts.some(a => a.id === accountID) && bankingGateForAccount(accountID) === null }
+    readonly property var transferFormAccounts: transferAccounts.concat(savingsTransferSources, giroCodeAccounts)
+    function canSendTransfer(accountID) { void bankingPolicy
+        return transferAccounts.concat(savingsTransferSources).some(a => a.id === accountID) && bankingGateForAccount(accountID) === null }
     readonly property bool canTransfer: isUnlocked && transferFormAccounts.length > 0 && syncingConnectionID === null && activeTransfer === null
 
     /// TransferSheetView.groupedIBAN: upper-case, only A–Z/0–9, groups of four.
@@ -3687,8 +3719,16 @@ QtObject {
     function clipboardConcealed() { try { return core("clipboard_concealed") !== false } catch (e) { return true } }
     function clipboardText() { clipboardHelper.text = ""; clipboardHelper.paste(); const t = clipboardHelper.text; clipboardHelper.text = ""; return t }
 
-    /// Pre-selects the sidebar account if it is offered in the form, else the first one.
+    /// "Neue Überweisung": an empty form, only the account is kept (#881). The sheet's own
+    /// reopenings (bank error, declined instant, name check) keep the draft; they set
+    /// `showTransferSheet` directly.
     function openTransfer() {
+        if (!canTransfer) return
+        transferDraft = newTransferDraft(transferDraft.account_id)
+        presentTransfer()
+    }
+    /// Pre-selects the sidebar account if it is offered in the form, else the first one.
+    function presentTransfer() {
         if (!canTransfer) return
         const offered = transferFormAccounts
         const has = id => offered.some(a => a.id === id)
@@ -3711,9 +3751,41 @@ QtObject {
     /// Context menu: new transfer pre-filled from a booking.
     function openTransferFrom(b) {
         if (!canTransfer) return
+        transferDraft = newTransferDraft(transferDraft.account_id)
         setDraft({ name: b.counterparty === "" ? b.merchant_name : b.counterparty, iban: groupedIBAN(b.counterparty_iban), bic: "",
                    amountText: Fmt.plain(Math.abs(b.amount_cents)), purpose: (b.purpose || "").slice(0, 140) })
-        openTransfer()
+        presentTransfer()
+    }
+    /// A template, a paste or an invoice names a recipient: that is a transfer to someone else, so
+    /// it leaves Umbuchung first (#881); the form would otherwise show an own account while the
+    /// order goes to this IBAN. A savings account may only book to own accounts: from there only
+    /// amount and purpose are taken. `patch`: draft fields (PaymentParser.patch).
+    function fillTransferDraft(patch, onlyEmpty) {
+        const p = Object.assign({}, patch)
+        if (onlyEmpty) for (const k of Object.keys(p)) if (String(transferDraft[k]).trim() !== "") delete p[k]
+        const source = account(transferDraft.account_id)
+        if (source && source.kind === "Savings") {
+            const kept = {}
+            if (p.amountText !== undefined) kept.amountText = p.amountText
+            if (p.purpose !== undefined) kept.purpose = String(p.purpose).slice(0, 140)
+            setDraft(kept)
+            return
+        }
+        p.ownTransfer = false
+        setDraft(p)
+    }
+    /// AppModel+Batch.swift: any own account other than a sender can receive an Umbuchung.
+    readonly property bool hasOwnTransferTargets: allAccounts.filter(a => a.iban !== "" && a.archived_unix === null).length > 1
+    /// The kind switch of both transfer sheets: "single" | "own" | "batch".
+    function switchTransferKind(kind, fromBatch) {
+        if (kind === "batch") {
+            if (!fromBatch) Payments.switchToBatchTransfer()
+            return
+        }
+        // back from Umbuchung: the own account is not this recipient
+        if (transferDraft.ownTransfer && kind === "single") setDraft({ name: "", iban: "", bic: "" })
+        setDraft({ ownTransfer: kind === "own" })
+        if (fromBatch) Payments.switchToSingleTransfer()
     }
     /// Sammelüberweisung / Dauerauftrag (Payments.qml): the TransferSession `session` of the
     /// core runs through the same steps as a single transfer. `kind` = "batch" | "standing".
@@ -3965,7 +4037,8 @@ QtObject {
         if (t !== null) activeChallenge = null
         activeTransfer = null; payeeCheck = null; transferBusy = false; showTransferSheet = false
         activeTransferIsBatch = false; activeTransferIsStanding = false; activeTransferIsDebit = false
-        setDraft({ pin: "" })
+        // the whole draft: name, IBAN and amount are personal too (#881)
+        transferDraft = newTransferDraft(null)
         Payments.endForLock()
         DirectDebits.endForLock()
         if (t !== null) coreAsync("session_cancel", { session: t }, null, () => {})
@@ -3999,9 +4072,9 @@ QtObject {
         try { core("save_transfer_template", { template: t }) } catch (e) { transferError = e.message }
     }
     function applyTransferTemplate(t) {
-        setDraft({ name: t.recipient_name, iban: groupedIBAN(t.recipient_iban), bic: t.recipient_bic,
-                   amountText: t.default_amount_cents !== null ? Fmt.plain(t.default_amount_cents) : "",
-                   purpose: t.default_purpose.slice(0, 140) })
+        fillTransferDraft({ name: t.recipient_name, iban: groupedIBAN(t.recipient_iban), bic: t.recipient_bic,
+                            amountText: t.default_amount_cents !== null ? Fmt.plain(t.default_amount_cents) : "",
+                            purpose: t.default_purpose.slice(0, 140) })
     }
     function deleteTransferTemplate(id) { try { core("delete_transfer_template", { id: id }) } catch (e) {} }
 
@@ -4433,12 +4506,17 @@ QtObject {
             if (TagsModel.tags.length) TagFilter.set([TagsModel.tags[0].id], false)
             TagFilter.shown = true
             break
+        case "export":
+            // Export dialog on the current view's demo bookings.
+            period = previousMonthPeriod()
+            openBookingExport(false)
+            break
         case "print":
             // Print dialog (GitHub #53) on last month's demo bookings.
             period = previousMonthPeriod()
             showPrintSheet = true
             break
-        case "transfer": case "transfer-confirm": case "transfer-clipboard":
+        case "transfer": case "transfer-confirm": case "transfer-girocode": case "transfer-clipboard":
             if (transferAccounts.length) sidebarSelection = "account:" + transferAccounts[0].id
             openTransfer()
             // transfer-clipboard: empty form, the sheet offers the payment in its clipboard banner (#663)

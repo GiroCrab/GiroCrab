@@ -1628,6 +1628,9 @@ vault_methods! {
     list_documents_for_booking(booking_id) list_all_documents(filter)
     link_document(doc_id, booking_id) delete_document(doc_id)
     export_document(doc_id, dest_path) export_all_documents(dest_dir)
+    // read status and export of the filtered list (#934)
+    mark_documents_seen(doc_ids, seen) mark_all_documents_seen(account_id) unseen_document_count()
+    export_documents(dest_dir, doc_ids, subfolder)
     auto_statements_enabled(account_id) set_auto_statements(account_id, enabled)
     // user groups
     list_user_groups()
@@ -2039,6 +2042,54 @@ mod tests {
             missing.get("err").is_some(),
             "unknown connection is refused"
         );
+    }
+
+    /// Belege & Postbox (#934): read status, the sidebar's unread count and the export of
+    /// the filtered list into a subfolder, as DocumentsView.qml / AppModel.qml call them.
+    #[test]
+    fn documents_read_status_and_filtered_export() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let list = || {
+            call_ok(
+                "list_all_documents",
+                json!({ "filter": { "account_id": null, "doc_type": null, "search": null,
+                        "unlinked_only": false } }),
+            )
+            .as_array()
+            .unwrap()
+            .clone()
+        };
+        let docs = list();
+        assert!(docs.len() >= 2 && docs.iter().all(|d| d["seen"].is_boolean()));
+        let ids: Vec<i64> = docs.iter().map(|d| d["id"].as_i64().unwrap()).collect();
+        call_ok(
+            "mark_documents_seen",
+            json!({ "doc_ids": ids, "seen": true }),
+        );
+        assert_eq!(call_ok("unseen_document_count", json!({})), json!(0));
+        call_ok(
+            "mark_documents_seen",
+            json!({ "doc_ids": [ids[0], ids[1]], "seen": false }),
+        );
+        assert_eq!(call_ok("unseen_document_count", json!({})), json!(2));
+        assert!(
+            list()
+                .iter()
+                .any(|d| d["id"] == ids[0] && d["seen"] == false)
+        );
+        call_ok("mark_all_documents_seen", json!({ "account_id": null }));
+        assert_eq!(call_ok("unseen_document_count", json!({})), json!(0));
+        let dir = std::env::temp_dir().join(format!("girocrab-docexp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let n = call_ok(
+            "export_documents",
+            json!({ "dest_dir": dir, "doc_ids": [ids[0]], "subfolder": "Girokonto" }),
+        );
+        assert_eq!(n, json!(1));
+        assert!(dir.join("Girokonto").is_dir(), "the account's subfolder");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Own vault lifecycle with the keychain bypass: create, use, lock, reopen,
@@ -3360,6 +3411,21 @@ mod tests {
             "\u{FEFF}Datum;Konto;Name;Verwendungszweck;Kategorie;Betrag;Währung;Tagessaldo\r\n"
         ));
         assert!(csv.contains(";'=SUMME(A1);\"Miete; März\";Wohnen;-1234,56;EUR;0,50\r\n"));
+        // Optional „IBAN der Gegenseite“ and „Tags“ columns (#831), as BookingExport.qml › csv sends them
+        let rows = json!([{ "date": "2026-03-02", "account_name": "Giro", "counterparty": "Markt",
+            "counterparty_iban": "DE02120300000000202051", "purpose": "Einkauf", "category": "",
+            "note": "", "tags": "Urlaub, Bar", "amount_cents": -4599, "currency": "EUR",
+            "day_balance_cents": null, "balance_cents": null }]);
+        let csv = call_ok(
+            "export_csv",
+            json!({ "rows": rows, "columns": { "category": false, "note": false, "daily_balance": false,
+                    "running_balance": false, "iban": true, "tags": true }, "balance_lines": [] }),
+        );
+        let csv = csv.as_str().unwrap();
+        assert!(csv.contains("Datum;Konto;Name;IBAN;Verwendungszweck;Tags;Betrag;Währung\r\n"));
+        assert!(csv.contains(
+            "2026-03-02;Giro;Markt;DE02120300000000202051;Einkauf;Urlaub, Bar;-45,99;EUR\r\n"
+        ));
         // CAMT.053 straight from the vault: account and period only (#483)
         let camt = call(
             "camt053_export",
