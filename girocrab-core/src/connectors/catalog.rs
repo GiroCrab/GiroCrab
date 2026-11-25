@@ -580,6 +580,7 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
             Capability::Transactions,
             Capability::Balances,
             Capability::Securities,
+            Capability::Documents,
         ],
         status: Status::Verified,
         issues: &[],
