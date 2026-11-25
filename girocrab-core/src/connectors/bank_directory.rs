@@ -118,6 +118,7 @@ pub fn psd2_catalog() -> Vec<Psd2Bank> {
         psd2("Hanseatic Bank", "DE", "Hanseatic Bank", None),
         psd2("Santander", "DE", "Santander", None),
         psd2("Commerzbank", "DE", "Commerzbank", None),
+        psd2("DKB (Deutsche Kreditbank)", "DE", "DKB", None),
         psd2("ING Business", "DE", "ING Business", None),
         psd2("Trade Republic", "DE", "Trade Republic", None),
         psd2("Raiffeisen Bank (Österreich)", "AT", "Raiffeisen", None),
