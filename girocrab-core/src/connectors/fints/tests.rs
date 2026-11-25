@@ -2571,6 +2571,8 @@ async fn the_closing_balance_of_the_bookings_is_the_balance_with_its_date() {
 /// An HKWPD answer that carries no holdings statement and no error (#1743).
 const WPD_WITHOUT_DATA: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+3050::UPD nicht mehr aktuell.'";
 const WPD_WITH_DATA: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+0020::Auftrag ausgefuehrt.'HIWPD:4:6:3+@10@:16R:GENL-'";
+/// An HIWPD segment whose binary is empty: no statement, not an empty depot.
+const WPD_WITH_EMPTY_BINARY: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+0020::Auftrag ausgefuehrt.'HIWPD:4:6:3+@0@'";
 
 #[tokio::test]
 async fn holdings_answer_without_a_statement_is_an_error_not_an_empty_depot() {
@@ -2595,6 +2597,18 @@ async fn holdings_answer_with_a_statement_is_read() {
         .await
         .expect("a statement without positions is an empty depot");
     assert!(st.holdings.is_empty());
+}
+
+#[tokio::test]
+async fn holdings_answer_with_an_empty_statement_is_an_error_not_an_empty_depot() {
+    let (url, _) = mock_bank(vec![WPD_WITH_EMPTY_BINARY]);
+    let mut c = two_step_connector(&url, synced());
+    // the CRLF separator after an empty binary must not count as a statement (value 0)
+    let r = c.holdings(&test_ctx(), &sepa_acc(IBAN_A, "1234567")).await;
+    assert!(
+        r.is_err(),
+        "an empty HIWPD binary must not become an empty depot"
+    );
 }
 
 #[test]
@@ -2635,15 +2649,94 @@ async fn a_depot_the_bank_does_not_answer_fails_the_fetch_with_the_banks_codes()
 }
 
 #[tokio::test]
-async fn a_depot_without_hkwpd_at_the_bank_is_warned_about() {
+async fn a_depot_without_hkwpd_at_the_bank_is_a_hint_not_a_failed_sync() {
+    // the only account of the login: nothing to fix, so the sync still ends (#1743)
     let (url, seen) = mock_bank(vec![WPD_WITHOUT_DATA]);
-    let e = depot_connector(&url, false)
+    let r = depot_connector(&url, false)
         .fetch(&test_ctx())
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(e.contains("von der Bank nicht angeboten"), "{e}");
+        .expect("a depot the bank cannot serve is no failed sync");
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert!(
+        r.hints
+            .iter()
+            .any(|h| h.contains("von der Bank nicht angeboten")),
+        "{:?}",
+        r.hints
+    );
+    // the value stays as it was instead of becoming 0
+    assert_eq!(r.balances_unknown.len(), 1);
     assert!(seen.lock().unwrap().is_empty(), "HKWPD is not sent");
+}
+
+#[tokio::test]
+async fn a_depot_without_hkwpd_keeps_its_value_even_when_hksal_answers() {
+    // the HKSAL figure of a depot is not its value: the stored one stays (#1743)
+    let (url, _) = mock_bank(vec![SAL_A]);
+    let mut c = depot_connector(&url, false);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd[0].allowed.insert("HKSAL".into());
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert!(
+        r.hints
+            .iter()
+            .any(|h| h.contains("von der Bank nicht angeboten")),
+        "{:?}",
+        r.hints
+    );
+}
+
+#[tokio::test]
+async fn a_depot_whose_holdings_were_not_delivered_does_not_take_the_hksal_figure() {
+    // HKSAL answers, HKWPD gets no statement: the cash figure is not the depot value (#1743)
+    let (url, _) = mock_bank(vec![SAL_A, WPD_WITHOUT_DATA]);
+    let mut c = depot_connector(&url, true);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd[0].allowed.insert("HKSAL".into());
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+}
+
+#[tokio::test]
+async fn a_depot_without_hkwpd_does_not_take_the_closing_balance_of_its_bookings() {
+    // the MT940 fallback must not fill in what the unsupported HKWPD left unknown (#1743)
+    let mt940 = ":20:STARTUMSE\r\n:25:52090000/0012345678\r\n:28C:00000/001\r\n:60F:C250101EUR1000,00\r\n\
+        :61:2501020102DR23,45NDDTNONREF\r\n:86:105?00FOLGELASTSCHRIFT?20Einkauf REWE?32REWE Markt GmbH\r\n\
+        :62F:C250103EUR3476,55\r\n";
+    let (url, seen) = mock_bank(vec![reply_with_binary("HIKAZ:3:7:3+", mt940)]);
+    let mut c = depot_connector(&url, false);
+    c.st.versions.insert("HKKAZ".into(), vec![7]);
+    c.upd[0].allowed.insert("HKKAZ".into());
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert!(
+        seen.lock().unwrap().iter().flatten().any(|i| i == "HKKAZ"),
+        "the bookings are still fetched"
+    );
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+}
+
+#[tokio::test]
+async fn a_depot_known_only_by_its_product_name_keeps_its_value_without_hkwpd() {
+    // Kontoart 1 (comdirect style), the product says "Depot": stored as a depot, so its value
+    // is one too (#1743)
+    let (url, _) = mock_bank(vec![SAL_A]);
+    let mut c = depot_connector(&url, false);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd[0].allowed.insert("HKSAL".into());
+    c.upd[0].kind_code = 1;
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(r.accounts[0].kind, AccountKind::Brokerage);
+    assert_eq!(r.balances_unknown.len(), 1, "{:?}", r.balances_unknown);
+    assert!(
+        r.hints
+            .iter()
+            .any(|h| h.contains("von der Bank nicht angeboten")),
+        "{:?}",
+        r.hints
+    );
 }
 
 #[tokio::test]

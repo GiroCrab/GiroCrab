@@ -566,6 +566,8 @@ impl BankConnector for FinTsConnector {
             .collect();
         let mut result = FetchResult::default();
         let mut ok_any = false;
+        // what the bank does not offer: said, but no failure of the sync (#1743)
+        let mut not_offered: Vec<String> = Vec::new();
         // a TAN was demanded for more statements than banks serve without one (#1627)
         let mut period_too_long = false;
         // not yet booked entries ("vorgemerkt"), see `camt::HOLD_PREFIX`
@@ -642,6 +644,9 @@ impl BankConnector for FinTsConnector {
                 .unwrap_or_else(|| "EUR".into());
             let mut balance: Option<i64> = None;
             let mut balance_date = super::today();
+            // Holdings asked for and not read, or none offered: no other figure (HKSAL, the
+            // closing balance of the bookings) stands in for the value of a depot (#1743).
+            let mut depot_value_unknown = false;
 
             // --- Balance (HKSAL), only if the account allows it
             let hksal = self.bank_supports("HKSAL") && allowed("HKSAL");
@@ -707,14 +712,18 @@ impl BankConnector for FinTsConnector {
                             }
                         }
                     }
-                    Err(e) => errors.push(trf("{0}: Depotbestand (HKWPD) – {1}", &[&label, &e])),
+                    Err(e) => {
+                        errors.push(trf("{0}: Depotbestand (HKWPD) – {1}", &[&label, &e]));
+                        depot_value_unknown = true;
+                    }
                 }
-            } else if upd
-                .as_ref()
-                .is_some_and(|u| kind_from_code(u.kind_code) == AccountKind::Brokerage)
-            {
-                // a depot by its Kontoart: its value stays as it was, and the user is told (#1743)
-                errors.push(trf(
+            } else if kind == AccountKind::Brokerage {
+                // a depot, by its Kontoart or its product name as it is stored: its value stays
+                // as it was, and the user is told (#1743).
+                // A hint, not a warning: there is nothing to fix, and a login with only this
+                // depot must not fail at every sync.
+                depot_value_unknown = true;
+                not_offered.push(trf(
                     "{0}: Depotbestand (HKWPD) – von der Bank nicht angeboten",
                     &[&label],
                 ));
@@ -881,6 +890,9 @@ impl BankConnector for FinTsConnector {
                     }
                 }
             }
+            if depot_value_unknown {
+                balance = None;
+            }
             // Not read this time (#1083): the stored balance stays instead of
             // becoming 0. Cards without one get theirs derived when storing.
             if balance.is_none() && kind != AccountKind::CreditCard {
@@ -915,6 +927,7 @@ impl BankConnector for FinTsConnector {
         let hints: Vec<String> = period_too_long
             .then(|| period_hint().into())
             .into_iter()
+            .chain(not_offered)
             .collect();
         if !ok_any && !errors.is_empty() {
             errors.extend(hints);

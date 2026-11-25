@@ -1087,10 +1087,11 @@ pub(crate) fn store_fetch(
                 [connection_id],
             )?;
         }
-        // Accounts by the name they carry here instead of their bank reference (an IBAN).
+        // Accounts by the name they carry here instead of their bank reference (an IBAN),
+        // in warnings and hints alike (e.g. "Depotbestand … nicht angeboten", #1743).
         let mut warnings = std::mem::take(&mut data.warnings);
-        let hints = std::mem::take(&mut data.hints);
-        if !warnings.is_empty() {
+        let mut hints = std::mem::take(&mut data.hints);
+        if !warnings.is_empty() || !hints.is_empty() {
             for acc in data.accounts.iter().filter(|a| !a.external_ref.is_empty()) {
                 let name: Option<String> = tx
                     .query_row(
@@ -1100,7 +1101,7 @@ pub(crate) fn store_fetch(
                     )
                     .optional()?;
                 let name = name.unwrap_or_else(|| acc.name.clone());
-                for w in &mut warnings {
+                for w in warnings.iter_mut().chain(hints.iter_mut()) {
                     *w = w.replace(&acc.external_ref, &name);
                 }
             }
