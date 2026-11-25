@@ -77,8 +77,9 @@ data class Tag(val id: String, val name: String, val colorHex: Long = 0xFF1976D2
 enum class RuleField { Counterparty, Purpose, BookingText, Iban, Amount, Any }
 
 /**
- * Match kinds of a rule. [Keyword] is the core's pipe list ("REWE|EDEKA|ALDI"), [Expression] its
- * own search language — the app shows both but only evaluates the kinds the demo path produces.
+ * Match kinds of a rule. [Keyword] is the core's keyword list ("REWE|EDEKA|ALDI", also comma or one
+ * per line), [Expression] its own search language — the app evaluates every kind except
+ * [Expression], which only the core can evaluate.
  */
 enum class MatchKind { Contains, Equals, StartsWith, Regex, Keyword, Expression }
 
@@ -108,6 +109,31 @@ data class Rule(
         RuleField.Iban -> listOf(b.counterpartyIban.filterNot { it.isWhitespace() })
     }
 
+    /**
+     * The pattern compiled once per rule. The core uses Rust's regex syntax; its named groups
+     * `(?P<name>…)` are written `(?<name>…)` in Java. Null when Java still rejects the pattern.
+     */
+    private val compiledRegex: kotlin.text.Regex? by lazy {
+        if (matchKind != MatchKind.Regex || pattern.isBlank()) return@lazy null
+        runCatching {
+            Regex(
+                pattern.replace("(?P<", "(?<"),
+                if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE),
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * False when the app cannot evaluate this rule (an [MatchKind.Expression] or a regex Java does
+     * not accept). Its non-matches here say nothing about the core, so the UI has to say so.
+     */
+    val evaluableHere: Boolean
+        get() = when (matchKind) {
+            MatchKind.Expression -> false
+            MatchKind.Regex -> pattern.isBlank() || compiledRegex != null
+            else -> true
+        }
+
     fun matches(b: Booking): Boolean {
         val hasRange = minCents != null || maxCents != null
         if (!enabled || (pattern.isBlank() && !hasRange)) return false
@@ -115,18 +141,15 @@ data class Rule(
         // Signed, not |amount|: a core rule with a negative range has to match here too.
         if (minCents != null && b.amountCents < minCents) return false
         if (maxCents != null && b.amountCents > maxCents) return false
-        if (pattern.isBlank()) return true
+        // An empty keyword list never matches in the core ("$^"), not even with an amount range.
+        if (pattern.isBlank()) return matchKind != MatchKind.Keyword && matchKind != MatchKind.Expression
         val fields = haystacks(b)
         return when (matchKind) {
             MatchKind.Contains -> fields.any { it.contains(pattern, ignoreCase = !caseSensitive) }
             MatchKind.Equals -> fields.any { it.equals(pattern, ignoreCase = !caseSensitive) }
             MatchKind.StartsWith -> fields.any { it.startsWith(pattern, ignoreCase = !caseSensitive) }
-            MatchKind.Regex -> fields.any {
-                runCatching {
-                    Regex(pattern, if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE))
-                        .containsMatchIn(it)
-                }.getOrDefault(false)
-            }
+            // Unsupported patterns are reported through [evaluableHere], not hidden here.
+            MatchKind.Regex -> compiledRegex?.let { r -> fields.any { r.containsMatchIn(it) } } ?: false
             // One keyword per line or separated by | or ,; empty terms are dropped, as in the core.
             MatchKind.Keyword -> {
                 val words = pattern.split('|', ',', '\n', '\r')
