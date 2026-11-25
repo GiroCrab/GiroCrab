@@ -430,11 +430,6 @@ fn render_splits(win: &MainWindow) {
     win.set_sp_remaining(planning::euro(remaining).into());
 }
 
-/// The amount a draft gets from „Rest übernehmen“; `None` when it does not fit in `i64`.
-fn filled(own: i64, rest: i64) -> Option<i64> {
-    own.checked_add(rest)
-}
-
 fn update_remaining(win: &MainWindow) {
     let remaining =
         with_ui(|u| planning::split_remaining(u.split_booking.map_or(0, |b| b.1), &u.drafts));
@@ -580,7 +575,7 @@ fn wire_splits(win: &MainWindow, slot: &VaultSlot) {
                     return true;
                 };
                 let own = planning::parse_cents(&d.amount).unwrap_or(0);
-                match filled(own, rest) {
+                match planning::split_fill(own, rest) {
                     Some(sum) => {
                         d.amount = planning::format_plain(sum);
                         true
@@ -952,13 +947,6 @@ mod tests {
     #[test]
     fn unknown_colour_falls_back_to_grey() {
         assert_eq!(color_of(""), slint::Color::from_rgb_u8(0x8b, 0x8d, 0x98));
-    }
-
-    #[test]
-    fn fill_amount_never_overflows() {
-        assert_eq!(filled(-200, 500), Some(300));
-        assert_eq!(filled(i64::MAX, 500), None);
-        assert_eq!(filled(i64::MIN, -1), None);
     }
 
     #[test]
