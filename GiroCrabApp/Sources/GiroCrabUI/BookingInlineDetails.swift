@@ -5,6 +5,8 @@ import GiroCrabCore
 /// bank data or acquires the vault mutex to expand its presentation.
 struct BookingInlineDetails: View {
     let booking: Booking
+    var showsCategoryDropdown = false
+    var onTextSingleClick: (() -> Void)?
     @Environment(\.textScale) private var textScale
 
     struct Field: Identifiable {
@@ -14,7 +16,7 @@ struct BookingInlineDetails: View {
         let redaction: ReportRedaction
     }
 
-    static func fields(for booking: Booking) -> [Field] {
+    static func fields(for booking: Booking, includesUncategorized: Bool = false) -> [Field] {
         var result: [Field] = []
         func add(_ id: String, _ title: String, _ raw: String, hides: ReportRedaction = .personal) {
             let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -25,8 +27,9 @@ struct BookingInlineDetails: View {
         if booking.counterparty != title {
             add("counterparty", String(localized: "Gegenpartei"), booking.counterparty)
         }
+        let category = booking.categoryPath.isEmpty ? booking.categoryName : booking.categoryPath
         add("category", String(localized: "Kategorie"),
-            booking.categoryPath.isEmpty ? booking.categoryName : booking.categoryPath, hides: .labels)
+            category.isEmpty && includesUncategorized ? String(localized: "Ohne Kategorie") : category, hides: .labels)
         // tag names often name people: hidden like personal data (#228)
         add("tags", String(localized: "Tags"), booking.tags.map(\.name).joined(separator: ", "))
         add("note", String(localized: "Notiz"), booking.note)
@@ -100,14 +103,37 @@ struct BookingInlineDetails: View {
 
     var body: some View {
         BookingDetailGrid(minimumColumnWidth: 240 * textScale, horizontalSpacing: 20 * textScale, verticalSpacing: 4 * textScale) {
-            ForEach(Self.fields(for: booking)) { field in
-                Text("\(Text(verbatim: field.title).bold()): \(Text(verbatim: field.value))")
-                    .appFont(.callout)
-                    .foregroundStyle(Theme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .sensitive(field.redaction)
+            #if os(macOS)
+            ForEach(Self.fields(for: booking, includesUncategorized: showsCategoryDropdown)) { field in
+                if field.id == "category", showsCategoryDropdown {
+                    BookingCategoryLabel(booking: booking, showsPath: true)
+                        .bookingNoteOccupied()
+                } else if field.id == "counterparty" {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("\(field.title):")
+                            .appFont(.callout, weight: .bold)
+                            .foregroundStyle(Theme.secondary)
+                        BookingRowText(field.value, wraps: true, onSingleClick: onTextSingleClick)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .bookingNoteOccupied()
+                } else {
+                    detail(field)
+                }
             }
+            #else
+            ForEach(Self.fields(for: booking)) { field in detail(field) }
+            #endif
         }
+    }
+
+    private func detail(_ field: Field) -> some View {
+        Text("\(Text(verbatim: field.title).bold()): \(Text(verbatim: field.value))")
+            .appFont(.callout)
+            .foregroundStyle(Theme.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .sensitive(field.redaction)
+            .bookingNoteOccupied()
     }
 }
 
