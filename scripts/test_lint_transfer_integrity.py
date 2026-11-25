@@ -143,6 +143,40 @@ class LintTransferIntegrityTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("unsupported CODEOWNERS pattern", r.stderr)
 
+    def test_wildcard_does_not_cross_directories(self):
+        # The ownerless connectors/ rule is the last one that matches the nested file; the
+        # single-level `*.rs` rule after it must not give connectors/fints/sepa.rs an owner.
+        self.owners(OWNERS + "/girocrab-core/src/connectors/\n/girocrab-core/src/*.rs @dr-prinz\n")
+        r = self.lint()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("connectors/fints/sepa.rs is not covered", r.stderr)
+
+    def test_ownerless_exception_for_real_workflow_fails(self):
+        wf = self.repo / ".github/workflows/pr-checklist.yml"
+        wf.parent.mkdir(parents=True, exist_ok=True)
+        wf.write_text("name: x\n")
+        self.commit("add workflow")
+        self.owners(OWNERS + "/.github/workflows/pr-checklist.yml\n")
+        r = self.lint()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(".github/workflows/pr-checklist.yml is not covered", r.stderr)
+
+    def test_each_payment_field_needs_checklist(self):
+        lines = {
+            "a.rs": "let creditor_iban = 1;\n",
+            "b.swift": "let creditorIban = 1\n",
+            "c.rs": "// pain.001 export\n",
+        }
+        for name, line in lines.items():
+            with self.subTest(file=name):
+                (self.repo / "girocrab-core/src" / name).write_text(line)
+                self.commit(f"touch {name}")
+                r = self.lint(GITHUB_BASE_REF="main", PR_BODY="")
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("checklist item", r.stderr)
+                r = self.lint(GITHUB_BASE_REF="main", PR_BODY=TICKED)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_payment_field_outside_payment_files_needs_checklist(self):
         (self.repo / "girocrab-core/src/other.rs").write_text("let amountCents = 1;\n")
         self.commit("touch payment field elsewhere")

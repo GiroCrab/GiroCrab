@@ -43,15 +43,16 @@ done < "$CODEOWNERS"
 # without owners (or with only a comment after the pattern) is an ownerless exception.
 # Patterns: anchored, optional trailing `/` or `*`.
 covered() {
-  local f=$1 pat owners owned=1
+  local f=$1 pat owners owned=1 slashes head
   while read -r pat owners || [[ -n "$pat" ]]; do
     [[ -z "$pat" || "$pat" == \#* ]] && continue
-    pat=${pat#/}
-    case "$pat" in
-      */) [[ "$f" == "$pat"* ]] || continue ;;
-      *) # shellcheck disable=SC2254
-         case "$f" in $pat|$pat/*) ;; *) continue ;; esac ;;
-    esac
+    pat=${pat#/}; pat=${pat%/}
+    # Compare only as many leading components of the file as the pattern has: `*` then
+    # cannot swallow a `/`, and a match on a directory covers everything below it.
+    slashes=${pat//[!\/]/}
+    head=$(cut -d/ -f1-$(( ${#slashes} + 1 )) <<<"$f")
+    # shellcheck disable=SC2254
+    case "$head" in $pat) ;; *) continue ;; esac
     owners=${owners%%#*}
     if [[ -n "${owners//[[:space:]]/}" ]]; then owned=0; else owned=1; fi
   done < "$CODEOWNERS"
@@ -70,6 +71,23 @@ done
 for p in GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift girocrab-core/src/sys.rs .github/CODEOWNERS .github/workflows/x.yml scripts/x.sh policy/x; do
   covered "$p" || err "$p is not covered by $CODEOWNERS"
 done
+# The real files under the protected paths too: an ownerless exception for a single workflow,
+# script or policy file must not hide behind the sentinel paths above.
+PROTECTED=(
+  .github/CODEOWNERS .github/workflows scripts policy
+  girocrab-core/src/connectors girocrab-core/src/local_api
+  'girocrab-core/src/vault*' 'girocrab-core/src/secret*' girocrab-core/src/sys.rs
+  GiroCrabApp/Sources/GiroCrabUI/VaultKeyManager.swift
+  GiroCrabApp/Sources/GiroCrabUI/PrivacyRedaction.swift
+  GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift
+)
+if ! protected_files=$(git ls-files -- "${PROTECTED[@]}"); then
+  err "cannot list the protected files (git ls-files failed)"
+else
+  while IFS= read -r p; do
+    [[ -n "$p" ]] && { covered "$p" || err "$p is not covered by $CODEOWNERS"; }
+  done <<<"$protected_files"
+fi
 
 # PR context: payment files touched -> the security checklist item must be ticked.
 # Fails closed: a base that cannot be fetched or diffed, or an empty PR body, is an error.
