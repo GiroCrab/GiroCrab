@@ -543,6 +543,9 @@ final class PortalBrowser {
           return vis(i) && /^(text|email|tel)?$/i.test(i.getAttribute('type') || ''); });
         var named = texts.find(function(i) {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
+        // a username-only page (the password comes on the next one) names its field e-mail
+        if (!pw) { named = named || texts.find(function(i) {
+          return /email/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); }); }
         var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
         var set = function(el, v) {
@@ -1167,9 +1170,11 @@ struct PortalWebSheet: View {
         // but a vault that stays closed (e.g. a real read error) ends the poll,
         // or every poll would read again and log for the whole session
         guard vaultAnswered else { return tryCount < 20 ? .retry : .done }
-        // Amazon Visa already stores the email as the connection login; use it when
-        // no separate user name was stored.
-        let user = storedUser.isEmpty && connectionIsAmazonVisa ? connectionLogin : storedUser
+        // Amazon Visa already stores the email as the connection login; use it as the
+        // user name only when a password is stored — opting out clears the stored
+        // values but not the autofill flag, so a bare email may never be filled in.
+        let user = storedUser.isEmpty && connectionIsAmazonVisa && !password.isEmpty
+            ? connectionLogin : storedUser
         // nothing stored (or only a user name that was never given): stop polling
         guard !user.isEmpty else { return .done }
         return .fill(user: user, password: password)
@@ -1203,7 +1208,7 @@ struct PortalWebSheet: View {
             return true
         case .retry:
             missingTries += 1
-            AppModel.debugLog("portal: vault busy – stored login read again (\(missingTries).)")
+            AppModel.debugLog("portal: stored login not readable yet – read again (\(missingTries).)")
             return false
         case let .fill(user, password):
             let filled = await browser.fillLogin(user: user, password: password)

@@ -42,12 +42,19 @@ final class PortalStoredLoginTests: XCTestCase {
     }
 
     func testAmazonVisaUsesTheConnectionEmailAsUser() {
-        if case let .fill(user, pw) = step(connectionLogin: "max@example.com", password: "code", amazonVisa: true) {
+        if case let .fill(user, pw) = step(password: "code", connectionLogin: "max@example.com", amazonVisa: true) {
             XCTAssertEqual(user, "max@example.com")
             XCTAssertEqual(pw, "code")
         } else { XCTFail("E-Mail der Verbindung wird als Benutzername benutzt") }
-        if case .done = step(connectionLogin: "max@example.com", password: "code") { }
+        if case .done = step(password: "code", connectionLogin: "max@example.com") { }
         else { XCTFail("ohne Fallback-Regel: Amex-Login ohne gespeicherten Namen bleibt aus") }
+    }
+
+    func testAmazonVisaWithoutStoredPasswordFillsNothing() {
+        // Opting out clears the stored values, but not the autofill flag: without a
+        // stored password the connection email must not be filled in either
+        if case .done = step(connectionLogin: "max@example.com", amazonVisa: true) { }
+        else { XCTFail("ohne gespeichertes Passwort wird auch die E-Mail nicht eingesetzt") }
     }
 
     func testStoredUserWithoutPasswordStillFillsTheName() {
