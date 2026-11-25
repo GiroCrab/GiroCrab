@@ -110,11 +110,18 @@ data class Rule(
     }
 
     /**
+     * No pattern at all. A regex keeps its whitespace like the core (`" "` matches a literal
+     * space); only the string match kinds treat a blank pattern as missing.
+     */
+    private val hasNoPattern: Boolean
+        get() = if (matchKind == MatchKind.Regex) pattern.isEmpty() else pattern.isBlank()
+
+    /**
      * The pattern compiled once per rule. The core uses Rust's regex syntax; its named groups
      * `(?P<name>…)` are written `(?<name>…)` in Java. Null when Java still rejects the pattern.
      */
     private val compiledRegex: kotlin.text.Regex? by lazy {
-        if (matchKind != MatchKind.Regex || pattern.isBlank()) return@lazy null
+        if (matchKind != MatchKind.Regex || pattern.isEmpty()) return@lazy null
         runCatching {
             Regex(
                 pattern.replace("(?P<", "(?<"),
@@ -130,19 +137,19 @@ data class Rule(
     val evaluableHere: Boolean
         get() = when (matchKind) {
             MatchKind.Expression -> false
-            MatchKind.Regex -> pattern.isBlank() || compiledRegex != null
+            MatchKind.Regex -> pattern.isEmpty() || compiledRegex != null
             else -> true
         }
 
     fun matches(b: Booking): Boolean {
         val hasRange = minCents != null || maxCents != null
-        if (!enabled || (pattern.isBlank() && !hasRange)) return false
+        if (!enabled || (hasNoPattern && !hasRange)) return false
         if (accountIds.isNotEmpty() && b.accountId !in accountIds) return false
         // Signed, not |amount|: a core rule with a negative range has to match here too.
         if (minCents != null && b.amountCents < minCents) return false
         if (maxCents != null && b.amountCents > maxCents) return false
         // An empty keyword list never matches in the core ("$^"), not even with an amount range.
-        if (pattern.isBlank()) return matchKind != MatchKind.Keyword && matchKind != MatchKind.Expression
+        if (hasNoPattern) return matchKind != MatchKind.Keyword && matchKind != MatchKind.Expression
         val fields = haystacks(b)
         return when (matchKind) {
             MatchKind.Contains -> fields.any { it.contains(pattern, ignoreCase = !caseSensitive) }
