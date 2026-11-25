@@ -82,6 +82,7 @@ export global MandatesState {
     callback return-ack();
     callback returns-refresh();
     callback batch-import();
+    callback batch-toggle(int);
 }
 
 component Frame inherits Rectangle {
@@ -300,15 +301,20 @@ export component MandatesPanel inherits VerticalLayout {
     }
 
     // ---- 3: batch transfer CSV
-    if MandatesState.tab == 3: VerticalLayout {
-        spacing: 6px;
-        Text { text: MandatesState.batch-summary; color: root.muted; font-size: 11px; wrap: word-wrap; }
-        Rows {
-            list-height: 230px;
-            line: root.line; ink: root.ink; muted: root.muted; accent: root.accent; negative: root.negative;
-            rows: MandatesState.batch-rows; empty: "CSV-Datei mit Name, IBAN, Betrag und Zweck wählen";
+    if MandatesState.tab == 3: ScrollView {
+        VerticalLayout {
+            spacing: 6px;
+            Text { text: MandatesState.batch-summary; color: root.muted; font-size: 11px; wrap: word-wrap; }
+            Rows {
+                list-height: 230px;
+                checks: true;
+                line: root.line; ink: root.ink; muted: root.muted; accent: root.accent; negative: root.negative;
+                rows: MandatesState.batch-rows; empty: "CSV-Datei mit Name, IBAN, Betrag und Zweck wählen";
+                toggle(i) => { MandatesState.batch-toggle(i); }
+            }
+            Text { text: "Häkchen entfernen, um eine Zeile abzuwählen. Fehlerhafte Zeilen sind nicht wählbar und zählen nicht zur Summe. Im Privatmodus ist die Prüfung gesperrt."; color: root.muted; font-size: 11px; wrap: word-wrap; }
+            HorizontalLayout { alignment: end; Button { text: "CSV öffnen …"; enabled: !MandatesState.busy; clicked => { MandatesState.batch-import(); } } }
         }
-        HorizontalLayout { alignment: end; Button { text: "CSV öffnen …"; enabled: !MandatesState.busy; clicked => { MandatesState.batch-import(); } } }
     }
 
     Text { text: MandatesState.status; color: root.muted; font-size: 11px; wrap: word-wrap; }

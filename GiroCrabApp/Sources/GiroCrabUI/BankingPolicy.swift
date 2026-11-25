@@ -171,6 +171,10 @@ public struct BankingGate: Equatable, Sendable {
         case "equateplus": base = "EquatePlus"
         case "quirion": base = "quirion"
         case "sharinbox": base = "Sharinbox (Société Générale)"
+        case "axashareplan": base = "AXA Mitarbeiter Shareplan"
+        case "unioninvestment": base = "Union Investment"
+        case "airplus": base = "AirPlus"
+        case "berghauscie": base = "Berghaus & Cie (Weindepot)"
         case "easybank": base = "easybank"
         case "fin4u": base = "Alte Leipziger"
         case "volkswagenbank": base = "Volkswagen Bank"
@@ -182,9 +186,12 @@ public struct BankingGate: Equatable, Sendable {
         case "opeldirektbank": base = "Opel Direktbank"
         case "hanseatic": base = "Hanseatic Bank"
         case "bhw": base = "BHW Bausparkasse"
+        case "edenred": base = "Edenred"
         case "finpension": base = "Finpension"
         case "kontist": base = "Kontist"
         case "monefit": base = "Monefit SmartSaver"
+        case "bitcoin": base = "Bitcoin-Wallet"
+        case "goandgrow": base = "Go & Grow"
         default: base = parts.first ?? id
         }
         guard parts.count == 2 else { return base }

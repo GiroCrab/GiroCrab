@@ -15,6 +15,9 @@ import uniffi.girocrab_core.CategorySource as CoreCategorySource
 import uniffi.girocrab_core.ConnectorKind as CoreConnector
 import uniffi.girocrab_core.FlowKind as CoreFlowKind
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.MatchKind as CoreMatchKind
+import uniffi.girocrab_core.Rule as CoreRule
+import uniffi.girocrab_core.RuleField as CoreRuleField
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -70,6 +73,7 @@ object VaultSnapshotMapper {
         page: CorePage,
         categories: List<CoreCategory>,
         tags: List<CoreTag>,
+        rules: List<CoreRule>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
     ): VaultSnapshot = map(
@@ -79,6 +83,7 @@ object VaultSnapshotMapper {
         bookingsTotal = page.totalCount.toInt(),
         categories = categories,
         tags = tags,
+        rules = rules,
         holdingsByAccount = holdingsByAccount,
         assets = assets,
     )
@@ -90,6 +95,7 @@ object VaultSnapshotMapper {
         bookingsTotal: Int,
         categories: List<CoreCategory>,
         tags: List<CoreTag>,
+        rules: List<CoreRule>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
     ): VaultSnapshot {
@@ -102,6 +108,7 @@ object VaultSnapshotMapper {
             bookings = bookings.map(::booking),
             categories = categories.map(::category),
             tags = tags.map(::tag),
+            rules = rules.map(::rule),
             holdings = holdingsByAccount.flatMap { (accountId, rows) ->
                 val quote = quoteCurrencies[accountId] ?: "EUR"
                 rows.map { holding(accountId, it, quote) }
@@ -153,6 +160,7 @@ object VaultSnapshotMapper {
         currency = row.currency,
         checked = row.checked,
         counterpartyIban = row.counterpartyIban,
+        bookingText = row.bookingText,
         // Existing data has to arrive too, or a search by note finds nothing on this device.
         note = row.note,
         tagIds = row.tags.map { it.id.toString() }.toSet(),
@@ -167,6 +175,35 @@ object VaultSnapshotMapper {
         colorHex = color(row.colorHex, 0xFF607D8B),
         icon = row.sfSymbol.ifBlank { "label" },
         monthlyBudgetCents = row.budgetCents,
+    )
+
+    /**
+     * Rules are applied on this side too (preview and apply), so the mapping has to keep what the
+     * matcher reads: field, kind, case sensitivity, account scope and the signed amount range.
+     */
+    fun rule(row: CoreRule): Rule = Rule(
+        id = row.id.toString(),
+        field = when (row.field) {
+            CoreRuleField.ANY -> RuleField.Any
+            CoreRuleField.COUNTERPARTY -> RuleField.Counterparty
+            CoreRuleField.PURPOSE -> RuleField.Purpose
+            CoreRuleField.BOOKING_TEXT -> RuleField.BookingText
+            CoreRuleField.COUNTERPARTY_IBAN -> RuleField.Iban
+        },
+        matchKind = when (row.matchKind) {
+            CoreMatchKind.KEYWORD -> MatchKind.Keyword
+            CoreMatchKind.REGEX -> MatchKind.Regex
+            CoreMatchKind.EXPRESSION -> MatchKind.Expression
+        },
+        pattern = row.pattern,
+        // 0 means "no category" in the core, not category 0.
+        categoryId = row.categoryId.takeIf { it != 0L }?.toString(),
+        tagIds = row.tagIds.map { it.toString() }.toSet(),
+        enabled = row.enabled,
+        minCents = row.minAmountCents,
+        maxCents = row.maxAmountCents,
+        caseSensitive = row.caseSensitive,
+        accountIds = row.accountIds.map { it.toString() }.toSet(),
     )
 
     private fun tag(row: CoreTag): Tag = Tag(

@@ -27,6 +27,24 @@ extension AppModel {
         }
     }
 
+    /// What a finished sync tells the Abrufprotokoll: the bookings, then what else it delivered
+    /// (documents, securities transactions, depot positions). Zero counts stay out.
+    static func syncLogMessage(_ s: SyncSummary) -> String {
+        var parts = [s.transactionsImported == 0 ? String(localized: "Keine neuen Buchungen")
+                     : String(localized: "\(Int(s.transactionsImported)) neue Buchungen")]
+        if s.documentsImported > 0 { parts.append(String(localized: "\(Int(s.documentsImported)) neue Dokumente")) }
+        if s.securityTransactions > 0 { parts.append(String(localized: "\(Int(s.securityTransactions)) Wertpapiergeschäfte")) }
+        if s.holdings > 0 { parts.append(String(localized: "\(Int(s.holdings)) Positionen")) }
+        // the log must show why no document came: the retrieval is switched off for this login
+        if s.documentsOff { parts.append(String(localized: "Dokumentenabruf aus")) }
+        if s.historyIncomplete {
+            let progress = HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal)).text
+            parts.append(String(localized: "Historie noch nicht vollständig") + (progress.isEmpty ? "" : " (\(progress))"))
+        }
+        parts.append(contentsOf: s.warnings + s.hints)
+        return parts.joined(separator: " · ")
+    }
+
     /// CSV of the rows the log window shows.
     static func syncLogCSV(_ entries: [SyncLogEntry]) -> String {
         func field(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }

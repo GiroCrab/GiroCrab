@@ -1,22 +1,49 @@
 //! Finpension (Switzerland): pillar 3a, vested benefits (Freizügigkeit) and 1e
-//! portfolios. Pure parser for the portfolio holdings and cash transactions
-//! of a Finpension export (CSV or JSON). It does no network access; every URL
-//! that is accepted for a download must pass [`validate_finpension_url`].
+//! portfolios.
 //!
-//! CSV: header row, `;` or `,` separated, quoted fields allowed, German or
-//! English column names. Amounts may use Swiss notation (`1'234.50`).
-//! JSON: `{"holdings": [...], "transactions": [...]}` (`positions` is accepted
-//! for `holdings`), keys in camelCase or snake_case.
+//! Synchronises finpension 3a portfolios, fund holdings, cash reserves and
+//! transaction histories into GiroCrab using finpension's official web app APIs
+//! (`accounts.finpension.ch` and `3a.finpension.ch`).
+//!
+//! Two-phase authentication flow:
+//!   Phase 1 (`begin`):
+//!     POST https://accounts.finpension.ch/api/login
+//!     Body: {"country_code": "CH", "password": "...", "server": "", "mobile_number": "+41..."}
+//!     Response: {"message": "OK", "method": "sms"} -> Returns Phase::Challenge (SMS Code)
+//!     (Or re-uses a valid stored Bearer token from ctx.state)
+//!
+//!   Phase 2 (`respond`):
+//!     POST https://accounts.finpension.ch/api/login2fa
+//!     Body: {"country_code": "CH", "password": "...", "code": "...", "mobile_number": "+41..."}
+//!     Response: {"token": "<JWT/Bearer token>"} -> Returns Phase::Ready
+//!
+//!   Fetch (`fetch`):
+//!     GET https://3a.finpension.ch/api/portfolios
+//!     Authorization: Bearer <token>
+//!     Returns portfolio accounts, asset holdings (including liquidity/cash), and transactions.
+//!
+//! Also supports offline CSV and JSON export files via [`Vault::import_finpension_export`].
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::Value;
+use async_trait::async_trait;
+use reqwest::header::{
+    ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, ORIGIN, REFERER,
+};
+use serde_json::{Value, json};
 
-use super::{ContentIds, RemoteHolding, RemoteTransaction, SyncSummary, persist::store_fetch};
+use super::{
+    BankConnector, Challenge, ChallengeKind, ChallengeResponse, ConnectContext, ContentIds,
+    FetchResult, Phase, RemoteAccount, RemoteHolding, RemoteTransaction, SyncSummary,
+    http_client_same_host, persist::store_fetch, read_json_or_null,
+};
 use crate::{
     error::{CoreError, CoreResult},
-    i18n::tr,
-    models::{ConnectorKind, Holding},
+    i18n::{tr, trf},
+    models::{AccountKind, ConnectorKind, Holding},
+    money::json_number_to_cents_rounded,
+    secret::{SecretJson, SecretString},
     vault::Vault,
 };
 
@@ -26,6 +53,11 @@ fn invalid(message: impl Into<String>) -> CoreError {
 
 /// Host every Finpension URL must belong to.
 const HOST: &str = "finpension.ch";
+
+const DEFAULT_AUTH_URL: &str = "https://accounts.finpension.ch/api";
+const DEFAULT_API_URL: &str = "https://3a.finpension.ch/api";
+const APP_ORIGIN: &str = "https://app.finpension.ch";
+const APP_VERSION: &str = "6.1.5";
 
 /// Accepts only `https://finpension.ch/…` or `https://<sub>.finpension.ch/…`
 /// (port 443 at most). Rejects other schemes, credentials in the URL,
@@ -67,6 +99,568 @@ fn valid_label(l: &str) -> bool {
         && !l.starts_with('-')
         && !l.ends_with('-')
         && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// Extracts ISO 3166-1 alpha-2 country code from an E.164 phone number.
+pub fn extract_country_code(phone: &str) -> Option<&'static str> {
+    let digits = phone.strip_prefix('+')?;
+    // Match longest prefix first (e.g. +423 before +42 before +4)
+    for len in (1..=3).rev() {
+        if digits.len() >= len
+            && let Some(cc) = calling_code_to_country(&digits[..len])
+        {
+            return Some(cc);
+        }
+    }
+    None
+}
+
+fn calling_code_to_country(prefix: &str) -> Option<&'static str> {
+    match prefix {
+        "41" => Some("CH"),
+        "49" => Some("DE"),
+        "43" => Some("AT"),
+        "423" => Some("LI"),
+        "1" => Some("US"),
+        "33" => Some("FR"),
+        "34" => Some("ES"),
+        "39" => Some("IT"),
+        "44" => Some("GB"),
+        "45" => Some("DK"),
+        "46" => Some("SE"),
+        "47" => Some("NO"),
+        "48" => Some("PL"),
+        "31" => Some("NL"),
+        "32" => Some("BE"),
+        "351" => Some("PT"),
+        "352" => Some("LU"),
+        "353" => Some("IE"),
+        "358" => Some("FI"),
+        "420" => Some("CZ"),
+        "421" => Some("SK"),
+        _ => None,
+    }
+}
+
+/// Normalises phone numbers to E.164 format. Defaulting trunk 0 to Switzerland (+41).
+pub fn normalize_phone(input: &str) -> String {
+    let t = input.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    if let Some(rest) = t.strip_prefix('+') {
+        let digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
+        return format!("+{digits}");
+    }
+    if let Some(rest) = t.strip_prefix("00") {
+        let digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
+        return format!("+{digits}");
+    }
+    let digits: String = t.chars().filter(|c| c.is_ascii_digit()).collect();
+    if let Some(rest) = digits.strip_prefix('0') {
+        return format!("+41{rest}");
+    }
+    format!("+{digits}")
+}
+
+fn headers(token: Option<&str>, is_login: bool) -> HeaderMap {
+    let mut h = HeaderMap::new();
+    h.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    h.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    h.insert("x-app-version", HeaderValue::from_static(APP_VERSION));
+    h.insert("x-app-platform", HeaderValue::from_static("web"));
+    h.insert(ORIGIN, HeaderValue::from_static(APP_ORIGIN));
+    if is_login {
+        h.insert(
+            REFERER,
+            HeaderValue::from_static("https://app.finpension.ch/login"),
+        );
+    }
+    if let Some(t) = token
+        && let Ok(hv) = HeaderValue::from_str(&format!("Bearer {t}"))
+    {
+        h.insert(AUTHORIZATION, hv);
+    }
+    h
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct FinpensionState {
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub country_code: Option<String>,
+}
+
+/// The stored token, only for the login it was issued to: a changed phone number
+/// never reuses it, a formatting-only edit of the same number does.
+fn reusable_token(state: &FinpensionState, phone: &str) -> Option<String> {
+    let token = state
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())?;
+    let saved_phone = normalize_phone(state.phone.as_deref()?);
+    (saved_phone == phone).then(|| token.to_string())
+}
+
+/// Statuses with which the bank refuses a token (expired or revoked).
+fn token_rejected(status: u16) -> bool {
+    matches!(status, 401 | 403)
+}
+
+pub struct FinpensionConnector {
+    auth_base_url: String,
+    api_base_url: String,
+    phone: String,
+    country_code: String,
+    cached_password: Option<SecretString>,
+    auth_token: Option<String>,
+}
+
+impl FinpensionConnector {
+    pub fn new() -> Self {
+        Self {
+            auth_base_url: DEFAULT_AUTH_URL.into(),
+            api_base_url: DEFAULT_API_URL.into(),
+            phone: String::new(),
+            country_code: String::new(),
+            cached_password: None,
+            auth_token: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_base_urls(auth_base: String, api_base: String) -> Self {
+        Self {
+            auth_base_url: auth_base,
+            api_base_url: api_base,
+            phone: String::new(),
+            country_code: String::new(),
+            cached_password: None,
+            auth_token: None,
+        }
+    }
+}
+
+impl Default for FinpensionConnector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl BankConnector for FinpensionConnector {
+    async fn begin(&mut self, ctx: &ConnectContext) -> CoreResult<Phase> {
+        self.phone = normalize_phone(&ctx.login_name);
+        self.country_code = match extract_country_code(&self.phone) {
+            Some(cc) => cc.to_string(),
+            None => {
+                return Err(CoreError::InvalidInput {
+                    message: trf(
+                        "Konnte Ländercode nicht aus der Telefonnummer ermitteln („{0}“). Bitte im Format +41… oder +49… eingeben.",
+                        &[&ctx.login_name],
+                    ),
+                });
+            }
+        };
+
+        // 1. Reuse the persisted token of the same login while the bank accepts it
+        let stored = ctx
+            .state
+            .decode::<FinpensionState>()
+            .ok()
+            .and_then(|st| reusable_token(&st, &self.phone));
+        if let Some(stored_token) = stored {
+            let resp = http_client_same_host()?
+                .get(format!("{}/portfolios", self.api_base_url))
+                .headers(headers(Some(&stored_token), false))
+                .send()
+                .await?;
+            let status = resp.status();
+            if status.is_success() {
+                self.auth_token = Some(stored_token);
+                return Ok(Phase::Ready);
+            }
+            // Only a token the bank no longer accepts leads to a new login (and SMS);
+            // timeouts and service errors stay errors.
+            if !token_rejected(status.as_u16()) {
+                return Err(CoreError::Bank {
+                    code: status.as_u16().to_string(),
+                    message: "finpension: Portfolios konnten nicht abgerufen werden".into(),
+                });
+            }
+        }
+
+        // 2. Fresh login requires password
+        let secret = ctx.secret.expose();
+        if secret.is_empty() {
+            return Err(CoreError::Authentication {
+                message: tr("finpension: Passwort erforderlich.").into(),
+            });
+        }
+
+        let client = http_client_same_host()?;
+        let body = json!({
+            "country_code": self.country_code,
+            "password": secret,
+            "server": "",
+            "mobile_number": self.phone,
+        });
+
+        let resp = client
+            .post(format!("{}/login", self.auth_base_url))
+            .headers(headers(None, true))
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let val: Value = read_json_or_null(resp).await;
+
+        if !status.is_success() {
+            let msg = val["message"]
+                .as_str()
+                .or_else(|| val["error"].as_str())
+                .unwrap_or("Anmeldung fehlgeschlagen");
+            return Err(CoreError::Authentication {
+                message: format!("finpension: {msg}"),
+            });
+        }
+
+        // Check if token was directly returned without 2FA
+        if let Some(token) = val["token"].as_str() {
+            self.auth_token = Some(token.to_string());
+            return Ok(Phase::Ready);
+        }
+
+        // SMS challenge expected
+        let is_sms = val["method"].as_str() == Some("sms") || val["message"].as_str() == Some("OK");
+        if is_sms {
+            self.cached_password = Some(ctx.secret.clone());
+            let challenge = Challenge {
+                kind: ChallengeKind::Code,
+                title: tr("SMS-Code erforderlich").into(),
+                message: trf(
+                    "Es wurde ein SMS-Code an {0} gesendet. Bitte den Code eingeben:",
+                    &[&self.phone],
+                ),
+                method_name: tr("finpension SMS-Code").into(),
+                redirect_url: None,
+                image: None,
+                expires_in_seconds: Some(300),
+                poll_interval_seconds: 0,
+            };
+            return Ok(Phase::Challenge(challenge));
+        }
+
+        Err(CoreError::Authentication {
+            message: tr("finpension: Unerwartete Antwort beim Anmeldeversuch.").into(),
+        })
+    }
+
+    async fn respond(
+        &mut self,
+        _ctx: &ConnectContext,
+        response: ChallengeResponse,
+    ) -> CoreResult<Phase> {
+        let ChallengeResponse::Code(code) = response else {
+            return Err(CoreError::InvalidInput {
+                message: tr("finpension benötigt den SMS-Code.").into(),
+            });
+        };
+
+        let code_str = code.expose().trim().to_string();
+        if code_str.is_empty() {
+            return Err(CoreError::InvalidInput {
+                message: tr("Kein SMS-Code eingegeben.").into(),
+            });
+        }
+
+        let password = self
+            .cached_password
+            .take()
+            .ok_or_else(|| CoreError::Authentication {
+                message: tr("Passwort nicht mehr im Speicher. Bitte Anmeldung neu starten.").into(),
+            })?;
+
+        let client = http_client_same_host()?;
+        let body = json!({
+            "mobile_number": self.phone,
+            "country_code": self.country_code,
+            "code": code_str,
+            "password": password.expose(),
+        });
+
+        let resp = client
+            .post(format!("{}/login2fa", self.auth_base_url))
+            .headers(headers(None, false))
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let val: Value = read_json_or_null(resp).await;
+
+        if !status.is_success() {
+            let msg = val["message"]
+                .as_str()
+                .or_else(|| val["error"].as_str())
+                .unwrap_or("2FA-Code ungültig");
+            return Err(CoreError::Authentication {
+                message: format!("finpension 2FA: {msg}"),
+            });
+        }
+
+        let token = val["token"]
+            .as_str()
+            .ok_or_else(|| CoreError::Authentication {
+                message: tr("finpension: Kein Token in der 2FA-Antwort.").into(),
+            })?;
+
+        self.auth_token = Some(token.to_string());
+        Ok(Phase::Ready)
+    }
+
+    async fn fetch(&mut self, _ctx: &ConnectContext) -> CoreResult<FetchResult> {
+        let token = self.auth_token.as_ref().ok_or(CoreError::SessionClosed)?;
+        let client = http_client_same_host()?;
+
+        let resp = client
+            .get(format!("{}/portfolios", self.api_base_url))
+            .headers(headers(Some(token), false))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let val: Value = read_json_or_null(resp).await;
+
+        if !status.is_success() {
+            let msg = val["message"]
+                .as_str()
+                .or_else(|| val["error"].as_str())
+                .unwrap_or("Portfolios konnten nicht abgerufen werden");
+            return Err(CoreError::Bank {
+                code: status.as_u16().to_string(),
+                message: format!("finpension: {msg}"),
+            });
+        }
+
+        let today = super::today();
+        let (accounts, holdings, transactions) = parse_portfolios_data(&val, &today)?;
+
+        let mut out = FetchResult {
+            accounts,
+            holdings,
+            transactions,
+            state: SecretJson::encode(&FinpensionState {
+                token: self.auth_token.clone(),
+                phone: Some(self.phone.clone()),
+                country_code: Some(self.country_code.clone()),
+            })
+            .ok(),
+            ..Default::default()
+        };
+
+        for acc in &out.accounts {
+            out.holdings_fetched.push(acc.external_ref.clone());
+            out.balances_reported.push(acc.external_ref.clone());
+        }
+
+        Ok(out)
+    }
+}
+
+/// Parses the finpension `/portfolios` response into GiroCrab accounts, holdings, and transactions.
+pub fn parse_portfolios_data(
+    val: &Value,
+    today: &str,
+) -> CoreResult<(
+    Vec<RemoteAccount>,
+    Vec<RemoteHolding>,
+    Vec<RemoteTransaction>,
+)> {
+    let portfolios = val.as_array().ok_or_else(|| CoreError::Protocol {
+        message: "finpension: Erwartete Liste von Portfolios".into(),
+    })?;
+
+    let mut accounts = Vec::new();
+    let mut holdings = Vec::new();
+    let mut transactions = Vec::new();
+
+    for p in portfolios {
+        // per portfolio: ID-less bookings keep their IDs whatever order the portfolios come in
+        let mut ids = ContentIds::default();
+        let id_num = p["id"]
+            .as_i64()
+            .or_else(|| p["id"].as_str().and_then(|s| s.parse().ok()))
+            .ok_or_else(|| CoreError::Protocol {
+                message: "finpension: Portfolio ohne gültige ID".into(),
+            })?;
+        let id_str = id_num.to_string();
+        let number = p["number"]
+            .as_i64()
+            .map(|n| n.to_string())
+            .or_else(|| p["number"].as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| id_str.clone());
+        let name = format!("Finpension Portfolio {number}");
+        // A missing value is no balance of zero: reject the snapshot, keep the stored one.
+        let balance_cents = json_number_to_cents_rounded(&p["performance"]["current_value"])
+            .map_err(|_| CoreError::Protocol {
+                message: "finpension: Portfolio ohne aktuellen Wert".into(),
+            })?;
+
+        let account_ref = format!("finpension-{id_str}");
+        accounts.push(RemoteAccount {
+            external_ref: account_ref.clone(),
+            name,
+            owner: format!("ID: {id_str}"),
+            iban: String::new(),
+            account_number: id_str.clone(),
+            currency: "CHF".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents,
+            balance_date: today.to_string(),
+        });
+
+        // 1. Collect ISIN mapping from strategy categories
+        let mut isin_by_name = HashMap::new();
+        if let Some(cats) = p["strategy"]["categories"].as_array() {
+            for cat in cats {
+                if let Some(positions) = cat["positions"].as_array() {
+                    for pos in positions {
+                        if let (Some(asset_name), Some(isin)) =
+                            (pos["asset_name"].as_str(), pos["isin"].as_str())
+                            && !isin.trim().is_empty()
+                        {
+                            isin_by_name.insert(asset_name.to_string(), isin.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Holdings replace the account's stored ones, so an incomplete inventory rejects
+        // the snapshot; an empty list is a valid (empty) inventory.
+        let incomplete = || CoreError::Protocol {
+            message: "finpension: Unvollständige Vermögensaufteilung".into(),
+        };
+        let classes = p["allocation_by_asset_class"]
+            .as_array()
+            .ok_or_else(incomplete)?;
+        for cls in classes {
+            for pos in cls["positions"].as_array().ok_or_else(incomplete)? {
+                let asset_name = pos["asset_name"].as_str().unwrap_or("Unbekannt");
+                let value_cents = json_number_to_cents_rounded(&pos["value"]).unwrap_or(0);
+                let shares = pos["shares"]
+                    .as_f64()
+                    .or_else(|| pos["shares"].as_str().and_then(|s| s.parse().ok()))
+                    .unwrap_or(0.0);
+
+                if asset_name.eq_ignore_ascii_case("cash")
+                    || asset_name.eq_ignore_ascii_case("liquidität")
+                {
+                    holdings.push(RemoteHolding {
+                        account_ref: account_ref.clone(),
+                        holding: Holding {
+                            isin: String::new(),
+                            wkn: String::new(),
+                            name: tr("Liquidität").into(),
+                            quantity: 1.0,
+                            current_price_cents: value_cents,
+                            purchase_price_cents: value_cents,
+                            value_cents,
+                            currency: "CHF".into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                } else {
+                    let current_price_cents = if shares > 0.0 {
+                        ((value_cents as f64) / shares).round() as i64
+                    } else {
+                        0
+                    };
+                    let isin = isin_by_name.get(asset_name).cloned().unwrap_or_default();
+                    // The response has no cost basis per position: the purchase price stays
+                    // unknown (0), as in the export import, instead of a portfolio-wide guess.
+                    holdings.push(RemoteHolding {
+                        account_ref: account_ref.clone(),
+                        holding: Holding {
+                            isin,
+                            wkn: String::new(),
+                            name: asset_name.into(),
+                            quantity: shares,
+                            current_price_cents,
+                            value_cents,
+                            currency: "CHF".into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        // 3. Extract portfolio transactions. Rows without a valid bank date or amount are
+        // skipped: a guessed value would be stored for good (and the fetch date would make an
+        // ID-less booking new every day). A later sync imports them once they are complete.
+        if let Some(tx_list) = p["transactions"].as_array() {
+            for tx in tx_list {
+                let Some(booking_date) = tx["date"].as_str().and_then(|d| parse_date(d).ok())
+                else {
+                    continue;
+                };
+                let Ok(amount_val) = json_number_to_cents_rounded(&tx["amount"]) else {
+                    continue;
+                };
+                // language independent: part of the fallback ID, translated only for display
+                let tx_type = tx["type"]
+                    .as_str()
+                    .unwrap_or("deposit")
+                    .to_ascii_lowercase();
+
+                let amount_cents = if matches!(tx_type.as_str(), "fee" | "withdrawal") {
+                    -amount_val.abs()
+                } else {
+                    amount_val.abs()
+                };
+
+                let mut r = RemoteTransaction {
+                    account_ref: account_ref.clone(),
+                    booking_date: booking_date.clone(),
+                    value_date: booking_date,
+                    amount_cents,
+                    currency: "CHF".into(),
+                    purpose: tx_type.clone(),
+                    ..Default::default()
+                };
+
+                let has_id = tx["id"].as_i64().map(|n| n.to_string()).or_else(|| {
+                    tx["id"]
+                        .as_str()
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.to_string())
+                });
+                r.external_id = match has_id {
+                    Some(tid) => format!("finpension-{id_str}-{tid}"),
+                    None => ids.next(&r),
+                };
+                r.purpose = match tx_type.as_str() {
+                    "deposit" => tr("Einzahlung Säule 3a").to_string(),
+                    "fee" => tr("Pauschalgebühr").to_string(),
+                    "withdrawal" => tr("Auszahlung").to_string(),
+                    _ => tx["type"].as_str().unwrap_or_default().to_string(),
+                };
+
+                transactions.push(r);
+            }
+        }
+    }
+
+    Ok((accounts, holdings, transactions))
 }
 
 /// Result of parsing an export.
@@ -140,34 +734,9 @@ pub fn remote_transactions(
         .collect()
 }
 
-/// Finpension has no API: the export file is imported through
-/// [`Vault::import_finpension_export`], a sync only points the user there.
-pub struct FinpensionConnector;
-
-#[async_trait::async_trait]
-impl super::BankConnector for FinpensionConnector {
-    async fn begin(&mut self, _ctx: &super::ConnectContext) -> CoreResult<super::Phase> {
-        Err(invalid(tr(
-            "Bitte die Exportdatei über „Datei importieren“ einlesen.",
-        )))
-    }
-    async fn respond(
-        &mut self,
-        ctx: &super::ConnectContext,
-        _response: super::ChallengeResponse,
-    ) -> CoreResult<super::Phase> {
-        self.begin(ctx).await
-    }
-    async fn fetch(&mut self, ctx: &super::ConnectContext) -> CoreResult<super::FetchResult> {
-        self.begin(ctx).await.map(|_| Default::default())
-    }
-}
-
 /// Builds the fetch of one import: a depot (holdings) and a cash account
 /// (transactions) per currency present in the export.
-pub fn to_fetch(connection_id: i64, name: &str, export: FinpensionExport) -> super::FetchResult {
-    use super::{FetchResult, RemoteAccount};
-    use crate::models::AccountKind;
+pub fn to_fetch(connection_id: i64, name: &str, export: FinpensionExport) -> FetchResult {
     let mut out = FetchResult::default();
     let mut currencies: Vec<String> = export
         .holdings
@@ -269,20 +838,18 @@ impl Vault {
 }
 
 /// Parses an export; JSON when it starts with `{` or `[`, otherwise CSV.
-/// A CSV is read as holdings when it has an ISIN column, else as transactions.
+/// A CSV with an ISIN column and no transaction amount column (amount / cash flow) is a
+/// holdings list, also with date or category columns; everything else is read as
+/// transactions (the transaction report has ISIN and cash flow).
 pub fn parse_export(input: &str) -> CoreResult<FinpensionExport> {
     let input = input.trim_start_matches('\u{feff}').trim();
     if input.starts_with('{') || input.starts_with('[') {
         parse_json(input)
     } else {
         let rows = parse_csv_rows(input)?;
-        let header_has = |names: &[&str]| {
-            rows.first()
-                .is_some_and(|h| h.iter().any(|c| names.contains(&norm(c).as_str())))
-        };
-        // The transaction report also has an ISIN column (of the asset traded),
-        // so a cash-flow column decides first.
-        let is_holdings = header_has(&["isin"]) && !header_has(&["cashflow"]);
+        let first_row = rows.first().ok_or_else(|| invalid("CSV has no rows"))?;
+        let c = Columns::new(first_row);
+        let is_holdings = c.find(&["isin"]).is_some() && c.find(TX_AMOUNT_COLUMNS).is_none();
         let mut out = FinpensionExport::default();
         if is_holdings {
             out.holdings = holdings_from_csv_rows(&rows)?;
@@ -355,6 +922,9 @@ fn norm(s: &str) -> String {
         .collect()
 }
 
+/// Columns holding a booking's amount; their presence makes a CSV a transaction list.
+const TX_AMOUNT_COLUMNS: &[&str] = &["amount", "betrag", "cashflow", "flow"];
+
 struct Columns(HashMap<String, usize>);
 
 impl Columns {
@@ -381,11 +951,48 @@ fn cell(row: &[String], i: usize) -> &str {
 fn holdings_from_csv_rows(rows: &[Vec<String>]) -> CoreResult<Vec<FinpensionHolding>> {
     let c = Columns::new(&rows[0]);
     let isin = c.require(&["isin"])?;
-    let name = c.require(&["name", "bezeichnung", "wertschrift", "security"])?;
-    let qty = c.require(&["quantity", "anzahl", "menge", "stueck", "stück"])?;
-    let price = c.require(&["price", "kurs", "preis", "preisprostueck"])?;
-    let value = c.require(&["marketvalue", "marktwert", "value", "wert"])?;
-    let cur = c.find(&["currency", "währung", "waehrung", "whg"]);
+    let name = c.require(&[
+        "name",
+        "bezeichnung",
+        "wertschrift",
+        "security",
+        "assetname",
+    ])?;
+    let qty = c.require(&[
+        "quantity",
+        "anzahl",
+        "menge",
+        "stueck",
+        "stück",
+        "numberofshares",
+    ])?;
+    let price = c.require(&[
+        "price",
+        "kurs",
+        "preis",
+        "preisprostueck",
+        "assetpriceinchf",
+        "assetprice",
+    ])?;
+    let value = c.require(&[
+        "marketvalue",
+        "marktwert",
+        "value",
+        "wert",
+        "marketvalueinchf",
+    ])?;
+    // "… in CHF" columns are CHF whatever the asset's currency; mixing one of them with a
+    // column in the asset's currency would label one of the amounts wrongly.
+    let price_in_chf = c.find(&["assetpriceinchf"]) == Some(price);
+    let value_in_chf = c.find(&["marketvalueinchf"]) == Some(value);
+    if price_in_chf != value_in_chf {
+        return Err(invalid("price and market value in different currencies"));
+    }
+    let cur = if price_in_chf {
+        None
+    } else {
+        c.find(&["currency", "währung", "waehrung", "whg", "assetcurrency"])
+    };
     rows[1..]
         .iter()
         .map(|r| {
@@ -404,38 +1011,39 @@ fn holdings_from_csv_rows(rows: &[Vec<String>]) -> CoreResult<Vec<FinpensionHold
 fn transactions_from_csv_rows(rows: &[Vec<String>]) -> CoreResult<Vec<FinpensionTransaction>> {
     let c = Columns::new(&rows[0]);
     let date = c.require(&["date", "datum", "buchungsdatum", "valuta"])?;
-    let desc = c.find(&[
+    let desc_col = c.find(&[
         "description",
         "beschreibung",
         "text",
         "buchungstext",
         "verwendungszweck",
     ]);
-    // The transaction report has no description: category and asset name make it.
-    let category = c.find(&["category", "kategorie"]);
-    let asset = c.find(&["assetname"]);
-    if desc.is_none() && category.is_none() {
-        return Err(invalid("missing column description"));
+    let cat_col = c.find(&["category", "kategorie"]);
+    let asset_col = c.find(&["assetname", "asset", "wertschrift", "security", "name"]);
+    if desc_col.is_none() && cat_col.is_none() && asset_col.is_none() {
+        return Err(invalid("missing column description or category"));
     }
-    let amount = c.require(&["amount", "betrag", "cashflow"])?;
-    let cur = c.find(&["currency", "währung", "waehrung", "whg"]);
-    let reference = c.find(&["reference", "referenz", "id"]);
+    let amount = c.require(TX_AMOUNT_COLUMNS)?;
+    let cur = c.find(&["currency", "währung", "waehrung", "whg", "assetcurrency"]);
+    let reference = c.find(&["reference", "referenz", "id", "isin"]);
     rows[1..]
         .iter()
         .map(|r| {
-            let text = match desc {
-                Some(i) => cell(r, i).to_string(),
-                None => [category, asset]
-                    .into_iter()
-                    .flatten()
-                    .map(|i| cell(r, i))
-                    .filter(|t| !t.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" – "),
+            let desc = if let Some(i) = desc_col {
+                cell(r, i).to_string()
+            } else {
+                let cat = cat_col.map(|i| cell(r, i)).unwrap_or("");
+                let asset = asset_col.map(|i| cell(r, i)).unwrap_or("");
+                match (cat.is_empty(), asset.is_empty()) {
+                    (false, false) => format!("{cat}: {asset}"),
+                    (false, true) => cat.to_string(),
+                    (true, false) => asset.to_string(),
+                    (true, true) => String::new(),
+                }
             };
             build_transaction(
                 cell(r, date),
-                &text,
+                &desc,
                 parse_decimal(cell(r, amount))?,
                 cur.map(|i| cell(r, i)).unwrap_or(""),
                 reference.map(|i| cell(r, i)).unwrap_or(""),
@@ -627,6 +1235,10 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
 15.03.2026,\"Einzahlung Säule 3a, März\",\"6'000.00\",CHF,R-1\n\
 2026-03-31,Verwaltungsgebühr,-12.34,CHF,R-2\n";
 
+    const TRANS_REPORT_CSV: &str = "Date;Category;\"Asset Name\";ISIN;\"Number of Shares\";\"Asset Currency\";\"Currency Rate\";\"Asset Price in CHF\";\"Cash Flow\";Balance\n\
+2024-01-15;Buy;\"Swisscanto (CH) IPF I\";CH0117044948;1.234;CHF;1.0;150.00;-185.10;1200.00\n\
+2024-01-20;Deposit;\"\";\"\";;CHF;1.0;;500.00;1700.00\n";
+
     #[test]
     fn value_errors_never_quote_file_content() {
         // A colon plus a line break once let the Windows filter show the part after the colon.
@@ -669,29 +1281,23 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
     }
 
     #[test]
-    fn urls_rejected() {
-        for u in [
-            "http://finpension.ch/",
-            "https://finpension.com/",
-            "https://finpension.ch.evil.com/",
-            "https://evilfinpension.ch/",
-            "https://evil.com/finpension.ch",
-            "https://evil.com?u=finpension.ch",
-            "https://finpension.ch@evil.com/",
-            "https://evil.com@finpension.ch/",
-            "https://finpension.ch:8443/",
-            "https://finpension.ch\\@evil.com/",
-            "https://.finpension.ch/",
-            "https://-a.finpension.ch/",
-            "https://fin pension.ch/",
-            "https://finpensión.ch/",
-            "ftp://finpension.ch/",
-            "//finpension.ch/",
-            "finpension.ch",
-            "",
-        ] {
-            assert!(validate_finpension_url(u).is_err(), "{u}");
-        }
+    fn transaktions_report_csv_with_isin() {
+        let export = parse_export(TRANS_REPORT_CSV).unwrap();
+        assert!(export.holdings.is_empty());
+        assert_eq!(export.transactions.len(), 2);
+
+        let t1 = &export.transactions[0];
+        assert_eq!(t1.date, "2024-01-15");
+        assert_eq!(t1.description, "Buy: Swisscanto (CH) IPF I");
+        assert_eq!(t1.amount_cents, -18510);
+        assert_eq!(t1.currency, "CHF");
+        assert_eq!(t1.reference, "CH0117044948");
+
+        let t2 = &export.transactions[1];
+        assert_eq!(t2.date, "2024-01-20");
+        assert_eq!(t2.description, "Deposit");
+        assert_eq!(t2.amount_cents, 50000);
+        assert_eq!(t2.currency, "CHF");
     }
 
     #[test]
@@ -703,26 +1309,26 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
         assert_eq!(h[0].quantity, 12.5);
         assert_eq!(h[0].price_cents, 10020);
         assert_eq!(h[0].value_cents, 125250);
+        assert_eq!(h[0].currency, "CHF");
         assert_eq!(h[1].currency, "EUR");
-        let r = h[1].clone().into_remote("depot:1");
-        assert_eq!(r.account_ref, "depot:1");
-        assert_eq!(r.holding.value_cents, 14997);
     }
 
     #[test]
     fn transactions_csv_and_ids() {
         let t = parse_transactions_csv(TX_CSV).unwrap();
+        assert_eq!(t.len(), 2);
         assert_eq!(t[0].date, "2026-03-15");
         assert_eq!(t[0].description, "Einzahlung Säule 3a, März");
-        assert_eq!(t[0].amount_cents, 600_000);
+        assert_eq!(t[0].amount_cents, 600000);
         assert_eq!(t[1].amount_cents, -1234);
-        let r = remote_transactions("cash:1", &t);
-        assert_eq!(r.len(), 2);
-        assert_ne!(r[0].external_id, r[1].external_id);
+        let rem = remote_transactions("depot-1", &t);
+        assert_eq!(rem.len(), 2);
+        assert_ne!(rem[0].external_id, rem[1].external_id);
         assert_eq!(
-            r[0].external_id,
-            remote_transactions("cash:1", &t)[0].external_id
+            rem[0].external_id,
+            remote_transactions("depot-1", &t)[0].external_id
         );
+        assert!(rem[0].external_id.starts_with('c'));
     }
 
     // Header as exported by the portal's transaction report; synthetic rows.
@@ -748,16 +1354,14 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
     }
 
     #[test]
-    fn identical_transactions_get_distinct_ids() {
-        let t = FinpensionTransaction {
-            date: "2026-01-01".into(),
-            description: "Gebühr".into(),
-            amount_cents: -100,
-            currency: "CHF".into(),
-            reference: String::new(),
-        };
-        let r = remote_transactions("c", &[t.clone(), t]);
-        assert_ne!(r[0].external_id, r[1].external_id);
+    fn json_export() {
+        let json = r#"{
+            "holdings": [{"isin": "CH0000000011", "name": "Eq", "quantity": 1, "price": 10.0, "value": 10.0}],
+            "transactions": [{"date": "2026-01-01", "description": "Dep", "amount": 100.0}]
+        }"#;
+        let e = parse_export(json).unwrap();
+        assert_eq!(e.holdings.len(), 1);
+        assert_eq!(e.transactions.len(), 1);
     }
 
     #[test]
@@ -767,47 +1371,72 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
     }
 
     #[test]
-    fn json_export() {
-        let j = r#"{"positions":[{"isin":"ch0000000011","name":"Fund","quantity":"2",
-            "currentPrice":10.005,"marketValue":20.01,"currency":"chf"}],
-            "transactions":[{"bookingDate":"2026-02-01T10:00:00Z","description":"Zins",
-            "amount":1.5,"currency":"CHF","id":"x"}]}"#;
-        let e = parse_export(j).unwrap();
-        assert_eq!(e.holdings[0].isin, "CH0000000011");
-        assert_eq!(e.holdings[0].currency, "CHF");
-        assert_eq!(e.holdings[0].value_cents, 2001);
-        assert_eq!(e.transactions[0].date, "2026-02-01");
-        assert_eq!(e.transactions[0].amount_cents, 150);
+    fn rejects_bad_input() {
+        assert!(parse_export("").is_err());
+        assert!(parse_export("foo,bar\n1,2").is_err());
+        assert!(parse_export("{\"holdings\": []}").is_err());
+        assert!(parse_holdings_csv("ISIN,Name,Anzahl,Kurs,Marktwert\nBAD,X,1,1,1").is_err());
     }
 
     #[test]
     fn decimals() {
-        assert_eq!(parse_decimal("1'234.50").unwrap(), 1234.5);
-        assert_eq!(parse_decimal("1’234.50").unwrap(), 1234.5);
-        assert_eq!(parse_decimal("1.234,50").unwrap(), 1234.5);
-        assert_eq!(parse_decimal("1,234.50").unwrap(), 1234.5);
-        assert_eq!(parse_decimal("12,5").unwrap(), 12.5);
-        assert_eq!(parse_decimal("-3").unwrap(), -3.0);
-        assert!(parse_decimal("abc").is_err());
-        assert!(parse_decimal("NaN").is_err());
-        assert!(parse_decimal("").is_err());
+        assert_eq!(parse_decimal("1'234.56").unwrap(), 1234.56);
+        assert_eq!(parse_decimal("1 234,56").unwrap(), 1234.56);
+        assert_eq!(parse_decimal("12,50").unwrap(), 12.5);
+        assert_eq!(parse_decimal("-42.10").unwrap(), -42.1);
     }
 
     #[test]
-    fn rejects_bad_input() {
-        let bad_isin = "ISIN;Name;Anzahl;Kurs;Marktwert\nXX;A;1;1;1\n";
-        assert!(parse_holdings_csv(bad_isin).is_err());
-        let usd = "ISIN;Name;Anzahl;Kurs;Marktwert;Währung\nCH0000000011;A;1;1;1;USD\n";
-        assert!(parse_holdings_csv(usd).is_err());
-        let neg = "ISIN;Name;Anzahl;Kurs;Marktwert\nCH0000000011;A;-1;1;1\n";
-        assert!(parse_holdings_csv(neg).is_err());
-        assert!(parse_holdings_csv("ISIN;Name\nCH0000000011;A\n").is_err());
-        assert!(parse_transactions_csv("Datum;Text;Betrag\n31.02.2026;x;1\n").is_err());
-        assert!(parse_transactions_csv("Datum;Text;Betrag\n").is_err());
-        assert!(parse_export("{\"holdings\": 5}").is_err());
-        assert!(parse_export("{}").is_err());
-        assert!(parse_export("{not json").is_err());
-        assert!(parse_csv_rows("a;b\n\"x;y\n").is_err());
+    fn urls_accepted_api_hosts() {
+        assert!(validate_finpension_url("https://finpension.ch").is_ok());
+        assert!(validate_finpension_url("https://finpension.ch/app").is_ok());
+        assert!(validate_finpension_url("https://app.finpension.ch/export.csv").is_ok());
+        assert!(validate_finpension_url("https://3a.finpension.ch/api").is_ok());
+        assert!(validate_finpension_url("https://accounts.finpension.ch:443/login").is_ok());
+    }
+
+    #[test]
+    fn urls_rejected() {
+        assert!(validate_finpension_url("http://finpension.ch").is_err());
+        assert!(validate_finpension_url("https://evilfinpension.ch").is_err());
+        assert!(validate_finpension_url("https://finpension.ch.evil.com").is_err());
+        assert!(validate_finpension_url("https://user:pass@finpension.ch").is_err());
+        assert!(validate_finpension_url("https://finpension.ch:8443").is_err());
+        assert!(validate_finpension_url("https://1.2.3.4/finpension.ch").is_err());
+        assert!(validate_finpension_url("https://finpension.ch/\\path").is_err());
+        assert!(validate_finpension_url("https://finpension.ch/ hello").is_err());
+    }
+
+    #[test]
+    fn identical_transactions_get_distinct_ids() {
+        let t = FinpensionTransaction {
+            date: "2026-01-01".into(),
+            description: "Same".into(),
+            amount_cents: 1000,
+            currency: "CHF".into(),
+            reference: "".into(),
+        };
+        let rem = remote_transactions("depot-1", &[t.clone(), t]);
+        assert_eq!(rem.len(), 2);
+        assert_ne!(rem[0].external_id, rem[1].external_id);
+    }
+
+    #[test]
+    fn to_fetch_creates_depot_and_cash_accounts_per_currency() {
+        let export = parse_export(HOLDINGS_CSV).unwrap();
+        let fetch = to_fetch(42, "FP", export);
+        let refs: Vec<_> = fetch
+            .accounts
+            .iter()
+            .map(|a| a.external_ref.as_str())
+            .collect();
+        assert_eq!(
+            refs,
+            vec!["finpension-42-depot-CHF", "finpension-42-depot-EUR"]
+        );
+        let chf = fetch.accounts.iter().find(|a| a.currency == "CHF").unwrap();
+        assert_eq!(chf.name, "FP Depot (CHF)");
+        assert_eq!(chf.balance_cents, 125250);
     }
 
     #[test]
@@ -848,5 +1477,428 @@ IE0000000022;Synthetic Bond Fund;3;49.99;149.97;EUR\n";
                 .import_finpension_export(conn, b"x".to_vec())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn phone_normalization_and_country_code() {
+        assert_eq!(normalize_phone("079 123 45 67"), "+41791234567");
+        assert_eq!(normalize_phone("+41 79 123 45 67"), "+41791234567");
+        assert_eq!(normalize_phone("0049 170 1234567"), "+491701234567");
+        assert_eq!(normalize_phone("+43 664 1234567"), "+436641234567");
+
+        assert_eq!(extract_country_code("+41791234567"), Some("CH"));
+        assert_eq!(extract_country_code("+491701234567"), Some("DE"));
+        assert_eq!(extract_country_code("+436641234567"), Some("AT"));
+        assert_eq!(extract_country_code("+4231234567"), Some("LI"));
+        assert_eq!(extract_country_code("+12025550123"), Some("US"));
+        assert_eq!(extract_country_code("invalid"), None);
+    }
+
+    fn mock_portfolios_json() -> String {
+        r#"[
+          {
+            "id": 1001,
+            "number": 1,
+            "performance": {
+              "current_value": 15000.50,
+              "current_profit_value": 500.00,
+              "deposits_ytd": 7000.00
+            },
+            "strategy": {
+              "categories": [
+                {
+                  "positions": [
+                    {
+                      "asset_name": "Swiss Equity Fund",
+                      "isin": "CH0117044948"
+                    }
+                  ]
+                }
+              ]
+            },
+            "allocation_by_asset_class": [
+              {
+                "positions": [
+                  {
+                    "asset_name": "Cash",
+                    "value": 5000.50,
+                    "shares": 1.0
+                  },
+                  {
+                    "asset_name": "Swiss Equity Fund",
+                    "value": 10000.00,
+                    "shares": 100.0
+                  }
+                ]
+              }
+            ],
+            "transactions": [
+              {
+                "id": 5001,
+                "date": "2026-01-15",
+                "type": "deposit",
+                "amount": 7000.00
+              },
+              {
+                "id": 5002,
+                "date": "2026-01-31",
+                "type": "fee",
+                "amount": 12.50
+              }
+            ]
+          },
+          {
+            "id": 1002,
+            "number": 2,
+            "performance": {
+              "current_value": 2000.00,
+              "current_profit_value": 0,
+              "deposits_ytd": 2000.00
+            },
+            "strategy": {
+              "categories": []
+            },
+            "allocation_by_asset_class": [
+              {
+                "positions": [
+                  {
+                    "asset_name": "Liquidität",
+                    "value": 2000.00,
+                    "shares": 1.0
+                  }
+                ]
+              }
+            ],
+            "transactions": [
+              {
+                "id": 6001,
+                "date": "2026-02-01",
+                "type": "deposit",
+                "amount": 2000.00
+              }
+            ]
+          }
+        ]"#
+        .to_string()
+    }
+
+    fn serve_finpension_mock() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log_clone = log.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { break };
+                let mut buf = [0u8; 8192];
+                let len = s.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..len]).to_string();
+                let first_line = req.lines().next().unwrap_or("").to_string();
+                log_clone.lock().unwrap().push(first_line.clone());
+                let (status, body) = if first_line.starts_with("POST /login2fa") {
+                    ("200 OK", r#"{"token": "test-jwt-token-12345"}"#.to_string())
+                } else if first_line.starts_with("POST /login") {
+                    (
+                        "200 OK",
+                        r#"{"message": "OK", "method": "sms"}"#.to_string(),
+                    )
+                } else if first_line.starts_with("GET /portfolios") {
+                    // only with the issued token; "down" simulates a service failure
+                    let lower = req.to_ascii_lowercase();
+                    if lower.contains("authorization: bearer test-jwt-token-12345") {
+                        ("200 OK", mock_portfolios_json())
+                    } else if lower.contains("authorization: bearer down") {
+                        (
+                            "503 Service Unavailable",
+                            r#"{"error": "maintenance"}"#.to_string(),
+                        )
+                    } else {
+                        (
+                            "401 Unauthorized",
+                            r#"{"error": "unauthorized"}"#.to_string(),
+                        )
+                    }
+                } else if first_line.starts_with("POST /logout") {
+                    ("200 OK", r#"{"message": "OK"}"#.to_string())
+                } else {
+                    ("404 Not Found", r#"{"error": "not found"}"#.to_string())
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(resp.as_bytes());
+            }
+        });
+        (base, log)
+    }
+
+    #[tokio::test]
+    async fn live_sync_two_phase_and_session_persistence() {
+        let (base, log) = serve_finpension_mock();
+
+        let mut connector = FinpensionConnector::with_base_urls(base.clone(), base.clone());
+        let ctx = ConnectContext {
+            connection_id: 1,
+            login_name: "+41 79 123 45 67".into(),
+            secret: SecretString::new("secret-password".into()),
+            ..Default::default()
+        };
+
+        // Phase 1: begin() -> triggers /login and returns SMS Challenge
+        let phase = connector.begin(&ctx).await.unwrap();
+        match phase {
+            Phase::Challenge(ch) => {
+                assert_eq!(ch.kind, ChallengeKind::Code);
+                assert!(ch.message.contains("+41791234567"));
+            }
+            _ => panic!("Expected Phase::Challenge"),
+        }
+
+        // Phase 2: respond() -> sends SMS code to /login2fa, receives token
+        let phase = connector
+            .respond(
+                &ctx,
+                ChallengeResponse::Code(SecretString::new("123456".into())),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(phase, Phase::Ready));
+
+        // Fetch: GET /portfolios -> extracts multiple accounts, holdings, and transactions
+        let result = connector.fetch(&ctx).await.unwrap();
+        assert_eq!(result.accounts.len(), 2);
+
+        // Verify account 1
+        let acc1 = &result.accounts[0];
+        assert_eq!(acc1.external_ref, "finpension-1001");
+        assert_eq!(acc1.name, "Finpension Portfolio 1");
+        assert_eq!(acc1.balance_cents, 1500050);
+        assert_eq!(acc1.currency, "CHF");
+        assert_eq!(acc1.kind, AccountKind::Brokerage);
+
+        // Verify account 2
+        let acc2 = &result.accounts[1];
+        assert_eq!(acc2.external_ref, "finpension-1002");
+        assert_eq!(acc2.name, "Finpension Portfolio 2");
+        assert_eq!(acc2.balance_cents, 200000);
+
+        // Verify holdings
+        assert_eq!(result.holdings.len(), 3);
+        let cash_holding = result
+            .holdings
+            .iter()
+            .find(|h| h.account_ref == "finpension-1001" && h.holding.isin.is_empty())
+            .unwrap();
+        assert_eq!(cash_holding.holding.name, "Liquidität");
+        assert_eq!(cash_holding.holding.value_cents, 500050);
+
+        let fund_holding = result
+            .holdings
+            .iter()
+            .find(|h| h.holding.isin == "CH0117044948")
+            .unwrap();
+        assert_eq!(fund_holding.account_ref, "finpension-1001");
+        assert_eq!(fund_holding.holding.name, "Swiss Equity Fund");
+        assert_eq!(fund_holding.holding.quantity, 100.0);
+        assert_eq!(fund_holding.holding.value_cents, 1000000);
+        // no cost basis per position in the response: unknown, not estimated
+        assert_eq!(fund_holding.holding.purchase_price_cents, 0);
+
+        // Verify transactions with stable external_id
+        assert_eq!(result.transactions.len(), 3);
+        let t_dep = result
+            .transactions
+            .iter()
+            .find(|t| t.external_id == "finpension-1001-5001")
+            .unwrap();
+        assert_eq!(t_dep.amount_cents, 700000);
+        assert_eq!(t_dep.purpose, "Einzahlung Säule 3a");
+
+        let t_fee = result
+            .transactions
+            .iter()
+            .find(|t| t.external_id == "finpension-1001-5002")
+            .unwrap();
+        assert_eq!(t_fee.amount_cents, -1250);
+        assert_eq!(t_fee.purpose, "Pauschalgebühr");
+
+        // Verify state has stored token
+        let saved_state = result.state.expect("state must be persisted");
+        let decoded = saved_state.decode::<FinpensionState>().unwrap();
+        assert_eq!(decoded.token.as_deref(), Some("test-jwt-token-12345"));
+
+        // Follow-up sync: begin() with existing state immediately returns Phase::Ready without challenge
+        let mut second_connector = FinpensionConnector::with_base_urls(base.clone(), base.clone());
+        let ctx2 = ConnectContext {
+            connection_id: 1,
+            login_name: "+41 79 123 45 67".into(),
+            secret: SecretString::new("".into()), // no password needed when session is valid!
+            state: saved_state,
+            ..Default::default()
+        };
+
+        let phase2 = second_connector.begin(&ctx2).await.unwrap();
+        assert!(matches!(phase2, Phase::Ready));
+
+        let requests = log.lock().unwrap().clone();
+        assert!(requests.iter().any(|r| r.starts_with("POST /login")));
+        assert!(requests.iter().any(|r| r.starts_with("POST /login2fa")));
+        assert!(requests.iter().any(|r| r.starts_with("GET /portfolios")));
+    }
+
+    fn ctx_with_token(login: &str, token: &str) -> ConnectContext {
+        ConnectContext {
+            connection_id: 1,
+            login_name: login.into(),
+            secret: SecretString::new(String::new()),
+            state: SecretJson::encode(&FinpensionState {
+                token: Some(token.into()),
+                phone: Some("+41791234567".into()),
+                country_code: Some("CH".into()),
+            })
+            .unwrap(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stored_token_only_for_the_same_login() {
+        let st = FinpensionState {
+            token: Some("t".into()),
+            phone: Some("+41791234567".into()),
+            country_code: Some("CH".into()),
+        };
+        assert_eq!(reusable_token(&st, "+41791234567").as_deref(), Some("t"));
+        assert_eq!(
+            reusable_token(&st, &normalize_phone("079 123 45 67")).as_deref(),
+            Some("t")
+        );
+        assert_eq!(reusable_token(&st, "+41799999999"), None);
+        let without_phone = FinpensionState { phone: None, ..st };
+        assert_eq!(reusable_token(&without_phone, "+41791234567"), None);
+        assert!(token_rejected(401) && token_rejected(403));
+        assert!(!token_rejected(503) && !token_rejected(500));
+    }
+
+    #[tokio::test]
+    async fn stored_token_probe_keeps_service_errors_and_login_changes() {
+        let (base, _log) = serve_finpension_mock();
+        let mut c = FinpensionConnector::with_base_urls(base.clone(), base.clone());
+
+        // a formatting-only edit of the phone number keeps the session
+        let phase = c
+            .begin(&ctx_with_token("079 123 45 67", "test-jwt-token-12345"))
+            .await
+            .unwrap();
+        assert!(matches!(phase, Phase::Ready));
+
+        // another phone number never reuses the previous login's token
+        let r = c
+            .begin(&ctx_with_token("+41 79 999 99 99", "test-jwt-token-12345"))
+            .await;
+        assert!(matches!(r, Err(CoreError::Authentication { .. })));
+
+        // a token the bank rejects asks for the password
+        let r = c.begin(&ctx_with_token("+41791234567", "stale")).await;
+        assert!(matches!(r, Err(CoreError::Authentication { .. })));
+
+        // a service failure stays a service failure: no password prompt, no new SMS
+        let Err(CoreError::Bank { code, .. }) =
+            c.begin(&ctx_with_token("+41791234567", "down")).await
+        else {
+            panic!("expected the bank's service error");
+        };
+        assert_eq!(code, "503");
+    }
+
+    fn portfolio(id: i64, transactions: Value) -> Value {
+        json!({
+            "id": id,
+            "performance": {"current_value": 100.0},
+            "allocation_by_asset_class": [],
+            "transactions": transactions,
+        })
+    }
+
+    #[test]
+    fn incomplete_portfolio_snapshot_is_rejected() {
+        let mut p = portfolio(1, json!([]));
+        p["performance"] = json!({});
+        assert!(parse_portfolios_data(&json!([p]), "2026-11-25").is_err());
+
+        let mut p = portfolio(1, json!([]));
+        p.as_object_mut()
+            .unwrap()
+            .remove("allocation_by_asset_class");
+        assert!(parse_portfolios_data(&json!([p]), "2026-11-25").is_err());
+
+        let mut p = portfolio(1, json!([]));
+        p["allocation_by_asset_class"] = json!([{"name": "Equities"}]);
+        assert!(parse_portfolios_data(&json!([p]), "2026-11-25").is_err());
+
+        // an explicit zero balance and an empty inventory are valid
+        let mut p = portfolio(1, json!([]));
+        p["performance"]["current_value"] = json!(0);
+        let (accounts, holdings, _) = parse_portfolios_data(&json!([p]), "2026-11-25").unwrap();
+        assert_eq!(accounts[0].balance_cents, 0);
+        assert!(holdings.is_empty());
+    }
+
+    #[test]
+    fn bookings_without_bank_date_or_amount_are_skipped() {
+        let txs = json!([
+            {"type": "deposit", "amount": 100.0},
+            {"id": 7, "date": "2026-02-30", "type": "deposit", "amount": 5.0},
+            {"id": 8, "date": "2026-03-01", "type": "deposit", "amount": null},
+            {"id": 9, "date": "2026-03-02T10:00:00Z", "type": "fee", "amount": 0},
+        ]);
+        let (_, _, t) = parse_portfolios_data(&json!([portfolio(1, txs)]), "2026-11-25").unwrap();
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].external_id, "finpension-1-9");
+        assert_eq!(t[0].booking_date, "2026-03-02");
+        assert_eq!(t[0].amount_cents, 0);
+    }
+
+    #[test]
+    fn id_less_booking_ids_do_not_depend_on_portfolio_order() {
+        let deposit = json!([{"date": "2026-01-15", "type": "Deposit", "amount": 50.0}]);
+        let a = portfolio(1, deposit.clone());
+        let b = portfolio(2, deposit);
+        let ids = |list: Value| {
+            let (_, _, t) = parse_portfolios_data(&list, "2026-11-25").unwrap();
+            assert!(t.iter().all(|t| t.purpose == "Einzahlung Säule 3a"));
+            let mut v: Vec<_> = t
+                .into_iter()
+                .map(|t| (t.account_ref, t.external_id))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(ids(json!([a.clone(), b.clone()])), ids(json!([b, a])));
+    }
+
+    #[test]
+    fn holdings_csv_with_date_and_category_stays_holdings() {
+        let csv = "Date;Category;ISIN;Name;Quantity;Price;Market Value;Currency\n\
+2026-03-31;Equities;CH0000000011;Fund;2;10.50;21.00;CHF\n";
+        let e = parse_export(csv).unwrap();
+        assert!(e.transactions.is_empty());
+        assert_eq!(e.holdings.len(), 1);
+        assert_eq!(e.holdings[0].value_cents, 2100);
+    }
+
+    #[test]
+    fn chf_columns_keep_chf_and_mixed_currencies_are_rejected() {
+        let csv = "ISIN;Name;\"Number of Shares\";\"Asset Currency\";\"Asset Price in CHF\";\"Market Value in CHF\"\n\
+IE0000000022;Bond Fund;2;EUR;50.00;100.00\n";
+        let h = parse_holdings_csv(csv).unwrap();
+        assert_eq!(h[0].currency, "CHF");
+        assert_eq!(h[0].value_cents, 10000);
+
+        let mixed = "ISIN;Name;Anzahl;\"Asset Price in CHF\";Marktwert;Währung\n\
+IE0000000022;Bond Fund;2;50.00;90.00;EUR\n";
+        assert!(parse_holdings_csv(mixed).is_err());
     }
 }

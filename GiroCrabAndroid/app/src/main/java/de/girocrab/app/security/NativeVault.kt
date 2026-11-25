@@ -13,6 +13,7 @@ import uniffi.girocrab_core.AccountGroup as CoreGroup
 import uniffi.girocrab_core.BookingPage as CorePage
 import uniffi.girocrab_core.Category as CoreCategory
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.Rule as CoreRule
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -174,6 +175,10 @@ class NativeVaultOpener {
                 ?: throw IllegalStateException("listCategories did not return a list")
             val tags = callNoArgs("listTags") as? List<CoreTag>
                 ?: throw IllegalStateException("listTags did not return a list")
+            // Core rules. The app applies them for preview and apply too, so the mapper has to
+            // keep the fields its matcher reads (range, accounts, case sensitivity).
+            val rules = callNoArgs("listRules") as? List<CoreRule>
+                ?: throw IllegalStateException("listRules did not return a list")
             // The core asks per account here; the flat list is assembled on this side.
             val holdings = accounts.associate { account ->
                 val rows = callWith("listHoldings", account.id) as? List<CoreHolding>
@@ -189,6 +194,7 @@ class NativeVaultOpener {
                 bookingsTotal = coverage.totalCount,
                 categories = categories,
                 tags = tags,
+                rules = rules,
                 holdingsByAccount = holdings,
                 assets = assets,
             )
