@@ -221,10 +221,10 @@ pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
         (u.planned_count, u.sidebar_generation)
     });
     std::thread::spawn(move || {
-        let accounts = v.list_accounts().unwrap_or_default();
-        let user_groups = v.list_user_groups().unwrap_or_default();
-        let categories = v.list_categories(None, None).unwrap_or_default();
-        let tangible_ids = v.list_tangible_account_ids().unwrap_or_default();
+        let accounts = v.list_accounts().map_err(|e| e.to_string());
+        let user_groups = v.list_user_groups().map_err(|e| e.to_string());
+        let categories = v.list_categories(None, None).map_err(|e| e.to_string());
+        let tangible_ids = v.list_tangible_account_ids().map_err(|e| e.to_string());
         let planned_count = cached.or_else(|| v.list_recurring(Vec::new()).ok().map(|s| s.len()));
         let mandate_count = v.count_active_mandates().unwrap_or(0);
         let document_count = v
@@ -235,15 +235,20 @@ pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
             if !crate::is_current(&v2) || with_ui(|u| u.sidebar_generation) != generation {
                 return;
             }
+            // a failed read keeps the last good value (the older refresh it superseded is gone)
+            let mut failed: Option<String> = None;
             with_ui(|u| {
-                u.accounts = accounts;
-                u.user_groups = user_groups;
-                u.categories = categories;
-                u.tangible_ids = tangible_ids;
+                keep(&mut u.accounts, accounts, &mut failed);
+                keep(&mut u.user_groups, user_groups, &mut failed);
+                keep(&mut u.categories, categories, &mut failed);
+                keep(&mut u.tangible_ids, tangible_ids, &mut failed);
                 u.planned_count = planned_count;
                 u.mandate_count = mandate_count;
                 u.document_count = document_count;
             });
+            if let Some(e) = failed {
+                win.set_view_status(e.into());
+            }
             render_sidebar(&win);
             // The account kinds are known now: a depot opened before shows its own view.
             let target = with_state(|st| st.target);
@@ -254,6 +259,19 @@ pub fn refresh_sidebar(win: &MainWindow, vault: &Arc<Vault>) {
             }
         });
     });
+}
+
+/// Takes a fresh read; a failed one keeps the last good value (a successful empty read still
+/// replaces it) and records the first error (CodeRabbit #1855).
+fn keep<T>(slot: &mut T, read: Result<T, String>, failed: &mut Option<String>) {
+    match read {
+        Ok(value) => *slot = value,
+        Err(e) => {
+            if failed.is_none() {
+                *failed = Some(e);
+            }
+        }
+    }
 }
 
 fn toggle_fold(win: &MainWindow, id: &str) {
@@ -1711,5 +1729,18 @@ mod tests {
         assert!(u.doc_rows.is_empty());
         assert!(u.doc_unread.is_empty());
         assert_eq!(u.selected_doc, None);
+    }
+
+    #[test]
+    fn failed_sidebar_read_keeps_the_last_good_value() {
+        let mut slot = vec![1, 2];
+        let mut failed = None;
+        keep(&mut slot, Err("locked".into()), &mut failed);
+        assert_eq!(slot, vec![1, 2]);
+        assert_eq!(failed.as_deref(), Some("locked"));
+        keep(&mut slot, Ok(Vec::new()), &mut failed);
+        assert!(slot.is_empty());
+        keep(&mut slot, Err("second".into()), &mut failed);
+        assert_eq!(failed.as_deref(), Some("locked"));
     }
 }

@@ -148,10 +148,10 @@ impl Vault {
         let tx = db.unchecked_transaction()?;
         let key = key(refund_id, refund_part, original_id, original_part);
         let mut state = State::load(&tx)?;
-        let row = state
+        let index = state
             .rows
-            .iter_mut()
-            .find(|r| {
+            .iter()
+            .position(|r| {
                 r.key == key
                     && r.deleted_ms.is_some()
                     && !r.moved
@@ -159,6 +159,24 @@ impl Vault {
                     && r.unlink_id == token
             })
             .ok_or_else(invalid)?;
+        {
+            let by_key = rows_by_key(&state.rows);
+            // judged by the revision the unlink wrote, not the one the undo would write: a newer
+            // explicit unlink of an ancestor keeps blocking this link (CodeRabbit #1855)
+            if move_blocked(&by_key, &state.rows[index]) {
+                return Err(invalid());
+            }
+            // a live successor moved from this key already holds the link: restoring the
+            // ancestor would allocate the one link twice, so the undo fails (CodeRabbit #1855)
+            if state
+                .rows
+                .iter()
+                .any(|r| r.deleted_ms.is_none() && r.key != key && descends_from(&by_key, r, &key))
+            {
+                return Err(invalid());
+            }
+        }
+        let row = &mut state.rows[index];
         row.changed_ms = next_stamp(&tx)?;
         row.deleted_ms = None;
         let restored = row.clone();
@@ -222,7 +240,7 @@ mod restore_tests {
     use crate::models::AccountKind;
     use crate::offline::ManualBookingSetup;
 
-    fn setup(cents: i64) -> ManualBookingSetup {
+    fn manual_setup(cents: i64) -> ManualBookingSetup {
         ManualBookingSetup {
             booking_date: "2026-01-10".into(),
             amount_cents: cents,
@@ -246,8 +264,12 @@ mod restore_tests {
         let account = v
             .create_offline_account("W".into(), AccountKind::Cash, "EUR".into(), 0)
             .unwrap();
-        let o = v.save_manual_booking(account, None, setup(-100)).unwrap();
-        let r = v.save_manual_booking(account, None, setup(100)).unwrap();
+        let o = v
+            .save_manual_booking(account, None, manual_setup(-100))
+            .unwrap();
+        let r = v
+            .save_manual_booking(account, None, manual_setup(100))
+            .unwrap();
         assert!(v.link_refund(r, String::new(), o, String::new()).unwrap());
         let changed = v.refund_links(r).unwrap()[0].changed_ms;
         let token = v
@@ -260,5 +282,123 @@ mod restore_tests {
             v.restore_refund(r, String::new(), o, String::new(), token)
                 .is_err()
         );
+    }
+
+    /// A 200-cent refund and two 100-cent debits; returns `[refund, first, second]`.
+    fn setup(tag: &str) -> (Arc<Vault>, std::path::PathBuf, [i64; 3]) {
+        let dir = std::env::temp_dir().join(format!(
+            "gc-refund-restore-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let v = Vault::open(dir.join("v.db").to_string_lossy().into(), vec![6u8; 32]).unwrap();
+        let ids = {
+            let c = v.db().unwrap();
+            c.execute_batch(
+                "INSERT INTO account_groups(name) VALUES ('G');
+                 INSERT INTO accounts(group_id, external_ref, name)
+                     VALUES ((SELECT id FROM account_groups), 'A', 'K');",
+            )
+            .unwrap();
+            [("r", 200), ("o1", -100), ("o2", -100)].map(|(ext, cents)| {
+                c.execute(
+                    "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents)
+                     VALUES ((SELECT id FROM accounts), ?1, '2025-01-01', ?2)",
+                    rusqlite::params![ext, cents],
+                )
+                .unwrap();
+                c.last_insert_rowid()
+            })
+        };
+        (v, dir, ids)
+    }
+
+    /// A link row `refund → original`, optionally moved from `refund → from`.
+    fn row(
+        v: &Vault,
+        refund: i64,
+        original: i64,
+        from: Option<i64>,
+        changed: i64,
+        deleted: Option<i64>,
+        unlink: &str,
+    ) {
+        v.db()
+            .unwrap()
+            .execute(
+                "INSERT INTO refund_links(refund_id,refund_part,original_id,original_part,refund_cents,
+                     original_cents,created_ms,changed_ms,deleted_ms,moved,moved_from_refund_id,
+                     moved_from_refund_part,moved_from_original_id,moved_from_original_part,
+                     moved_from_key,unlink_id)
+                 VALUES (?1,'',?2,'',200,-100,1,?3,?4,0,?5,?6,?7,?8,'',?9)",
+                rusqlite::params![
+                    refund,
+                    original,
+                    changed,
+                    deleted,
+                    from.map(|_| refund),
+                    from.map(|_| ""),
+                    from,
+                    from.map(|_| ""),
+                    unlink
+                ],
+            )
+            .unwrap();
+    }
+
+    /// CodeRabbit (#1855): a newer explicit unlink of the ancestor blocks the undo of its moved
+    /// successor; an older one does not.
+    #[test]
+    fn a_newer_ancestor_unlink_blocks_the_undo() {
+        let (v, dir, [r, o1, o2]) = setup("ancestor");
+        row(&v, r, o1, None, 50, Some(50), "");
+        row(&v, r, o2, Some(o1), 40, Some(40), "tok");
+        assert!(
+            v.restore_refund(r, String::new(), o2, String::new(), "tok".into())
+                .is_err()
+        );
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE refund_links SET changed_ms = 30, deleted_ms = 30 WHERE original_id = ?1",
+                [o1],
+            )
+            .unwrap();
+        v.restore_refund(r, String::new(), o2, String::new(), "tok".into())
+            .unwrap();
+        assert_eq!(
+            v.refund_links(r)
+                .unwrap()
+                .iter()
+                .filter(|l| !l.inactive)
+                .count(),
+            1
+        );
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// CodeRabbit (#1855): with a live successor moved from the unlinked key, the undo fails
+    /// instead of allocating the one link twice (the refund could cover both debits).
+    #[test]
+    fn a_live_successor_blocks_restoring_its_ancestor() {
+        let (v, dir, [r, o1, o2]) = setup("successor");
+        row(&v, r, o1, None, 40, Some(40), "tok");
+        row(&v, r, o2, Some(o1), 50, None, "");
+        assert!(
+            v.restore_refund(r, String::new(), o1, String::new(), "tok".into())
+                .is_err()
+        );
+        let live: Vec<_> = v
+            .refund_links(r)
+            .unwrap()
+            .into_iter()
+            .filter(|l| !l.inactive)
+            .collect();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].original_id, o2);
+        drop(v);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -1618,6 +1618,9 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
         return;
     }
     if with_state(|st| !std::ptr::eq(st.vault.as_ptr(), Arc::as_ptr(vault))) {
+        // a direct switch (demo ↔ own vault) keeps the privacy toggle; only the first unlock (no
+        // live vault before) starts with it off, so that paint shows real balances (CodeRabbit #1855)
+        let switching = with_state(|st| st.vault.upgrade().is_some());
         with_state(|st| {
             st.vault = Arc::downgrade(vault);
             st.reveal_limit = 0;
@@ -1630,7 +1633,9 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
             st.balances = daily::Balances::default();
         });
         REFUND_SHOWN.with(|k| k.set(None));
-        win.set_privacy(false);
+        if !switching {
+            win.set_privacy(false);
+        }
         win.set_busy(false);
     }
     win.set_unlocked(true);
@@ -2550,7 +2555,11 @@ fn main() -> Result<(), slint::PlatformError> {
         win.on_select_booking(move |id| {
             let Some(win) = weak.upgrade() else { return };
             refunds_ui::cancel_reveal();
-            with_state(|st| st.selected_booking = Some(id as i64));
+            with_state(|st| {
+                // an explicit pick ends a finished reveal: the next reload is a normal page
+                st.reveal_limit = 0;
+                st.selected_booking = Some(id as i64);
+            });
             // one path for the card and its key, so a later filter redraw stays in step
             render_bookings(&win);
         });
