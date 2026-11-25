@@ -167,6 +167,8 @@ public final class AppModel {
                 oldValue.flatMap { sidebarRowSelections[$0] }?.isSelected = false
                 sidebarSelection.flatMap { sidebarRowSelections[$0] }?.isSelected = true
                 requestStreamTop()
+                // the next list belongs to this switch: `publish` keeps only what it still shows (#1808)
+                viewSwitchPending = MainColumn(sidebarSelection) == .bookings
             }
             // Any other choice in the sidebar ends the merchant list (#495).
             if !appliesMerchantFocus { merchantFocus = nil; merchantFocusReturn = nil }
@@ -182,6 +184,15 @@ public final class AppModel {
             // all accounts only replaced the list the column shows next (#1396).
             guard MainColumn(sidebarSelection) == .bookings else {
                 if selectionLoadTask != nil { endSelectionLoad() }
+                // No booking list here: a selection left over from the last list would stay in the
+                // inspector, and its pending auto review would still run (#1808).
+                if oldValue != sidebarSelection {
+                    selectedBookingID = nil
+                    #if os(iOS)
+                    // the iPhone sheet would otherwise reopen with the next booking selected
+                    showBookingSheet = false
+                    #endif
+                }
                 // the recurring data and salary cycle follow the selection (all accounts here)
                 refreshSalaryCycle()
                 refreshRecurring()
@@ -193,6 +204,8 @@ public final class AppModel {
             reloadSelection(periodChanged: false)
         }
     }
+    /// A sidebar switch to a booking list is under way and the list has not been published yet.
+    @ObservationIgnored var viewSwitchPending = false
     /// The selection the booking column shows: `sidebarSelection` once its data is in, so a new
     /// title never stands over the old figures (#1396). Views read this; loads `sidebarSelection`.
     private(set) var shownSelection: SidebarItem? = .allAccounts {

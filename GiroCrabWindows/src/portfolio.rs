@@ -355,6 +355,272 @@ pub fn position_row(
     }
 }
 
+/// Holdings in table order (largest value first): row `i` of the positions tab is entry `i`.
+pub fn sorted_positions(data: &DepotData) -> Vec<&(Holding, AssetClass)> {
+    let mut positions: Vec<&(Holding, AssetClass)> = data.holdings.iter().collect();
+    positions.sort_by_key(|a| std::cmp::Reverse(a.0.value_cents));
+    positions
+}
+
+/// What the position history dialog (#578) needs of one position, detached from the depot data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PositionTarget {
+    pub account_id: i64,
+    /// Identity of the row in the table (ISIN, else name); not Core's history key.
+    pub key: String,
+    /// ISIN of the holding, empty when unknown (used to find Core's series).
+    pub isin: String,
+    pub name: String,
+    pub currency: String,
+    pub quantity: f64,
+    /// Booking date and signed quantity change of each buy/sell of this position.
+    pub trades: Vec<(String, f64)>,
+}
+
+fn same_security(h: &Holding, t: &SecurityTransaction) -> bool {
+    if !h.isin.is_empty() && !t.isin.is_empty() {
+        h.isin == t.isin
+    } else {
+        h.name == t.name
+    }
+}
+
+/// A value series Core reports for a depot: (history key, name, currency, still held).
+pub type SeriesInfo = (String, String, String, bool);
+
+fn collapsed_lower(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Finds Core's series of a position: by ISIN, else by name (a held position wins over a sold
+/// one). Core's own key is used, so its `name:` / `cash` rule is not duplicated here.
+pub fn resolve_series<'a>(
+    series: &'a [SeriesInfo],
+    isin: &str,
+    name: &str,
+) -> Option<&'a SeriesInfo> {
+    let isin = isin.trim();
+    if !isin.is_empty()
+        && let Some(s) = series.iter().find(|s| s.0.eq_ignore_ascii_case(isin))
+    {
+        return Some(s);
+    }
+    let wanted = collapsed_lower(name);
+    if wanted.is_empty() {
+        return None;
+    }
+    series
+        .iter()
+        .filter(|s| collapsed_lower(&s.1) == wanted)
+        .max_by_key(|s| s.3)
+}
+
+pub fn position_targets(data: &DepotData) -> Vec<PositionTarget> {
+    sorted_positions(data)
+        .into_iter()
+        .map(|(h, _)| PositionTarget {
+            account_id: data.account.id,
+            key: if h.isin.is_empty() {
+                h.name.clone()
+            } else {
+                h.isin.clone()
+            },
+            isin: h.isin.clone(),
+            name: h.name.clone(),
+            // Fallback label only: the history shows the currency of Core's series.
+            currency: if h.currency.is_empty() {
+                data.account.currency.clone()
+            } else {
+                h.currency.clone()
+            },
+            quantity: h.quantity,
+            trades: data
+                .transactions
+                .iter()
+                .filter(|t| same_security(h, t))
+                .filter_map(|t| {
+                    let sign = match t.direction {
+                        SecurityDirection::Buy => 1.0,
+                        SecurityDirection::Sell => -1.0,
+                        _ => return None,
+                    };
+                    Some((t.booking_date.clone(), sign * t.quantity.abs()))
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// One row of the position history, newest first.
+pub struct HistoryRow {
+    pub date: String,
+    pub value_cents: i64,
+    pub quantity: f64,
+    /// Change against the previous (older) point, `None` when unchanged.
+    pub quantity_change: Option<f64>,
+    /// Value relative to the largest value of the series, for the bar.
+    pub share: f32,
+}
+
+/// Value series with the quantity held on each day: the current quantity minus the trades
+/// booked after that day (a trade on the day itself is already held).
+pub fn position_history_rows(
+    points: &[(String, i64)],
+    trades: &[(String, f64)],
+    current_quantity: f64,
+) -> Vec<HistoryRow> {
+    let max = points.iter().map(|p| p.1).max().unwrap_or(0).max(1);
+    let mut sorted: Vec<&(String, i64)> = points.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut previous: Option<f64> = None;
+    let mut rows: Vec<HistoryRow> = sorted
+        .into_iter()
+        .map(|(date, value)| {
+            let later: f64 = trades.iter().filter(|t| t.0 > *date).map(|t| t.1).sum();
+            let quantity = current_quantity - later;
+            let quantity_change = previous.map(|p| quantity - p).filter(|d| d.abs() > 1e-9);
+            previous = Some(quantity);
+            HistoryRow {
+                date: date.clone(),
+                value_cents: *value,
+                quantity,
+                quantity_change,
+                share: (*value).max(0) as f32 / max as f32,
+            }
+        })
+        .collect();
+    rows.reverse();
+    rows
+}
+
+/// Date, value and quantity text of a history row; value and quantity are masked in privacy mode.
+pub fn history_texts(
+    row: &HistoryRow,
+    currency: &str,
+    privacy: bool,
+    date: &dyn Fn(&str) -> String,
+) -> (String, String, String) {
+    let value = format!("{} {currency}", native_amount(row.value_cents));
+    let mut quantity = quantity_text(row.quantity);
+    if let Some(d) = row.quantity_change {
+        let sign = if d > 0.0 { '+' } else { '−' };
+        quantity = format!("{quantity} ({sign}{})", quantity_text(d.abs()));
+    }
+    (
+        date(&row.date),
+        crate::daily::mask(&value, privacy),
+        crate::daily::mask(&quantity, privacy),
+    )
+}
+
+#[cfg(test)]
+mod position_history_tests {
+    use super::*;
+
+    fn p(date: &str, cents: i64) -> (String, i64) {
+        (date.to_string(), cents)
+    }
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    fn series_of(key: &str, name: &str, currency: &str, held: bool) -> SeriesInfo {
+        (key.into(), name.into(), currency.into(), held)
+    }
+
+    #[test]
+    fn series_resolves_by_isin_then_by_name_with_series_currency() {
+        let series = vec![
+            series_of("DE1", "Welt-ETF", "EUR", true),
+            series_of("name:gold barren", "Gold  Barren", "EUR", false),
+            series_of("name:alt", "Alt", "EUR", false),
+            series_of("name:alt", "Alt", "USD", true),
+            series_of("cash", "Liquidität", "EUR", true),
+        ];
+        let by_isin = resolve_series(&series, "de1", "egal").unwrap();
+        assert_eq!(by_isin.0, "DE1");
+        let gold = resolve_series(&series, "", "gold barren").unwrap();
+        assert_eq!(gold.0, "name:gold barren");
+        assert_eq!(resolve_series(&series, "", "LIQUIDITÄT").unwrap().0, "cash");
+        // Held series wins; its currency is the one the amounts are in.
+        assert_eq!(resolve_series(&series, "", "Alt").unwrap().2, "USD");
+        assert!(resolve_series(&series, "", "Unbekannt").is_none());
+        assert!(resolve_series(&series, "", "  ").is_none());
+    }
+
+    #[test]
+    fn target_changes_show_up_in_equality() {
+        let mut h = Holding {
+            isin: "DE1".into(),
+            name: "ETF".into(),
+            quantity: 5.0,
+            value_cents: 100,
+            ..Default::default()
+        };
+        let mk = |h: &Holding| DepotData {
+            account: crate::nav::testing::account(1, "K", "Bank", AccountKind::Brokerage, 0),
+            holdings: vec![(h.clone(), AssetClass::Equity)],
+            transactions: vec![],
+        };
+        let a = position_targets(&mk(&h));
+        h.quantity = 7.0;
+        let b = position_targets(&mk(&h));
+        assert_eq!(a[0].key, b[0].key);
+        assert_eq!(a[0].isin, "DE1");
+        assert_ne!(a[0], b[0]);
+    }
+
+    #[test]
+    fn empty_history_gives_no_rows() {
+        assert!(position_history_rows(&[], &[("2026-01-01".into(), 5.0)], 5.0).is_empty());
+    }
+
+    #[test]
+    fn quantity_follows_buys_and_sells_newest_first() {
+        let points = [
+            p("2026-01-10", 1000),
+            p("2026-03-10", 1600),
+            p("2026-02-10", 2000),
+        ];
+        let trades = [
+            ("2026-02-01".to_string(), 10.0),
+            ("2026-03-01".to_string(), -4.0),
+        ];
+        let rows = position_history_rows(&points, &trades, 16.0);
+        let dates: Vec<&str> = rows.iter().map(|r| r.date.as_str()).collect();
+        assert_eq!(dates, ["2026-03-10", "2026-02-10", "2026-01-10"]);
+        assert!(close(rows[0].quantity, 16.0) && close(rows[1].quantity, 20.0));
+        assert!(close(rows[2].quantity, 10.0));
+        assert_eq!(rows[0].quantity_change, Some(-4.0));
+        assert_eq!(rows[1].quantity_change, Some(10.0));
+        assert_eq!(rows[2].quantity_change, None);
+        assert!((rows[1].share - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trade_after_last_point_and_on_the_day() {
+        let points = [p("2026-03-31", 500), p("2026-04-01", 1000)];
+        let trades = [("2026-04-01".to_string(), 5.0)];
+        let rows = position_history_rows(&points, &trades, 5.0);
+        assert!(close(rows[0].quantity, 5.0) && close(rows[1].quantity, 0.0));
+    }
+
+    #[test]
+    fn privacy_masks_value_and_quantity_but_not_date() {
+        let rows = position_history_rows(&[p("2026-05-01", 123_456)], &[], 20.0);
+        let date = |d: &str| d.to_string();
+        let (d, value, quantity) = history_texts(&rows[0], "USD", true, &date);
+        assert_eq!(d, "2026-05-01");
+        assert!(!value.contains("1.234") && !quantity.contains("20"));
+        let (_, plain, _) = history_texts(&rows[0], "USD", false, &date);
+        assert_eq!(plain, format!("{} USD", native_amount(123_456)));
+    }
+}
+
 /// Plain amount with German separators, without a currency symbol.
 fn native_amount(cents: i64) -> String {
     let abs = cents.unsigned_abs();

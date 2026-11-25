@@ -96,11 +96,18 @@ pub(crate) const COMDIRECT: DocumentMatchRules = DocumentMatchRules {
     link_types: &["abrechnung"],
     direction_required: true,
     account_from_text: true,
+    // What reaches the Girokonto is the amount after tax: the gross amount of a taxed sale must not
+    // link to a booking of that size (#1626). Without a tax line the settled amount or the amount
+    // before tax (a tax-free sale, a purchase) is the one booked.
     amount_labels: &[
+        &[
+            "zu ihren gunsten nach steuern",
+            "zu ihren lasten nach steuern",
+        ],
         &["ausmachender betrag"],
         &[
-            "zu ihren lasten vor steuern",
             "zu ihren gunsten vor steuern",
+            "zu ihren lasten vor steuern",
         ],
     ],
     slack_days: 5,
@@ -293,6 +300,9 @@ fn match_by_amounts(
         return BookingMatch::None;
     }
     let mut best: Vec<(i64, i64)> = Vec::new();
+    // Candidates of different amounts (gross and net of a taxed sale) compete: a nearer booking
+    // of the one amount must not beat a booking of the other.
+    let mut stated = BTreeSet::new();
     for (id, date, cents, counterparty) in bookings {
         if !amounts.contains(&cents.abs()) || !squash(counterparty).contains(&subject) {
             continue;
@@ -310,7 +320,11 @@ fn match_by_amounts(
             && distance <= slack_days
         {
             best.push((distance, *id));
+            stated.insert(cents.abs());
         }
+    }
+    if stated.len() > 1 {
+        return BookingMatch::Ambiguous;
     }
     best.sort();
     match best.as_slice() {
@@ -324,20 +338,21 @@ fn match_by_amounts(
 /// The amount a text states after one of the labels: the first amount of the rest of the label's
 /// line or, when the label heads a column (`IBAN  Valuta  Zu Ihren Lasten vor Steuern` and the
 /// values below), of the next line. Dates are no amounts ("19.07.2023" holds a "19.07"). The settled
-/// amount of a trade confirmation, not the price, a fee or a tax amount.
+/// amount of a trade confirmation, not the price, a fee or a tax amount. Only the first group present
+/// counts: a taxed sale offers its amount after tax only, never the gross amount next to it.
 fn settled_amounts(text: &str, label_groups: &[&[&str]]) -> Vec<(i64, String)> {
     static DATE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\b\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})\b").unwrap());
     // ASCII lower case keeps the byte positions of the original
     let lower = text.to_ascii_lowercase();
-    let Some(labels) = label_groups
+    let labels: Vec<&&str> = label_groups
         .iter()
+        .copied()
         .find(|labels| labels.iter().any(|&label| lower.contains(label)))
-    else {
-        return Vec::new();
-    };
+        .map(|group| group.iter().collect())
+        .unwrap_or_default();
     let mut out = Vec::new();
-    for label in *labels {
+    for label in labels {
         let mut from = 0;
         while let Some(at) = lower[from..].find(label).map(|i| i + from) {
             let first_amount = |line: &str| {
@@ -512,15 +527,21 @@ fn encode_cached_match_days(pdf_len: i64, title: &str, days: &[jiff::civil::Date
         .map(|d| crate::dates::iso(*d))
         .collect::<Vec<_>>()
         .join(",");
-    format!("v1:{pdf_len}:{csv}\n{title}")
+    format!("{MATCH_DAYS_CACHE_VERSION}{pdf_len}:{csv}\n{title}")
 }
+
+/// Bumped whenever the extraction rules change what a PDF yields: an entry of an older extractor
+/// (e.g. an empty result for a taxed sale before the after-tax labels, #1626) is read again.
+const MATCH_DAYS_CACHE_VERSION: &str = "v2:";
 
 fn parse_cached_match_days(
     raw: Option<&str>,
     pdf_len: i64,
     title: &str,
 ) -> Option<Vec<jiff::civil::Date>> {
-    let (head, cached_title) = raw?.strip_prefix("v1:")?.split_once('\n')?;
+    let (head, cached_title) = raw?
+        .strip_prefix(MATCH_DAYS_CACHE_VERSION)?
+        .split_once('\n')?;
     if cached_title != title {
         return None;
     }
@@ -1003,6 +1024,53 @@ mod tests {
     }
 
     #[test]
+    fn comdirect_taxed_sale_offers_only_the_amount_after_tax() {
+        let cents = |text: &str| -> Vec<i64> {
+            settled_amounts(text, COMDIRECT.amount_labels)
+                .into_iter()
+                .map(|(cents, _)| cents)
+                .collect()
+        };
+        let sale = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
+            Steuerabzug   EUR   52,75\n\
+            Zu Ihren Gunsten nach Steuern:   EUR   4.947,25\n";
+        let amounts = cents(sale);
+        // neither the gross amount nor the tax is a candidate
+        assert_eq!(amounts, [494_725]);
+        // a credit of the gross amount within the slack does not take the document before the
+        // net booking arrives
+        let gross = vec![(
+            1,
+            "2025-12-04".to_string(),
+            5_000_00,
+            "A1JX52 ETF".to_string(),
+        )];
+        let days = vec![crate::dates::parse_iso("2025-12-04").unwrap()];
+        assert_eq!(
+            match_by_amounts(&amounts, &days, "A1JX52", &gross, 5, Some(true)),
+            BookingMatch::None
+        );
+
+        // a tax-free sale states only the amount before tax: that one is settled and still links
+        let tax_free = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n";
+        let amounts = cents(tax_free);
+        assert_eq!(amounts, [500_000]);
+        assert_eq!(
+            match_by_amounts(&amounts, &days, "A1JX52", &gross, 5, Some(true)),
+            BookingMatch::Unique(1)
+        );
+
+        let purchase = "Wertpapierabrechnung Kauf\n\
+            Zu Ihren Lasten vor Steuern   EUR   1.000,00\n\
+            Zu Ihren Lasten nach Steuern:   EUR   1.000,00\n";
+        let amounts = cents(purchase);
+        assert!(amounts.iter().all(|&c| c == 100_000), "{amounts:?}");
+        assert!(!amounts.is_empty());
+    }
+
+    #[test]
     fn only_the_amount_after_the_label_is_the_settled_one() {
         let text = "Kurs 100,00 EUR\nProvision 1,50 EUR\nAusmachender Betrag  500,00- EUR\nAUSMACHENDER BETRAG 7,00 EUR";
         assert_eq!(
@@ -1044,6 +1112,81 @@ mod tests {
                 5,
                 Some(false)
             ),
+            BookingMatch::Unique(1)
+        );
+    }
+
+    #[test]
+    fn a_sale_without_tax_line_takes_the_settled_amount_not_the_gross_one() {
+        let sale = "Wertpapierabrechnung Verkauf\n\
+            Zu Ihren Gunsten vor Steuern   EUR   5.000,00\n\
+            Ausmachender Betrag   EUR   4.947,25\n";
+        let cents = settled_amounts(sale, COMDIRECT.amount_labels)
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect::<Vec<_>>();
+        assert_eq!(cents, [494_725]);
+    }
+
+    #[test]
+    fn match_days_cached_by_an_older_extractor_are_read_again() {
+        let title = "Wertpapierabrechnung Verkauf";
+        let day = crate::dates::parse_iso("2025-12-04").unwrap();
+        let encoded = encode_cached_match_days(1234, title, &[day]);
+        assert_eq!(
+            parse_cached_match_days(Some(&encoded), 1234, title),
+            Some(vec![day])
+        );
+        let empty = encode_cached_match_days(1234, title, &[]);
+        assert_eq!(
+            parse_cached_match_days(Some(&empty), 1234, title),
+            Some(Vec::new())
+        );
+        // an empty result of the extractor before the after-tax labels must not stick
+        assert_eq!(
+            parse_cached_match_days(Some("v1:1234:\nWertpapierabrechnung Verkauf"), 1234, title),
+            None
+        );
+        assert_eq!(
+            parse_cached_match_days(
+                Some("v1:1234:2025-12-04\nWertpapierabrechnung Verkauf"),
+                1234,
+                title
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_booking_of_the_net_amount_does_not_beat_a_gross_booking_a_day_later() {
+        let bookings = vec![
+            (
+                1,
+                "2025-12-04".to_string(),
+                4_947_25,
+                "A1JX52 ETF".to_string(),
+            ),
+            (
+                2,
+                "2025-12-05".to_string(),
+                5_000_00,
+                "A1JX52 ETF".to_string(),
+            ),
+        ];
+        let days = vec![crate::dates::parse_iso("2025-12-04").unwrap()];
+        assert_eq!(
+            match_by_amounts(
+                &[4_947_25, 5_000_00],
+                &days,
+                "A1JX52",
+                &bookings,
+                5,
+                Some(true)
+            ),
+            BookingMatch::Ambiguous
+        );
+        assert_eq!(
+            match_by_amounts(&[4_947_25], &days, "A1JX52", &bookings, 5, Some(true)),
             BookingMatch::Unique(1)
         );
     }

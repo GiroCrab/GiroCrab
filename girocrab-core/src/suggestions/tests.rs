@@ -363,7 +363,7 @@ fn splits_own_transfers_and_deleted_categories_are_left_out() {
         f.v.db()
             .unwrap()
             .execute(
-                "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents) VALUES (?1, NULL, -6000)",
+                "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, uuid, position) VALUES (?1, NULL, -6000, 'part-' || ?1, 0)",
                 [id],
             )
             .unwrap();

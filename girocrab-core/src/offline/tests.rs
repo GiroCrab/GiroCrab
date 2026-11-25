@@ -4,7 +4,7 @@ use rusqlite::params;
 
 use super::ManualBookingSetup;
 use crate::error::CoreError;
-use crate::models::AccountKind;
+use crate::models::{AccountKind, TransactionSplitInput};
 use crate::vault::Vault;
 
 fn vault(tag: &str) -> Arc<Vault> {
@@ -46,6 +46,337 @@ fn live_count(v: &Vault, id: i64) -> i64 {
             |r| r.get(0),
         )
         .unwrap()
+}
+
+/// CodeRabbit (#1855): a date-only edit on one device and a split edit on the other both
+/// survive the merge, in either edit and receive order (the date has its own stamp, `date_ms`).
+#[test]
+fn date_only_edit_does_not_outrank_a_peer_split_edit() {
+    for (date_first, a_receives_first) in
+        [(true, true), (false, true), (true, false), (false, false)]
+    {
+        let a = vault("date-vs-split-a");
+        let b = vault("date-vs-split-b");
+        let account = a
+            .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let id = a
+            .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+            .unwrap();
+        b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        let bid: i64 = b
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM transactions WHERE counterparty='Shop'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let part = |cents| TransactionSplitInput {
+            uuid: None,
+            category_id: None,
+            amount_cents: cents,
+            note: String::new(),
+        };
+        let splits_ms = |v: &Vault, id: i64| -> i64 {
+            v.db()
+                .unwrap()
+                .query_row(
+                    "SELECT splits_ms FROM transactions WHERE id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let date_edit = || {
+            let before = splits_ms(&a, id);
+            a.save_manual_booking(account, Some(id), setup("2026-01-12", -1000, "Shop"))
+                .unwrap();
+            // a date-only edit leaves the amount/split unit's stamp alone
+            assert_eq!(splits_ms(&a, id), before);
+        };
+        let split_edit = || {
+            b.set_transaction_splits(bid, vec![part(-400), part(-600)])
+                .unwrap()
+        };
+        if date_first {
+            date_edit();
+            split_edit();
+        } else {
+            split_edit();
+            date_edit();
+        }
+        if a_receives_first {
+            a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+            b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+        } else {
+            b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+            a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+        }
+        for (v, id) in [(&a, id), (&b, bid)] {
+            let date: String = v
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT booking_date FROM transactions WHERE id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(date, "2026-01-12", "date_first={date_first}");
+            assert_eq!(
+                v.list_transaction_splits(id).unwrap().len(),
+                2,
+                "date_first={date_first}"
+            );
+        }
+    }
+}
+
+/// CodeRabbit (#1853): a newer date edit survives a peer's later text-only edit, and the text
+/// edit survives too (each has its own stamp).
+#[test]
+fn date_edit_and_peer_text_edit_both_survive() {
+    let a = vault("date-vs-text-a");
+    let b = vault("date-vs-text-b");
+    let account = a
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = a
+        .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    let (bid, bacc): (i64, i64) = b
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id, account_id FROM transactions WHERE counterparty='Shop'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    a.save_manual_booking(account, Some(id), setup("2026-01-12", -1000, "Shop"))
+        .unwrap();
+    b.save_manual_booking(bacc, Some(bid), setup("2026-01-10", -1000, "Shop GmbH"))
+        .unwrap();
+    a.merge_other_vault(b.file_path(), vec![7; 32]).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    for (v, id) in [(&a, id), (&b, bid)] {
+        let got: (String, String) = v
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT booking_date, counterparty FROM transactions WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(got, ("2026-01-12".into(), "Shop GmbH".into()));
+    }
+}
+
+/// CodeRabbit (#1855): the text stamp only ever grows, also when the stored stamp is ahead
+/// of this device's clock (set by a peer).
+#[test]
+fn text_stamp_advances_past_a_stamp_ahead_of_the_clock() {
+    let v = vault("text-stamp-ahead");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+        .unwrap();
+    let ahead = crate::dates::now_ms() + 86_400_000;
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET text_ms=?2, date_ms=?2 WHERE id=?1",
+            params![id, ahead],
+        )
+        .unwrap();
+    v.save_manual_booking(account, Some(id), setup("2026-01-11", -1000, "Shop GmbH"))
+        .unwrap();
+    let (text_ms, date_ms): (i64, i64) = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT text_ms, date_ms FROM transactions WHERE id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((text_ms, date_ms), (ahead + 1, ahead + 1));
+}
+
+#[test]
+fn round7_manual_dates_sync_with_amount_and_date_only_edits() {
+    for amount in [-1000, -500] {
+        let v = vault("round7-manual-dates");
+        let peer = vault("round7-manual-dates-peer");
+        let account = v
+            .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+            .unwrap();
+        let id = v
+            .save_manual_booking(account, None, setup("2026-01-31", -500, "Shop"))
+            .unwrap();
+        peer.merge_other_vault(v.file_path(), vec![7; 32]).unwrap();
+        v.save_manual_booking(account, Some(id), setup("2026-02-01", amount, "Shop"))
+            .unwrap();
+        peer.merge_other_vault(v.file_path(), vec![7; 32]).unwrap();
+        let got: (String, String, i64) = peer.db().unwrap().query_row("SELECT booking_date,value_date,amount_cents FROM transactions WHERE counterparty='Shop'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+        assert_eq!(got, ("2026-02-01".into(), "2026-02-01".into(), amount));
+    }
+}
+
+#[test]
+fn round7_zero_split_metadata_save_is_allowed_but_new_zero_is_not() {
+    let v = vault("round7-zero-split");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    assert!(
+        v.save_manual_booking(account, None, setup("2026-01-01", 0, "Shop"))
+            .is_err()
+    );
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-01", 100, "Shop"))
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute("UPDATE transactions SET amount_cents=0 WHERE id=?1", [id])
+        .unwrap();
+    v.set_transaction_splits(
+        id,
+        vec![
+            TransactionSplitInput {
+                uuid: None,
+                category_id: None,
+                amount_cents: 100,
+                note: String::new(),
+            },
+            TransactionSplitInput {
+                uuid: None,
+                category_id: None,
+                amount_cents: -100,
+                note: String::new(),
+            },
+        ],
+    )
+    .unwrap();
+    v.save_manual_booking(account, Some(id), setup("2026-01-01", 0, "Updated"))
+        .unwrap();
+    assert_eq!(v.list_transaction_splits(id).unwrap().len(), 2);
+    // CodeRabbit (#1851): an empty replacement would leave a zero booking without parts
+    assert!(
+        v.save_manual_booking_with_splits(
+            account,
+            Some(id),
+            setup("2026-01-01", 0, "Updated"),
+            Some(Vec::new())
+        )
+        .is_err()
+    );
+    assert_eq!(v.list_transaction_splits(id).unwrap().len(), 2);
+    v.save_manual_booking(account, Some(id), setup("2026-01-01", 0, "Again"))
+        .unwrap();
+}
+
+#[test]
+fn split_amount_edits_require_atomic_matching_replacements() {
+    let v = vault("offline-split-amount");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-01", -100, "Shop"))
+        .unwrap();
+    let part = |uuid, amount| TransactionSplitInput {
+        uuid,
+        category_id: None,
+        amount_cents: amount,
+        note: String::new(),
+    };
+    v.set_transaction_splits(id, vec![part(None, -40), part(None, -60)])
+        .unwrap();
+    let parts = v.list_transaction_splits(id).unwrap();
+    let changed = setup("2026-01-02", -200, "Changed");
+    assert!(
+        v.save_manual_booking(account, Some(id), changed.clone())
+            .is_err()
+    );
+    assert!(
+        v.save_manual_booking_with_splits(account, Some(id), changed.clone(), Some(vec![]))
+            .is_err()
+    );
+    assert!(
+        v.save_manual_booking_with_splits(
+            account,
+            Some(id),
+            changed.clone(),
+            Some(vec![part(None, -1), part(None, -1)])
+        )
+        .is_err()
+    );
+    assert!(
+        v.save_manual_booking_with_splits(
+            account,
+            Some(id),
+            changed.clone(),
+            Some(vec![part(Some("missing".into()), -100), part(None, -100)])
+        )
+        .is_err()
+    );
+    assert_eq!(balance(&v, account), -100);
+    let db = v.db().unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT booking_date || ':' || counterparty FROM transactions WHERE id=?1",
+            [id],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "2026-01-01:Shop"
+    );
+    drop(db);
+    assert_eq!(
+        v.list_transaction_splits(id)
+            .unwrap()
+            .iter()
+            .map(|p| &p.uuid)
+            .collect::<Vec<_>>(),
+        parts.iter().map(|p| &p.uuid).collect::<Vec<_>>()
+    );
+    v.save_manual_booking_with_splits(
+        account,
+        Some(id),
+        changed,
+        Some(vec![
+            part(Some(parts[0].uuid.clone()), -80),
+            part(Some(parts[1].uuid.clone()), -120),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(balance(&v, account), -200);
+    let after = v.list_transaction_splits(id).unwrap();
+    // each kept UUID keeps the amount it was saved with, in order
+    assert_eq!(
+        after
+            .iter()
+            .map(|p| (&p.uuid, p.amount_cents))
+            .collect::<Vec<_>>(),
+        vec![(&parts[0].uuid, -80), (&parts[1].uuid, -120)]
+    );
+    v.save_manual_booking(account, Some(id), setup("2026-01-03", -200, "Same amount"))
+        .unwrap();
+    v.save_manual_booking_with_splits(
+        account,
+        Some(id),
+        setup("2026-01-03", -200, "Unsplit"),
+        Some(vec![]),
+    )
+    .unwrap();
+    assert!(v.list_transaction_splits(id).unwrap().is_empty());
 }
 
 #[test]
@@ -577,4 +908,52 @@ fn category_sums_count_only_eur_across_accounts() {
         .unwrap();
     assert_eq!(page.transactions.len(), 4, "rows of every currency stay");
     assert_eq!(page.expense_cents, -10_00, "page sums: EUR only");
+}
+
+/// CodeRabbit (#1855): an amount edit evaluates a rule-assigned category again (a rule may
+/// match amounts), like the sync merge on a receiving device; a manual category stays.
+#[test]
+fn amount_edit_reevaluates_a_rule_category_but_keeps_a_manual_one() {
+    let v = vault("offline-amount-rule");
+    let account = v
+        .create_offline_account("Wallet".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let id = v
+        .save_manual_booking(account, None, setup("2026-01-10", -1000, "Shop"))
+        .unwrap();
+    let cat: i64 = {
+        let db = v.db().unwrap();
+        db.execute("INSERT INTO categories(name) VALUES ('Regel')", [])
+            .unwrap();
+        db.last_insert_rowid()
+    };
+    let set_source = |source: &str| {
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE transactions SET category_id=?2, category_source=?3 WHERE id=?1",
+                params![id, cat, source],
+            )
+            .unwrap();
+    };
+    let category = || -> Option<i64> {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT category_id FROM transactions WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    set_source("rule");
+    let mut s = setup("2026-01-10", -2000, "Shop");
+    s.category_id = Some(cat);
+    v.save_manual_booking(account, Some(id), s.clone()).unwrap();
+    // no rule matches the booking: the rule result is gone
+    assert_eq!(category(), None);
+    set_source("manual");
+    s.amount_cents = -3000;
+    v.save_manual_booking(account, Some(id), s).unwrap();
+    assert_eq!(category(), Some(cat));
 }
