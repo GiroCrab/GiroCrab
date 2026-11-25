@@ -637,6 +637,7 @@ fn call(method: &str, a: &Value) -> R {
                 let _ = v.checkpoint();
             }
             *VAULT.lock().unwrap() = None;
+            // again once the vault is gone: a job running in between may have started it
             crate::local_api::stop();
             ok(())
         }
@@ -1437,6 +1438,9 @@ fn open_demo() -> R {
     let v = Vault::open(path.display().to_string(), key).map_err(|e| e.to_string())?;
     v.seed_demo_data().map_err(|e| e.to_string())?;
     *VAULT.lock().unwrap() = Some(v);
+    // again after the swap: a job that reconciled in the gap above may have started it
+    // on the own vault; from here on `local_api_target` sees the demo and refuses
+    crate::local_api::stop();
     ok(())
 }
 
@@ -3871,7 +3875,11 @@ mod tests {
         // short: sun_path holds 108 bytes
         let run = (0u32..)
             .map(|n| std::path::PathBuf::from(format!("/tmp/gcl-{}-{n}", std::process::id())))
-            .find(|p| std::fs::create_dir(p).is_ok())
+            .find(|p| match std::fs::create_dir(p) {
+                Ok(()) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(e) => panic!("runtime dir {}: {e}", p.display()),
+            })
             .expect("exclusive runtime dir");
         std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o700)).unwrap();
         let _guard = Cleanup {
