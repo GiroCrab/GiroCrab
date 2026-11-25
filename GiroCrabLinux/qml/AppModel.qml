@@ -545,6 +545,7 @@ QtObject {
         vaultLoaded = false
         hasOwnVault = false
         demoActive = false
+        netRefundsInStats = false
         groups = []; userGroups = []; accountsByID = ({}); accountMarkers = ({}); bookings = []; categories = []; categoryTree = []; uncategorizedFilteredCount = null
         connections = []; page = null; ListBalances.clear(); merchantStats = null; merchantAccountStats = null; streamItems = []; streamModel.clear(); dayGroups = []; history = []
         rules = []; settings = []; dashboard = null; budgets = []; recurring = []; recurringMonth = null; recurringHidden = []
@@ -1800,10 +1801,21 @@ QtObject {
 
     // MARK: - Settings (vault/settings.rs)
     property var settings: []
-    function reloadSettings() { run(() => { settings = core("list_settings"); fintsProductIDSource = core("fints_product_id_source") }) }
+    function reloadSettings() { run(() => { settings = core("list_settings"); fintsProductIDSource = core("fints_product_id_source")
+                                            netRefundsInStats = core("net_refunds_in_stats") }) }
     property string fintsProductIDSource: ""
     function settingEntry(key) { return settings.find(e => e.key === key) || null }
     function saveSetting(key, value) { run(() => core("set_setting", { key: key, value: value })); reloadSettings() }
+    /// Erstattungen mit der Ursprungsbuchung verrechnen (#714, refunds/offsets.rs): off by default.
+    property bool netRefundsInStats: false
+    function setNetRefundsInStats(on) {
+        if (!run(() => { core("set_net_refunds_in_stats", { on: on }); return true })) return
+        netRefundsInStats = on
+        reloadStatistics()
+    }
+    /// Every sum that leaves linked refunds out: sidebar category totals, budgets, the list's
+    /// KPI tiles, cash flow and category history (reloadBookings), the investment dashboard.
+    function reloadStatistics() { reloadCategories(); reloadBookings(); reloadPlanning(); reloadDashboard() }
 
     // MARK: - Bank catalog
     readonly property var bankCatalog: core("bank_catalog")
@@ -3196,9 +3208,10 @@ QtObject {
             UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
                 if (vaultGeneration === generation) changeRefundLink(inversePair, inverse, undoToken)
             }, phase, branch)
-            // documentation only (#714): sums stay, only the list markers change
+            // without the setting documentation only (#714): sums stay, only the list markers change
             refundLinksRevision++
-            reloadBookings()
+            if (netRefundsInStats) reloadStatistics()
+            else reloadBookings()
         }, failed) } catch (e) { failed(e.message) }
     }
     readonly property var colorPalette: core("account_color_palette")

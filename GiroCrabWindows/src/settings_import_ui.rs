@@ -947,11 +947,13 @@ fn load_settings(win: &MainWindow, v: &Arc<Vault>) {
             let mode = v.fints_product_id_mode().map_err(|e| e.to_string())?;
             let source = v.fints_product_id_source().map_err(|e| e.to_string())?;
             let prefs = update_prefs(&v);
-            Ok((list, mode, source, prefs))
+            let refunds = v.net_refunds_in_stats().map_err(|e| e.to_string())?;
+            Ok((list, mode, source, prefs, refunds))
         },
-        |win, (list, mode, source, prefs)| {
+        |win, (list, mode, source, prefs, refunds)| {
             show_update_prefs(win, prefs);
             let gs = win.global::<SettingsImportState>();
+            gs.set_net_refunds(refunds);
             gs.set_settings(rows(view::setting_lines(&list)));
             gs.set_sel_setting(-1);
             gs.set_mode(view::product_mode_index(&mode));
@@ -1017,6 +1019,33 @@ fn wire_settings(win: &MainWindow) {
     });
 
     let weak = win.as_weak();
+    gs.on_net_refunds_changed(move |on| {
+        let Some(win) = weak.upgrade() else { return };
+        let Some(v) = vault_now() else {
+            win.global::<SettingsImportState>().set_net_refunds(!on);
+            set_status(&win, "Tresor ist gesperrt.");
+            return;
+        };
+        let vault = v.clone();
+        spawn(
+            &win,
+            "Wird gespeichert …",
+            move || Ok(save_net_refunds(&v, on)),
+            move |win, (stored, saved)| {
+                win.global::<SettingsImportState>().set_net_refunds(stored);
+                match saved {
+                    // every total, budget and chart reads the setting: reload like a refund link change
+                    Ok(()) => {
+                        set_status(win, "Gespeichert.");
+                        crate::reload(win, vault);
+                    }
+                    Err(e) => set_status(win, e),
+                }
+            },
+        );
+    });
+
+    let weak = win.as_weak();
     gs.on_mode_changed(move |index| {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_now()) else {
             return;
@@ -1037,6 +1066,14 @@ fn wire_settings(win: &MainWindow) {
             },
         );
     });
+}
+
+/// Stores the switch and reads it back; the stored state is what the checkbox shows, also when
+/// saving failed.
+fn save_net_refunds(v: &Vault, on: bool) -> (bool, Result<(), String>) {
+    let saved = v.set_net_refunds_in_stats(on).map_err(|e| e.to_string());
+    let stored = v.net_refunds_in_stats().unwrap_or(!on);
+    (stored, saved)
 }
 
 // ---- Abrufprotokoll ----------------------------------------------------------------------------------
@@ -1389,6 +1426,21 @@ mod tests {
             std::env::temp_dir().join(format!("girocrab-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn refund_switch_persists_in_the_vault() {
+        let dir = temp_dir("refund-switch");
+        let path = dir.join("v.db").display().to_string();
+        let v = girocrab_core::Vault::open(path.clone(), vec![7; 32]).unwrap();
+        assert!(!v.net_refunds_in_stats().unwrap(), "off by default");
+        assert_eq!(super::save_net_refunds(&v, true), (true, Ok(())));
+        drop(v);
+        let v = girocrab_core::Vault::open(path, vec![7; 32]).unwrap();
+        assert!(v.net_refunds_in_stats().unwrap());
+        assert_eq!(super::save_net_refunds(&v, false), (false, Ok(())));
+        drop(v);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

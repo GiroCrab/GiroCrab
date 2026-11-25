@@ -1,5 +1,8 @@
 {
+  "Auswertungen": "Statistics",
   "Keine Erstattungen": "No refunds",
+  "Erstattungen mit der Ursprungsbuchung verrechnen": "Net refunds against their original booking",
+  "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Buchungen, Liste und Kontostände bleiben unverändert.": "A linked refund no longer counts as income in totals, budgets and charts; it reduces the amount of its original booking instead, also retroactively in that booking's month. Bookings, the list and balances stay unchanged.",
   "Die Aufteilung hat sich geändert. Bitte erneut versuchen.": "The splits have changed. Please try again.",
   "Eine Änderung wird gerade gespeichert. Bitte warten Sie.": "A change is being saved. Please wait.",
   "Diese Erstattungszuordnung ist nicht möglich.": "This refund assignment is not possible.",
