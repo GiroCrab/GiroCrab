@@ -3,8 +3,9 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 // DepotDetailView.swift (#564): a securities depot as a view of its own – value, four depot
-// figures and positions. No cash flow, budgets, booking scopes or booking filters; the search
-// (DepotState.query) and the sort are the view's own. The tab (Strg+1) is DepotState.depotTab.
+// figures, composition, positions or activities. No cash flow, budgets, booking scopes or booking
+// filters; the search (DepotState.query) and the sort are the view's own. The tab (Strg+1 / Strg+2)
+// is DepotState.depotTab, switched in the toolbar.
 AssetAccountFrame {
     id: dv
     property var account: null
@@ -20,6 +21,10 @@ AssetAccountFrame {
     readonly property var holdings: loaded ? assets.map(a => a.holding) : []
 
     property var sort: ({ key: "value", ascending: false })
+    property string activityFilter: "all"
+    property string compositionMode: "position"
+    /// Positions behind the slice clicked in the composition card (null: all).
+    property var compositionFilter: null
 
     readonly property real syncStamp: {
         const a = account
@@ -88,6 +93,26 @@ AssetAccountFrame {
         tiles: dv.loaded ? DepotMetrics.securitiesTiles(dv.assets, dv.transactions, dv.currency, DepotState.depotPeriodTitle, dv.periodRange[0], dv.periodRange[1]) : []
     }
 
+    // MARK: composition
+    Text {
+        visible: dv.loaded && DepotState.depotTab === "positions" && dv.assets.length > 0
+        Layout.leftMargin: 4
+        text: qsTr("Aktueller Bestand · unabhängig vom gewählten Zeitraum")
+        font.pixelSize: Theme.caption; color: Theme.secondary
+    }
+    AssetCompositionCard {
+        visible: dv.loaded && DepotState.depotTab === "positions" && dv.assets.length > 0
+        Layout.fillWidth: true
+        assets: dv.loaded ? dv.assets : []
+        currency: dv.currency
+        mode: dv.compositionMode
+        filter: dv.compositionFilter
+        expandedKey: "depotAnalysisExpanded"
+        displayKey: "depotCompositionDisplay"
+        onModeRequested: m => dv.compositionMode = m
+        onFilterRequested: keys => dv.compositionFilter = keys
+    }
+
     // MARK: content
     // ContentUnavailableView „Depot konnte nicht geladen werden“
     ColumnLayout {
@@ -110,7 +135,8 @@ AssetAccountFrame {
         message: qsTr("Positionen kommen mit dem nächsten Abruf. Wertpapiergeschäfte stehen unter „Aktivitäten“, Geldbewegungen als Buchungen im Verrechnungskonto.")
     }
     readonly property var positions: loaded ? DepotMetrics.makePositions(assets) : []
-    readonly property var shownPositions: DepotMetrics.sortedPositions(DepotMetrics.filteredByQuery(positions, DepotState.query), sort)
+    readonly property var shownPositions: DepotMetrics.sortedPositions(
+        DepotMetrics.filteredByKeys(DepotMetrics.filteredByQuery(positions, DepotState.query), compositionFilter, positions), sort)
     Unavailable {
         visible: dv.loaded && DepotState.depotTab === "positions" && dv.assets.length > 0 && dv.shownPositions.length === 0
         symbol: "magnifyingglass"; title: qsTr("Keine Treffer")
@@ -126,6 +152,19 @@ AssetAccountFrame {
         currency: dv.currency
         onSortRequested: s => dv.sort = s
         onCopyAll: AppModel.copyToClipboard(dv.positions.map(p => DepotMetrics.clipboardLine(p.holding, dv.currency)).join("\n"))
+    }
+
+    // activities
+    DepotActivitiesView {
+        visible: dv.loaded && DepotState.depotTab === "activities"
+        Layout.fillWidth: true
+        all: dv.loaded ? dv.transactions : []
+        shown: dv.loaded && DepotState.depotTab === "activities" ? DepotMetrics.filteredActivities(dv.transactions, dv.account.id, dv.activityFilter, DepotState.query, dv.periodRange[0], dv.periodRange[1]) : []
+        filter: dv.activityFilter
+        query: DepotState.query
+        periodTitle: DepotState.depotPeriodTitle
+        wide: dv.wide
+        onFilterRequested: f => dv.activityFilter = f
     }
 
     component Unavailable: ColumnLayout {

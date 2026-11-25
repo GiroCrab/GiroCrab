@@ -43,6 +43,7 @@ xtrackers	Xtrackers	xtrackers	EtfIssuer	chart.line.uptrend.xyaxis	#0B7FAB	dws.co
 vanguard	Vanguard	vanguard	EtfIssuer	chart.line.uptrend.xyaxis	#96151D	de.vanguard
 amundi	Amundi	amundi	EtfIssuer	chart.line.uptrend.xyaxis	#0F2B5B	amundi.de
 trade-republic	Trade Republic	trade republic	Broker	chart.line.uptrend.xyaxis.circle	#111111	traderepublic.com
+finpension	finpension	finpension	Broker	chart.line.uptrend.xyaxis.circle	#1A2B4C	finpension.ch
 
 # --- Supermarkets & food ---
 rewe	REWE	rewe	Supermarket	cart	#CC071E	rewe.de

@@ -363,6 +363,10 @@ pub(crate) mod tests {
     pub(crate) fn row(date: &str, cents: i64, cat: &str) -> Row {
         Row {
             id: 1,
+            refund_linked: false,
+            refund_cents: 0,
+            refunded_cents: 0,
+            split_count: 0,
             account_name: "Giro".into(),
             booking_date: date.into(),
             value_date: String::new(),

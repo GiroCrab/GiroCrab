@@ -39,7 +39,8 @@ pub(crate) const OFFLINE_SQL: &str =
 pub struct ManualBookingSetup {
     /// `YYYY-MM-DD`.
     pub booking_date: String,
-    /// Negative = money out. Never 0.
+    /// Negative = money out. A new booking is never 0. An existing 0-€ split booking may keep 0
+    /// as long as it keeps nonempty parts (they carry its amounts).
     pub amount_cents: i64,
     pub counterparty: String,
     pub purpose: String,
@@ -314,6 +315,8 @@ impl Vault {
 
     /// Saves the booking and optional replacement splits atomically. `None` keeps its splits.
     /// Changing a split booking's amount requires nonempty parts summing to the new amount.
+    /// A new booking of 0 is rejected; an existing 0-€ split booking saves with 0 only while it
+    /// keeps its parts (`None`) or gets nonempty replacement parts summing to 0.
     pub fn save_manual_booking_with_splits(
         &self,
         account_id: i64,

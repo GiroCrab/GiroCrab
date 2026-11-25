@@ -64,7 +64,7 @@ Rectangle {
         }
         out.push({ type: "caption", key: "documents", title: qsTr("Dokumente"), open: !sm.documentsCollapsed })
         if (!sm.documentsCollapsed)
-            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & Postbox"), badge: 0 })
+            out.push({ type: "nav", key: "documents", symbol: "doc.on.doc", title: qsTr("Belege & Postbox"), badge: sm.unseenDocumentCount })
         const pending = m.connections.filter(c => !m.allAccounts.some(a => a.connection_id === c.id))
         if (pending.length) {
             out.push({ type: "section", title: qsTr("Neue Bankzugänge") })
@@ -485,7 +485,7 @@ Rectangle {
         AppMenuItem { text: qsTr("Neue Kategorie …"); icon.name: SF.icon("tag"); onTriggered: AppModel.newCategoryRequest = { parent: sidebar.selectedCategoryID } }
         AppMenuItem { text: qsTr("Neue Kategoriengruppe …"); icon.name: SF.icon("tag.circle"); onTriggered: AppModel.newCategoryRequest = { parent: null } }
     }
-    function openNavMenu(key) { if (key === "newBookings") allMenu.popup(); else uncategorizedMenu.popup() }
+    function openNavMenu(key) { if (key === "newBookings") allMenu.popup(); else if (key === "documents") documentsMenu.popup(); else uncategorizedMenu.popup() }
     /// „Neue Umsätze“, „Vermögen“, „Geplant“, „Lastschriften“, „Belege & Postbox“ and „Ohne Kategorie“:
     /// a page row with the empty chevron column, icon, title and count badge.
     component NavRow: SidebarRow {
@@ -495,7 +495,7 @@ Rectangle {
         signal menuRequested(string key)
         selectionKey: modelData.key
         TapHandler {
-            enabled: navRow.modelData.key === "newBookings" || navRow.modelData.key === "uncategorized"
+            enabled: navRow.modelData.key === "newBookings" || navRow.modelData.key === "uncategorized" || navRow.modelData.key === "documents"
             acceptedButtons: Qt.RightButton
             onTapped: navRow.menuRequested(navRow.modelData.key)
         }
@@ -621,6 +621,12 @@ Rectangle {
         id: allMenu
         AppMenuItem { text: qsTr("Alle Buchungen als gelesen markieren"); icon.name: SF.icon("checkmark.circle"); enabled: AppModel.newCount > 0
                    onTriggered: AppModel.markAllChecked(AppModel.allAccounts.map(a => a.id)) }
+    }
+    // „Belege & Postbox“ (#934): the unread documents
+    AppMenu {
+        id: documentsMenu
+        AppMenuItem { text: qsTr("Alle als gelesen markieren"); enabled: SidebarModel.unseenDocumentCount > 0
+                      onTriggered: AppModel.markAllDocumentsSeen() }
     }
     // pending bank logins ("Neue Bankzugänge")
     AppMenu {

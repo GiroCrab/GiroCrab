@@ -683,6 +683,7 @@ fn merge_creditor_id_newest_wins_and_a_removal_travels() {
     let (a, _da) = vault();
     let (b, _db) = vault();
     let (acc_a, acc_b) = (first_account(&a), first_account(&b));
+    tick();
     a.set_creditor_id(acc_a, "DE98ZZZ09999999999".into())
         .unwrap();
     merge(&b, &a);
