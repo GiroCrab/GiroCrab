@@ -75,8 +75,8 @@ final class SplitBookingTests: XCTestCase {
     /// #1663: plain shares of the amount (not the VAT contained in it), labelled with the number.
     func testSharesArePlainSharesOfTheAmount() {
         XCTAssertEqual(SplitMath.shares, [7, 19, 50])
-        XCTAssertEqual(SplitMath.share(of: 8_743, 19, 100), 1_661)
-        XCTAssertEqual(SplitMath.share(of: 8_743, 7, 100), 612)
+        XCTAssertEqual(splitShareCents(totalCents: 8_743, numerator: 19, denominator: 100), 1_661)
+        XCTAssertEqual(splitShareCents(totalCents: 8_743, numerator: 7, denominator: 100), 612)
         for percent in SplitMath.shares {
             let label = SplitMath.label(percent)
             // the sign's position follows the locale ("19 %", "19%", "%19")
