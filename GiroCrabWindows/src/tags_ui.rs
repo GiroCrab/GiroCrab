@@ -497,6 +497,7 @@ fn wire_splits(win: &MainWindow, slot: &VaultSlot) {
                     let mut drafts: Vec<SplitDraft> = splits
                         .iter()
                         .map(|s| SplitDraft {
+                            uuid: Some(s.uuid.clone()),
                             category_index: s
                                 .category_id
                                 .and_then(|id| cats.iter().position(|c| c.id == id))

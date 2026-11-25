@@ -48,6 +48,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import de.girocrab.app.model.AppUiState
 import de.girocrab.app.model.AppViewModel
 import de.girocrab.app.model.Booking
@@ -185,6 +186,21 @@ fun AnalyticsScreen(
                         ),
                         icon = {},
                     ) { Text("$m Monate", style = MaterialTheme.typography.labelLarge) }
+                }
+            }
+        }
+        incompleteBookingsNote(state.data.bookings.size, state.data.bookingsTotal)?.let { note ->
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(10.dp),
+                    )
                 }
             }
         }
