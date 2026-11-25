@@ -171,6 +171,15 @@ fn portal_schema_dump(json_bodies: Vec<String>, dom_rows_json: String) -> String
     crate::importers::portal_import::portal_schema_dump(json_bodies, dom_rows_json)
 }
 
+/// Closing dates and PDF links of a captured statements list of a card portal
+/// (schema-agnostic, see `parse_portal_statement_list`).
+#[uniffi::export]
+fn parse_portal_statement_list(
+    body: String,
+) -> Vec<crate::importers::portal_statements::PortalStatementItem> {
+    crate::importers::portal_statements::parse_portal_statement_list(&body)
+}
+
 /// A part typed into the split sheet: an amount or a percentage of `total_cents` (#1663).
 #[uniffi::export]
 fn parse_split_part_to_cents(text: String, total_cents: i64) -> Result<i64, CoreError> {
