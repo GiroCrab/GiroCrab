@@ -1,5 +1,6 @@
 """Tests for scripts/sync_docs.py: python3 -m unittest scripts/test_sync_docs.py"""
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -134,6 +135,46 @@ class SyncDocs(unittest.TestCase):
             self.assertIn("v0.2.0", first)
             self.assertIn("| Volksbank X | FinTS 3.0 |", first)
             self.assertIn("| Amazon orders | Web-Portal |", first)
+
+
+
+ROOT = Path(__file__).resolve().parent.parent
+FIX = "run: python3 scripts/sync_docs.py notes ."
+
+
+class RealRepo(unittest.TestCase):
+    """Checks docs/*-connector.md and CONNECTOR_DOCS against the real catalog.rs (#1875)."""
+
+    def setUp(self):
+        self.catalog = (ROOT / "girocrab-core/src/connectors/catalog.rs").read_text()
+        self.matrix = {e["name"]: e for e in sd.parse_matrix(self.catalog)}
+
+    def test_parse_matrix_reads_every_entry(self):
+        # parse_matrix() silently drops entries whose fields it does not recognise, so count
+        # independently of field order: every `MatrixEntry {` inside the BANK_MATRIX slice.
+        block = re.search(r"BANK_MATRIX:\s*&\[MatrixEntry\]\s*=\s*&\[(.*?)\n\];", self.catalog, re.S)
+        self.assertIsNotNone(block, "BANK_MATRIX not found in catalog.rs")
+        n = len(re.findall(r"\bMatrixEntry\s*\{", block.group(1)))
+        self.assertGreater(n, 0)
+        self.assertEqual(len(self.matrix), n, "parse_matrix() misses BANK_MATRIX entries (field order changed?)")
+
+    def test_every_connector_doc_is_listed(self):
+        docs = {f.name[: -len("-connector.md")] for f in (ROOT / "docs").glob("*-connector.md")}
+        self.assertEqual(sorted(docs - set(sd.CONNECTOR_DOCS)), [], "docs/<key>-connector.md missing in CONNECTOR_DOCS")
+        self.assertEqual(sorted(set(sd.CONNECTOR_DOCS) - docs), [], "CONNECTOR_DOCS entry without docs/<key>-connector.md")
+
+    def test_connector_docs_sorted(self):
+        keys = list(sd.CONNECTOR_DOCS)
+        self.assertEqual(keys, sorted(keys), "CONNECTOR_DOCS in sync_docs.py: keep the keys in alphabetical order")
+
+    def test_every_connector_doc_has_current_note(self):
+        for key, (entry, shown) in sd.CONNECTOR_DOCS.items():
+            with self.subTest(key):
+                # assertTrue, not assertIn: keep the whole doc/matrix out of the failure message.
+                self.assertTrue(entry in self.matrix, f"CONNECTOR_DOCS[{key!r}]: {entry!r} not parsed from BANK_MATRIX")
+                text = (ROOT / f"docs/{key}-connector.md").read_text()
+                note = sd.connector_note(shown, self.matrix[entry]["official"])
+                self.assertTrue(note in text, f"docs/{key}-connector.md: notice missing or outdated; {FIX}")
 
 
 if __name__ == "__main__":
