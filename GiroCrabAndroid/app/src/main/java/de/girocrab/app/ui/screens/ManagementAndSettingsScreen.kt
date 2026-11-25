@@ -242,7 +242,8 @@ fun RuleEditorDialog(
     var applied by remember { mutableStateOf<Int?>(null) }
 
     val rule = Rule(
-        id, field, kind, pattern.trim(), categoryId, tagIds, initial?.enabled ?: true,
+        // A regex keeps its whitespace like in the core; only the string match kinds are trimmed.
+        id, field, kind, if (kind == MatchKind.Regex) pattern else pattern.trim(), categoryId, tagIds, initial?.enabled ?: true,
         parseRuleCents(minText), parseRuleCents(maxText),
         // Keep what the dialog does not edit, or saving would widen the rule to all accounts.
         caseSensitive = initial?.caseSensitive ?: false,
@@ -256,7 +257,7 @@ fun RuleEditorDialog(
     // An action is a category or at least one tag (core tag-only rules have no category).
     val hasAction = categoryId != null || tagIds.isNotEmpty()
     // An empty keyword list never matches in the core, not even with an amount range.
-    val hasCondition = pattern.isNotBlank() ||
+    val hasCondition = rule.pattern.isNotEmpty() ||
         (kind != MatchKind.Keyword && (rule.minCents != null || rule.maxCents != null))
     val valid = hasAction && hasCondition
 
@@ -286,6 +287,12 @@ fun RuleEditorDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f),
                     )
                 }
+                // The range is signed like in the core: expenses need negative bounds.
+                Text(
+                    "Ausgaben sind negativ: z. B. ab -100,00 bis -10,00 für Ausgaben zwischen 10 und 100 €.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text("Kategorie", style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScrollCompat(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     state.data.categories.forEach { c ->
@@ -317,7 +324,8 @@ fun RuleEditorDialog(
                     enabled = valid && uncategorized > 0,
                     onClick = { applied = onApplyUncategorized(rule) },
                 ) { Text("Auf unkategorisierte Treffer anwenden") }
-                applied?.let { Text("$it Buchungen kategorisiert.", style = MaterialTheme.typography.bodySmall) }
+                // A tag-only rule changes tags but sets no category, so "updated" covers both.
+                applied?.let { Text("$it Buchungen aktualisiert.",style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = { Button(enabled = valid, onClick = { onSave(rule); onDismiss() }) { Text("Speichern") } },
