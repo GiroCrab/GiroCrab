@@ -28,7 +28,7 @@ Sheet {
     // Amounts are entered in the booking's direction: a negative part counter-books the others
     // (+59 = +200 and -141, #427). Only the sum must match; no part may be 0 (SplitMath).
     readonly property bool valid: { revision; return parts.length >= 2 && remaining === 0 && parts.every(p => cents(p) !== 0) }
-    function part(categoryID, amount, note) { return { uid: nextUid++, categoryID: categoryID, amount: amount, note: note } }
+    function part(categoryID, amount, note, uuid) { return { uid: nextUid++, uuid: uuid || null, categoryID: categoryID, amount: amount, note: note } }
 
     onAboutToShow: {
         error = ""; hasSplits = false; parts = []
@@ -43,12 +43,12 @@ Sheet {
             hasSplits = existing.length > 0
             parts = existing.length === 0
                 ? [part(b.category_id, Fmt.plain(total), ""), part(null, "", "")]
-                : existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note))
+                : existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note, s.uuid))
         })
     }
     function save() {
         if (!valid) return
-        const inputs = parts.map(p => ({ category_id: p.categoryID, amount_cents: sign * cents(p), note: p.note }))
+        const inputs = parts.map(p => ({ uuid: p.uuid, category_id: p.categoryID, amount_cents: sign * cents(p), note: p.note }))
         error = AppModel.saveSplits(inputs, booking)
         if (error === "") close()
     }
