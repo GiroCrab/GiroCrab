@@ -213,7 +213,7 @@ Item {
                             Layout.fillWidth: true
                             spacing: 8
                             Text { text: Fmt.medium(pr.modelData.booking_date); color: Theme.secondary; font.pixelSize: Theme.callout + 1; font.features: { "tnum": 1 } }
-                            Text { text: pr.modelData.counterparty; color: Theme.text; font.pixelSize: Theme.callout + 1; elide: Text.ElideRight; Layout.fillWidth: true }
+                            Text { text: pr.modelData.counterparty; color: Theme.text; font.pixelSize: Theme.callout + 1; elide: Text.ElideRight; Layout.fillWidth: true; Sensitive {} }
                             SFIcon {
                                 // a tag-only rule (#580) also tags a booking categorised by hand
                                 visible: pr.modelData.category_source === "Manual" && form.rule.category_id !== 0; symbol: "hand.raised.fill"; size: 12

@@ -46,8 +46,9 @@ and `migrate` runs the missing ones in a single transaction.
 | 39 | `transaction_splits.uuid` / `position`: stable split-part identities, deterministic UUIDv5 backfill (#714) |
 | 40 | `refund_links`: refund links between bookings or split parts (#714) |
 | 41 | `transactions.date_ms`: edit stamp of a manual booking's date, synced on its own (#714) |
-| 42 | `categories.role` / `role_ms`: financial role of a category, inherited down the tree (#931); seeded with stamp 0: `investment`/`loan`/`neutral` only where `builtin_role` decided the classification before, plus the defaults `income` (top-level `Einnahmen`) and `salary` (`Gehalt`), which change no classification yet |
-| 43+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 42 | `accounts.last_fetch_unix`: last single-account fetch, shown with the later of it and the login's sync time (#1716) |
+| 43 | `categories.role` / `role_ms`: financial role of a category, inherited down the tree (#931); seeded with stamp 0: `investment`/`loan`/`neutral` only where `builtin_role` decided the classification before, plus the defaults `income` (top-level `Einnahmen`) and `salary` (`Gehalt`), which change no classification yet |
+| 44+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 

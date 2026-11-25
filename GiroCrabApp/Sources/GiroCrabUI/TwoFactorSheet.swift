@@ -115,8 +115,12 @@ struct TwoFactorSheet: View {
                         .multilineTextAlignment(.center)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 220)
+                        // no input while an answer or a skip is on its way: it would be sent for the next order
+                        .disabled(active.busy)
                         .focused($codeFocused)
                         .onAppear { codeFocused = true }
+                        // a disabled field loses the focus: back in it when the answer is in (wrong TAN, retry)
+                        .onChange(of: active.busy) { _, busy in if !busy { codeFocused = true } }
                         #if os(iOS)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
@@ -202,7 +206,11 @@ struct TwoFactorSheet: View {
                     Text("Gültig noch etwa \(s / 60) Min.").appFont(.caption).foregroundStyle(.tertiary)
                 }
 
-                SyncPromptButtons(cancel: model.skipCurrentSync) {
+                SyncPromptButtons(cancel: model.skipCurrentSync, leading: active.canSkipOrder ? AnyView(
+                    Button("TAN auslassen") { consent = nil; code = ""; model.skipOrder() }
+                        .disabled(active.busy || active.polling)
+                        .help("Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert.")
+                ) : nil) {
                     if c.kind == .code || c.kind == .imageCode || (c.kind == .redirect && showManualRedirect) {
                         Button(action: submit) {
                             Text("Weiter").frame(maxWidth: .infinity)

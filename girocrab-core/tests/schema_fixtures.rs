@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use girocrab_core::error::CoreError;
-use girocrab_core::models::BookingFilter;
+use girocrab_core::models::{BookingFilter, CategoryRole};
 use girocrab_core::vault::Vault;
 use rusqlite::Connection;
 
@@ -269,6 +269,54 @@ fn fixture_vaults_open_and_match_a_fresh_vault() {
 
         assert_eq!(user_version(&path), fresh_version, "{name}: user_version");
         assert_eq!(schema_dump(&path), schema_dump(&fresh), "{name}: schema");
+    }
+}
+
+#[test]
+fn main_v42_keeps_last_fetch_when_upgrading_category_roles() {
+    let tmp = Tmp::new("category-roles-v42");
+    let path = tmp.path("v42.girocrab");
+    std::fs::copy(fixtures().join("vault-v42.girocrab"), &path).unwrap();
+    assert_eq!(user_version(&path), 42);
+    let fetch_time = 1_700_000_000;
+    let account_id: i64 = raw(&path, &KEY)
+        .query_row(
+            "UPDATE accounts SET last_fetch_unix = ?1
+              WHERE id = (SELECT MIN(id) FROM accounts WHERE deleted_ms IS NULL)
+              RETURNING id",
+            [fetch_time],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    for _ in 0..2 {
+        let v = Vault::open(path.clone(), KEY.to_vec()).unwrap();
+        assert_eq!(user_version(&path), 43);
+        let account = v
+            .list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == account_id);
+        assert_eq!(account.unwrap().last_fetch_unix, Some(fetch_time));
+        assert_eq!(
+            raw(&path, &KEY)
+                .query_row(
+                    "SELECT role, role_ms FROM categories WHERE builtin_role = 'Umbuchungen' AND deleted_ms IS NULL",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap(),
+            ("neutral".into(), 0)
+        );
+        assert!(
+            v.list_categories(None, None)
+                .unwrap()
+                .iter()
+                .any(|category| {
+                    category.role == Some(CategoryRole::Neutral)
+                        && category.effective_role == CategoryRole::Neutral
+                })
+        );
     }
 }
 

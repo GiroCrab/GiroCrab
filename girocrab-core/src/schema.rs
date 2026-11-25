@@ -65,7 +65,9 @@
 //! - 40: refund links (#714): `refund_links` between bookings or their split parts.
 //! - 41: `transactions.date_ms` (#714): edit stamp of the date of a manual booking, so a date
 //!   edit syncs on its own (neither with the text nor with amount and splits).
-//! - 42: explicit category financial roles (#931): `categories.role` (NULL = inherit from
+//! - 42: last single-account fetch (#1716): `accounts.last_fetch_unix` (NULL =
+//!   none; the login's `last_sync_unix` still counts for every account).
+//! - 43: explicit category financial roles (#931): `categories.role` (NULL = inherit from
 //!   parent, root default `consumption`) and its sync stamp `categories.role_ms`, seeded
 //!   from `categories.builtin_role` with stamp 0 so user edits win on sync
 //!   ([`category_roles`]): `investment`, `loan` and `neutral` only where `builtin_role`
@@ -129,10 +131,11 @@ const STEPS: &[Step] = &[
     Step::Hook(crate::planning::stable_split_ids),             // 39 (#714)
     Step::Sql(REFUND_LINKS),                                   // 40 (#714)
     Step::Hook(manual_date_stamp),                             // 41 (#714)
-    Step::Hook(category_roles),                                // 42 (#931)
+    Step::Hook(account_last_fetch),                            // 42 (#1716)
+    Step::Hook(category_roles),                                // 43 (#931)
 ];
 
-/// Step 42 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
+/// Step 43 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
 /// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
 /// explicit user choice on another device wins on sync. Idempotent.
 ///
@@ -150,8 +153,10 @@ const STEPS: &[Step] = &[
 /// Deliberate exception: v41 looked at 32 categories from a booking's category upwards,
 /// `Vault::category_roles` at 33. A category 32 or more levels deep can therefore resolve
 /// differently than before (e.g. `Neutral` from an `Umbuchungen` root exactly 32 levels up);
-/// the step does not reproduce that bound. Such trees do not occur in practice.
+/// the step does not reproduce that bound.
 fn category_roles(conn: &Connection) -> CoreResult<()> {
+    // PR builds that used v42 for category roles lack the fetch-time column.
+    account_last_fetch(conn)?;
     for (col, def) in [("role", "TEXT"), ("role_ms", "INTEGER NOT NULL DEFAULT 0")] {
         if !has_column(conn, "main", "categories", col)? {
             conn.execute_batch(&format!("ALTER TABLE categories ADD COLUMN {col} {def};"))?;
@@ -1073,6 +1078,16 @@ fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
+/// Step 42 (#1716): when an account was last fetched on its own ("<Konto>
+/// abrufen"). The login's `last_sync_unix` stays as it is then, so the other
+/// accounts do not count as fresh; the account shows the later of the two.
+fn account_last_fetch(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "accounts", "last_fetch_unix")? {
+        conn.execute_batch("ALTER TABLE accounts ADD COLUMN last_fetch_unix INTEGER;")?;
+    }
+    Ok(())
+}
+
 /// Step 37 (#1003): the sidebar's "by kind" view had one section for checking,
 /// savings, time deposit, cash and payment accounts. Each kind now has its own
 /// (`connectors::group_for`). The accounts of the old section move by `kind`
@@ -1295,10 +1310,49 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 42);
+        assert_eq!(SCHEMA_VERSION, 43);
     }
 
-    /// #931: step 42 adds `categories.role` and `categories.role_ms` and seeds built-in
+    /// #1716: a vault at version 41 gets the fetch time of step 42.
+    #[test]
+    fn vault_at_41_gets_last_fetch() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&mut conn).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE accounts DROP COLUMN last_fetch_unix; PRAGMA user_version = 41;",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        assert!(has_column(&conn, "main", "accounts", "last_fetch_unix").unwrap());
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn category_role_preview_v42_gets_fetch_column_without_resetting_choices() {
+        let mut conn = schema_at(41);
+        category_roles(&conn).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE accounts DROP COLUMN last_fetch_unix;
+             INSERT INTO categories(name, builtin_role, role, role_ms)
+                  VALUES ('Umbuchungen', 'Umbuchungen', NULL, 55);
+             PRAGMA user_version = 42;",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+
+        assert!(has_column(&conn, "main", "accounts", "last_fetch_unix").unwrap());
+        let choice: (Option<String>, i64) = conn
+            .query_row("SELECT role, role_ms FROM categories", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(choice, (None, 55));
+    }
+
+    /// #931: step 43 adds `categories.role` and `categories.role_ms` and seeds built-in
     /// categories from `builtin_role` with stamp 0, leaving custom categories `NULL`.
     #[test]
     fn category_roles_backfill_from_builtin_role() {
@@ -1349,9 +1403,9 @@ mod tests {
         assert_eq!(read(7), (Some("salary".into()), 0));
         assert_eq!(read(8), (None, 0));
         assert_eq!(read(9), (None, 0));
-        // Promoted to root before v42: preserves legacy investment classification.
+        // Promoted to root before v43: preserves legacy investment classification.
         assert_eq!(read(10), (Some("investment".into()), 0));
-        // Rearranged before v42: `Gehalt` under `Umbuchungen` stays inheriting
+        // Rearranged before v43: `Gehalt` under `Umbuchungen` stays inheriting
         // (`Neutral`), non-root `Sparen`/`Kredite` keep legacy root-only behaviour,
         // and nested `Umbuchungen` stays `Neutral`.
         assert_eq!(read(11), (None, 0));
@@ -1589,7 +1643,7 @@ mod tests {
         assert_eq!(n, 0);
     }
 
-    /// A duplicate that a v41 sync combined into another category gets no role from step 42
+    /// A duplicate that a v41 sync combined into another category gets no role from step 43
     /// (#931): when reading, its role would count for the survivor, and `Sparen & Investieren`
     /// moved under a custom folder would become an investment.
     #[test]
@@ -1616,9 +1670,9 @@ mod tests {
         assert_eq!(roles[&2], crate::models::CategoryRole::Consumption);
     }
 
-    /// The deliberate exception of step 42 (#931): the old walk looked at 32 categories and
+    /// The deliberate exception of step 43 (#931): the old walk looked at 32 categories and
     /// never reached an `Umbuchungen` root 32 levels up; the role resolver does, so the
-    /// deepest category resolves to `Neutral`. One level less, both agree.
+    /// category at depth 32 resolves to `Neutral`. At depths 31 and 33, both agree.
     #[test]
     fn category_roles_depth_32_below_transfers_is_neutral() {
         let conn = schema_at(SCHEMA_VERSION as usize);
@@ -1628,7 +1682,7 @@ mod tests {
              VALUES (1, NULL, 'Umbuchungen', 'Umbuchungen');",
         )
         .unwrap();
-        for id in 2..=33_i64 {
+        for id in 2..=34_i64 {
             conn.execute(
                 "INSERT INTO categories(id, parent_id, name) VALUES (?1, ?2, 'Ebene')",
                 [id, id - 1],
@@ -1639,9 +1693,10 @@ mod tests {
         let roles = crate::vault::Vault::category_roles(&conn).unwrap();
         assert_eq!(roles[&32], crate::models::CategoryRole::Neutral);
         assert_eq!(roles[&33], crate::models::CategoryRole::Neutral);
+        assert_eq!(roles[&34], crate::models::CategoryRole::Consumption);
     }
 
-    /// Step 42 (#931) keeps the v41 classification of every category, checked on random
+    /// Step 43 (#931) keeps the v41 classification of every category, checked on random
     /// v41 trees: built-ins (every starter name and `import:transfers`) at random places,
     /// custom categories and deleted ones, also between live ones. The v41 side is a copy of the
     /// old `category_flows` walk plus how `classify_by_kind`/`BookingFinisher::finish` used
@@ -1784,7 +1839,7 @@ mod tests {
                 assert_eq!(
                     after.get(id),
                     Some(effect),
-                    "tree {tree}, category {id}: v41 {effect:?}, after step 42 {:?}\n{}",
+                    "tree {tree}, category {id}: v41 {effect:?}, after step 43 {:?}\n{}",
                     after.get(id),
                     rows.join("\n")
                 );

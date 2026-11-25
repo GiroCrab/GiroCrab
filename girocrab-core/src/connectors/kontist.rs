@@ -166,7 +166,9 @@ impl KontistConnector {
         }
         if let Some(msg) = graphql_error(&v) {
             return Err(CoreError::Bank {
-                code: status.as_u16().to_string(),
+                code: graphql_error_status(&v)
+                    .unwrap_or(status.as_u16())
+                    .to_string(),
                 message: msg,
             });
         }
@@ -179,6 +181,46 @@ impl KontistConnector {
             });
         }
         Ok(v)
+    }
+
+    /// All booked transactions of the main account from `since` on; an
+    /// incomplete list is an error.
+    async fn transactions(
+        &self,
+        account_ref: &str,
+        since: &str,
+    ) -> CoreResult<Vec<RemoteTransaction>> {
+        let filter = json!({ "bookingDate_gte": format!("{since}T00:00:00.000Z") });
+        let mut out = Vec::new();
+        let mut after: Option<String> = None;
+        for _ in 0..MAX_PAGES {
+            let page = self
+                .graphql(
+                    TRANSACTIONS_QUERY,
+                    json!({ "first": PAGE_SIZE, "after": after, "filter": filter }),
+                )
+                .await?;
+            let conn = &page["data"]["viewer"]["mainAccount"]["transactions"];
+            for edge in conn["edges"].as_array().into_iter().flatten() {
+                if let Some(t) = parse_transaction(&edge["node"], account_ref) {
+                    out.push(t);
+                }
+            }
+            // no explicit end of the list (e.g. a null viewer): not complete
+            match conn["pageInfo"]["hasNextPage"].as_bool() {
+                Some(false) => return Ok(out),
+                Some(true) => {}
+                None => break,
+            }
+            let next = conn["pageInfo"]["endCursor"].as_str().map(str::to_string);
+            if next.is_none() || next == after {
+                break;
+            }
+            after = next;
+        }
+        Err(CoreError::Protocol {
+            message: tr("Kontist: Die Umsatzliste wurde nicht vollständig geliefert. Bitte den Abruf erneut starten.").into(),
+        })
     }
 }
 
@@ -210,6 +252,21 @@ fn graphql_error(v: &Value) -> Option<String> {
             .unwrap_or("GraphQL error")
             .to_string(),
     )
+}
+
+/// HTTP-like status the first GraphQL error carries itself (a GraphQL error can
+/// come with HTTP 200, #1043): `status`, `extensions.status` or `extensions.code`
+/// when it is a number.
+fn graphql_error_status(v: &Value) -> Option<u16> {
+    let first = v["errors"].as_array()?.first()?;
+    [
+        &first["status"],
+        &first["extensions"]["status"],
+        &first["extensions"]["code"],
+    ]
+    .into_iter()
+    .find_map(|s| s.as_u64().or_else(|| s.as_str()?.parse().ok()))
+    .and_then(|s| u16::try_from(s).ok())
 }
 
 /// `2026-11-03T00:00:00.000Z` → `2026-11-03`.
@@ -421,40 +478,21 @@ impl BankConnector for KontistConnector {
         let today = super::today();
         let v = self.graphql(ACCOUNT_QUERY, json!({})).await?;
         let account = parse_account(&v["data"]["viewer"], &today)?;
-        let since = ctx.since_for(&account.external_ref).to_string();
-        let filter = json!({ "bookingDate_gte": format!("{since}T00:00:00.000Z") });
-
+        let since = ctx.since_for(&account.external_ref);
         let mut out = FetchResult::default();
-        let mut after: Option<String> = None;
-        let mut complete = false;
-        for _ in 0..MAX_PAGES {
-            let page = self
-                .graphql(
-                    TRANSACTIONS_QUERY,
-                    json!({ "first": PAGE_SIZE, "after": after, "filter": filter }),
-                )
-                .await?;
-            let conn = &page["data"]["viewer"]["mainAccount"]["transactions"];
-            for edge in conn["edges"].as_array().into_iter().flatten() {
-                if let Some(t) = parse_transaction(&edge["node"], &account.external_ref) {
-                    out.transactions.push(t);
-                }
+        out.transactions = match self.transactions(&account.external_ref, since).await {
+            Ok(transactions) => transactions,
+            // the bank refused the start date (#1043): once more with 90 days
+            Err(e) => {
+                let since = super::history::retry_since(since, ctx.full_fetch, e)?;
+                let transactions = self.transactions(&account.external_ref, &since).await?;
+                out.warnings.push(super::history::refused_warning(
+                    &account.external_ref,
+                    &since,
+                ));
+                transactions
             }
-            if conn["pageInfo"]["hasNextPage"].as_bool() != Some(true) {
-                complete = true;
-                break;
-            }
-            let next = conn["pageInfo"]["endCursor"].as_str().map(str::to_string);
-            if next.is_none() || next == after {
-                break;
-            }
-            after = next;
-        }
-        if !complete {
-            return Err(CoreError::Protocol {
-                message: tr("Kontist: Die Umsatzliste wurde nicht vollständig geliefert. Bitte den Abruf erneut starten.").into(),
-            });
-        }
+        };
         out.balances_reported.push(account.external_ref.clone());
         out.accounts.push(account);
         if !self.refresh_token.expose().is_empty() {
@@ -520,5 +558,28 @@ mod tests {
         let v = json!({ "errors": [{ "message": "Not authorized" }], "data": null });
         assert_eq!(graphql_error(&v).as_deref(), Some("Not authorized"));
         assert_eq!(graphql_error(&json!({ "data": {} })), None);
+    }
+
+    #[test]
+    fn graphql_error_carries_its_own_status() {
+        let err = |e: Value| json!({ "errors": [e], "data": null });
+        assert_eq!(
+            graphql_error_status(&err(json!({ "status": 429 }))),
+            Some(429)
+        );
+        assert_eq!(
+            graphql_error_status(&err(json!({ "extensions": { "status": "503" } }))),
+            Some(503)
+        );
+        assert_eq!(
+            graphql_error_status(&err(json!({ "extensions": { "code": 400 } }))),
+            Some(400)
+        );
+        // a named code is no status
+        assert_eq!(
+            graphql_error_status(&err(json!({ "extensions": { "code": "FORBIDDEN" } }))),
+            None
+        );
+        assert_eq!(graphql_error_status(&json!({ "data": {} })), None);
     }
 }
