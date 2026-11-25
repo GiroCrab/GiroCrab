@@ -252,52 +252,20 @@ struct DocumentsView: View {
         let choices = typeAndYearChoices(found)
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.documentsScope.heading).appFont(.title2, weight: .semibold)
-                    Text(model.documentsScope.description)
-                        .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                #if os(iOS)
-                DocumentsScopePicker(compact: isCompact)
-                #endif
-                VStack(alignment: .leading, spacing: 10) {
-                    if isCompact {
-                        VStack(alignment: .leading, spacing: 8) {
-                            connectionPicker
-                            accountPicker
-                            if choices.showsType || choices.showsYear {
-                                HStack(spacing: 12) {
-                                    if choices.showsType { typePicker(choices.types).fixedSize() }
-                                    if choices.showsYear { yearPicker(choices.years).fixedSize() }
-                                }
-                            }
-                            unseenToggle
-                            unlinkedToggle
-                        }
-                    } else {
-                        filterRows(choices)
-                    }
-                    documentsOffHint
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
-                            importButton
-                            Spacer(minLength: 12)
-                            exportButton(docs)
-                            moreMenu(docs)
-                        }
-                        VStack(alignment: .leading, spacing: 8) {
-                            importButton
-                            HStack(spacing: 8) {
-                                exportButton(docs)
-                                moreMenu(docs)
-                            }
-                        }
-                    }
-                    Text(docs.count == found.count ? String(localized: "\(docs.count) Dokumente")
-                         : String(localized: "\(docs.count) von \(found.count) Dokumenten"))
-                        .appFont(.caption).foregroundStyle(Theme.secondary)
-                }
+                if !isCompact { header(docs, found: found.count, choices) }
                 List(selection: $selected) {
+                    // iPhone: scrolls away with the list, which otherwise has hardly any room (#1526)
+                    if isCompact {
+                        Group {
+                            header(docs, found: found.count, choices)
+                            if docs.isEmpty { emptyState }
+                        }
+                        .buttonStyle(.borderless) // in one row iOS otherwise fires all its buttons on a tap
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 12, trailing: 2))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Theme.canvas)
+                        .selectionDisabled()
+                    }
                     ForEach(docs) { d in
                         DocumentRow(doc: d, account: accountText(d), focusedSelection: selected == d.id && listHasFocus,
                                     showsUnlinked: unlinkedOnly)
@@ -349,17 +317,7 @@ struct DocumentsView: View {
                     selected = nil
                 }
                 .overlay {
-                    if docs.isEmpty && !isFiltered {
-                        ContentUnavailableView("Keine Belege", systemImage: "doc.on.doc", description: Text("Belege kommen beim Abruf (Trade Republic, comdirect-Postbox, FinTS-Kontoauszug) oder per Drag & Drop."))
-                    } else if docs.isEmpty {
-                        ContentUnavailableView {
-                            Label("Keine passenden Dokumente", systemImage: "doc.on.doc")
-                        } description: {
-                            Text("Für diese Auswahl wurden keine Dokumente gefunden.")
-                        } actions: {
-                            Button("Alle Dokumente anzeigen") { showAllDocuments() }
-                        }
-                    }
+                    if docs.isEmpty && !isCompact { emptyState }
                 }
                 // (demo) `--pick <text>`: the document whose title contains it starts selected (screenshots)
                 .task {
@@ -416,6 +374,32 @@ struct DocumentsView: View {
         .fileImporter(isPresented: $exporting, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportAllDocuments(to: url, ids: exportIDs, subfolder: exportSubfolder) }
         }
+        // Beside the export's importer, not inside its view: on the button, iOS never presented it
+        // (and the button scrolls away with the header).
+        .background {
+            Color.clear
+                .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .png, .jpeg, .heic], allowsMultipleSelection: true) { result in
+                    switch result {
+                    case .success(let urls):
+                        guard !urls.isEmpty else { return }
+                        // An unmatched upload has no account. Make it visible even when
+                        // the dialog was opened from Postbox or a filtered account.
+                        model.documentsScope = .receipts
+                        model.documentsAccountFilter = nil
+                        model.documentsConnectionFilter = nil
+                        search = ""
+                        unlinkedOnly = false
+                        // a new receipt is stored as read, with today's type and year: no filter may hide it
+                        unseenOnly = false
+                        typeFilter = nil
+                        yearFilter = nil
+                        model.dropAnywhere(urls)
+                    case .failure(let error):
+                        guard (error as NSError).code != NSUserCancelledError else { return }
+                        model.showError(String(localized: "Beleg konnte nicht importiert werden"), error.localizedDescription)
+                    }
+                }
+        }
         .confirmationDialog("Beleg löschen?", isPresented: Binding(get: { docToDelete != nil }, set: { if !$0 { docToDelete = nil } }), presenting: docToDelete) { d in
             Button("Löschen", role: .destructive) { model.deleteDocument(d) }
             Button("Abbrechen", role: .cancel) {}
@@ -436,33 +420,85 @@ struct DocumentsView: View {
         }
     }
 
+    /// Heading, filters, actions and the number of documents.
+    private func header(_ docs: [DocumentInfo], found: Int, _ choices: TypeAndYearChoices) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.documentsScope.heading).appFont(.title2, weight: .semibold)
+                Text(model.documentsScope.description)
+                    .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            #if os(iOS)
+            DocumentsScopePicker(compact: isCompact)
+            #endif
+            VStack(alignment: .leading, spacing: 10) {
+                if isCompact {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Group {
+                            connectionPicker
+                            accountPicker
+                        }
+                        .labelsHidden()
+                        if choices.showsType || choices.showsYear {
+                            let pickers = Group {
+                                if choices.showsType { typePicker(choices.types).fixedSize() }
+                                if choices.showsYear { yearPicker(choices.years).fixedSize() }
+                            }
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 12) { pickers }
+                                VStack(alignment: .leading, spacing: 8) { pickers }
+                            }
+                            .labelsHidden()
+                        }
+                        unseenToggle
+                        unlinkedToggle
+                    }
+                } else {
+                    filterRows(choices)
+                }
+                documentsOffHint
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        importButton
+                        Spacer(minLength: 12)
+                        exportButton(docs)
+                        moreMenu(docs)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        importButton
+                        HStack(spacing: 8) {
+                            exportButton(docs)
+                            moreMenu(docs)
+                        }
+                    }
+                }
+                Text(docs.count == found ? String(localized: "\(docs.count) Dokumente")
+                     : String(localized: "\(docs.count) von \(found) Dokumenten"))
+                    .appFont(.caption).foregroundStyle(Theme.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        if !isFiltered {
+            ContentUnavailableView("Keine Belege", systemImage: "doc.on.doc", description: Text("Belege kommen beim Abruf (Trade Republic, comdirect-Postbox, FinTS-Kontoauszug) oder per Drag & Drop."))
+        } else {
+            ContentUnavailableView {
+                Label("Keine passenden Dokumente", systemImage: "doc.on.doc")
+            } description: {
+                Text("Für diese Auswahl wurden keine Dokumente gefunden.")
+            } actions: {
+                Button("Alle Dokumente anzeigen") { showAllDocuments() }
+            }
+        }
+    }
+
     private var importButton: some View {
         Button { importing = true } label: {
             Label("Beleg hinzufügen …", systemImage: "plus.circle")
                 .lineLimit(isCompact ? nil : 1).fixedSize(horizontal: !isCompact, vertical: true)
         }
         .help("PDFs oder Fotos auswählen und einem passenden Umsatz zuordnen")
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .png, .jpeg, .heic], allowsMultipleSelection: true) { result in
-            switch result {
-            case .success(let urls):
-                guard !urls.isEmpty else { return }
-                // An unmatched upload has no account. Make it visible even when
-                // the dialog was opened from Postbox or a filtered account.
-                model.documentsScope = .receipts
-                model.documentsAccountFilter = nil
-                model.documentsConnectionFilter = nil
-                search = ""
-                unlinkedOnly = false
-                // a new receipt is stored as read, with today's type and year: no filter may hide it
-                unseenOnly = false
-                typeFilter = nil
-                yearFilter = nil
-                model.dropAnywhere(urls)
-            case .failure(let error):
-                guard (error as NSError).code != NSUserCancelledError else { return }
-                model.showError(String(localized: "Beleg konnte nicht importiert werden"), error.localizedDescription)
-            }
-        }
     }
 
     /// Without a filter: the whole collection. With one (account, type, year, search, "ohne Umsatz"):
