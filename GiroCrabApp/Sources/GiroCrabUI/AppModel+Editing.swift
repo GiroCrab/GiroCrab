@@ -18,6 +18,12 @@ extension AppModel {
         return selectedBookingIDs.compactMap(self.booking(withID:))
     }
 
+    /// Keep a booking's category source intact when it already has the chosen category.
+    func setCategoryFromPicker(_ categoryID: Int64?, for booking: Booking) {
+        let changed = categorizeTargets(for: booking).filter { $0.categoryId != categoryID }
+        setCategory(categoryID, for: changed)
+    }
+
     /// Bookings dragged onto a sidebar category (#366); false when `items`
     /// carry no loaded booking.
     func dropBookings(_ items: [String], onCategory categoryID: Int64) -> Bool {
@@ -132,9 +138,10 @@ extension AppModel {
                     )
                 }
                 guard !Task.isCancelled, let self, self.vault === vault else { return }
+                self.categoryRefreshTask = nil // done (a newer edit cancels this one first)
                 if generation == self.listGeneration {
                     self.dropPendingPage()
-                    self.publish(r.page)
+                    self.publish(r.page, filter: filter)
                 }
                 let (nowFrom, nowTo) = self.periodRange
                 let nowSums = self.categorySumFilter

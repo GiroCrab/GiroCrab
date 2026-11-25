@@ -19,11 +19,36 @@ use crate::schema::has_table;
 pub(crate) const MIN_BACKUP_PASSWORD_CHARS: usize = 8;
 
 /// Settings that belong to this device, not to the data: where logins are sent,
-/// stored PINs and the unattended-fetch interval. A restore keeps this device's
-/// values and drops the backup's, so a backup file can never repoint a bank
-/// endpoint that later receives a PIN.
+/// stored PINs, the unattended-fetch interval and the local API share (#136). A
+/// restore keeps this device's values and drops the backup's, so a backup file can
+/// never repoint a bank endpoint that later receives a PIN, nor bring back a local
+/// API key that was revoked or replaced after the backup was written.
 const DEVICE_SETTINGS_WHERE: &str = "key LIKE 'fints.url.%' OR key LIKE 'fints.tan_medium.%' \
-     OR key LIKE 'pin.%' OR key = 'sync.psd2_auto_hours'";
+     OR key LIKE 'pin.%' OR key = 'sync.psd2_auto_hours' OR key = 'local_api.scope'";
+
+#[cfg(test)]
+#[test]
+fn restore_keeps_the_devices_local_api_key() {
+    let dir = std::env::temp_dir().join(format!("gc-restore-api-key-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let v = Vault::open(dir.join("v.girocrab").display().to_string(), vec![7; 32]).unwrap();
+    v.create_local_api_token().unwrap();
+    let revoked = v.local_api_scope().unwrap().token_sha256;
+    let backup = dir.join("old.backup").display().to_string();
+    v.write_backup(backup.clone(), "password-123".into())
+        .unwrap();
+    v.create_local_api_token().unwrap();
+    let live = v.local_api_scope().unwrap().token_sha256;
+    assert_ne!(revoked, live);
+    v.restore_backup(backup, "password-123".into()).unwrap();
+    let after = v.local_api_scope().unwrap().token_sha256;
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        after, live,
+        "an older backup must not bring back a revoked key"
+    );
+}
 
 fn not_a_backup() -> CoreError {
     CoreError::invalid(tr("Falsches Passwort oder keine GiroCrab-Sicherung."))

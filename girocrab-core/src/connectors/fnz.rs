@@ -14,6 +14,7 @@ use crate::{
     vault::Vault,
 };
 
+pub(crate) mod portal;
 mod snapshot;
 
 fn invalid(message: &'static str) -> CoreError {
@@ -142,6 +143,27 @@ fn document_account(v: &Value) -> CoreResult<&str> {
     field(v, "/depot/externalDepotNumber/externalDepotNumber")
 }
 
+/// Postbox title: subject, else the document kind, else a generic name.
+fn document_title(v: &Value) -> String {
+    v["subject"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| v["documentKindText"].as_str())
+        .unwrap_or("FNZ Dokument")
+        .to_string()
+}
+
+/// `YYYY-MM-DD` of the mailbox date, or "" when the portal sends none.
+fn document_date(v: &Value) -> String {
+    v["receivedDate"]
+        .as_str()
+        .unwrap_or_default()
+        .get(..10)
+        .filter(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).is_ok())
+        .unwrap_or_default()
+        .to_string()
+}
+
 impl Vault {
     fn check_fnz(&self, connection_id: i64) -> CoreResult<()> {
         if self.portal_connection(connection_id)?.0 != ConnectorKind::Fnz {
@@ -234,17 +256,8 @@ impl Vault {
             .map_err(|_| invalid("FNZ: Ungültige Dokumentdaten."))?;
         let id = field(&doc, "/id")?;
         let account_ref = document_account(&doc)?;
-        let title = doc["subject"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| doc["documentKindText"].as_str())
-            .unwrap_or("FNZ Dokument");
-        let date = doc["receivedDate"]
-            .as_str()
-            .unwrap_or_default()
-            .get(..10)
-            .filter(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).is_ok())
-            .unwrap_or_default();
+        let title = document_title(&doc);
+        let date = document_date(&doc);
         let db = self.db()?;
         let (account_id, excluded) = db.query_row(
             "SELECT id, archived_unix IS NOT NULL OR deleted_ms IS NOT NULL FROM accounts WHERE connection_id = ?1 AND external_ref = ?2",
@@ -260,38 +273,15 @@ impl Vault {
             &db,
             None,
             Some(account_id),
-            title,
-            crate::documents::account_document_type(title),
+            &title,
+            crate::documents::account_document_type(&title),
             "application/pdf",
             &name,
             &bytes,
             &source,
-            date,
+            &date,
         )?
         .is_some())
-    }
-}
-
-pub struct WebOnlyConnector;
-
-#[async_trait::async_trait]
-impl super::BankConnector for WebOnlyConnector {
-    async fn begin(&mut self, _ctx: &super::ConnectContext) -> CoreResult<super::Phase> {
-        Err(CoreError::BrowserLoginRequired {
-            message: tr("Bitte bei FNZ anmelden und in FNZsecure freigeben.").into(),
-        })
-    }
-    async fn respond(
-        &mut self,
-        ctx: &super::ConnectContext,
-        _response: super::ChallengeResponse,
-    ) -> CoreResult<super::Phase> {
-        self.begin(ctx).await
-    }
-    async fn fetch(&mut self, _ctx: &super::ConnectContext) -> CoreResult<FetchResult> {
-        Err(CoreError::BrowserLoginRequired {
-            message: tr("Bitte im FNZ-Browserfenster abrufen.").into(),
-        })
     }
 }
 

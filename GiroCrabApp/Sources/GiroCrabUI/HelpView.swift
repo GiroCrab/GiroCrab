@@ -167,7 +167,7 @@ enum HelpCatalog {
 
                 **Vorschläge aus der Historie:** Hat eine Buchung keine Kategorie, schlägt ihre Kategorie-Karte die Kategorie vor, die andere Buchungen beim selben Händler haben. Hat die Buchung eine IBAN, zählen zuerst die Buchungen an dieselbe IBAN; eine IBAN allein entscheidet nie. Hat der Händler noch gar keine Historie, zählen Buchungen mit ähnlichem Text (Empfänger, Verwendungszweck, Buchungstext); dafür braucht es mindestens zwei ähnliche Buchungen. Grundlage sind Kategorien, die du selbst gewählt oder per Import übernommen hast, sowie geprüfte Regel-Buchungen (sie zählen weniger). Ein Vorschlag braucht mindestens zwei passende Buchungen; berechnet wird alles auf dem Gerät. *Übernehmen* setzt die Kategorie, *Als Regel …* macht daraus eine Regel. In der Buchungsliste steht der Vorschlag blass neben „Ohne Kategorie“; im Zeilenmenü unter *Kategorie* lässt er sich direkt übernehmen. Solange du einen Vorschlag nicht übernimmst, zählt er in keiner Summe und keinem Budget.
 
-                **Splitbuchungen:** Eine Buchung lässt sich auf mehrere Kategorien aufteilen (z. B. Supermarkt-Einkauf in Lebensmittel und Haushalt). Die Summe der Teile muss dem Betrag entsprechen.
+                **Splitbuchungen:** Eine Buchung lässt sich auf mehrere Kategorien aufteilen (z. B. Supermarkt-Einkauf in Lebensmittel und Haushalt): per Rechtsklick › *Umsatz aufteilen* oder in der Kategorie-Karte. Die erste Zeile behält automatisch den Rest. In die anderen Zeilen kommt ein Betrag (`43,71`) oder ein Anteil (`50 %`, `33,3 %`). Die Schaltflächen *7 %*, *19 %* und *50 %* tragen einen Anteil mit einem Klick ein; im Kontextmenü öffnen dieselben Anteile den Dialog schon ausgefüllt. Ein negativer Teil bucht die anderen gegen, etwa bei einer Erstattung.
 
                 **Interne Umbuchungen** zwischen eigenen Konten werden erkannt und zählen nicht als Einnahme oder Ausgabe.
 
@@ -188,13 +188,13 @@ enum HelpCatalog {
 
                 **Suggestions from history:** When a booking has no category, its category card suggests the category that other bookings at the same merchant have. If the booking has an IBAN, bookings to the same IBAN count first; an IBAN alone never decides. If the merchant has no history at all, bookings with similar text (payee, purpose, booking text) count; that needs at least two similar bookings. They are based on categories you picked yourself or brought in by an import, and on checked rule bookings (which count less). A suggestion needs at least two matching bookings; everything is computed on the device. *Apply* sets the category, *Create Rule…* turns it into a rule. In the booking list the suggestion appears dimmed next to “Uncategorised”; the row menu's *Category* submenu applies it directly. Until you apply a suggestion, it counts in no sum and no budget.
 
-                **Split bookings:** A booking can be divided across several categories (e.g. a supermarket trip into groceries and household). The parts must add up to the amount.
+                **Split bookings:** A booking can be divided across several categories (e.g. a supermarket trip into groceries and household): right-click › *Split booking* or use the category card. The first row keeps the rest automatically. The other rows take an amount (`43.71`) or a share (`50%`, `33.3%`). The *7%*, *19%* and *50%* buttons enter a share in one click; in the context menu the same shares open the dialog already filled in. A negative part offsets the others, e.g. for a refund.
 
                 **Internal transfers** between your own accounts are detected and do not count as income or expense.
 
                 **Search:** ⌘F focuses the search field; it understands the same expressions as rules.
                 """],
-            keywords: ["regel", "rule", "kategorie", "category", "vorschlag", "suggestion", "historie", "history", "split", "umbuchung", "transfer", "suche", "search", "name:", "purpose:", "iban", "amount", "betrag", "regex"]),
+            keywords: ["regel", "rule", "kategorie", "category", "vorschlag", "suggestion", "historie", "history", "split", "aufteilen", "anteil", "share", "prozent", "percent", "umbuchung", "transfer", "suche", "search", "name:", "purpose:", "iban", "amount", "betrag", "regex"]),
         HelpTopic(
             id: "vault", icon: "lock.shield",
             title: ["de": "Tresor, Datenschutz & iCloud-Sync", "en": "Vault, privacy & iCloud sync"],
