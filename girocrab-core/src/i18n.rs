@@ -793,6 +793,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Bank verlangt für {0} eine TAN-Eingabe, die während des Abrufs nicht möglich ist. Bitte ein App-Verfahren der Bank (Freigabe in der Banking-App) verwenden." => {
             "The bank requires a TAN for {0}, which can’t be entered during a sync. Please use one of the bank’s app methods (approval in the banking app)."
         }
+        "Die Bank verlangt für {0} eine TAN. Automatische Abrufe fragen nicht danach, ein selbst gestarteter Abruf schon." => {
+            "The bank requires a TAN for {0}. Automatic syncs do not ask for it; a sync you start does."
+        }
         "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen." => {
             "Banks usually hand out the last 90 days of bookings without a TAN. For a new account, the period of the first fetch can be set to 90 days in Settings."
         }

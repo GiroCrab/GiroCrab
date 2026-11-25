@@ -27,10 +27,22 @@ pub(super) fn approval_pending(reply: &BankReply) -> bool {
         && (reply.has("3956") || !reply.codes.iter().any(|c| c.0.starts_with('0')))
 }
 
+/// Code of the error `request` returns without sending anything: the bank wanted a TAN
+/// or an approval for this job the last time (`sca_seen`) and an automatic sync does not
+/// ask for one (#1828). Not a bank code; no bank message uses it.
+pub(super) const SCA_NOT_ASKED: &str = "SCA";
+
+/// The bank asks for a TAN (0030) or an app approval (3955, still open: 3956) in
+/// `reply`: what it answered is no acceptance (#1828).
+pub(super) fn demands_sca(reply: &BankReply) -> bool {
+    reply.has("0030") || reply.has("3955") || reply.has("3956")
+}
+
 /// `request` failed because the bank wanted a TAN (0030) or an app approval
 /// that was not given in time (3956): asking again sends the next one (#1083).
+/// Also when `request` did not send the job at all ([`SCA_NOT_ASKED`]).
 pub(super) fn tan_demanded(e: &CoreError) -> bool {
-    matches!(e, CoreError::Bank { code, .. } if matches!(code.as_str(), "0030" | "3956"))
+    matches!(e, CoreError::Bank { code, .. } if matches!(code.as_str(), "0030" | "3956" | SCA_NOT_ASKED))
 }
 
 /// Statements this far back are handed out without a TAN (PSD2, RTS art. 10);
@@ -398,6 +410,7 @@ impl FinTsConnector {
         self.rah_stream = None;
         self.dialog_id = "0".into();
         self.msg_no = 1;
+        self.sca_in_dialog = false;
     }
 
     pub(super) fn hkidn(&self, ctx: &ConnectContext, n: u32) -> Vec<u8> {
@@ -638,6 +651,16 @@ impl FinTsConnector {
         if ctx.cancelled.is_set() {
             return Err(CoreError::SessionClosed);
         }
+        // #1828: the bank wanted a TAN for this job the last time; an automatic sync does not ask
+        if ctx.prompt.is_none() && self.st.sca_seen.contains(seg_id) {
+            return Err(CoreError::Bank {
+                code: SCA_NOT_ASKED.into(),
+                message: trf(
+                    "Die Bank verlangt für {0} eine TAN. Automatische Abrufe fragen nicht danach, ein selbst gestarteter Abruf schon.",
+                    &[&seg_id],
+                ),
+            });
+        }
         let prompt = ctx.prompt.as_ref();
         let sec = self.sec();
         let mut payload = vec![segment];
@@ -645,16 +668,22 @@ impl FinTsConnector {
             payload.push(self.hktan_process4(4, seg_id));
         }
         let mut reply = self.send(ctx, payload, &sec, None).await?;
-        let wants_sca = reply.has("3955") || reply.has("3956") || reply.has("0030");
+        let wants_sca = self.learn_sca(seg_id, &reply);
         if let Some(prompt) = prompt.filter(|_| wants_sca) {
             // only this reply's task counts, not one left from the login
             self.task_reference = None;
             if let Some(question) = self.challenge_from(&reply)? {
                 let reply = self.ask_during_fetch(ctx, prompt, seg_id, question).await?;
                 reply.check()?;
+                // the TAN or the approval was accepted (a skip or a refusal returned above),
+                // unless the bank asks for another one
+                if !demands_sca(&reply) {
+                    self.sca_in_dialog = true;
+                }
                 return Ok(reply);
             }
         }
+        let mut approval_given = false;
         if reply.has("3955") || reply.has("3956") {
             let _ = self.challenge_from(&reply)?;
             let task = self.task_reference.clone().ok_or_else(|| {
@@ -683,6 +712,7 @@ impl FinTsConnector {
                     ),
                 });
             }
+            approval_given = true;
         } else if reply.has("0030") {
             return Err(CoreError::Bank {
                 code: "0030".into(),
@@ -693,7 +723,30 @@ impl FinTsConnector {
             });
         }
         reply.check()?;
+        // the app approval was given and the bank accepted it: a status reply that is no
+        // longer pending may still ask for a TAN (0030), that is no acceptance
+        if approval_given && !demands_sca(&reply) {
+            self.sca_in_dialog = true;
+        }
         Ok(reply)
+    }
+
+    /// #1828: what the next automatic sync leaves out, learned from the bank's `reply` to
+    /// `seg_id`; returns whether the reply demands a TAN or an app approval. After an approval
+    /// in this dialog (a later page, another job) a reply without SCA says nothing about the
+    /// next sync, nor does one for another account when the job asked for SCA in this fetch.
+    pub(super) fn learn_sca(&mut self, seg_id: &str, reply: &BankReply) -> bool {
+        let wants_sca = demands_sca(reply);
+        if wants_sca {
+            self.sca_asked.insert(seg_id.to_string());
+            self.sca_seen_changed |= self.st.sca_seen.insert(seg_id.to_string());
+        } else if reply.errors().is_empty()
+            && !self.sca_in_dialog
+            && !self.sca_asked.contains(seg_id)
+        {
+            self.sca_seen_changed |= self.st.sca_seen.remove(seg_id);
+        }
+        wants_sca
     }
 
     /// The bank wants a TAN or an app approval for `seg_id` during the fetch

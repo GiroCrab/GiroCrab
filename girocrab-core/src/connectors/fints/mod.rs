@@ -70,8 +70,8 @@ use serde::{Deserialize, Serialize};
 
 use self::accounts::{account_label, kind_from_code};
 use self::dialog::{
-    approval_pending, has_so_prefix, is_comdirect, period_hint, tan_beyond_free_period,
-    tan_demanded,
+    approval_pending, demands_sca, has_so_prefix, is_comdirect, period_hint,
+    tan_beyond_free_period, tan_demanded,
 };
 use self::syntax::Segment;
 use super::{
@@ -105,6 +105,10 @@ struct FinTsState {
     versions: HashMap<String, Vec<u32>>,
     /// HKxxx -> TAN required (HIPINS).
     tan_required: HashMap<String, bool>,
+    /// Jobs the bank answered with a TAN demand (0030) or an app approval (3955/3956) the last time
+    /// they were sent outside an approved dialog (#1828). Automatic syncs leave them out.
+    #[serde(default)]
+    sca_seen: std::collections::BTreeSet<String>,
     /// camt descriptors from HICAZS, best first.
     #[serde(default)]
     camt_formats: Vec<String>,
@@ -296,6 +300,19 @@ pub struct FinTsConnector {
     /// A statement request still had pages left after the last one GiroCrab
     /// reads: the list is not complete (#1043).
     truncated_statements: bool,
+    /// A TAN or an approval the bank asked for in this dialog was given and accepted (not when
+    /// it was only asked, skipped or refused): a later reply without SCA (a further page,
+    /// another job) says nothing about the next sync (#1828).
+    sca_in_dialog: bool,
+    /// `sca_seen` changed during this connector's requests: a fetch that fails still hands the
+    /// state back (`state_after_failed_fetch`, #1828).
+    sca_seen_changed: bool,
+    /// Jobs that demanded a TAN or an approval during this connector's requests: another
+    /// account's reply without SCA does not forget them in the same fetch (#1828).
+    sca_asked: HashSet<String>,
+    /// The state as `begin` read it from storage: a failed fetch keeps only the receipt codes
+    /// found here (codes of dropped PDFs must not be stored, #1828).
+    stored: FinTsState,
     /// The order was handed to the bank: from here on, an unclear reply or a
     /// lost connection means "result unknown", never "not executed".
     order_submitted: bool,
@@ -379,6 +396,10 @@ impl FinTsConnector {
             tan_medium_override: String::new(),
             partial_statements: false,
             truncated_statements: false,
+            sca_in_dialog: false,
+            sca_seen_changed: false,
+            sca_asked: HashSet::new(),
+            stored: FinTsState::default(),
             order_submitted: false,
             result: TransferResult::default(),
             order: None,
@@ -450,6 +471,7 @@ impl BankConnector for FinTsConnector {
             });
         }
         if let Ok(st) = ctx.state.decode::<FinTsState>() {
+            self.stored = st.clone();
             self.st = st;
         }
         // comdirect: log in under the bank code found last time (the address
@@ -508,13 +530,21 @@ impl BankConnector for FinTsConnector {
                     let c = self.challenge.clone().ok_or(CoreError::SessionClosed)?;
                     return Ok(Phase::Pending(c));
                 }
-                self.after_approval(ctx, reply).await
+                // accepted by the bank (a refusal returns below, a new TAN or approval
+                // demanded is none): this dialog is approved (#1828)
+                let accepted = !demands_sca(&reply);
+                let phase = self.after_approval(ctx, reply).await?;
+                self.sca_in_dialog |= accepted;
+                Ok(phase)
             }
             ChallengeResponse::Code(tan) => {
                 self.tan_for_next = None;
                 payload.push(self.hktan_with_tan(n, &task));
                 let reply = self.send(ctx, payload, &sec, Some(tan.expose())).await?;
-                self.after_approval(ctx, reply).await
+                let accepted = !demands_sca(&reply);
+                let phase = self.after_approval(ctx, reply).await?;
+                self.sca_in_dialog |= accepted;
+                Ok(phase)
             }
         }
     }
@@ -887,6 +917,20 @@ impl BankConnector for FinTsConnector {
         self.end_dialog(ctx, &sec).await;
     }
 
+    /// A bank that wants a TAN for every job fails the whole fetch (nothing was read), and the
+    /// next automatic sync would send the same jobs again: the jobs this fetch found out about
+    /// are kept (#1828). Receipt codes that are new since `begin` are dropped: their statements'
+    /// PDFs went with the error, so they must never be acknowledged (HKQTG).
+    fn state_after_failed_fetch(&self) -> Option<SecretJson> {
+        if !self.sca_seen_changed {
+            return None;
+        }
+        let mut kept = self.st.clone();
+        kept.pending_receipts
+            .retain(|code| self.stored.pending_receipts.contains(code));
+        SecretJson::encode(&kept).ok()
+    }
+
     async fn send_transfer(
         &mut self,
         ctx: &ConnectContext,
@@ -957,3 +1001,67 @@ impl BankConnector for FinTsConnector {
 mod invariant_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod sca_seen_tests {
+    use super::*;
+
+    fn reply(codes: &[&str]) -> BankReply {
+        BankReply {
+            segments: Vec::new(),
+            codes: codes
+                .iter()
+                .map(|c| (c.to_string(), Some(3), String::new(), Vec::new()))
+                .collect(),
+            sent: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_failed_fetch_keeps_the_learned_tan_jobs_but_no_new_receipt_codes() {
+        let mut c = FinTsConnector::new("12345678");
+        c.stored.pending_receipts = vec!["aa".into()];
+        c.st = c.stored.clone();
+        // a PDF page read before the error: its receipt code went into the state
+        c.st.pending_receipts.push("bb".into());
+        assert!(c.learn_sca("HKCAZ", &reply(&["0030"])));
+        let kept: FinTsState = c
+            .state_after_failed_fetch()
+            .expect("sca_seen changed")
+            .decode::<FinTsState>()
+            .unwrap();
+        assert!(kept.sca_seen.contains("HKCAZ"));
+        assert_eq!(kept.pending_receipts, vec!["aa".to_string()]);
+    }
+
+    #[test]
+    fn a_failed_fetch_that_learned_nothing_stores_nothing() {
+        let c = FinTsConnector::new("12345678");
+        assert!(c.state_after_failed_fetch().is_none());
+    }
+
+    #[test]
+    fn a_reply_without_sca_forgets_a_job_from_an_earlier_fetch() {
+        let mut c = FinTsConnector::new("12345678");
+        c.st.sca_seen.insert("HKSAL".into());
+        assert!(!c.learn_sca("HKSAL", &reply(&["0020"])));
+        assert!(!c.st.sca_seen.contains("HKSAL"));
+        assert!(c.sca_seen_changed);
+    }
+
+    #[test]
+    fn another_account_without_sca_does_not_forget_a_job_that_asked_in_this_fetch() {
+        let mut c = FinTsConnector::new("12345678");
+        assert!(c.learn_sca("HKCAZ", &reply(&["0030"])));
+        assert!(!c.learn_sca("HKCAZ", &reply(&["0020"])));
+        assert!(c.st.sca_seen.contains("HKCAZ"));
+    }
+
+    #[test]
+    fn a_status_reply_that_asks_for_a_tan_again_is_no_approval() {
+        // ends the polling (not pending) but must not mark the dialog approved
+        let r = reply(&["0010", "0030"]);
+        assert!(!dialog::approval_pending(&r));
+        assert!(dialog::demands_sca(&r));
+    }
+}
