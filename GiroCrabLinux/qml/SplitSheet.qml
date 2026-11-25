@@ -35,58 +35,56 @@ Sheet {
     padding: 22
     onClosed: { AppModel.splitBooking = null; parts = [] }
 
-    readonly property real total: booking ? Math.abs(booking.amount_cents) : 0
-    readonly property int sign: booking && booking.amount_cents < 0 ? -1 : 1
-    // Amounts are entered in the booking's direction: a negative part counter-books the others
-    // (+59 = +200 and -141, #427). The first part takes what is left; no part may be 0 (SplitMath).
-    /// A part split off as typed: an amount or a share ("50 %"); null when unreadable. An empty
-    /// field counts as 0, so the rest shows the whole amount until something is typed.
-    function cents(p) { return String(p.amount).trim() === "" ? 0 : AppModel.splitPartCents(p.amount, total) }
-    readonly property var splitOff: { revision; return parts.slice(1).map(p => cents(p)) }
-    /// What the first part keeps; null while a part is unreadable.
-    readonly property var rest: splitOff.some(c => c === null) ? null : total - splitOff.reduce((s, c) => s + c, 0)
-    /// The rest is below 0 and counter-books the other parts: allowed (#427), but computed
-    /// (#1663), so a typo gets there unnoticed. Warn, never block.
-    readonly property bool restIsNegative: rest !== null && rest < 0
-    readonly property bool valid: ready && parts.length >= 2 && rest !== null && rest !== 0 && splitOff.every(c => c !== 0)
-    /// Why "Speichern" is greyed out (#383): say so instead of leaving it silent; nothing while
-    /// nothing is typed yet (SplitDraft.problem).
-    readonly property string problem: {
+    property string bookingCents: ""
+    readonly property bool expense: bookingCents.startsWith("-")
+    readonly property var draft: {
         revision
-        if (valid || parts.length === 0 || error !== "") return ""
-        if (parts.slice(1).every(p => String(p.amount).trim() === "")) return ""
-        return parts.slice(1).some(p => String(p.amount).trim() !== "" && cents(p) === null)
-            ? qsTr("Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“.")
-            : qsTr("Jeder Teil braucht einen Betrag ungleich 0.")
+        return ready ? AppModel.splitDraft(bookingCents, parts.slice(1).map(p => p.amount)) : null
     }
-    function presetAmount() {
-        const percent = AppModel.splitPresetPercent
-        const share = percent === null ? null : AppModel.splitShareCents(total, percent, 100)
-        return share === null ? "" : Fmt.plain(share)
+    readonly property bool valid: draft !== null && draft.amounts_to_save !== null
+    readonly property string problem: {
+        if (draft === null || draft.problem === null || error !== "") return ""
+        return draft.problem === "ZeroPart"
+            ? qsTr("Jeder Teil braucht einen Betrag ungleich 0.")
+            : qsTr("Teilbeträge sind Beträge wie „43,71“ oder Anteile wie „50 %“.")
+    }
+    // Format exact cent strings from Rust. Ordinary values use the standard locale formatter.
+    function amountText(cents, reverseSign) {
+        const negative = cents.startsWith("-")
+        const digits = (negative ? cents.slice(1) : cents).padStart(3, "0")
+        const sign = negative !== reverseSign && cents !== "0" ? "−" : ""
+        if (digits.length <= 15) return Fmt.plain(Number(digits) * (sign ? -1 : 1))
+        return sign + digits.slice(0, -2) + Fmt.locale.decimalPoint + digits.slice(-2)
+    }
+    function presetText(percent) {
+        const cents = percent === null ? null : AppModel.splitShareCents(bookingCents, percent, 100)
+        return cents === null ? "" : amountText(cents, expense)
     }
     function part(categoryID, amount, note, uuid) { return { uid: nextUid++, uuid: uuid || null, categoryID: categoryID, amount: amount, note: note } }
 
     onAboutToShow: {
-        error = ""; hasSplits = false; storedPartsDiffer = false; ignoredShare = ""; parts = []; ready = false
+        ready = false; error = ""; hasSplits = false; storedPartsDiffer = false; ignoredShare = ""; parts = []
         const b = booking
-        AppModel.splits(b, existing => {
+        AppModel.splitEditorData(b, data => {
             if (sheet.booking !== b) return
-            if (existing === null) {
+            if (data === null) {
                 // never offer a fresh split over one that could not be read
                 error = qsTr("Die bestehende Aufteilung konnte nicht geladen werden.")
                 return
             }
+            bookingCents = data.booking_cents
+            const existing = data.parts
             hasSplits = existing.length > 0
             // the share picked in the row menu (#1663) goes into the second part
             const loaded = hasSplits
-                ? existing.map(s => part(s.category_id, Fmt.plain(sign * s.amount_cents), s.note, s.uuid))
-                : [part(b.category_id, "", ""), part(null, presetAmount(), "")]
+                ? existing.map(s => part(s.category_id, amountText(s.amount_cents, expense), s.note, s.uuid))
+                : [part(b.category_id, "", ""), part(null, presetText(AppModel.splitPresetPercent), "")]
             // before `parts`: the Repeater builds the rows (and reads focusUid) on assignment
             if (!hasSplits) focusUid = loaded[1].uid
             parts = loaded
             ready = true
             if (hasSplits) {
-                storedPartsDiffer = existing.reduce((s, x) => s + sign * x.amount_cents, 0) !== total
+                storedPartsDiffer = data.stored_parts_differ
                 const percent = AppModel.splitPresetPercent
                 ignoredShare = percent === null ? "" : qsTr("%1 %").arg(percent)
             }
@@ -94,8 +92,8 @@ Sheet {
     }
     function save() {
         if (!valid) return
-        const amounts = [rest].concat(splitOff)
-        const inputs = parts.map((p, i) => ({ uuid: p.uuid, category_id: p.categoryID, amount_cents: sign * amounts[i], note: p.note }))
+        const amounts = draft.amounts_to_save
+        const inputs = parts.map((p, i) => ({ uuid: p.uuid, category_id: p.categoryID, amount_cents: amounts[i], note: p.note }))
         error = AppModel.saveSplits(inputs, booking)
         if (error === "") close()
     }
@@ -105,8 +103,7 @@ Sheet {
         let index = parts.findIndex(p => p.uid === pickUid)
         if (index < 1) index = parts.length - 1
         if (index < 1) return
-        const share = AppModel.splitShareCents(total, percent, 100)
-        parts[index].amount = share === null ? "" : Fmt.plain(share)
+        parts[index].amount = presetText(percent)
         // rebuild the rows: the amount field shows the new text
         parts = parts.slice()
         revision++
@@ -115,10 +112,10 @@ Sheet {
     /// anything else stays. Returns the field's new text.
     function settle(index) {
         const p = parts[index]
-        if (!p || !String(p.amount).includes("%")) return null
-        const c = AppModel.splitPartCents(p.amount, total)
-        if (c === null) return null
-        p.amount = Fmt.plain(c)
+        if (!p || draft === null || !p.amount.includes("%")) return null
+        const cents = draft.split_off_cents[index - 1]
+        if (cents === null || cents === undefined) return null
+        p.amount = amountText(cents, expense)
         revision++
         return p.amount
     }
@@ -174,13 +171,13 @@ Sheet {
                 TextField {
                     visible: row.isRest
                     Layout.preferredWidth: 120 * Theme.textScale   // holds "−1.234.567,89" at every text size
-                    text: sheet.rest === null ? "–" : Fmt.plain(sheet.rest)
+                    text: sheet.draft === null || sheet.draft.rest_cents === null ? "–" : sheet.amountText(sheet.draft.rest_cents, sheet.expense)
                     readOnly: true
                     enabled: false
                     horizontalAlignment: TextInput.AlignRight
                     font.features: { "tnum": 1 }
                     Accessible.name: qsTr("Rest")
-                    Binding on color { when: sheet.restIsNegative; value: Theme.warning }
+                    Binding on color { when: sheet.draft !== null && sheet.draft.rest_is_negative; value: Theme.warning }
                     HoverHandler { id: restHover }
                     ToolTip.visible: restHover.hovered; ToolTip.delay: 600
                     ToolTip.text: qsTr("Bekommt automatisch, was die anderen Teile übrig lassen")
@@ -248,7 +245,7 @@ Sheet {
             font.pixelSize: Theme.callout + 1; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
         }
         Text {
-            visible: sheet.restIsNegative && sheet.error === ""
+            visible: sheet.draft !== null && sheet.draft.rest_is_negative && sheet.error === ""
             text: qsTr("Der Rest in der ersten Zeile ist negativ und bucht die anderen Teile gegen. Ist das nicht gewollt, bitte die Beträge prüfen.")
             font.pixelSize: Theme.callout + 1; color: Theme.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true
         }

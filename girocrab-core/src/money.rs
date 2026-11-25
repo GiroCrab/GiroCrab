@@ -41,8 +41,21 @@ pub fn share_cents(total_cents: i64, numerator: i64, denominator: i64) -> Option
 /// "33,3%"), rounded toward zero like [`share_cents`]. A percentage may carry
 /// any number of decimals; its lone separator is always the decimal one.
 pub fn parse_split_part(text: &str, total_cents: i64) -> CoreResult<i64> {
+    parse_split_part_with_direction(text, total_cents, false)
+}
+
+/// Read editor input in ledger sign, including the full magnitude of an i64::MIN expense.
+pub(crate) fn parse_split_part_in_ledger_sign(text: &str, booking_cents: i64) -> CoreResult<i64> {
+    parse_split_part_with_direction(text, booking_cents, booking_cents < 0)
+}
+
+fn parse_split_part_with_direction(
+    text: &str,
+    total_cents: i64,
+    reverse_amount: bool,
+) -> CoreResult<i64> {
     let Some(percent) = text.trim().strip_suffix('%') else {
-        return parse_cents(text);
+        return parse_text(text, false, reverse_amount);
     };
     let invalid = || CoreError::InvalidInput {
         message: trf("Kein gültiger Anteil: „{0}“", &[&text]),
@@ -70,7 +83,7 @@ pub fn parse_split_part(text: &str, total_cents: i64) -> CoreResult<i64> {
 ///
 /// Grouped digits must come in groups of three.
 pub fn parse_cents(text: &str) -> CoreResult<i64> {
-    parse_text(text, false)
+    parse_text(text, false, false)
 }
 
 /// Like [`parse_cents`], but for prices and depot values: a lone separator is
@@ -78,10 +91,10 @@ pub fn parse_cents(text: &str) -> CoreResult<i64> {
 /// ("55,550"), and extra decimals round half away from zero instead of being
 /// rejected ("412.3871" -> 41239, "1.234,5678" -> 123457). Bookings stay strict.
 pub fn parse_cents_rounded(text: &str) -> CoreResult<i64> {
-    parse_text(text, true)
+    parse_text(text, true, false)
 }
 
-fn parse_text(text: &str, round: bool) -> CoreResult<i64> {
+fn parse_text(text: &str, round: bool, reverse_sign: bool) -> CoreResult<i64> {
     let invalid = |message| CoreError::InvalidInput { message };
     if text.trim().is_empty() {
         return Err(invalid(tr("Kein Betrag angegeben").into()));
@@ -92,6 +105,7 @@ fn parse_text(text: &str, round: bool) -> CoreResult<i64> {
     if !round && d.normalize().scale() > 2 {
         return Err(invalid(trf("Zu viele Nachkommastellen in „{0}“", &[&text])));
     }
+    let d = if reverse_sign { -d } else { d };
     if round { cents_rounded(d) } else { cents(d) }
         .ok_or_else(|| invalid(trf("Betrag zu groß: „{0}“", &[&text])))
 }

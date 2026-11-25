@@ -14,6 +14,7 @@ use crate::export::{ExportCsvBalanceLine, ExportCsvColumns, ExportCsvRow};
 use crate::mandates::MandateCsvImport;
 use crate::models::{AccountKind, AccountKindSection, ConnectorKind, Holding};
 use crate::payment_input::{GiroCodeMatrix, PaymentDetails};
+use crate::planning::SplitDraft;
 use crate::{BankDescriptor, CoreError};
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -181,6 +182,16 @@ fn parse_split_part_to_cents(text: String, total_cents: i64) -> Result<i64, Core
 #[uniffi::export]
 fn split_share_cents(total_cents: i64, numerator: i64, denominator: i64) -> Option<i64> {
     crate::money::share_cents(total_cents, numerator, denominator)
+}
+
+#[uniffi::export]
+fn calculate_split_draft(booking_cents: i64, split_off_texts: Vec<String>) -> SplitDraft {
+    crate::planning::calculate_split_draft(booking_cents, &split_off_texts)
+}
+
+#[uniffi::export]
+fn split_amounts_match(booking_cents: i64, amounts: Vec<i64>) -> bool {
+    crate::planning::split_amounts_match(booking_cents, amounts)
 }
 
 #[uniffi::export]

@@ -3245,8 +3245,8 @@ QtObject {
         try { return core("parse_amount_to_cents", { text: text }) } catch (e) { return null }
     }
     /// `done(null)` = could not be read – not the same as "not split".
-    function splits(booking, done) {
-        coreAsync("list_transaction_splits", { transaction_id: booking.id }, r => done(r), () => done(null))
+    function splitEditorData(booking, done) {
+        coreAsync("split_editor_data", { transaction_id: booking.id }, done, () => done(null))
     }
     /// Error text, or "" on success.
     function saveSplits(parts, booking) {
@@ -3260,15 +3260,12 @@ QtObject {
         splitPresetPercent = percent === undefined ? null : percent
         splitBooking = b
     }
-    /// SplitMath.parse (#1663): a part as typed – an amount ("43,71") or a share of `total`
-    /// ("50 %") – in cents; null when it is neither.
-    function splitPartCents(text, total) {
-        try { return core("parse_split_part_to_cents", { text: String(text), total_cents: total }) } catch (e) { return null }
+    /// Amounts cross the QML bridge as strings to preserve exact cents.
+    function splitDraft(bookingCents, texts) {
+        return coreOrNull("calculate_split_draft", { booking_cents: bookingCents, split_off_texts: texts })
     }
-    /// SplitMath.share: `numerator / denominator` of `total`, rounded toward zero (the odd cent
-    /// stays with the rest); null when it cannot be computed.
     function splitShareCents(total, numerator, denominator) {
-        try { return core("split_share_cents", { total_cents: total, numerator: numerator, denominator: denominator }) } catch (e) { return null }
+        return coreOrNull("split_share_cents", { total_cents: total, numerator: numerator, denominator: denominator })
     }
 
     function newRuleDraft(booking) {
