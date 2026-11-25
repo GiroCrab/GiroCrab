@@ -22,12 +22,22 @@ PAYMENT_FILES=(
   girocrab-core/src/connectors/fints/standing.rs
 )
 CODEOWNERS=.github/CODEOWNERS
+# Payment fields and the Pain.001 builder (#946): a source line naming them is a payment-path
+# change wherever it lives (snake_case and camelCase, case-insensitive).
+PAYMENT_FIELDS='creditor_?iban|amount_?cents|pain_?\.?001'
 # The payment-path item of .github/pull_request_template.md, ticked (keep its text in sync).
 CHECKLIST_ITEM='^[[:space:]]*[-*] \[[xX]\] Zahlungspfad geprüft / payment path reviewed'
 fail=0
 err() { echo "lint-transfer-integrity: $*" >&2; fail=1; }
 
 [[ -f "$CODEOWNERS" ]] || { echo "lint-transfer-integrity: $CODEOWNERS missing" >&2; exit 1; }
+
+# Only anchored patterns (leading `/`, no `**`) are understood below. GitHub applies an
+# unanchored rule such as `payment_input.rs` anywhere in the tree; rather than guess, fail closed.
+while read -r pat _ || [[ -n "$pat" ]]; do
+  [[ -z "$pat" || "$pat" == \#* ]] && continue
+  [[ "$pat" == /* && "$pat" != *'**'* ]] || err "unsupported CODEOWNERS pattern (anchor it with a leading /, no **): $pat"
+done < "$CODEOWNERS"
 
 # Does CODEOWNERS give the file an owner? Like GitHub, the last matching rule wins; a rule
 # without owners (or with only a comment after the pattern) is an ownerless exception.
@@ -73,6 +83,14 @@ if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
     for f in "${PAYMENT_FILES[@]}"; do
       grep -qxF "$f" <<<"$changed" && touched+=("$f")
     done
+    # Added/removed source lines naming payment fields count too (#946). No `grep -q` in the
+    # pipe: with `pipefail` an early exit would turn a hit into a miss.
+    if ! hunks=$(git diff -U0 FETCH_HEAD HEAD -- '*.rs' '*.swift' '*.kt' '*.qml' '*.slint'); then
+      err "cannot diff against base '$GITHUB_BASE_REF': the PR's payment-path changes cannot be checked"
+    else
+      field_hits=$(grep -Ei "^[+-].*($PAYMENT_FIELDS)" <<<"$hunks" | grep -vE '^(\+\+\+|---) ' || true)
+      [[ -n "$field_hits" ]] && touched+=("payment fields ($PAYMENT_FIELDS)")
+    fi
     if (( ${#touched[@]} )); then
       echo "lint-transfer-integrity: PR touches the payment path: ${touched[*]}"
       if [[ -z "${PR_BODY:-}" ]]; then

@@ -128,6 +128,36 @@ class LintTransferIntegrityTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("cannot fetch base", r.stderr)
 
+    def test_unanchored_ownerless_rule_fails_closed(self):
+        # On GitHub a trailing `payment_input.rs` rule without owner would strip the owner
+        # of girocrab-core/src/payment_input.rs; the earlier directory rule must not pass it.
+        self.owners(OWNERS + "payment_input.rs\n")
+        r = self.lint()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("unsupported CODEOWNERS pattern", r.stderr)
+        self.assertNotIn("lint-transfer-integrity: ok", r.stdout)
+
+    def test_double_star_pattern_fails_closed(self):
+        self.owners(OWNERS + "/girocrab-core/**/payment_input.rs\n")
+        r = self.lint()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("unsupported CODEOWNERS pattern", r.stderr)
+
+    def test_payment_field_outside_payment_files_needs_checklist(self):
+        (self.repo / "girocrab-core/src/other.rs").write_text("let amountCents = 1;\n")
+        self.commit("touch payment field elsewhere")
+        r = self.lint(GITHUB_BASE_REF="main", PR_BODY="")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("checklist item", r.stderr)
+        r = self.lint(GITHUB_BASE_REF="main", PR_BODY=TICKED)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_payment_field_in_docs_needs_no_checklist(self):
+        (self.repo / "README.md").write_text("creditor_iban and amount_cents\n")
+        self.commit("docs mention fields")
+        r = self.lint(GITHUB_BASE_REF="main", PR_BODY="")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
