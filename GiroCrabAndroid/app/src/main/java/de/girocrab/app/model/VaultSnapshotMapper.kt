@@ -15,6 +15,8 @@ import uniffi.girocrab_core.CategorySource as CoreCategorySource
 import uniffi.girocrab_core.ConnectorKind as CoreConnector
 import uniffi.girocrab_core.FlowKind as CoreFlowKind
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.Mandate as CoreMandate
+import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -92,6 +94,7 @@ object VaultSnapshotMapper {
         tags: List<CoreTag>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
+        mandates: List<CoreMandate> = emptyList(),
     ): VaultSnapshot {
         // Holdings come back in the currency of their account; that is the label for their prices.
         val quoteCurrencies = accounts.associate { it.id to it.currency.ifBlank { "EUR" } }
@@ -102,6 +105,7 @@ object VaultSnapshotMapper {
             bookings = bookings.map(::booking),
             categories = categories.map(::category),
             tags = tags.map(::tag),
+            mandates = mandates.map(::mandate),
             holdings = holdingsByAccount.flatMap { (accountId, rows) ->
                 val quote = quoteCurrencies[accountId] ?: "EUR"
                 rows.map { holding(accountId, it, quote) }
@@ -180,6 +184,31 @@ object VaultSnapshotMapper {
      * `quantity * priceCents * fxRateToEur`. Instead of assuming a rate, the rate is derived, so the
      * app's own arithmetic lands on the core's value to the cent.
      */
+    /**
+     * One mandate. The debtor is the counterpart, `scheme`/`nextSequence` are what the core
+     * reports; the creditor id belongs to the collecting account and is not part of the mandate.
+     */
+    private fun mandate(row: CoreMandate): DirectDebitMandate = DirectDebitMandate(
+        id = row.id.toString(),
+        accountId = row.accountId.toString(),
+        debtorName = row.debtorName,
+        debtorIban = row.debtorIban,
+        reference = row.reference,
+        signedDate = LocalDate.parse(row.signedDate),
+        scheme = when (row.scheme) {
+            CoreMandateScheme.CORE -> MandateScheme.Core
+            CoreMandateScheme.COR1 -> MandateScheme.Cor1
+            CoreMandateScheme.B2B -> MandateScheme.B2b
+        },
+        oneOff = row.oneOff,
+        defaultAmountCents = row.defaultAmountCents,
+        defaultPurpose = row.defaultPurpose,
+        note = row.note,
+        active = row.active,
+        lastCollected = row.lastCollected?.let(LocalDate::parse),
+        nextSequence = row.nextSequence,
+    )
+
     private fun holding(accountId: Long, row: CoreHolding, quoteCurrency: String): Holding {
         val costBasis = row.profitLossPurchaseCents?.let { row.valueCents - it } ?: row.valueCents
         val fx = if (row.quantity > 0.0 && row.currentPriceCents > 0L) {

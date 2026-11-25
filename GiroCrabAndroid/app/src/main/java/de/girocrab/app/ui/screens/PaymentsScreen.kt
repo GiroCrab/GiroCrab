@@ -243,10 +243,19 @@ fun parsePaymentInput(text: String): EpcPayload? {
 
 private fun CorePaymentDetails.hasValidIban(): Boolean = iban?.let { isValidIban(it.filter { c -> !c.isWhitespace() }) } == true
 
+/**
+ * What the core says the next collection gets (`FRST`/`RCUR`/`OOFF`). A mandate marked as one-off
+ * and a manual override in the sheet win over it; an empty or unknown value falls back to what the
+ * mandate's own history implies.
+ */
 fun sequenceTypeFor(m: DirectDebitMandate, oneOff: Set<String>): SequenceType = when {
-    m.id in oneOff -> SequenceType.OOFF
-    m.lastUsed == null -> SequenceType.FRST
-    else -> SequenceType.RCUR
+    m.id in oneOff || m.oneOff -> SequenceType.OOFF
+    else -> when (m.nextSequence.uppercase(Locale.ROOT)) {
+        "FRST" -> SequenceType.FRST
+        "OOFF" -> SequenceType.OOFF
+        "RCUR" -> SequenceType.RCUR
+        else -> if (m.lastCollected == null) SequenceType.FRST else SequenceType.RCUR
+    }
 }
 
 /** Minimal pain.008.001.02 skeleton for a collection (preview/export). */
@@ -268,7 +277,7 @@ fun buildPain008(
             appendLine("<CdtrAcct><Id><IBAN>${creditorIban.filter { !it.isWhitespace() }}</IBAN></Id></CdtrAcct>")
             appendLine("<CdtrSchmeId><Id><PrvtId><Othr><Id>${esc(creditorId)}</Id></Othr></PrvtId></Id></CdtrSchmeId>")
             for ((m, cents, _) in g) {
-                appendLine("<DrctDbtTxInf><InstdAmt Ccy=\"EUR\">${eur(cents)}</InstdAmt><DrctDbtTx><MndtRltdInf><MndtId>${esc(m.mandateRef)}</MndtId><DtOfSgntr>${m.signedDate}</DtOfSgntr></MndtRltdInf></DrctDbtTx><Dbtr><Nm>${esc(m.creditor)}</Nm></Dbtr></DrctDbtTxInf>")
+                appendLine("<DrctDbtTxInf><InstdAmt Ccy=\"EUR\">${eur(cents)}</InstdAmt><DrctDbtTx><MndtRltdInf><MndtId>${esc(m.reference)}</MndtId><DtOfSgntr>${m.signedDate}</DtOfSgntr></MndtRltdInf></DrctDbtTx><Dbtr><Nm>${esc(m.debtorName)}</Nm></Dbtr></DrctDbtTxInf>")
             }
             appendLine("</PmtInf>")
         }
@@ -534,17 +543,23 @@ private fun DirectDebitsTab(state: AppUiState, today: LocalDate, masked: Boolean
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (masked) "••••••" else m.creditor, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1)
+                        Text(if (masked) "••••••" else m.debtorName, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1)
                         FilterChip(
                             selected = seq == SequenceType.OOFF,
                             onClick = { oneOff = if (m.id in oneOff) oneOff - m.id else oneOff + m.id },
                             label = { Text(seq.code) },
                         )
                     }
-                    Text("Gläubiger-ID: ${if (masked) "••••" else m.creditorId}", style = MaterialTheme.typography.bodySmall)
-                    Text("Mandatsreferenz: ${if (masked) "••••" else m.mandateRef}", style = MaterialTheme.typography.bodySmall)
+                    Text(if (masked) "••••" else formatIban(m.debtorIban), style = MaterialTheme.typography.bodySmall)
                     Text(
-                        "Unterschrieben ${m.signedDate.format(dateFmt)} · zuletzt genutzt ${m.lastUsed?.format(dateFmt) ?: "nie"}",
+                        "Schema ${m.scheme.label} · Mandatsreferenz ${if (masked) "••••" else m.reference}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (m.defaultAmountCents > 0) {
+                        Text("Vorgabe ${formatMoney(m.defaultAmountCents, masked = masked)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(
+                        "Unterschrieben ${m.signedDate.format(dateFmt)} · zuletzt eingezogen ${m.lastCollected?.format(dateFmt) ?: "nie"}",
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
                     )
                     Text(seq.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -605,8 +620,8 @@ private fun CollectionDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         androidx.compose.material3.Checkbox(m.id in selected, { c -> onSelected(if (c) selected + m.id else selected - m.id) })
                         Column(Modifier.weight(1f)) {
-                            Text(m.creditor, maxLines = 1)
-                            Text("${seqOf(m).code} · ${m.mandateRef}", style = MaterialTheme.typography.labelSmall)
+                            Text(m.debtorName, maxLines = 1)
+                            Text("${seqOf(m).code} · ${m.reference}", style = MaterialTheme.typography.labelSmall)
                         }
                         OutlinedTextField(
                             amounts[m.id].orEmpty(), { amounts = amounts + (m.id to it) }, label = { Text("€") }, singleLine = true,

@@ -125,14 +125,30 @@ data class StandingOrder(
     val purpose: String,
 )
 
+/** SEPA scheme of a mandate, as the core stores it (`MandateScheme`). */
+enum class MandateScheme(val label: String) { Core("CORE"), Cor1("COR1"), B2b("B2B") }
+
+/**
+ * A SEPA direct-debit mandate. The fields are the core's `Mandate`: the debtor is the counterpart
+ * the money is collected from, the creditor id is the account's own and lives in the collection
+ * dialog, not on the mandate. Category `0`/empty has no meaning here — nothing is invented.
+ */
 data class DirectDebitMandate(
     val id: String,
     val accountId: String,
-    val creditor: String,
-    val creditorId: String,
-    val mandateRef: String,
+    val debtorName: String,
+    val debtorIban: String,
+    val reference: String,
     val signedDate: LocalDate,
-    val lastUsed: LocalDate?,
+    val scheme: MandateScheme,
+    val oneOff: Boolean,
+    val defaultAmountCents: Long,
+    val defaultPurpose: String,
+    val note: String,
+    val active: Boolean,
+    val lastCollected: LocalDate?,
+    /** `FRST`, `RCUR` or `OOFF` — what the next collection gets. */
+    val nextSequence: String,
 )
 
 data class Holding(

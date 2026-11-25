@@ -8,6 +8,7 @@ import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import uniffi.girocrab_core.Account as CoreAccount
 import uniffi.girocrab_core.AssetItem as CoreAssetItem
+import uniffi.girocrab_core.Mandate as CoreMandate
 import uniffi.girocrab_core.Booking as CoreBooking
 import uniffi.girocrab_core.AccountGroup as CoreGroup
 import uniffi.girocrab_core.BookingPage as CorePage
@@ -182,6 +183,9 @@ class NativeVaultOpener {
             }
             val assets = callNoArgs("listAllAssetItems") as? List<CoreAssetItem>
                 ?: throw IllegalStateException("listAllAssetItems did not return a list")
+            // `null` = every account, as in the core's `list_mandates(Option<i64>)`.
+            val mandates = callWith("listMandates", null as Any?) as? List<CoreMandate>
+                ?: throw IllegalStateException("listMandates did not return a list")
             return VaultSnapshotMapper.map(
                 groups = groups,
                 accounts = accounts,
@@ -191,6 +195,7 @@ class NativeVaultOpener {
                 tags = tags,
                 holdingsByAccount = holdings,
                 assets = assets,
+                mandates = mandates,
             )
         }
 

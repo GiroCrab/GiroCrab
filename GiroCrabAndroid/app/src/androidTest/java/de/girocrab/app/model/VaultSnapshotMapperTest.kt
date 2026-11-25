@@ -11,6 +11,8 @@ import uniffi.girocrab_core.AssetItem as CoreAssetItem
 import uniffi.girocrab_core.AssetItemSetup as CoreAssetSetup
 import uniffi.girocrab_core.BookingPage as CoreBookingPage
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.Mandate as CoreMandate
+import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
 import uniffi.girocrab_core.SelectionFlow as CoreFlow
 import java.security.SecureRandom
 import org.junit.After
@@ -308,6 +310,79 @@ class VaultSnapshotMapperTest {
             vault.close()
         }
     }
+
+    /** 3.2b: a mandate carries the core's fields — debtor, scheme, sequence, last collection. */
+    @Test
+    fun mandateCarriesWhatTheCoreStores() {
+        val m = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            mandates = listOf(coreMandate()),
+        ).mandates.single()
+
+        assertEquals("7", m.id)
+        assertEquals("3", m.accountId)
+        assertEquals("Vattenfall Europe Sales", m.debtorName)
+        assertEquals("DE12345678901234567890", m.debtorIban)
+        assertEquals("VAT-2024-0042", m.reference)
+        assertEquals(LocalDate.of(2024, 3, 1), m.signedDate)
+        assertEquals(MandateScheme.Core, m.scheme)
+        assertFalse(m.oneOff)
+        assertEquals(8_900L, m.defaultAmountCents)
+        assertTrue(m.active)
+        assertEquals(LocalDate.of(2026, 10, 5), m.lastCollected)
+        assertEquals("RCUR", m.nextSequence)
+    }
+
+    /** A mandate without a collection keeps `null`, not a made-up date; the scheme survives. */
+    @Test
+    fun mandateWithoutCollectionKeepsNoDate() {
+        val m = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            mandates = listOf(coreMandate(lastCollected = null, scheme = CoreMandateScheme.B2B, oneOff = true, nextSequence = "OOFF")),
+        ).mandates.single()
+
+        assertNull(m.lastCollected)
+        assertEquals(MandateScheme.B2b, m.scheme)
+        assertTrue(m.oneOff)
+        assertEquals("OOFF", m.nextSequence)
+    }
+
+    private fun coreMandate(
+        lastCollected: String? = "2026-10-05",
+        scheme: CoreMandateScheme = CoreMandateScheme.CORE,
+        oneOff: Boolean = false,
+        nextSequence: String = "RCUR",
+    ) = CoreMandate(
+        id = 7,
+        accountId = 3,
+        debtorName = "Vattenfall Europe Sales",
+        debtorIban = "DE12345678901234567890",
+        debtorBic = "",
+        reference = "VAT-2024-0042",
+        signedDate = "2024-03-01",
+        scheme = scheme,
+        oneOff = oneOff,
+        defaultAmountCents = 8_900,
+        defaultPurpose = "Abschlag Strom",
+        note = "",
+        active = true,
+        lastCollected = lastCollected,
+        nextSequence = nextSequence,
+    )
 
     private fun read(key: ByteArray): VaultSnapshot {
         val vault = open(key)
