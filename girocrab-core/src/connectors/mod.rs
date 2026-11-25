@@ -56,6 +56,7 @@ pub mod sharinbox;
 pub mod template;
 pub mod trade_republic;
 pub mod uberspace;
+pub mod unioninvestment;
 pub mod volkswagen_bank;
 
 pub(crate) mod account_selection;

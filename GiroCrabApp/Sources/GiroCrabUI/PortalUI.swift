@@ -13,7 +13,7 @@ extension AppModel {
     /// PSD2 banks such as C24 and must not move the cards off the web login.
     func usesPortal(_ c: BankConnection) -> Bool {
         if Self.isMagicDemoLogin(c.loginName) { return false }
-        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .sharinbox, .axaShareplan, .schwaebischHall, .equatePlus, .edenred].contains(c.connector) { return true }
+        if !isDemo, [.advanzia, .amazonOrders, .fnz, .quirion, .sharinbox, .axaShareplan, .unionInvestment, .schwaebischHall, .equatePlus, .edenred].contains(c.connector) { return true }
         guard !isDemo, c.connector == .americanExpress || c.connector == .amazonVisa else { return false }
         // the card's own application (#824) or the default one
         let app = connectionEnableBankingApp(c.id)
@@ -181,6 +181,7 @@ extension ConnectorKind {
         case .quirion: return URL(string: "https://banking.quirion.de/login/")
         case .sharinbox: return URL(string: "https://sharinbox.sgmarkets.com/home")
         case .axaShareplan: return URL(string: "https://espace-salarie.axa-mon-epargne-entreprises.com/")
+        case .unionInvestment: return URL(string: "https://anlegen.meindepot.union-investment.de/dashboard/super")
         case .schwaebischHall: return SchwaebischHallScripts.loginURL
         case .fnz: return URL(string: "https://portal.fnz.de/")
         case .edenred: return URL(string: "https://nutzer.edenred.de/")
@@ -213,6 +214,8 @@ extension ConnectorKind {
         case .sharinbox: return ["sharinbox.sgmarkets.com", "sso.sgmarkets.com"]
         // the portal page serves its sign-in and its data interface
         case .axaShareplan: return ["espace-salarie.axa-mon-epargne-entreprises.com"]
+        // sign-in (Keycloak) and API run on service.*; the captcha on frcapi.com is a sub-resource
+        case .unionInvestment: return ["anlegen.meindepot.union-investment.de", "service.meindepot.union-investment.de"]
         case .schwaebischHall: return ["www.schwaebisch-hall.de", "login.schwaebisch-hall.de"]
         default: return []
         }

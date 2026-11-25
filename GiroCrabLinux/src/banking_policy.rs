@@ -395,6 +395,7 @@ pub fn display_name(id: &str) -> String {
         "quirion" => "quirion",
         "sharinbox" => "Sharinbox",
         "axashareplan" => "AXA Mitarbeiter Shareplan",
+        "unioninvestment" => "Union Investment",
         "uberspace" => "Uberspace",
         "bitcoincore" => "Bitcoin Core",
         "schwaebischhall" => "Schwäbisch Hall",

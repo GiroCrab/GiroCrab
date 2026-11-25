@@ -241,6 +241,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
+| Union Investment | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
@@ -512,6 +513,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
+| Union Investment | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verified |
