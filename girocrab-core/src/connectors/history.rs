@@ -87,6 +87,7 @@ fn max_days(kind: ConnectorKind) -> i64 {
         // back from the newest booking and stop there.
         ConnectorKind::TradeRepublic
         | ConnectorKind::Bunq
+        | ConnectorKind::Monefit
         | ConnectorKind::HanseaticBank
         | ConnectorKind::Bhw
         | ConnectorKind::Uberspace
