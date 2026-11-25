@@ -1430,6 +1430,17 @@
         }
       }
     },
+    "%lld Wertpapiergeschäfte" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld securities transactions"
+          }
+        }
+      }
+    },
     "%lld Wochen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1687,6 +1698,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld new transactions imported. Bank balance updated."
+          }
+        }
+      }
+    },
+    "%lld neue Dokumente" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld new documents"
           }
         }
       }
@@ -3348,6 +3370,7 @@
       }
     },
     "Advanzia Bank (Zugang mein.advanzia.com)" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3358,6 +3381,7 @@
       }
     },
     "Advanzia hat die Anmeldung abgelehnt. Bitte das Passwort prüfen und erneut bestätigen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3368,6 +3392,7 @@
       }
     },
     "Advanzia hat die Anmeldung oder den Code abgelehnt. Prüfen Sie die Bankseite; GiroCrab wiederholt die Eingabe nicht automatisch." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3389,6 +3414,7 @@
       }
     },
     "Advanzia konnte nicht sicher abgerufen werden. Bitte die Bankseite prüfen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3421,6 +3447,7 @@
       }
     },
     "Advanzia konnte nicht vorbereitet werden. Bitte den Abruf erneut starten." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3442,6 +3469,7 @@
       }
     },
     "Advanzia meldet sich an …" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3474,6 +3502,7 @@
       }
     },
     "Advanzia-Abruf abgeschlossen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3484,6 +3513,7 @@
       }
     },
     "Advanzia-Abruf anzeigen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7011,6 +7041,7 @@
       }
     },
     "Bankseite ausblenden" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -7021,6 +7052,7 @@
       }
     },
     "Bankseite öffnen" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8770,6 +8802,7 @@
       }
     },
     "Bitte das Advanzia-Passwort eingeben. Die Anmeldung wird im Hintergrund fortgesetzt." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -8813,6 +8846,7 @@
       }
     },
     "Bitte den SMS-Code eingeben. Anschließend läuft der Abruf automatisch weiter." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10139,6 +10173,7 @@
       }
     },
     "Das Passwort konnte nicht sicher übermittelt werden. Sie können es erneut versuchen oder die Bankseite öffnen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10149,6 +10184,7 @@
       }
     },
     "Das Passwort wird lokal im Schlüsselbund gespeichert und für spätere Abrufe verwendet." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10159,6 +10195,7 @@
       }
     },
     "Das Passwort wird nur für diesen Abruf verwendet. Bei einem späteren Abruf kann GiroCrab erneut danach fragen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10202,6 +10239,7 @@
       }
     },
     "Das gespeicherte Passwort ist nicht verfügbar. Öffnen Sie die Bankseite oder prüfen Sie die Zugangseinstellungen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10883,6 +10921,7 @@
       }
     },
     "Der Advanzia-Abruf benötigt Ihre Aufmerksamkeit." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10904,6 +10943,7 @@
       }
     },
     "Der Advanzia-Zugang konnte nicht vollständig gespeichert werden. Bitte erneut versuchen. Der Abruf wurde noch nicht gestartet." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -10914,6 +10954,7 @@
       }
     },
     "Der Advanzia-Zugang konnte nicht vorbereitet werden. Bitte den Tresor und die Sicherheitshinweise prüfen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11034,6 +11075,7 @@
       }
     },
     "Der SMS-Code konnte nicht sicher übermittelt werden. Bitte die Bankseite öffnen und dort bestätigen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11594,6 +11636,7 @@
       }
     },
     "Die Advanzia-Anmeldung konnte nicht automatisch fortgesetzt werden. Bei Bedarf können Sie die Bankseite öffnen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -11604,6 +11647,7 @@
       }
     },
     "Die Advanzia-Anmeldung wartet zu lange. Öffnen Sie die Bankseite, um die Freigabe zu prüfen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -12093,6 +12137,7 @@
       }
     },
     "Die SMS-Freigabe wird geprüft …" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -12103,6 +12148,7 @@
       }
     },
     "Die SMS-Freigabe wurde noch nicht bestätigt. Prüfen Sie den Code oder öffnen Sie die Bankseite." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -12345,6 +12391,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "External analysis is only available with your own unlocked vault – not with the demo data."
+          }
+        }
+      }
+    },
+    "Die folgenden Abrufe holen Buchungen, Wertpapieraktivitäten und noch fehlende Dokumente nach. Das kann einige Abrufe dauern." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The next syncs retrieve earlier transactions, securities activity and missing documents. This may take several syncs."
           }
         }
       }
@@ -12724,6 +12780,7 @@
       }
     },
     "Dieses Konto stammt aus einer früheren Version. Wählen Sie es einmalig aus, um es mit seinen vorhandenen Umsätzen weiterzuverwenden." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -12970,6 +13027,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Documents are kept under “Documents & Postbox” (search: equateplus) and are not assigned to bookings or activities automatically. Only if the plan name in the document matches a plan does it also appear with that plan’s account."
+          }
+        }
+      }
+    },
+    "Dokumentenabruf aus" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "document retrieval off"
           }
         }
       }
@@ -16104,6 +16172,7 @@
       }
     },
     "Für Karten mit Zugang über mein.advanzia.com. Nach dem Hinzufügen läuft die Anmeldung im Hintergrund; nur eine erforderliche Freigabe wird angezeigt." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -17061,6 +17130,7 @@
       }
     },
     "GiroCrab meldet sich mit den gespeicherten Zugangsdaten an. Geben Sie anschließend den SMS-Code ein oder bestätigen Sie die Freigabe in der Advanzia-App. Danach werden die Umsätze automatisch übernommen." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -18185,6 +18255,70 @@
         }
       }
     },
+    "Historie neu aufbauen …" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebuild history…"
+          }
+        }
+      }
+    },
+    "Historie neu aufbauen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebuild history?"
+          }
+        }
+      }
+    },
+    "Historie noch nicht vollständig" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History not complete yet"
+          }
+        }
+      }
+    },
+    "Historie noch nicht vollständig – bitte noch einmal abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History not complete yet – please sync again"
+          }
+        }
+      }
+    },
+    "Historie noch nicht vollständig. Der nächste Abruf setzt sie fort." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The history is incomplete. The next fetch will continue it."
+          }
+        }
+      }
+    },
+    "Historie wird neu aufgebaut" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebuilding history"
+          }
+        }
+      }
+    },
     "Hochformat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18648,6 +18782,7 @@
       }
     },
     "Im Hintergrund warten" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -24681,6 +24816,17 @@
         }
       }
     },
+    "Neu aufbauen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rebuild"
+          }
+        }
+      }
+    },
     "Neu aufnehmen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29134,6 +29280,7 @@
       }
     },
     "SMS-Code" : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -34848,6 +34995,17 @@
         }
       }
     },
+    "Weiter abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue syncing"
+          }
+        }
+      }
+    },
     "Weiter suchen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36243,6 +36401,7 @@
       }
     },
     "Zugangsdaten und Freigabeverfahren festlegen. Danach startet der Abruf im Hintergrund." : {
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {

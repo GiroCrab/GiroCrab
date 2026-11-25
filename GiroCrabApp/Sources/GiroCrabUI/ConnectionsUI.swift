@@ -170,6 +170,7 @@ struct ConnectionEditSheet: View {
     @State private var documentsSupported = false
     @State private var confirmResort = false
     @State private var resorting = false
+    @State private var confirmRebuild = false
     @State private var documentsFetch = true
     /// "Dokumente abrufen" is off: nothing that fetches documents runs (Postbox included).
     private var documentsBlocked: Bool { documentsSupported && !documentsFetch }
@@ -558,6 +559,8 @@ struct ConnectionEditSheet: View {
                             if st.hasSession {
                                 Button("Sitzung löschen …", role: .destructive) { confirmClear = .tradeRepublic }
                             }
+                            Button("Historie neu aufbauen …") { confirmRebuild = true }
+                                .disabled(model.syncingConnectionID != nil)
                         }
                     }
                     if let t = connection.lastSyncUnix {
@@ -618,6 +621,12 @@ struct ConnectionEditSheet: View {
             Button("Abbrechen", role: .cancel) {}
         } message: {
             Text("GiroCrab prüft die vorhandenen Belege dieses Bankzugangs erneut. Dabei können sich Dokumenttypen und manuell gewählte Ablagekonten ändern. Bestehende Buchungsverknüpfungen bleiben erhalten. Offene Belege können eine neue Verknüpfung erhalten, auch wenn Sie diese zuvor gelöst haben.")
+        }
+        .confirmationDialog("Historie neu aufbauen?", isPresented: $confirmRebuild, titleVisibility: .visible) {
+            Button("Neu aufbauen") { model.resetTradeRepublicHistory(connection.id) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Die folgenden Abrufe holen Buchungen, Wertpapieraktivitäten und noch fehlende Dokumente nach. Das kann einige Abrufe dauern.")
         }
         .confirmationDialog("Sitzung löschen?", isPresented: Binding(get: { confirmClear != nil }, set: { if !$0 { confirmClear = nil } }),
                             titleVisibility: .visible, presenting: confirmClear) { kind in

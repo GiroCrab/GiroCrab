@@ -3549,6 +3549,13 @@ mod tests {
             postbox_documents: None,
             warnings: vec![],
             hints: vec![],
+            documents_imported: 0,
+            security_transactions: 0,
+            holdings: 0,
+            history_incomplete: false,
+            history_remaining: 0,
+            history_total: 0,
+            documents_off: false,
         };
         log_file_import(&vault, 1, &Ok(None));
         let none = SyncLogFilter::default();

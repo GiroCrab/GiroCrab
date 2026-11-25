@@ -511,6 +511,37 @@ impl Vault {
         Ok(DocumentResortResult { resorted, linked })
     }
 
+    /// Clears the Trade Republic history cursors so the next sync starts from the beginning.
+    pub fn reset_trade_republic_history(&self, connection_id: i64) -> Result<(), CoreError> {
+        let db = self.db()?;
+        let connector: String = db.query_row(
+            "SELECT connector FROM bank_connections WHERE id = ?1 AND deleted_ms IS NULL",
+            [connection_id],
+            |r| r.get(0),
+        )?;
+        if connector != ConnectorKind::TradeRepublic.as_str() {
+            return Err(CoreError::invalid(tr("Kein Trade-Republic-Zugang.")));
+        }
+        let state = connection_state(&db, connection_id)?;
+        update_state(&db, connection_id, &state, |o| {
+            for key in [
+                "trade_history_v3_before",
+                "trade_history_v3_complete",
+                "trade_history_v3_retry",
+                "trade_retry_rows_v1",
+                "transaction_history_cursor_v1",
+                "doc_listing_cursor_v1",
+                // the Activity Log is listed to its end once more
+                "doc_listing_complete_v1",
+            ] {
+                if let Some(mut value) = o.remove(key) {
+                    wipe(&mut value);
+                }
+            }
+            o.insert("doc_listing_open_v1".into(), serde_json::json!(true));
+        })
+    }
+
     pub fn connection_status(&self, connection_id: i64) -> Result<ConnectionStatus, CoreError> {
         let db = self.db()?;
         let state = connection_state(&db, connection_id)?;
@@ -1060,6 +1091,42 @@ mod tests {
         v.clear_connection_session(c).unwrap();
         assert!(!v.connection_status(c).unwrap().has_session);
         assert_eq!(stored(&v), serde_json::json!({"doc_items": ["a"]}));
+    }
+
+    #[test]
+    fn restarting_trade_republic_history_preserves_docs_and_session() {
+        let dir = crate::test_support::TempDir::new("girocrab-tr-reset-state");
+        let v = Vault::open(
+            dir.join("v.db").to_string_lossy().to_string(),
+            vec![5u8; 32],
+        )
+        .unwrap();
+        let c = v
+            .add_bank_connection(ConnectorKind::TradeRepublic, String::new(), "login".into())
+            .unwrap();
+        let original = SecretJson::from(serde_json::json!({
+            "cookies": "tr_session=test",
+            "doc_items": ["already-downloaded"],
+            "trade_history_v3_complete": true,
+            "transaction_history_cursor_v1": "next-page",
+            "doc_listing_complete_v1": true
+        }));
+        store_state(&v.db().unwrap(), c, &original).unwrap();
+
+        v.reset_trade_republic_history(c).unwrap();
+
+        let state = connection_state(&v.db().unwrap(), c).unwrap();
+        state.with_value(|state| {
+            assert_eq!(state["cookies"], "tr_session=test");
+            assert_eq!(
+                state["doc_items"],
+                serde_json::json!(["already-downloaded"])
+            );
+            assert!(state["trade_history_v3_complete"].is_null());
+            assert!(state["transaction_history_cursor_v1"].is_null());
+            assert!(state["doc_listing_complete_v1"].is_null());
+            assert_eq!(state["doc_listing_open_v1"], true);
+        });
     }
 
     #[test]

@@ -1282,6 +1282,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Geben Sie den 4-stelligen Code ein, der in der Trade-Republic-App angezeigt wird. Keine Push-Nachricht erhalten? „Code per SMS“ wählen." => {
             "Enter the 4-digit code shown in the Trade Republic app. No push notification? Choose “Code via SMS”."
         }
+        "Kein Trade-Republic-Zugang." => "This is not a Trade Republic connection.",
         "Trade Republic benötigt den 4-stelligen Code" => "Trade Republic needs the 4-digit code",
         "SMS-Anforderung" => "SMS request",
         "Der Code wurde per SMS gesendet. Bitte die 4 Ziffern eingeben." => {

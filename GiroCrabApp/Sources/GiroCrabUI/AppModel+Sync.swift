@@ -346,7 +346,15 @@ extension AppModel {
             : String(localized: "\(n) neue Postbox-Dokumente")
     }
 
-    /// Toast suffix: new bookings the bank delivered for archived accounts (not stored).
+    /// Shown after a sync that left history for the next one.
+    static func historyNote(_ s: SyncSummary) -> String {
+        guard s.historyIncomplete else { return "" }
+        let progress = HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal)).text
+        return " · " + String(localized: "Historie noch nicht vollständig – bitte noch einmal abrufen")
+            + (progress.isEmpty ? "" : " (\(progress))")
+    }
+
+    /// Toast suffix for bookings the bank delivered for archived accounts.
     static func skippedArchivedNote(_ s: SyncSummary) -> String {
         s.transactionsSkippedArchived == 0 ? "" : " · " + String(localized: "\(s.transactionsSkippedArchived) Buchungen archivierter Konten übersprungen")
     }
@@ -412,6 +420,7 @@ extension AppModel {
         let quiet = quietSyncConnectionID == connection.id
         syncingConnectionID = connection.id
         syncingAccountID = statementsFor ?? accountOnly
+        syncVaultRevision = vaultRevision
         syncGeneration &+= 1
         Task {
             var started: SyncSession?
@@ -490,10 +499,17 @@ extension AppModel {
             // what the bank would not give is no success (#1627)
             logSync(connectionID: connection.id, source: syncLogSource(for: connection.id),
                     outcome: s.warnings.isEmpty ? .ok : .partial,
-                    message: (s.warnings + s.hints).joined(separator: " / "), imported: Int(s.transactionsImported))
+                    message: connection.connector == .tradeRepublic ? Self.syncLogMessage(s) : (s.warnings + s.hints).joined(separator: " / "),
+                    imported: Int(s.transactionsImported))
             activeChallenge = nil
             syncingConnectionID = nil
             activeSession = nil
+            // Only a sync of the whole login in this vault tells the history's state: one account
+            // ("<Konto> abrufen", statements) leaves the history and its documents for later.
+            if syncingAccountID == nil, syncVaultRevision == vaultRevision {
+                historyIncomplete[connection.id] = s.historyIncomplete
+                    ? HistoryProgress(remaining: Int(s.historyRemaining), total: Int(s.historyTotal)) : nil
+            }
             let statementsFetch = statementsAccountID != nil
             if let accountID = statementsAccountID {
                 statementsAccountID = nil
@@ -528,7 +544,7 @@ extension AppModel {
                 // scheduled syncs only speak up when something changed
                 if !quiet || s.transactionsImported > 0 || !s.newAccounts.isEmpty || !s.revokedAccounts.isEmpty
                     || !s.warnings.isEmpty {
-                    var note = syncNotice(connection, s) + Self.skippedArchivedNote(s)
+                    var note = syncNotice(connection, s) + Self.skippedArchivedNote(s) + Self.historyNote(s)
                     if let n = s.postboxDocuments, n > 0 { note += " · " + Self.postboxNote(s, connection) }
                     toast = note
                 }

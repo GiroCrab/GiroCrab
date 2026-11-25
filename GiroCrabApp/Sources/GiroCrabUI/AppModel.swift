@@ -28,6 +28,8 @@ public final class AppModel {
             showRuleEditor = false
             ruleDraft = nil
             advanziaWorkflow?.cancel()
+            // connection ids belong to one vault: the demo must not show the own vault's progress
+            historyIncomplete = [:]
             if vault != nil { refreshSidebarCounts() }
         }
     }
@@ -787,6 +789,9 @@ public final class AppModel {
     /// ("<Konto> abrufen", statements), nil for the whole login. Set with it by
     /// `startSync`; read only through `isSyncing(_:)` (#1572).
     var syncingAccountID: Int64?
+    /// `vaultRevision` when the running sync started: a result from another vault must not
+    /// write this vault's per-connection state (`historyIncomplete`, #1660).
+    @ObservationIgnored var syncVaultRevision = 0
     var toast: String?
     /// Text of the error alert. Clearing it also clears title and retry.
     var errorMessage: String? {
@@ -860,6 +865,8 @@ public final class AppModel {
     var standingUnknown: String?
     /// Bumped whenever a sync wrote a row to the Abrufprotokoll (#238); the log window reloads on it.
     var syncLogVersion = 0
+    /// Connections whose last sync read only part of the history (the next sync continues it).
+    var historyIncomplete: [Int64: HistoryProgress] = [:]
     /// Unified booking export (PDF / CSV / XML).
     var showExportSheet = false
     var exportFile = ExportFileDocument(data: Data())
@@ -1937,6 +1944,7 @@ public final class AppModel {
         setupRequest = nil
         webLoginConnection = nil
         syncingConnectionID = nil
+        historyIncomplete = [:]
         quietSyncConnectionID = nil
         // the failure text may name a bank: gone with the vault
         autoSyncStatus = AutoSyncStatus()
