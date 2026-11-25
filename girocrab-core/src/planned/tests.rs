@@ -258,3 +258,17 @@ fn exact_iban_booking_is_reserved_before_empty_iban_fallback() {
     settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 0);
 }
+
+#[test]
+fn an_order_whose_date_has_passed_does_not_take_the_booking() {
+    let v = vault("planned-past-order");
+    let a = account(&v, "Giro");
+    // an old recurring order (still stored, no longer listed) and the one actually booked
+    v.record_planned_transfer(a, &job("OLD", Some("2000-01-15"), 600))
+        .unwrap();
+    v.record_planned_transfer(a, &job("NEW", Some("2999-01-15"), 600))
+        .unwrap();
+    book(&v, a, "x", "2999-01-10", -600, "DE89370400440532013000");
+    settle(&v, a);
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}

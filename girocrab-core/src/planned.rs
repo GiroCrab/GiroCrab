@@ -13,8 +13,8 @@ use crate::schema::{has_column, has_table};
 use crate::vault::Vault;
 
 /// Step 17: scheduled transfers sent to the bank. `end_to_end_id` is the merge
-/// key. Rows stay until the execution date has passed; the bank's booking
-/// then arrives through the normal sync. Idempotent like the steps before.
+/// key. Rows stay until the execution date has passed or a fetched booking
+/// settles them ([`drop_booked`], #1881). Idempotent like the steps before.
 pub(crate) fn planned_transfers(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS planned_transfers (
@@ -325,10 +325,11 @@ pub(crate) fn drop_booked(
     let mut q = db.prepare(
         "SELECT id, execution_date, recipient_iban, amount_cents, kind,
                 date(created_ms / 1000, 'unixepoch', 'localtime')
-         FROM planned_transfers WHERE account_id = ?1 ORDER BY id",
+         FROM planned_transfers WHERE account_id = ?1 AND execution_date >= ?2
+         ORDER BY execution_date, id",
     )?;
     let orders: Vec<(i64, String, String, i64, String, String)> = q
-        .query_map([account_id], |r| {
+        .query_map(params![account_id, today()], |r| {
             Ok((
                 r.get(0)?,
                 r.get(1)?,
