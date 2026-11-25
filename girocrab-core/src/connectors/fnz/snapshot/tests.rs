@@ -376,3 +376,25 @@ fn security_transactions_are_stored_once_across_syncs() {
     assert_eq!(list[0].quantity, 1.0);
     assert_eq!(list[0].direction, SecurityDirection::Buy);
 }
+
+/// Per-account error isolation: a detail row the connector could not fetch
+/// ("notFetched") is accepted – the account keeps its overview balance and its
+/// stored data, nothing here counts as completely fetched this round.
+#[test]
+fn accepts_a_not_fetched_account_and_fetches_nothing_for_it() {
+    let mut f = fixture();
+    f["details"][0]["kind"] = json!("notFetched");
+    let r = snapshot(&f.to_string()).unwrap();
+    assert!(r.holdings.iter().all(|h| h.account_ref != "D1"));
+    assert!(!r.holdings_fetched.contains(&"D1".to_string()));
+    assert!(r.transactions.iter().all(|t| t.account_ref != "D1"));
+    // The untouched accounts are still complete: one depot (D2) with its
+    // holdings and every cash transaction.
+    assert_eq!(r.holdings.len(), 1);
+    assert_eq!(r.holdings_fetched, vec!["D2"]);
+    assert!(
+        r.transactions
+            .iter()
+            .any(|t| t.account_ref == "C1" || t.account_ref == "C2")
+    );
+}

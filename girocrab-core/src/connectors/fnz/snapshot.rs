@@ -472,6 +472,10 @@ pub(super) fn snapshot(json: &str) -> CoreResult<FetchResult> {
                 )?);
             }
             ("managedDepots" | "stockDepots" | "preciousMetalDepots", "totalsOnly") => {}
+            // Account whose details the connector could not fetch (per-account
+            // error isolation): the next sync fetches it again, nothing here
+            // counts as completely fetched.
+            (_, "notFetched") => {}
             _ => return Err(incomplete()),
         }
     }

@@ -299,7 +299,7 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             secret_label: tr("PIN").into(),
             required_settings: vec![],
             note: tr(
-                "FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Direkt-Login mit Zugangsnummer und PIN (bleibt im Tresor gespeichert), danach die Freigabe in der FNZsecure-App. Ohne gespeicherte Zugangsdaten öffnet sich das Browserfenster.",
+                "FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Direkt-Login mit Zugangsnummer und PIN; wird „PIN im Tresor speichern“ abgewählt, gilt die PIN nur für diesen Abruf. Danach die Freigabe in der FNZsecure-App. Ohne Zugangsdaten öffnet sich das Browserfenster.",
             )
             .into(),
         },

@@ -47,6 +47,12 @@ const MAX_PAGES: usize = 1000;
 const MAX_ROWS: usize = 100_000;
 /// Mailbox page size (`indexFrom`/`indexTo`) and the same loop bound.
 const DOCUMENTS_PAGE: usize = 100;
+/// Bytes of mailbox PDFs one sync keeps in memory before the rest stays due
+/// for the next sync (`documents.state` remember nothing of the deferred).
+const SYNC_DOC_BYTES: usize = 64 * 1024 * 1024;
+/// Broken documents in a row the mailbox loop tolerates before it stops for
+/// this sync (the next tries again, the ids of the failures stay due).
+const MAX_DOC_FAILURES: u32 = 10;
 
 fn page_changed() -> CoreError {
     CoreError::protocol(tr(
@@ -172,6 +178,18 @@ impl Login {
         out.push((self.user_field.clone(), user.to_string()));
         out.push((self.pin_field.clone(), pin.to_string()));
         out
+    }
+}
+
+/// The filled login form: every value (the PIN included) is wiped again when
+/// the guard is dropped, also when the request future is dropped mid-flight.
+struct WipeFields(Vec<(String, String)>);
+
+impl Drop for WipeFields {
+    fn drop(&mut self) {
+        for (_, v) in self.0.iter_mut() {
+            v.zeroize();
+        }
     }
 }
 
@@ -452,6 +470,7 @@ impl PortalConnector {
     /// validations: consistent totals, no repeated row, no silent stops.
     async fn page_all(
         &self,
+        ctx: &ConnectContext,
         path: &str,
         filter: &Value,
         array_key: &str,
@@ -462,6 +481,10 @@ impl PortalConnector {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut total: Option<i64> = None;
         for page in 0..MAX_PAGES {
+            // cancelled during the fetch: no further request to the portal
+            if ctx.cancelled.is_set() {
+                return Err(CoreError::SessionClosed);
+            }
             let mut body = filter.clone();
             body["pagination"] = json!({ "page": page.to_string(), "pageSize": "100" });
             let data = self.post(path, &body, "Die Umsatzliste").await?;
@@ -498,15 +521,20 @@ impl PortalConnector {
 
     /// Mailbox plus archive: metadata of every document, with the snapshot
     /// script's paging and validations.
-    async fn document_list(&self) -> CoreResult<Vec<Value>> {
+    async fn document_list(&mut self, ctx: &ConnectContext) -> CoreResult<Vec<Value>> {
         let date_to = crate::dates::now_utc()
             .strftime("%Y-%m-%dT%H:%M:%S")
             .to_string();
         let mut all: Vec<Value> = Vec::new();
         let mut ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         for archived in [false, true] {
+            let mut fetched = 0usize;
             let mut index = 0usize;
             loop {
+                // cancelled during the fetch: no further request to the portal
+                if ctx.cancelled.is_set() {
+                    return Err(CoreError::SessionClosed);
+                }
                 let body = json!({
                     "postboxCategoryAndStateFilter": {
                         "dateFrom": "2000-01-01T00:00:00", "dateTo": date_to,
@@ -541,10 +569,21 @@ impl PortalConnector {
                     ));
                 }
                 all.extend(documents.iter().cloned());
+                fetched += documents.len();
                 index += DOCUMENTS_PAGE;
-                let reached = data["totalMessages"].as_i64().is_some_and(|t| t >= 0)
-                    && index as i64 >= data["totalMessages"].as_i64().unwrap_or_default();
-                if documents.len() < DOCUMENTS_PAGE || reached {
+                // Complete only when the reported total is reached. A short
+                // page against a remaining total keeps going (the portal
+                // delivers pages smaller than asked for); without a usable
+                // total, a short page is the end, like the browser script.
+                let total = data["totalMessages"].as_i64().filter(|t| *t >= 0);
+                if let Some(total) = total {
+                    if fetched as i64 >= total {
+                        break;
+                    }
+                    if documents.is_empty() {
+                        return Err(incomplete_documents());
+                    }
+                } else if documents.len() < DOCUMENTS_PAGE {
                     break;
                 }
                 if index > MAX_ROWS {
@@ -556,25 +595,36 @@ impl PortalConnector {
     }
 
     /// Pending PDFs of the mailbox, ready for `store_fetch` (which skips
-    /// archived/blocked accounts and stores each document once).
+    /// archived/blocked accounts and stores each document once). Returns the
+    /// documents, the known-ids state (only what is stored here) and whether
+    /// the mailbox was not fully read (failed download, budget, cancellation).
     async fn pending_documents(
         &mut self,
         connection_id: i64,
         ctx: &ConnectContext,
         refs: &[String],
-    ) -> CoreResult<(Vec<RemoteDocument>, KnownDocuments)> {
+    ) -> CoreResult<(Vec<RemoteDocument>, KnownDocuments, bool)> {
         let mut known = KnownDocuments::from_state(&ctx.state);
         // Documents retrieval switched off: list nothing, download nothing and
         // remember nothing, so a later sync can fetch what is missing.
         if !ctx.documents.enabled() {
-            return Ok((Vec::new(), known));
+            return Ok((Vec::new(), known, false));
         }
-        let list = self.document_list().await?;
+        // One account's sync (#1124): only its PDFs are downloaded (and
+        // remembered) – keep_only would discard the others without storing
+        // them, and their ids must not block later syncs.
+        let only = ctx.only_account.as_ref();
+        let list = self.document_list(ctx).await?;
         let mut documents = Vec::new();
+        let mut remaining_budget = SYNC_DOC_BYTES;
+        let mut incomplete = false;
         let mut consecutive_failures = 0u32;
         for doc in &list {
-            if consecutive_failures >= 3 {
-                break; // a lost session must not cause hundreds of failed requests
+            // cancelled during the fetch: what is here stays, the rest comes
+            // with the next sync.
+            if ctx.cancelled.is_set() {
+                incomplete = true;
+                break;
             }
             let Some(id) = doc["id"].as_str().filter(|s| !s.trim().is_empty()) else {
                 continue;
@@ -585,13 +635,21 @@ impl PortalConnector {
             let Ok(account_ref) = document_account(doc) else {
                 continue; // an unknown account gets no download, like the browser flow
             };
-            if ctx.skipped_accounts.contains(account_ref)
+            if only.is_some_and(|o| *o != account_ref)
+                || ctx.skipped_accounts.contains(account_ref)
                 || !refs.contains(&account_ref.to_string())
             {
                 continue;
             }
+            if remaining_budget == 0 {
+                // Byte budget of this sync spent: the rest stays due (the id
+                // is not remembered) and the next sync catches up.
+                incomplete = true;
+                break;
+            }
             match self.fetch_pdf(id).await {
                 Ok(bytes) => {
+                    remaining_budget = remaining_budget.saturating_sub(bytes.len());
                     let title = document_title(doc);
                     documents.push(RemoteDocument {
                         account_ref: account_ref.to_string(),
@@ -607,17 +665,32 @@ impl PortalConnector {
                     known.insert(id.to_string());
                     consecutive_failures = 0;
                 }
+                // The session is gone: further downloads all fail the same
+                // way, so the loop ends here.
+                Err(CoreError::Authentication { .. }) => {
+                    incomplete = true;
+                    break;
+                }
+                // One document failed (rejected, too large, no PDF): the
+                // others still come, the failed id stays eligible for retry.
                 Err(_) => {
+                    incomplete = true;
                     consecutive_failures += 1;
+                    if consecutive_failures >= MAX_DOC_FAILURES {
+                        // A broken mailbox run must not become hundreds of
+                        // failed requests; the next sync tries anew.
+                        break;
+                    }
                 }
             }
         }
-        Ok((documents, known))
+        Ok((documents, known, incomplete))
     }
 
     /// One mailbox PDF, validated like the browser download: content type
     /// `application/pdf`, `%PDF-` marker, bounded size. Runs inside the login
-    /// session (cookies, `X-EOX-Session` et al.).
+    /// session (cookies, `X-EOX-Session` et al.). A lost session is an
+    /// `Authentication` error, a broken document its own error.
     async fn fetch_pdf(&self, id: &str) -> CoreResult<Vec<u8>> {
         let pdf_base = self.pdf_base.as_ref().ok_or_else(session_ended)?;
         let mut url = pdf_base.clone();
@@ -641,16 +714,115 @@ impl PortalConnector {
                     .trim()
                     .to_ascii_lowercase()
             });
-        if !response.status().is_success() || content_type.as_deref() != Some("application/pdf") {
+        let status = response.status();
+        if content_type.as_deref() == Some("text/html") || matches!(status.as_u16(), 401 | 403) {
+            // A page or a refusal instead of the document: the session is
+            // gone.
             return Err(session_ended());
+        }
+        if !status.is_success() {
+            return Err(CoreError::Bank {
+                code: status.as_u16().to_string(),
+                message: trf(
+                    "FNZ: {0} wurde abgelehnt (HTTP {1}).",
+                    &[&"Das Dokument", &status.as_str()],
+                ),
+            });
         }
         let bytes =
             crate::connectors::read_body_limited(response, crate::connectors::MAX_DOC_BYTES)
                 .await?;
         if !bytes.starts_with(b"%PDF-") {
-            return Err(session_ended());
+            return Err(invalid("FNZ: Das Dokument ist keine gültige PDF-Datei."));
         }
         Ok(bytes)
+    }
+    /// Detail row of one cash account: the validated transaction list.
+    async fn cash_detail(
+        &self,
+        ctx: &ConnectContext,
+        base_filter: &Value,
+        number: &str,
+    ) -> CoreResult<Value> {
+        let mut body = base_filter.clone();
+        body["cashAccountId"] = json!(number);
+        body["referenceFilter"] = json!("");
+        let cash = self
+            .page_all(
+                ctx,
+                "cash-account-transaction/getCashAccountTransactionOverviewForEndCustomer",
+                &body,
+                "cashAccountTransactions",
+                "totalCashAccountTransactions",
+                "orderOrTransactionId",
+            )
+            .await?;
+        Ok(json!({
+            "accountRef": number, "kind": "cash",
+            "cashAccountId": cash.metadata["cashAccountId"],
+            "iban": cash.metadata["iban"],
+            "transactions": cash.rows,
+        }))
+    }
+
+    /// Detail row of one investment depot: inventory, order transactions and
+    /// the migrated AAB history. Only investment requests need the depot-level
+    /// id; a totals-only stock depot works without one.
+    async fn investment_detail(
+        &self,
+        ctx: &ConnectContext,
+        account: &Value,
+        base_filter: &Value,
+        number: &str,
+    ) -> CoreResult<Value> {
+        let Some(depot_id) = account
+            .pointer("/depotOrCashAccountId/depotId")
+            .filter(|v| v["id"].as_str().is_some_and(|s| !s.trim().is_empty()))
+            .cloned()
+        else {
+            return Err(invalid("FNZ: Konto ohne eindeutige Kennung."));
+        };
+        let inventory = self
+            .get(
+                &format!(
+                    "depot-inventory/getEndCustomerDepotInventory/depotId/{}",
+                    path_encoding(depot_id["id"].as_str().unwrap_or_default())
+                ),
+                "Die Depotbestände",
+            )
+            .await?;
+        let mut orders_body = base_filter.clone();
+        orders_body["depotId"] = depot_id.clone();
+        orders_body["showTransactionsOnDepotLevel"] = json!(true);
+        orders_body["subDepotPos"] = Value::Null;
+        orders_body["showTaxTransactions"] = json!(true);
+        orders_body["showOtherTransactions"] = json!(true);
+        orders_body["includeCanceledTransactions"] = json!(true);
+        let orders = self
+            .page_all(
+                ctx,
+                "order-transaction/getOrderTransactionOverviewForEndCustomer",
+                &orders_body,
+                "orderTransactions",
+                "totalOrderTransactions",
+                "orderTransactionId",
+            )
+            .await?;
+        let historical = self
+            .page_all(
+                ctx,
+                "order-transaction/getMigratedAabTransactionOverview",
+                &json!({ "depotId": depot_id }),
+                "migratedAabTransactions",
+                "totalTransactions",
+                "migratedAabTransactionId",
+            )
+            .await?;
+        Ok(json!({
+            "accountRef": number, "kind": "investment", "inventory": inventory,
+            "transactions": orders.rows,
+            "historicalTransactions": historical.rows,
+        }))
     }
 }
 
@@ -664,8 +836,8 @@ fn file_name_id(id: &str) -> String {
 impl BankConnector for PortalConnector {
     async fn begin(&mut self, ctx: &ConnectContext) -> CoreResult<Phase> {
         let user = ctx.login_name.trim().to_string();
-        let pin = ctx.secret.expose().to_string();
-        if user.is_empty() || pin.is_empty() {
+        let pin_empty = ctx.secret.expose().trim().is_empty();
+        if user.is_empty() || pin_empty {
             // No stored credentials: like before this change, the in-app
             // browser window takes over.
             return Err(CoreError::BrowserLoginRequired {
@@ -686,11 +858,13 @@ impl BankConnector for PortalConnector {
         ensure_fnz(&page)?;
         let html = crate::connectors::read_text_limited(resp).await?;
         let form = login_form(&html, &page)?;
-        let mut fields = form.filled(&user, &pin);
-        let sent = client.post(form.action.clone()).form(&fields).send().await;
-        for (_, v) in fields.iter_mut() {
-            v.zeroize();
-        }
+        let fields = WipeFields(form.filled(&user, ctx.secret.expose()));
+        let sent = client
+            .post(form.action.clone())
+            .form(&fields.0)
+            .send()
+            .await;
+        drop(fields);
         let resp = sent.map_err(|_| {
             network("FNZ: Das Portal ist nicht erreichbar. Bitte später erneut versuchen.")
         })?;
@@ -755,6 +929,7 @@ impl BankConnector for PortalConnector {
         let mut details = Vec::new();
         let mut totals_only = 0u32;
         let mut refs = Vec::new();
+        let mut warnings = Vec::new();
         for (_group, key, row) in open_rows(&overview)? {
             let account = &row["depotOrCashAccount"];
             let number = field(account, "/externalDepotNumber/externalDepotNumber")?;
@@ -762,88 +937,55 @@ impl BankConnector for PortalConnector {
                 continue;
             }
             refs.push(number.to_string());
-            let Some(depot_id) = account
-                .pointer("/depotOrCashAccountId/depotId")
-                .filter(|v| v["id"].as_str().is_some_and(|s| !s.trim().is_empty()))
-                .cloned()
-            else {
-                return Err(invalid("FNZ: Konto ohne eindeutige Kennung."));
-            };
-            if key == "cashAccounts" {
-                let mut body = base_filter.clone();
-                body["cashAccountId"] = json!(number);
-                body["referenceFilter"] = json!("");
-                let cash = self
-                    .page_all(
-                        "cash-account-transaction/getCashAccountTransactionOverviewForEndCustomer",
-                        &body,
-                        "cashAccountTransactions",
-                        "totalCashAccountTransactions",
-                        "orderOrTransactionId",
-                    )
-                    .await?;
-                details.push(json!({
-                    "accountRef": number, "kind": "cash",
-                    "cashAccountId": cash.metadata["cashAccountId"],
-                    "iban": cash.metadata["iban"],
-                    "transactions": cash.rows,
-                }));
+            // Per-account error isolation: one account's failing request does
+            // not end the fetch of the others – its row stays without data
+            // ("notFetched"), the next sync fetches it again. A cancelled or
+            // lost session still ends the whole fetch.
+            let detail = if key == "cashAccounts" {
+                self.cash_detail(ctx, &base_filter, number).await
             } else if key == "investmentDepots" {
-                let inventory = self
-                    .get(
-                        &format!(
-                            "depot-inventory/getEndCustomerDepotInventory/depotId/{}",
-                            path_encoding(depot_id["id"].as_str().unwrap_or_default())
-                        ),
-                        "Die Depotbestände",
-                    )
-                    .await?;
-                let mut orders_body = base_filter.clone();
-                orders_body["depotId"] = depot_id.clone();
-                orders_body["showTransactionsOnDepotLevel"] = json!(true);
-                orders_body["subDepotPos"] = Value::Null;
-                orders_body["showTaxTransactions"] = json!(true);
-                orders_body["showOtherTransactions"] = json!(true);
-                orders_body["includeCanceledTransactions"] = json!(true);
-                let orders = self
-                    .page_all(
-                        "order-transaction/getOrderTransactionOverviewForEndCustomer",
-                        &orders_body,
-                        "orderTransactions",
-                        "totalOrderTransactions",
-                        "orderTransactionId",
-                    )
-                    .await?;
-                let historical = self
-                    .page_all(
-                        "order-transaction/getMigratedAabTransactionOverview",
-                        &json!({ "depotId": depot_id }),
-                        "migratedAabTransactions",
-                        "totalTransactions",
-                        "migratedAabTransactionId",
-                    )
-                    .await?;
-                details.push(json!({
-                    "accountRef": number, "kind": "inventory", "inventory": inventory,
-                    "transactions": orders.rows,
-                    "historicalTransactions": historical.rows,
-                }));
+                self.investment_detail(ctx, account, &base_filter, number)
+                    .await
             } else {
                 // Depot kinds whose detail endpoints are not yet live
                 // validated: totals and PDFs only, like the browser flow.
-                details.push(json!({ "accountRef": number, "kind": "totalsOnly" }));
                 totals_only += 1;
+                Ok(json!({ "accountRef": number, "kind": "totalsOnly" }))
+            };
+            match detail {
+                Ok(row) => details.push(row),
+                // cancelled mid-request, or the session died after this
+                // account: the remaining accounts would fail the same way.
+                Err(e)
+                    if matches!(e, CoreError::SessionClosed)
+                        || matches!(e, CoreError::Authentication { .. }) =>
+                {
+                    return Err(e);
+                }
+                Err(_) => {
+                    warnings.push(trf(
+                        "FNZ: Konto {0}: Angaben konnten nicht geladen werden – der nächste Abruf wiederholt es.",
+                        &[&number],
+                    ));
+                    details.push(json!({ "accountRef": number, "kind": "notFetched" }));
+                }
             }
         }
         let snapshot = json!({
             "version": 1, "overview": overview, "details": details, "totalsOnly": totals_only,
         });
         let mut result = super::snapshot::snapshot(&snapshot.to_string())?;
-        let (documents, known) = self
-            .pending_documents(ctx.connection_id, ctx, &refs)
-            .await?;
-        result.documents = documents;
-        result.state = known.to_state();
+        result.warnings = warnings;
+        // The mailbox may fail without taking the account data with it: the
+        // sync reports the document catch-up as due instead.
+        match self.pending_documents(ctx.connection_id, ctx, &refs).await {
+            Ok((documents, known, incomplete)) => {
+                result.documents = documents;
+                result.state = known.to_state();
+                result.documents_incomplete = incomplete;
+            }
+            Err(_) => result.documents_incomplete = true,
+        }
         Ok(result)
     }
 }
