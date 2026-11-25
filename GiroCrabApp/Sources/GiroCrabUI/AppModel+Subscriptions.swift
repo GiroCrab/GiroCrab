@@ -33,12 +33,17 @@ extension AppModel {
         }
     }
 
+    /// Mutations copy `subscriptionData` first, so it must be loaded before that copy is taken.
+    private func ensureSubscriptionDataLoaded() -> Bool {
+        if !subscriptionDataLoaded { loadSubscriptionData() }
+        return subscriptionDataLoaded
+    }
+
     /// Publishes the new value only after it is stored; false when nothing was written.
     @discardableResult
     private func storeSubscriptionData(_ value: SubscriptionData) -> Bool {
         guard let vault else { return false }
-        if !subscriptionDataLoaded { loadSubscriptionData() }
-        guard subscriptionDataLoaded else { return false }
+        guard ensureSubscriptionDataLoaded() else { return false }
         do {
             try vault.setSetting(key: SubscriptionStore.settingKey, value: SubscriptionStore.encode(value))
         } catch {
@@ -57,6 +62,7 @@ extension AppModel {
     }
 
     func setSubscription(_ s: RecurringSeries, marked: Bool) {
+        guard ensureSubscriptionDataLoaded() else { return }
         var data = subscriptionData
         if marked { data.entries[s.seriesKey] = data.entries[s.seriesKey] ?? SubscriptionDetails() } else { data.entries[s.seriesKey] = nil }
         storeSubscriptionData(data)
@@ -64,6 +70,7 @@ extension AppModel {
     }
 
     func setSubscriptionDetails(_ item: SubscriptionItem, _ details: SubscriptionDetails) {
+        guard ensureSubscriptionDataLoaded() else { return }
         var data = subscriptionData
         if let s = item.series {
             guard data.entries[s.seriesKey] != nil, data.entries[s.seriesKey] != details else { return }
@@ -78,6 +85,7 @@ extension AppModel {
     /// `amountCents` carries the sign: negative is an expense, positive an income.
     func addManualSubscription(name: String, amountCents: Int64, group: SubscriptionGroup, currency: String, startDate: String,
                                symbol: String? = nil, details: SubscriptionDetails = SubscriptionDetails()) {
+        guard ensureSubscriptionDataLoaded() else { return }
         var data = subscriptionData
         data.manual.append(ManualSubscription(
             id: UUID().uuidString, name: name, amountCents: amountCents, group: group.rawValue,
@@ -86,6 +94,7 @@ extension AppModel {
     }
 
     func updateManualSubscription(_ m: ManualSubscription) {
+        guard ensureSubscriptionDataLoaded() else { return }
         var data = subscriptionData
         guard let i = data.manual.firstIndex(where: { $0.id == m.id }), data.manual[i] != m else { return }
         data.manual[i] = m
@@ -93,6 +102,7 @@ extension AppModel {
     }
 
     func removeManualSubscription(id: String) {
+        guard ensureSubscriptionDataLoaded() else { return }
         var data = subscriptionData
         data.manual.removeAll { $0.id == id }
         storeSubscriptionData(data)
@@ -104,7 +114,8 @@ extension AppModel {
         // The series is the same payee/contract (same base key); a manual rhythm also drops the amount from
         // the key, so the latest booking and the key suffix both change. Among several contracts of one
         // payee the one with the nearest amount is the same contract.
-        guard let details = subscriptionData.entries[old.seriesKey],
+        guard ensureSubscriptionDataLoaded(),
+              let details = subscriptionData.entries[old.seriesKey],
               let now = recurring.filter({ $0.baseKey == old.baseKey })
                 .min(by: { abs($0.amountCents - old.amountCents) < abs($1.amountCents - old.amountCents) }),
               now.seriesKey != old.seriesKey else { return }

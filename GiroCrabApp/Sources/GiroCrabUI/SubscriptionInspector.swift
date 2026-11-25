@@ -201,7 +201,7 @@ private struct SubscriptionDetailView: View {
             if let s = item.series {
                 Picker("Turnus", selection: Binding(
                     get: { s.interval },
-                    set: { if $0 != .custom { model.changeSubscriptionRhythm(s, to: $0) } })) {
+                    set: { if $0 != .custom { flush(); model.changeSubscriptionRhythm(s, to: $0) } })) {
                     if s.interval == .custom { Text(RecurrenceInterval.custom.label).tag(RecurrenceInterval.custom) }
                     ForEach(RecurrenceInterval.fixed, id: \.self) { Text($0.label).tag($0) }
                 }
