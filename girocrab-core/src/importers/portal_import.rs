@@ -1309,10 +1309,19 @@ fn convert_legacy_copies(db: &rusqlite::Connection, account_id: i64) -> Result<u
     };
     for id in &copies {
         db.execute(&copy_sql, [id])?;
-        let survivor: i64 = db.query_row(
-            "SELECT c.id FROM transactions c JOIN transactions old ON c.account_id=old.account_id AND c.external_id=?2 || old.external_id WHERE old.id=?1",
-            params![id, HOLD_PREFIX], |r| r.get(0))?;
-        crate::refunds::move_booking(db, *id, survivor)?;
+        // only a live copy takes the links: a deleted hold that already owns the id (the insert
+        // was ignored) never does; then the links stay on the converted row, inactive with it
+        let survivor: Option<i64> = rusqlite::OptionalExtension::optional(db.query_row(
+            "SELECT c.id FROM transactions c JOIN transactions old
+                ON c.account_id=old.account_id AND c.external_id=?2 || old.external_id
+               AND c.deleted_ms IS NULL
+             WHERE old.id=?1",
+            params![id, HOLD_PREFIX],
+            |r| r.get(0),
+        ))?;
+        if let Some(survivor) = survivor {
+            crate::refunds::move_booking(db, *id, survivor)?;
+        }
         crate::sync_merge::soft_delete_booking(db, *id)?;
     }
     Ok(copies.len() as u32)

@@ -56,9 +56,14 @@ extension AppModel {
         refreshRecurring()
     }
 
+    /// The latest `revealBooking` call: an older jump still waiting gives way to a newer one.
+    @MainActor private static var revealRequest = 0
+
     /// Selects a booking in the list, widening the period if it is outside of it.
     func revealBooking(_ id: Int64) {
         guard let pin = pinVault() else { return }
+        AppModel.revealRequest &+= 1
+        let request = AppModel.revealRequest
         if booking(withID: id) == nil {
             sidebarSelection = .allAccounts
             period = .all
@@ -69,9 +74,12 @@ extension AppModel {
         // After a closing sheet / list reload, so the list can scroll to the row.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 350_000_000)
-            guard let self, !Task.isCancelled, isCurrent(pin), generation == listGeneration else { return }
-            // an older booking is not on the first page: load back to its day
+            guard let self, !Task.isCancelled, isCurrent(pin), request == AppModel.revealRequest else { return }
+            // an older booking is not on the first page: load back to its day. Only this path
+            // depends on the list generation; a loaded target is selected even when a load that
+            // started before the jump finished meanwhile.
             if booking(withID: id) == nil {
+                guard generation == listGeneration else { return }
                 let filter = currentFilter
                 do {
                     let count = try await pin.run { vault -> UInt32? in
@@ -80,14 +88,18 @@ extension AppModel {
                         if narrowed.dateFrom.map({ $0 < day }) ?? true { narrowed.dateFrom = day }
                         return try vault.countTransactions(filter: narrowed)
                     }
-                    guard !Task.isCancelled, isCurrent(pin), generation == listGeneration, let count else { return }
+                    guard !Task.isCancelled, isCurrent(pin), request == AppModel.revealRequest,
+                          generation == listGeneration, let count else { return }
                     listLimit = max(listLimit, count)
                     startSelectionLoad()
                     let loadGeneration = listGeneration
                     await selectionLoadTask?.value
-                    guard !Task.isCancelled, isCurrent(pin), loadGeneration == listGeneration else { return }
+                    guard !Task.isCancelled, isCurrent(pin), request == AppModel.revealRequest,
+                          loadGeneration == listGeneration else { return }
                 } catch {
-                    if isCurrent(pin), generation == listGeneration { errorMessage = describe(error) }
+                    if isCurrent(pin), request == AppModel.revealRequest, generation == listGeneration {
+                        errorMessage = describe(error)
+                    }
                     return
                 }
             }

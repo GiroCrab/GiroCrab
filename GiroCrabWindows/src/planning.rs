@@ -146,6 +146,12 @@ pub fn split_remaining(booking_cents: i64, drafts: &[SplitDraft]) -> i64 {
     rest.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
+/// What "Rest übernehmen" puts into a row: its own amount plus the rest; `None` when the sum does
+/// not fit into cents (the row then keeps what was typed and the sum check reports it).
+pub fn split_fill(own_cents: i64, rest_cents: i64) -> Option<i64> {
+    own_cents.checked_add(rest_cents)
+}
+
 /// Validates the split form. An empty (all rows blank) form removes the split.
 pub fn build_splits(
     drafts: &[SplitDraft],
@@ -477,6 +483,18 @@ mod tests {
             split_remaining(-1000, &[draft(0, "-4"), draft(0, "x")]),
             -600
         );
+    }
+
+    #[test]
+    fn fill_rejects_an_out_of_range_sum() {
+        assert_eq!(split_fill(-400, -600), Some(-1000));
+        assert_eq!(split_fill(-i64::MAX, -i64::MAX), None);
+        assert_eq!(split_fill(i64::MAX, 1), None);
+        // balanced extreme drafts leave the plain rest, which fills an empty row
+        let max = format_plain(i64::MAX);
+        let min = format_plain(-i64::MAX);
+        let rest = split_remaining(-1000, &[draft(0, &max), draft(0, &min)]);
+        assert_eq!(split_fill(0, rest), Some(-1000));
     }
 
     #[test]

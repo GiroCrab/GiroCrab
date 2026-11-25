@@ -10,10 +10,13 @@ extension AppModel {
     func refundSnapshot(for key: RefundLoadKey, booking: Booking) async throws -> RefundSnapshot? {
         let generation = listGeneration
         guard key.vaultRevision == vaultRevision, key.revision == refundRevision, key.bookingID == booking.id else { return nil }
-        let filter = BookingFilter(accountIds: [booking.accountId], categoryId: nil, includeSubcategories: true,
-            uncategorizedOnly: false, search: nil, dateFrom: booking.bookingDate, dateTo: booking.bookingDate,
-            limit: 0, offset: 0, scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
+        let accountID = booking.accountId
         let snapshot = try await vaultOffMain { vault -> RefundSnapshot? in
+            // the day as stored now: a peer may have moved the booking while the sheet was open
+            guard let day = try vault.bookingDate(bookingId: key.bookingID) else { return nil }
+            let filter = BookingFilter(accountIds: [accountID], categoryId: nil, includeSubcategories: true,
+                uncategorizedOnly: false, search: nil, dateFrom: day, dateTo: day,
+                limit: 0, offset: 0, scope: .all, merchantKey: nil, direction: .all, checked: nil, wholeDays: false)
             let rows = try vault.listTransactions(filter: filter).transactions
             guard let booking = rows.first(where: { $0.id == key.bookingID }) else { return nil }
             let parts = try vault.listTransactionSplits(transactionId: key.bookingID)

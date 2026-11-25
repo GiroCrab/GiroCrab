@@ -366,10 +366,12 @@ impl Vault {
     /// What the booking rows show (markers, allocated cents, split counts). Without any link
     /// row only the split counts are read, not the whole ledger after every write.
     pub(crate) fn refund_markers(&self, db: &Connection) -> CoreResult<Arc<Resolved>> {
-        let any_link: bool =
-            db.query_row("SELECT EXISTS(SELECT 1 FROM refund_links)", [], |r| {
-                r.get(0)
-            })?;
+        // tombstones (unlinks, move markers) allocate nothing: only a live row needs the ledger
+        let any_link: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM refund_links WHERE deleted_ms IS NULL)",
+            [],
+            |r| r.get(0),
+        )?;
         if any_link {
             return self.refund_projection(db);
         }
