@@ -71,33 +71,35 @@ extension AppModel {
     /// Adds a bank login. While demo data is shown, the login goes into the
     /// personal vault (switching to it), then setup / PIN entry starts.
     func addConnection(_ kind: ConnectorKind, login: String) {
+        // taken now: adding may wait for the policy or an unlock, after the assistant closed
+        let history = newLoginHistory
         withFreshBankingPolicy { [self] in
             guard Self.isMagicDemoLogin(login) || bankingAllowsAdding(bankingGate(forNew: kind)) else { return }
-            addConnectionChecked(kind, login: login)
+            addConnectionChecked(kind, login: login, history: history)
         }
     }
 
-    private func addConnectionChecked(_ kind: ConnectorKind, login: String) {
+    private func addConnectionChecked(_ kind: ConnectorKind, login: String, history: String?) {
         // also while demo data is shown: the login goes into the personal vault (only a magic
         // demo login is a demo connection)
         if kind == .bitcoinCore, !Self.isMagicDemoLogin(login) {
-            addBitcoinCore(login: login)
+            addBitcoinCore(login: login, history: history)
             return
         }
-        addConnectionStored(kind, login: login)
+        addConnectionStored(kind, login: login, history: history)
     }
 
     /// Bitcoin Core: stored only once the node answers (RPC server on, `.cookie` found, wallet
     /// there); otherwise its error says what is missing and nothing is added. The data
     /// directory Bitcoin-Qt uses is taken over when none is set. Runs in the personal vault, so
     /// the check uses its settings and the detected directory is saved there, not in the demo.
-    private func addBitcoinCore(login: String) {
-        runInOwnVault { [self] in checkAndAddBitcoinCore(login: login) }
+    private func addBitcoinCore(login: String, history: String?) {
+        runInOwnVault { [self] in checkAndAddBitcoinCore(login: login, history: history) }
     }
 
     /// Adds only when, after the check, the same vault is open and the datadir and RPC URL are
     /// still the checked ones; otherwise nothing is written and the user adds it again.
-    private func checkAndAddBitcoinCore(login: String) {
+    private func checkAndAddBitcoinCore(login: String, history: String?) {
         guard let pin = pinVault() else { return }
         let storedDatadir = settingEntry(BitcoinCoreDatadir.key)?.value ?? ""
         let rpcURL = settingEntry("bitcoin_core.rpc_url")?.value ?? ""
@@ -125,15 +127,20 @@ extension AppModel {
                 return
             }
             if let detected { saveSetting(BitcoinCoreDatadir.key, detected) }
-            addConnectionStored(.bitcoinCore, login: login)
+            addConnectionStored(.bitcoinCore, login: login, history: history)
         }
     }
 
-    private func addConnectionStored(_ kind: ConnectorKind, login: String) {
+    /// `history`: period of the first fetch chosen in "Bank hinzufügen" (nil = the setting).
+    private func addConnectionStored(_ kind: ConnectorKind, login: String, history: String? = nil) {
         runInOwnVault(allowDemo: Self.isMagicDemoLogin(login)) { [self] in
             guard let vault else { return }
             var newID: Int64?
-            runCore { newID = try vault.addBankConnection(connector: kind, displayName: "", loginName: login) }
+            runCore {
+                let id = try vault.addBankConnection(connector: kind, displayName: "", loginName: login)
+                try Self.requestNewLoginHistory(history, for: id, in: vault)
+                newID = id
+            }
             reloadAccounts()
             if let id = newID, let conn = connections.first(where: { $0.id == id }) {
                 toast = String(localized: "\(conn.displayName) hinzugefügt")
@@ -144,17 +151,22 @@ extension AppModel {
 
     /// Adds a login at any FinTS 3.0 bank (BLZ + https URL), then starts setup / PIN entry.
     func addFinTsConnection(name: String, blz: String, url: String, login: String, tanMedium: String = "") {
+        let history = newLoginHistory
         withFreshBankingPolicy { [self] in
             guard Self.isMagicDemoLogin(login) || bankingAllowsAdding(bankingGate(forNewFinTS: blz)) else { return }
-            addFinTsConnectionChecked(name: name, blz: blz, url: url, login: login, tanMedium: tanMedium)
+            addFinTsConnectionChecked(name: name, blz: blz, url: url, login: login, tanMedium: tanMedium, history: history)
         }
     }
 
-    private func addFinTsConnectionChecked(name: String, blz: String, url: String, login: String, tanMedium: String) {
+    private func addFinTsConnectionChecked(name: String, blz: String, url: String, login: String, tanMedium: String, history: String?) {
         runInOwnVault(allowDemo: Self.isMagicDemoLogin(login)) { [self] in
             guard let vault else { return }
             var newID: Int64?
-            runCore { newID = try vault.addFintsConnection(blz: blz, url: url, displayName: name, loginName: login, tanMedium: tanMedium) }
+            runCore {
+                let id = try vault.addFintsConnection(blz: blz, url: url, displayName: name, loginName: login, tanMedium: tanMedium)
+                try Self.requestNewLoginHistory(history, for: id, in: vault)
+                newID = id
+            }
             reloadSettings()
             reloadAccounts()
             if let id = newID, let conn = connections.first(where: { $0.id == id }) {
@@ -167,17 +179,22 @@ extension AppModel {
     /// Adds a login at a bank reached via Enable Banking (PSD2), then starts the
     /// setup (Enable Banking credentials, if missing) and the consent redirect.
     func addEnableBankingConnection(aspsp: String, country: String, name: String, label: String) {
+        let history = newLoginHistory
         withFreshBankingPolicy { [self] in
             guard Self.isMagicDemoLogin(label) || bankingAllowsAdding(bankingGate(forNew: .enableBanking)) else { return }
-            addEnableBankingConnectionChecked(aspsp: aspsp, country: country, name: name, label: label)
+            addEnableBankingConnectionChecked(aspsp: aspsp, country: country, name: name, label: label, history: history)
         }
     }
 
-    private func addEnableBankingConnectionChecked(aspsp: String, country: String, name: String, label: String) {
+    private func addEnableBankingConnectionChecked(aspsp: String, country: String, name: String, label: String, history: String?) {
         runInOwnVault(allowDemo: Self.isMagicDemoLogin(label)) { [self] in
             guard let vault else { return }
             var newID: Int64?
-            runCore { newID = try vault.addEnableBankingConnection(aspsp: aspsp, country: country, displayName: name, loginName: label) }
+            runCore {
+                let id = try vault.addEnableBankingConnection(aspsp: aspsp, country: country, displayName: name, loginName: label)
+                try Self.requestNewLoginHistory(history, for: id, in: vault)
+                newID = id
+            }
             reloadAccounts()
             if let id = newID, let conn = connections.first(where: { $0.id == id }) {
                 toast = String(localized: "\(conn.displayName) hinzugefügt")
@@ -418,6 +435,35 @@ extension AppModel {
         guard let vault else { return }
         runCore { try vault.clearConnectionSession(connectionId: id) }
         toast = String(localized: "Sitzung gelöscht")
+    }
+
+    /// Marks the just added login `id` for a full first fetch of the period chosen in
+    /// "Bank hinzufügen" (#1043); nil leaves the default the core marked it with.
+    nonisolated static func requestNewLoginHistory(_ setting: String?, for id: Int64, in vault: Vault) throws {
+        guard let setting else { return }
+        try vault.requestFullHistory(connectionId: id, range: HistoryRange(setting: setting))
+    }
+
+    /// Period of the full fetch pending for login `id` (`max` or days; "" = none, #1043).
+    func pendingFullHistory(_ id: Int64) -> String {
+        ((try? vault?.pendingFullHistory(connectionId: id)) ?? nil)?.setting ?? ""
+    }
+
+    /// Marks login `id` for a full fetch of `setting` at its next sync the user starts,
+    /// or calls a pending one off (""). False when it was not stored (the error is shown).
+    func setFullHistory(_ id: Int64, _ setting: String) -> Bool {
+        guard let vault else { return false }
+        do {
+            if setting.isEmpty {
+                try vault.cancelFullHistory(connectionId: id)
+            } else {
+                try vault.requestFullHistory(connectionId: id, range: HistoryRange(setting: setting))
+            }
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
     }
 
     /// The connection's bank delivers documents (the switch is offered only then).

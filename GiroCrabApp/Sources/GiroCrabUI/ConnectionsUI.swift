@@ -175,6 +175,9 @@ struct ConnectionEditSheet: View {
     /// "Dokumente abrufen" is off: nothing that fetches documents runs (Postbox included).
     private var documentsBlocked: Bool { documentsSupported && !documentsFetch }
     @State private var initialDocumentsFetch = true
+    /// Full fetch at the next sync (#1043): `max`, days, or "" for none.
+    @State private var fullHistory = ""
+    @State private var initialFullHistory = ""
     /// Sharinbox: "Nicht zugeteilte Aktienrechte abrufen".
     @State private var rightsFetch = true
     @State private var initialRightsFetch = true
@@ -544,6 +547,21 @@ struct ConnectionEditSheet: View {
                     } header: { Text("Abruf").appSectionHeader() }
                 }
                 Section {
+                    Picker("Beim nächsten Abruf", selection: $fullHistory) {
+                        Text("Ab dem neuesten Umsatz").tag("")
+                        ForEach(HistoryRange.pickerOptions, id: \.setting) { Text($0.title).tag($0.setting) }
+                        if !fullHistory.isEmpty, !HistoryRange.pickerOptions.contains(where: { $0.setting == fullHistory }) {
+                            Text("\(Int(fullHistory) ?? 90) Tage").tag(fullHistory)
+                        }
+                    }
+                } header: {
+                    Text("Umsätze").appSectionHeader()
+                } footer: {
+                    Text("Ein Zeitraum holt beim nächsten Abruf alle Umsätze daraus, auch für Konten, die schon Umsätze haben. Vorhandene Umsätze werden nicht doppelt angelegt. Für mehr als 90 Tage verlangen viele Banken eine TAN.")
+                        .appFont(.caption).foregroundStyle(Theme.secondary)
+                        .leadingFooter()
+                }
+                Section {
                     // saved by the sheet's own Speichern, so there is a single place to confirm
                     AccountSelectionList(connection: connection, showsSaveButton: false, draft: selection)
                 } header: { Text("Kontenauswahl").appSectionHeader() }
@@ -768,6 +786,7 @@ struct ConnectionEditSheet: View {
         if documentsSupported, documentsFetch != initialDocumentsFetch { return true }
         if connection.connector == .sharinbox, rightsFetch != initialRightsFetch { return true }
         if syncSchedule != initialSyncSchedule { return true }
+        if fullHistory != initialFullHistory { return true }
         // Amex portal login (user name, password, save switch) and Advanzia (password, release method)
         // are not in `values`.
         if savesPortalLogin,
@@ -799,11 +818,22 @@ struct ConnectionEditSheet: View {
         return true
     }
 
+    /// Before anything that fetches: the next sync must reach back as chosen (#1043).
+    /// `force`: a fetch starts right away, so the shown period is stored even when it is the one
+    /// loaded: a full sync that finished while the sheet was open has deleted the stored one.
+    private func saveFullHistoryIfChanged(force: Bool = false) -> Bool {
+        guard force || fullHistory != initialFullHistory else { return true }
+        guard model.setFullHistory(connection.id, fullHistory) else { return false }
+        initialFullHistory = fullHistory
+        return true
+    }
+
     /// The login's settings and the account selection, saved together; a fetch only starts after
     /// the selection is stored (a switched-off account must not be fetched).
     private func saveAll(thenSync: Bool = false) {
+        guard !thenSync || saveFullHistoryIfChanged(force: true) else { return }
         if connection.connector == .advanzia {
-            guard saveSyncScheduleIfChanged() else { return }
+            guard saveSyncScheduleIfChanged(), saveFullHistoryIfChanged() else { return }
             Task { @MainActor in
                 guard let updated = await advanziaSettings.save(connection: connection, name: name, login: login, model: model) else { return }
                 dismiss()
@@ -839,6 +869,8 @@ struct ConnectionEditSheet: View {
         }
         syncSchedule = model.syncSchedule(connection.id)
         initialSyncSchedule = syncSchedule
+        fullHistory = model.pendingFullHistory(connection.id)
+        initialFullHistory = fullHistory
         if isFinTs { tanMedium = model.revealSetting(tanMediumKey) }
         if savesPortalLogin {
             let storedUser = model.revealSetting(AppModel.portalLoginKey(connection.id))
@@ -883,7 +915,7 @@ struct ConnectionEditSheet: View {
     }
 
     private func save() -> Bool {
-        guard saveSyncScheduleIfChanged() else { return false }
+        guard saveSyncScheduleIfChanged(), saveFullHistoryIfChanged() else { return false }
         if documentsSupported, documentsFetch != initialDocumentsFetch {
             model.setDocumentsFetch(connection.id, documentsFetch)
             initialDocumentsFetch = documentsFetch

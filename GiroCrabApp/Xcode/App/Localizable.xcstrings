@@ -3051,6 +3051,17 @@
         }
       }
     },
+    "Ab dem neuesten Umsatz" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From the newest transaction"
+          }
+        }
+      }
+    },
     "Abbrechen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7619,6 +7630,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Switch on “Fetch documents” in the connection"
+          }
+        }
+      }
+    },
+    "Beim nächsten Abruf" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On the next fetch"
           }
         }
       }
@@ -13934,6 +13956,17 @@
         }
       }
     },
+    "Ein Zeitraum holt beim nächsten Abruf alle Umsätze daraus, auch für Konten, die schon Umsätze haben. Vorhandene Umsätze werden nicht doppelt angelegt. Für mehr als 90 Tage verlangen viele Banken eine TAN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A period fetches all its transactions on the next fetch, also for accounts that already have transactions. Existing transactions are not added twice. Many banks require a TAN for more than 90 days."
+          }
+        }
+      }
+    },
     "Ein anderes Gerät hat Bankzugängen eine eigene Enable-Banking-Anwendung gegeben. Beim nächsten Abruf ist auf diesem Gerät eine neue Zustimmung nötig." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15182,6 +15215,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Created on %1$@ at %2$@"
+          }
+        }
+      }
+    },
+    "Erster Abruf" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "First fetch"
           }
         }
       }
@@ -39183,6 +39227,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“Cancel import” discards everything – nothing is imported then."
+          }
+        }
+      }
+    },
+    "„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Später lässt sich ein Zeitraum in den Einstellungen des Zugangs erneut abrufen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“Maximum” goes back as far as the bank and the connection allow. Many banks require a TAN for more than 90 days. A period can be fetched again later in the connection’s settings."
           }
         }
       }
