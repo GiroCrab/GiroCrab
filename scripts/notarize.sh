@@ -334,7 +334,7 @@ if [ "$NIGHTLY" -eq 1 ]; then
   CHANNEL="nightly"
   # <last v* tag's bundle version>.<UTC timestamp>: sorts after that tag and
   # before the next beta/stable, so nightly testers also get those.
-  LAST_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2>/dev/null)" \
+  LAST_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-nightly.*' HEAD 2>/dev/null)" \
     || { echo "error: --nightly needs a previous v* tag" >&2; exit 2; }
   LAST_BUILD="$(bundle_version_for_tag "$LAST_TAG")" \
     || { echo "error: last tag $LAST_TAG is neither vX.Y.Z nor vX.Y.Z-beta.N" >&2; exit 2; }

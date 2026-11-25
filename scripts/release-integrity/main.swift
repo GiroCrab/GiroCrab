@@ -197,6 +197,40 @@ if sparkleKeys.isEmpty {
     }
 }
 
+// MARK: - Windows assets (#1778)
+
+// The Windows package is not signed (no Authenticode, no Sparkle): the release carries SHA256SUMS.txt next to it.
+// That catches a replaced or corrupted file but not an attacker who replaces both – see docs/release-integrity.md.
+switch fetch(latestBase + "/SHA256SUMS.txt") {
+case .notFound:
+    note("SHA256SUMS.txt not found on the latest release – Windows asset check skipped")
+case .failed(let why):
+    finding("SHA256SUMS.txt could not be downloaded: \(why)")
+case .ok(let sums):
+    var checked = 0
+    for line in String(decoding: sums, as: UTF8.self).split(separator: "\n") {
+        let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+        guard parts.count == 2 else { finding("SHA256SUMS.txt: malformed line '\(line)'"); continue }
+        let (hash, name) = (parts[0].lowercased(), String(parts[1]).trimmingCharacters(in: CharacterSet(charactersIn: "*")))
+        guard name.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil,
+              hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+            finding("SHA256SUMS.txt: unexpected entry '\(line)'"); continue
+        }
+        guard name.hasSuffix(".exe") || name.hasSuffix(".msi") || name.hasSuffix(".zip") else {
+            finding("SHA256SUMS.txt lists an unexpected file type: \(name)"); continue
+        }
+        switch fetch(latestBase + "/" + name) {
+        case .notFound: finding("SHA256SUMS.txt lists \(name), but the release has no such asset")
+        case .failed(let why): finding("\(name) could not be downloaded: \(why)")
+        case .ok(let data):
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            if digest == hash { checked += 1; print("ok: \(name) SHA-256") }
+            else { finding("\(name): SHA-256 differs from SHA256SUMS.txt") }
+        }
+    }
+    if checked == 0 { finding("SHA256SUMS.txt lists no checkable Windows asset") }
+}
+
 // MARK: - Banking policy
 
 func policyKeys() -> [Curve25519.Signing.PublicKey] {

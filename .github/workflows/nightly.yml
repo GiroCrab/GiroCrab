@@ -4,6 +4,8 @@ name: Nightly
 # signing and notarization stay on the maintainer's Mac (scripts/notarize.sh
 # --nightly), deliberately without Apple certificates in GitHub Secrets.
 # The zip is kept as a workflow artifact, never attached to a release.
+# Windows (#1778) is the exception: updates.rs reads the GitHub releases API, so each night gets a VERSIONED
+# pre-release vX.Y.Z-nightly.YYYYMMDD (X.Y.Z = last stable/beta tag) with the installer attached, never a rolling tag.
 
 on:
   workflow_dispatch:
@@ -47,6 +49,54 @@ jobs:
           name: GiroCrab-macOS-arm64-nightly
           path: dist/GiroCrab-macOS-arm64.zip
           retention-days: 14
+
+  windows:
+    # One pre-release per UTC day; a re-run on the same day replaces its assets.
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Nightly version from the last release tag
+        id: ver
+        shell: bash
+        run: |
+          LAST="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-nightly.*' HEAD)" \
+            || { echo "error: no previous v* tag" >&2; exit 1; }
+          BASE="$(echo "${LAST#v}" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          echo "tag=v${BASE}-nightly.$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - run: scripts/set-windows-version.sh "${{ steps.ver.outputs.tag }}"
+        shell: bash
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: GiroCrabWindows
+      - run: cargo build --release --locked --manifest-path GiroCrabWindows/Cargo.toml
+      - name: Package installer
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ steps.ver.outputs.tag }}
+        run: ./scripts/package-windows.ps1 -Version "$env:TAG_NAME"
+      - name: Publish versioned nightly pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.ver.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          FILES=(dist/girocrab-windows-x86_64.zip dist/girocrab-windows-x86_64-setup.exe dist/SHA256SUMS.txt)
+          if gh release view "$TAG_NAME" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "${FILES[@]}" --clobber --repo "$REPO"
+          else
+            gh release create "$TAG_NAME" "${FILES[@]}" --target main --prerelease --latest=false \
+              --title "Nightly ${TAG_NAME#*-nightly.} (Windows)" \
+              --notes "Windows-Nightly aus main (Alpha, nicht signiert). Prüfsummen: SHA256SUMS.txt." --repo "$REPO"
+          fi
 
   sync-docs-website:
     # Idempotent: no diff => nothing happens. Manual runs can opt out via the input.
