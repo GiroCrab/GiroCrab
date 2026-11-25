@@ -2116,6 +2116,8 @@ QtObject {
                 postboxConnectionID = null
                 documentsVersion++
                 toast = qsTr("%1: %2 neue Kontoauszüge").arg(connection.display_name).arg(n)
+                // a skipped order („TAN auslassen“) leaves the fetch incomplete: say so, as syncNotice does
+                if (s.warnings.length > 0) toast += " · " + qsTr("Nicht alles abgerufen, Details im Abruf-Protokoll")
             } else if (postboxConnectionID === connection.id) {
                 postboxConnectionID = null
                 documentsVersion++
