@@ -40,21 +40,29 @@ pub struct PortalStatementItem {
 /// PDF of the same entry, never with the link of a neighbour. Duplicate
 /// `(date, path)` pairs and entries without a complete pair are left out.
 pub fn parse_portal_statement_list(body: &str) -> Vec<PortalStatementItem> {
-    /// First closing date of an object's direct fields — a field that names a
-    /// statement/closing date (`statementDate`, `endDate`, …) wins over any other
-    /// date-like field (`serde_json` maps iterate alphabetically, so e.g. a
-    /// `dueDate` would otherwise be taken before `statementDate`).
+    /// First closing date of an object's direct fields — a field whose (separator-free,
+    /// lower-cased) name names a statement/closing date wins over any other date-like
+    /// field, whatever the map order (`serde_json` maps iterate alphabetically, e.g. a
+    /// `created` would otherwise win over `end_date` or `statementDate`).
     fn own_date(m: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
-        const NAMED: [&str; 4] = ["statementdate", "closingdate", "enddate", "documentdate"];
+        const NAMED: [&str; 5] = [
+            "statementdate",
+            "closingdate",
+            "enddate",
+            "documentdate",
+            "date",
+        ];
         let mut best: Option<(usize, String)> = None;
         for (k, v) in m {
             let Some(date) = v.as_str().and_then(closing_date) else {
                 continue;
             };
-            let prio = NAMED
-                .iter()
-                .position(|n| k.to_lowercase() == *n)
-                .unwrap_or(usize::MAX);
+            let name: String = k
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
+            let prio = NAMED.iter().position(|n| *n == name).unwrap_or(usize::MAX);
             if best.as_ref().is_none_or(|(p, _)| prio < *p) {
                 best = Some((prio, date));
             }
@@ -448,18 +456,26 @@ mod statement_list_tests {
     }
 
     /// `serde_json` maps iterate alphabetically: a field whose name names the
-    /// statement's date wins over any other date-like field (`dueDate` would
-    /// otherwise be read before `statementDate`; invented values only).
+    /// statement's date wins over any other date-like field — `created` or
+    /// `dueDate` would otherwise be read before `end_date`/`statementDate`
+    /// (invented values only).
     #[test]
     fn a_statement_named_date_wins_over_other_date_fields() {
         let body = r#"{"statements":[
-            {"id":"S1","dueDate":"2026-10-01","statementDate":"2026-09-30","url":"/a/1.pdf"}]}"#;
+            {"id":"S1","dueDate":"2026-10-01","statementDate":"2026-09-30","url":"/a/1.pdf"},
+            {"id":"S2","created":"2026-10-01","end_date":"2026-10-31","url":"/a/2.pdf"}]}"#;
         assert_eq!(
             parse_portal_statement_list(body),
-            vec![PortalStatementItem {
-                date: "2026-09-30".into(),
-                path: "/a/1.pdf".into()
-            }]
+            vec![
+                PortalStatementItem {
+                    date: "2026-09-30".into(),
+                    path: "/a/1.pdf".into()
+                },
+                PortalStatementItem {
+                    date: "2026-10-31".into(),
+                    path: "/a/2.pdf".into()
+                },
+            ]
         );
     }
 

@@ -695,15 +695,20 @@ final class PortalBrowser {
     (function(){
       var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
       var norm = function(s) {
-        var p = s.split('.');
-        if (p.length !== 3) return s;
-        return p[2] + '-' + p[1].padStart(2, '0') + '-' + p[0].padStart(2, '0');
+        // ISO or DD.MM.YYYY, only a day that exists in its month (the core
+        // checks too; 29.02.2024 passes, 29.02.2025 has no date)
+        var iso = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/), de = s.match(/^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})$/);
+        if (!iso && !de) return '';
+        var y = iso ? iso[1] * 1 : de[3] * 1, mo = (iso ? iso[2] : de[2]) * 1, d = (iso ? iso[3] : de[1]) * 1;
+        var t = new Date(Date.UTC(y, mo - 1, d));
+        if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) return '';
+        return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
       };
       var date = function(t) {
         var re = /(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4})/g, ms = [], m;
         while ((m = re.exec(t || ''))) {
           var d = norm(m[1]);
-          if (ms.indexOf(d) < 0) ms.push(d);
+          if (d && ms.indexOf(d) < 0) ms.push(d);
         }
         if (!ms.length) return '';
         if (ms.length === 1) return ms[0];
@@ -761,10 +766,10 @@ final class PortalBrowser {
         // (like Amex, a failure) — a captured but empty list stays failed=0
         guard statementList != nil || !items.isEmpty else { return ("", "", [], 0, 1) }
         let card = Self.cardKey(statementList?.token ?? "")
-        guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1 + undated) }
         // visible links without a usable closing date: the statement exists but
         // cannot be identified — a failure, while known or older ones count fine
         let undated = items.filter { $0.date.count != 10 }.count
+        guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1 + undated) }
         let wanted = items
             .filter { $0.date.count == 10 && $0.date >= since && !knownDates.contains($0.date) }
             .map { (date: $0.date, path: $0.path) }
