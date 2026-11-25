@@ -2375,6 +2375,45 @@ fn find_existing_accounts(
     Ok(out)
 }
 
+/// Whether the vault account `id` is the MoneyMoney card `a` that a fetch took over by its
+/// number (#1691): neither has an IBAN, the account is a card under the bank's reference on
+/// the login the preview finds for `a`'s bank, in `a`'s currency, and the number the import
+/// stored (a fetch never replaces it) names `a` and no other MoneyMoney account.
+fn card_taken_over_from(
+    conn: &Connection,
+    src: &Source,
+    a: &SrcAccount,
+    id: i64,
+) -> CoreResult<bool> {
+    let Some(b) = src.bank(a.bank_key).filter(|_| a.iban.is_empty()) else {
+        return Ok(false);
+    };
+    let Some((kind, key)) = src.connector_key(b) else {
+        return Ok(false);
+    };
+    let Some(login) = find_connection(conn, kind, &key, &b.username)? else {
+        return Ok(false);
+    };
+    let number: Option<String> = conn
+        .query_row(
+            "SELECT IFNULL(account_number, '') FROM accounts
+             WHERE id = ?1 AND connection_id = ?2 AND kind = ?3
+               AND external_ref NOT LIKE 'moneymoney-db:%'
+               AND replace(IFNULL(iban, ''), ' ', '') = ''
+               AND upper(IFNULL(currency, '')) IN ('', ?4)",
+            params![
+                id,
+                login,
+                AccountKind::CreditCard.as_str(),
+                a.currency.trim().to_uppercase()
+            ],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let numbers = src.accounts.iter().map(|x| (x.id, x.account.as_str()));
+    Ok(number.is_some_and(|n| card_by_number(numbers, &n) == CardMatch::One(a.id)))
+}
+
 fn find_connection(
     conn: &Connection,
     kind: ConnectorKind,
@@ -3375,9 +3414,10 @@ impl ImportCtx<'_> {
             // active) or of one the #998 repair reactivated: MoneyMoney's applies –
             // for the latter only from the MoneyMoney account it came from (its
             // reference, or the same IBAN and currency once a fetch took it over and
-            // the reference is gone), not from another one merged into it. MoneyMoney
-            // may keep several accounts with one IBAN (a closed and an open one, #94):
-            // then the IBAN names no source and the state stays as it is.
+            // the reference is gone, for a card without IBAN its number, #1691), not
+            // from another one merged into it. MoneyMoney may keep several accounts
+            // with one IBAN (a closed and an open one, #94): then the IBAN names no
+            // source and the state stays as it is.
             let iban_source = if src.accounts.iter().filter(|x| x.iban == a.iban).count() == 1 {
                 a.iban.as_str()
             } else {
@@ -3400,6 +3440,7 @@ impl ImportCtx<'_> {
                 ],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
+            let own = own || card_taken_over_from(conn, src, a, id)?;
             let unknown = own && marked;
             if a.closed && unknown {
                 // closed in its own MoneyMoney account: archived, stamped just after the

@@ -4939,6 +4939,111 @@ fn a_noted_account_taken_over_by_iban_takes_its_sources_state() {
     assert!(archive_unknown(&v.db().unwrap()).unwrap().is_empty());
 }
 
+/// The fixture's Visa card (4711, no IBAN) on the comdirect login the import set up, marked by
+/// step 38 (stamped 1_790_001_000_124) and then taken over by a fetch of the card `fetched`:
+/// the bank's reference, still the number the import stored. Returns its id.
+fn taken_over_card(v: &Vault, fetched: &str) -> i64 {
+    import_with(v, &fake_db(), |o| o.create_connections = true);
+    let visa = account_by_name(v, "Visa-Karte");
+    let db = v.db().unwrap();
+    db.execute(
+        "UPDATE accounts SET archived_ms = 1790001000124, archive_unknown = 1 WHERE id = ?1",
+        [visa.id],
+    )
+    .unwrap();
+    let login = visa.connection_id.unwrap();
+    let card = AccountKind::CreditCard;
+    let adopted = adopt_account(&db, login, "card-1", "", fetched, "EUR", card, &[fetched]);
+    assert_eq!(adopted.unwrap(), Some(visa.id), "{fetched}");
+    visa.id
+}
+
+/// (archived_unix, archived_ms, marked) of an account.
+fn archive_state(v: &Vault, id: i64) -> (Option<i64>, i64, bool) {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT archived_unix, archived_ms, archive_unknown != 0 FROM accounts WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_marked_card_taken_over_by_its_number_takes_its_sources_state() {
+    // #1691: no reference and no IBAN left, but the number names its own MoneyMoney card on
+    // the login the import finds for it – also after a replacement card with a new number
+    // took it over. Closed: archived just after the repair; open: known, stamp unchanged
+    for fetched in ["5232000000004711", "5232000000008888"] {
+        for closed in [true, false] {
+            let v = vault();
+            let card = taken_over_card(&v, fetched);
+            let extra = if closed { CARD_CLOSED } else { "" };
+            import_with(&v, &fake_db_with(false, extra), |_| {});
+            let expected = match closed {
+                true => (Some(1_790_001_000), 1_790_001_000_125, false),
+                false => (None, 1_790_001_000_124, false),
+            };
+            assert_eq!(
+                archive_state(&v, card),
+                expected,
+                "{fetched} closed: {closed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_card_number_two_sources_share_leaves_the_mark() {
+    // MoneyMoney keeps a second card ending in 4711, masked: the number names no source
+    let v = vault();
+    let card = taken_over_card(&v, "5232000000004711");
+    let second = "INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+                    VALUES (6, 1, 'XXXX XXXX XXXX 4711', '20041111', 0, '', 'EUR', 'Visa-Karte alt', 'Max Mustermann', 0, 3, 6, 0, 1, 'GEHEIM');";
+    import_with(
+        &v,
+        &fake_db_with(false, &format!("{CARD_CLOSED} {second}")),
+        |_| {},
+    );
+    assert_eq!(archive_state(&v, card), (None, 1_790_001_000_124, true));
+}
+
+#[test]
+fn a_card_number_names_the_source_only_on_its_login_and_in_its_currency() {
+    // the card in another currency, or on another login (the user chose it as target): not
+    // the Visa card's own account, the closed source leaves state and mark alone
+    for other_login in [false, true] {
+        let v = vault();
+        let card = taken_over_card(&v, "5232000000004711");
+        let (login, currency) = if other_login {
+            let other = v
+                .add_bank_connection(ConnectorKind::AmazonVisa, String::new(), "visa".into())
+                .unwrap();
+            (other, "EUR")
+        } else {
+            (account_by_id(&v, card).connection_id.unwrap(), "USD")
+        };
+        v.db()
+            .unwrap()
+            .execute(
+                "UPDATE accounts SET connection_id = ?2, currency = ?3 WHERE id = ?1",
+                params![card, login, currency],
+            )
+            .unwrap();
+        import_with(&v, &fake_db_with(false, CARD_CLOSED), |o| {
+            for c in o.accounts.iter_mut().filter(|c| c.mm_id == 2) {
+                c.target_account_id = Some(card);
+            }
+        });
+        assert_eq!(
+            archive_state(&v, card),
+            (None, 1_790_001_000_124, true),
+            "other login: {other_login}"
+        );
+    }
+}
+
 /// Device A imported the fixture and step 38 marked its Girokonto; device B has it from A by
 /// merge. Returns (A, B, Girokonto on A, Girokonto on B).
 fn repaired_on_two_devices() -> (Arc<Vault>, Arc<Vault>, i64, i64) {
