@@ -523,8 +523,10 @@ final class PortalBrowser {
     }
 
     /// Types user name and password into the visible login form (empty fields only).
-    /// Runs in an isolated script world, so the page's scripts never get the values
-    /// as arguments; does not submit.
+    /// An empty password only fills the user name — two-step logins (e-mail first,
+    /// password on the next page) have no visible password field there. Otherwise a
+    /// visible password field is required. Runs in an isolated script world, so the
+    /// page's scripts never get the values as arguments; does not submit.
     func fillLogin(user: String, password: String) async -> Bool {
         guard onPortal else { return false }
         let js = """
@@ -535,13 +537,13 @@ final class PortalBrowser {
         });
         if (location.protocol !== 'https:' || !allowed) return false;
         var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-        var pw = Array.prototype.find.call(document.querySelectorAll('input[type=password]'), vis);
-        if (!pw) return false;
+        var pw = Array.prototype.filter.call(document.querySelectorAll('input[type=password]'), vis)[0] || null;
+        if (password && !pw) return false;
         var texts = Array.prototype.filter.call(document.querySelectorAll('input'), function(i) {
           return vis(i) && /^(text|email|tel)?$/i.test(i.getAttribute('type') || ''); });
         var named = texts.find(function(i) {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
-        var before = texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; });
+        var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
         var set = function(el, v) {
           if (el.value) return;
@@ -550,8 +552,8 @@ final class PortalBrowser {
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
         if (u) set(u, user);
-        set(pw, password);
-        return true;
+        if (pw && password) set(pw, password);
+        return pw ? true : !!u;
         """
         return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password,
                                                                                "domains": domains.domains],
