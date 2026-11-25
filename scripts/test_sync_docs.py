@@ -123,15 +123,15 @@ class SyncDocs(unittest.TestCase):
             (root / "girocrab-core/src/connectors").mkdir(parents=True)
             (root / "girocrab-core/data").mkdir()
             (root / "docs/assets").mkdir(parents=True)
-            (root / "girocrab-core/src/connectors/catalog.rs").write_text(CATALOG)
-            (root / "girocrab-core/data/fints_directory.tsv").write_text("1\ta\tu\n")
-            (root / "docs/assets/download-macos.svg").write_text("v0.1.0 · Apple Silicon")
+            (root / "girocrab-core/src/connectors/catalog.rs").write_text(CATALOG, encoding="utf-8")
+            (root / "girocrab-core/data/fints_directory.tsv").write_text("1\ta\tu\n", encoding="utf-8")
+            (root / "docs/assets/download-macos.svg").write_text("v0.1.0 · Apple Silicon", encoding="utf-8")
             readme = root / "README.md"
-            readme.write_text(f"{BLK}\n{BLK}\nAktuelle Version: **v0.1.0**")
+            readme.write_text(f"{BLK}\n{BLK}\nAktuelle Version: **v0.1.0**", encoding="utf-8")
             sd.run_readme(root, "v0.2.0")
-            first = readme.read_text()
+            first = readme.read_text(encoding="utf-8")
             sd.run_readme(root, "v0.2.0")
-            self.assertEqual(first, readme.read_text())
+            self.assertEqual(first, readme.read_text(encoding="utf-8"))
             self.assertIn("v0.2.0", first)
             self.assertIn("| Volksbank X | FinTS 3.0 |", first)
             self.assertIn("| Amazon orders | Web-Portal |", first)
@@ -146,7 +146,7 @@ class RealRepo(unittest.TestCase):
     """Checks docs/*-connector.md and CONNECTOR_DOCS against the real catalog.rs (#1875)."""
 
     def setUp(self):
-        self.catalog = (ROOT / "girocrab-core/src/connectors/catalog.rs").read_text()
+        self.catalog = (ROOT / "girocrab-core/src/connectors/catalog.rs").read_text(encoding="utf-8")
         self.matrix = {e["name"]: e for e in sd.parse_matrix(self.catalog)}
 
     def test_parse_matrix_reads_every_entry(self):
@@ -172,7 +172,7 @@ class RealRepo(unittest.TestCase):
             with self.subTest(key):
                 # assertTrue, not assertIn: keep the whole doc/matrix out of the failure message.
                 self.assertTrue(entry in self.matrix, f"CONNECTOR_DOCS[{key!r}]: {entry!r} not parsed from BANK_MATRIX")
-                text = (ROOT / f"docs/{key}-connector.md").read_text()
+                text = (ROOT / f"docs/{key}-connector.md").read_text(encoding="utf-8")
                 note = sd.connector_note(shown, self.matrix[entry]["official"])
                 self.assertTrue(note in text, f"docs/{key}-connector.md: notice missing or outdated; {FIX}")
 

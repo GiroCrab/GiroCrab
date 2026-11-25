@@ -213,18 +213,18 @@ def replace_version(text, version):
 
 
 def read_facts(root):
-    matrix = parse_matrix((root / "girocrab-core/src/connectors/catalog.rs").read_text())
+    matrix = parse_matrix((root / "girocrab-core/src/connectors/catalog.rs").read_text(encoding="utf-8"))
     if not matrix:
         sys.exit("error: no BANK_MATRIX entries parsed from catalog.rs (format changed?)")
-    n = fints_count((root / "girocrab-core/data/fints_directory.tsv").read_text())
+    n = fints_count((root / "girocrab-core/data/fints_directory.tsv").read_text(encoding="utf-8"))
     return matrix, n
 
 
 def edit(path, fn):
-    old = path.read_text()
+    old = path.read_text(encoding="utf-8")
     new = fn(old)
     if new != old:
-        path.write_text(new)
+        path.write_text(new, encoding="utf-8")
         print(f"updated {path}")
     return new != old
 
