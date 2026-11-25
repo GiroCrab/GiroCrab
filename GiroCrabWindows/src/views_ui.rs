@@ -711,9 +711,17 @@ pub fn apply_header(win: &MainWindow) {
         Target::Category(_) => "Kategorie inklusive Unterkategorien".into(),
         _ => String::new(),
     };
+    let fetched = match target {
+        Target::Account(id) => crate::fetched_label(
+            id,
+            crate::daily::effective_privacy(win.get_privacy(), win.get_unlocked()),
+        ),
+        _ => String::new(),
+    };
     win.set_selected_subtitle(subtitle.into());
     win.set_selected_name(name.into());
     win.set_selected_balance(balance.into());
+    win.set_selected_fetched(fetched.into());
 }
 
 /// Privacy toggled: redraw sidebar and view from the cached data.
@@ -739,6 +747,7 @@ pub fn on_lock(win: &MainWindow) {
     win.set_view_mode(MODE_BOOKINGS);
     win.set_side_selected("all".into());
     win.set_side_query(SharedString::new());
+    win.set_selected_fetched(SharedString::new());
     win.set_link_open(false);
     win.set_rules_open(false);
     crate::tags_ui::on_lock(win);
