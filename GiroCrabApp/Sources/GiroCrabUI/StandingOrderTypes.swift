@@ -10,6 +10,8 @@ struct StandingDraft {
     /// `standing_orders.id` of the order to change or delete.
     var orderRowID: Int64?
     var accountID: Int64?
+    /// Umbuchung (#1475): name and IBAN come from an own account.
+    var ownTransfer = false
     var name = ""
     var iban = ""
     var bic = ""
@@ -24,6 +26,15 @@ struct StandingDraft {
     /// Day of the month (31 = last day) or weekday (1 = Monday … 7).
     var execDay = 1
     var pin = ""
+
+    /// A recipient picked from the suggestions: name and IBAN, and no BIC of the one before (it belongs
+    /// to the other bank). The same recipient keeps its BIC.
+    mutating func takeRecipient(name newName: String, iban newIban: String) {
+        func key(_ s: String) -> String { s.filter { !$0.isWhitespace }.uppercased() }
+        if key(newIban) != key(iban) { bic = "" }
+        name = newName
+        iban = BatchRow.grouped(newIban)
+    }
 
     static var tomorrow: Date { Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date() }
 
