@@ -872,7 +872,7 @@ Sheet {
         const dir = AppModel.localPath(StandardPaths.writableLocation(StandardPaths.RuntimeLocation))
         const path = dir + "/girocrab-girocode-" + Date.now() + ".png"
         giroCodeImage.savePng(path, ok => {
-            if (!ok) return
+            if (!ok) { giroCodeWriteFailed(qsTr("GiroCode nicht kopiert")); return }
             AppModel.run(() => AppModel.core("copy_image", { path: path }))
             // the picture carries IBAN and amount: no copy stays on disk
             AppModel.run(() => AppModel.core("save_export_file", { from_path: path, discard: true }))
@@ -886,7 +886,14 @@ Sheet {
         nameFilters: [qsTr("PNG-Bilder (*.png)")]
         currentFolder: StandardPaths.writableLocation(StandardPaths.PicturesLocation)
         selectedFile: currentFolder + "/GiroCode.png"
-        onAccepted: giroCodeImage.savePng(AppModel.localPath(selectedFile), () => {})
+        onAccepted: giroCodeImage.savePng(AppModel.localPath(selectedFile), ok => {
+            if (!ok) sheet.giroCodeWriteFailed(qsTr("GiroCode nicht gesichert"))
+        })
+    }
+    /// The PNG could not be written (temp directory or the chosen file): say so, the buttons stay for a retry.
+    function giroCodeWriteFailed(title) {
+        AppModel.errorTitle = title
+        AppModel.errorMessage = qsTr("Das Bild konnte nicht geschrieben werden. Bitte erneut versuchen.")
     }
 
     // TransferSheetView.swift › .onDrop: Rechnung (PDF, ZUGFeRD-XML, Bild oder PDF mit GiroCode) hierher ziehen.

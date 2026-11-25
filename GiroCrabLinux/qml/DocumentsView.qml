@@ -43,16 +43,23 @@ Rectangle {
     // MARK: DocumentFilters (DocumentsUI.swift)
     /// Known types in reading order; others follow alphabetically.
     readonly property var typeOrder: ["abrechnung", "steuer", "kontoauszug", "postbox", "beleg"]
+    /// DocumentFilters.types(of:active:): those of `found`, plus the one being filtered by, even when
+    /// the documents found now have none of it: the picker needs an item for its selection.
     readonly property var types: {
         const present = {}
         for (const d of found) if (d.doc_type) present[d.doc_type] = true
+        if (typeFilter !== null && typeFilter !== "") present[typeFilter] = true
         return typeOrder.filter(t => present[t]).concat(Object.keys(present).filter(t => typeOrder.indexOf(t) < 0).sort())
     }
+    /// DocumentFilters.years(of:active:): newest first, plus the one being filtered by.
     readonly property var years: {
         const ys = {}
         for (const d of found) { const y = parseInt(String(d.doc_date || "").slice(0, 4)); if (!isNaN(y)) ys[y] = true }
+        if (yearFilter !== null) ys[yearFilter] = true
         return Object.keys(ys).map(Number).sort((a, b) => b - a)
     }
+    readonly property bool showsType: types.length > 1 || typeFilter !== null
+    readonly property bool showsYear: years.length > 1 || yearFilter !== null
     function typeTitle(t) {
         switch (t) {
         case "abrechnung": return qsTr("Abrechnung")
@@ -188,13 +195,14 @@ Rectangle {
                         ToolTip.text: qsTr("Markiert die Dokumente, die gerade in der Liste stehen, als gelesen"); ToolTip.visible: hovered; ToolTip.delay: 600
                     }
                 }
-                // typeAndYearPickers: only what exists is offered, for a long list
+                // typeAndYearChoices: only with a choice, or while their filter is on, so an active
+                // filter never loses its control
                 RowLayout {
-                    visible: view.found.length > 1
+                    visible: view.showsType || view.showsYear
                     spacing: 12
                     AppComboBox {
                         readonly property var options: [{ id: null, title: qsTr("Alle Typen") }].concat(view.types.map(t => ({ id: t, title: view.typeTitle(t) })))
-                        visible: view.types.length > 1 || view.typeFilter !== null
+                        visible: view.showsType
                         model: options; textRole: "title"
                         currentIndex: Math.max(0, options.findIndex(o => o.id === view.typeFilter))
                         onActivated: i => view.typeFilter = options[i].id
@@ -202,7 +210,7 @@ Rectangle {
                     }
                     AppComboBox {
                         readonly property var options: [{ id: null, title: qsTr("Alle Jahre") }].concat(view.years.map(y => ({ id: y, title: String(y) })))
-                        visible: view.years.length > 1 || view.yearFilter !== null
+                        visible: view.showsYear
                         model: options; textRole: "title"
                         currentIndex: Math.max(0, options.findIndex(o => o.id === view.yearFilter))
                         onActivated: i => view.yearFilter = options[i].id
