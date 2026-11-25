@@ -51,7 +51,7 @@ jobs:
       linux: ${{ steps.f.outputs.linux }}
       flatpak: ${{ steps.f.outputs.flatpak }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -107,12 +107,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       # Prebuilt binary instead of `cargo install` (compiling it took 2.5-3 min on every run).
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@18101caa61cb89118e2ee749786f33c6d1f8a8cb # v2
         with:
           tool: cargo-audit
       - name: cargo audit
@@ -130,7 +130,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -141,7 +141,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
       - run: cargo fmt --all -- --check
@@ -199,7 +199,7 @@ jobs:
           scripts/lint-no-obfuscation.sh --compiled --features serde
       - name: Install cargo-nextest
         if: needs.changes.outputs.rust == 'true'
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@18101caa61cb89118e2ee749786f33c6d1f8a8cb # v2
         with:
           tool: nextest
       - if: needs.changes.outputs.rust == 'true'
@@ -214,7 +214,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -235,7 +235,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -253,7 +253,7 @@ jobs:
         shell: pwsh
         run: ./scripts/package-windows.ps1
       - if: runner.os == 'Windows' && needs.changes.outputs.windows-pkg == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: girocrab-windows-x86_64
           path: dist/*
@@ -266,13 +266,13 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Cache prebuilt macOS XCFramework + UniFFI bindings
         if: needs.changes.outputs.swift == 'true'
         id: xcf-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             GiroCrabApp/GiroCrabCore.xcframework
@@ -323,12 +323,12 @@ jobs:
       # tests never touch a real keyring / Secret Service
       GIROCRAB_NO_KEYCHAIN: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1-mesa-dev libxkbcommon-dev libdbus-1-dev pkg-config
-      - uses: jurplel/install-qt-action@v4
+      - uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4
         with:
           version: '6.6.3'
           modules: 'qtwebengine qtwebchannel qtpositioning qtpdf'
@@ -383,7 +383,7 @@ jobs:
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
             qml6-module-qtquick-shapes qml6-module-qtquick-dialogs qml6-module-qt-labs-qmlmodels \
             qml6-module-qtcore qml6-module-org-kde-kirigami
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Rust toolchain
@@ -406,7 +406,7 @@ jobs:
       - name: Build .deb
         working-directory: GiroCrabLinux
         run: ./packaging/build-deb.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: girocrab-debian13-${{ matrix.arch }}
           path: GiroCrabLinux/target/debian/*.deb
@@ -427,7 +427,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Generator dependencies
@@ -455,7 +455,7 @@ jobs:
       options: --privileged
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       # The image ships the KDE runtimes preinstalled; updating them renames directories of
