@@ -59,7 +59,22 @@ enum SharinboxScripts {
         if (blocks !== items.length) fail('Unbekanntes Seitenformat.');
         return items;
       };
+      // Share rights: the start page shows only their number ("Menge"); none listed = no section
+      const parseRights = html => {
+        const at = html.indexOf('id="myChart-droitsActions"');
+        if (at < 0) return null;
+        // look only inside the rights panel: up to the next panel or chart, never into a later one
+        const rest = html.slice(at);
+        const from = rest.indexOf('panelChartBorderBordeaux');
+        const next = from < 0 ? -1 : rest.slice(from + 24).search(/panelChartBorder|<canvas/);
+        const panel = from < 0 ? '' : next < 0 ? rest.slice(from) : rest.slice(from, from + 24 + next);
+        const m = /panelChartBorderBordeaux[\s\S]*?<span\s+class="text-muted">[^<]*<\/span>\s*(?:<br\s*\/?>)?\s*([^<]*?)\s*<\/div>/.exec(panel);
+        // an empty number must not read as 0 and remove an existing position
+        if (!m || !m[1].trim()) fail('Aktienrechte nicht erkannt.');
+        return {quantity: amount(m[1])};
+      };
       const MARKERS = ['myChart-assets-', 'myChart-droitsActions'];
+      const depotOf = html => { const rights = parseRights(html); return rights ? {items: parse(html), rights} : {items: parse(html)}; };
       const hasOverview = html => MARKERS.some(m => html.includes(m));
       // The overview the user sees: this document and same-origin frames (the portal may embed it).
       const shown = () => {
@@ -130,7 +145,7 @@ enum SharinboxScripts {
           const got = await page(HOME);
           const html = got.html && hasOverview(got.html) ? got.html : shown()[0];
           if (!html) fail(got.status ? 'Abruf fehlgeschlagen (HTTP ' + got.status + '). Bitte erneut anmelden.' : 'Keine Bestandsübersicht erkannt. Bitte erneut anmelden.');
-          return JSON.stringify({version: 1, asOf: new Date().toISOString().slice(0, 10), depot: {items: parse(html)}});
+          return JSON.stringify({version: 1, asOf: new Date().toISOString().slice(0, 10), depot: depotOf(html)});
         },
         documents: async () => {
           const got = await page(DOCS);
@@ -166,6 +181,8 @@ struct SharinboxWebSheet: View {
     @State private var ready = false
     @State private var running = false
     @State private var includeDocuments = true
+    /// "Nicht zugeteilte Aktienrechte abrufen": stored with the connection, also in its settings.
+    @State private var rightsOn = true
     /// "Dokumente abrufen" of the connection (bank connection dialog): off = no list, no PDFs.
     private var documentsOn: Bool { !model.documentsOffConnectionIDs.contains(connection.id) }
     @State private var progress = ""
@@ -190,6 +207,14 @@ struct SharinboxWebSheet: View {
             HStack {
                 Button("Schließen", role: .cancel) { task?.cancel(); close() }.keyboardShortcut(.cancelAction)
                 if documentsOn { Toggle("PDF-Postbox abrufen", isOn: $includeDocuments).disabled(running) }
+                Toggle("Nicht zugeteilte Aktienrechte abrufen", isOn: Binding(
+                    get: { rightsOn },
+                    // save first, then show what is stored: a failed save keeps the old value
+                    set: {
+                        model.setSharinboxRights(connection.id, $0)
+                        rightsOn = model.sharinboxRightsEnabled(connection.id)
+                    }
+                )).disabled(running)
                 Spacer()
                 Button("Bestand abrufen") { start() }.buttonStyle(.borderedProminent).disabled(!ready || running)
             }.padding(12)
@@ -197,6 +222,7 @@ struct SharinboxWebSheet: View {
         .webPageDialogs(uiDelegate)
         .task {
             browser.webView.uiDelegate = uiDelegate
+            rightsOn = model.sharinboxRightsEnabled(connection.id)
             while !Task.isCancelled {
                 let authenticated = (try? await browser.webView.evaluateJavaScript(SharinboxScripts.probe)) as? Bool ?? false
                 let ok = browser.onPortal && authenticated

@@ -3052,6 +3052,16 @@ QtObject {
     }
     /// AccountCopyMenu: BIC from the Bundesbank BLZ list (German IBANs only).
     function bicForIban(iban) { try { return iban ? core("bic_for_iban", { iban: iban }) : null } catch (e) { return null } }
+    /// `bankNameForIban(iban:)` (#1563/#1584): the bank of a German IBAN from the Bundesbank BLZ
+    /// list ("Commerzbank"), null otherwise. Personal like the IBAN (`Sensitive {}`). Cached per
+    /// IBAN: the recipient chips and „Empfänger verwalten“ ask once per row.
+    property var bankNameCache: ({})
+    function bankNameForIban(iban) {
+        const key = (iban || "").replace(/\s/g, "").toUpperCase()
+        if (key.length < 15) return null
+        if (!(key in bankNameCache)) bankNameCache[key] = coreOrNull("bank_name_for_iban", { iban: key })
+        return bankNameCache[key]
+    }
     function accountBankDetails(a, bic) {
         const bank = bic && a.bank_name ? "BIC: " + bic + " (" + a.bank_name + ")" : bic ? "BIC: " + bic : a.bank_name ? "Bank: " + a.bank_name : ""
         return [a.owner ? "Name: " + a.owner : "", "IBAN: " + Fmt.iban(a.iban), bank].filter(x => x).join("\n")

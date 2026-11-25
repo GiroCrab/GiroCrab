@@ -60,12 +60,18 @@ rounded:
   control: "8pt"
   card: "12pt"
 spacing:
+  section-inset: "12pt"
+  section-padding: "8pt"
+  section-spacing: "4pt"
   card-gap: "4pt"
   card-spacing: "8pt"
   card-padding-compact: "12pt"
   card-padding: "16pt"
   block: "14pt"
 components:
+  flat-section:
+    backgroundColor: "system"
+    padding: "{spacing.section-padding} {spacing.section-inset}"
   card:
     backgroundColor: "{colors.card}"
     rounded: "{rounded.card}"
@@ -84,9 +90,12 @@ Dialoge) stehen in [`CLAUDE.md`](CLAUDE.md); diese Datei verweist darauf und wie
 
 ## Overview
 
-Charakter **Operate**: ein ruhiges, dichtes Arbeitswerkzeug mit nativen Plattformmustern. Schiefer-Grautöne auf Weiß („Daylight“) bzw. auf tiefem Navy („Nightfall“),
-ein blauer Akzent, Farbe nur dort, wo sie etwas bedeutet. Der Mac ist die Hauptplattform: drei Spalten
+Charakter **Operate**: ein ruhiges, dichtes Arbeitswerkzeug mit nativen Plattformmustern, ein blauer Akzent,
+Farbe nur dort, wo sie etwas bedeutet. Der Mac ist die Hauptplattform: drei Spalten
 (Seitenleiste, Buchungsliste, Inspektor), viel Information auf wenig Fläche, Bedienung auch per Tastatur.
+Die Hauptspalten (Übersicht, Kennzahlen, Buchungsliste, Inspektor) sind flach wie klassische Mac-Apps:
+Systemflächen, Trennlinien und klare Typografie statt Kacheln (#1666). Andere Ansichten (Vermögen, Depots,
+Konto-Ansichten, Einrichtung) nutzen noch Karten auf `canvas` (Schiefer-Grautöne, „Daylight“ / „Nightfall“).
 Auf dem iPhone dieselben Inhalte im Navigationsstapel, der Inspektor als Sheet.
 
 Beträge sind das zentrale Element. Sie sind gleich breit gesetzt, stehen rechts und werden nie gekürzt;
@@ -97,6 +106,7 @@ wenn der Platz knapp wird, kürzt sich der Name daneben.
 Jede Farbe hat vier Varianten: hell, dunkel und je eine für „Kontrast erhöhen“ (`ThemeShade`).
 Alle Textfarben erreichen mindestens 4,5:1 auf `canvas` und `card`; `ThemeContrastTests` prüft das
 für jede Variante. Ein neues Text-Token gehört in `Theme.textSpecs`, sonst prüft es niemand.
+**Offen:** Die Systemflächen der Hauptspalten (`systemBackground`, `systemSurface`) prüft der Test nicht.
 
 ### Primary
 
@@ -105,7 +115,10 @@ anderen Akzent, gilt dieser. Auswahlflächen (`Theme.selection`) sind der Akzent
 
 ### Neutral
 
-`canvas` (Fensterhintergrund), `card` (Karten, Inspektor), `sidebar`, `border` (1-pt-Haarlinie).
+Hauptspalten: Systemfarben `Theme.systemBackground` (Spaltenhintergrund), `Theme.systemSurface`
+(Eingabe- und Diagrammflächen), `Theme.systemSeparator` (Trennlinien); sie folgen Hell/Dunkel und den
+Bedienungshilfen des Systems. Übrige Ansichten: `canvas` (Hintergrund), `card` (Karten), `sidebar`,
+`border` (1-pt-Haarlinie).
 Text in drei Stufen: `text` → `secondary` (Beschriftungen) → `tertiary` (Metadaten, Symbole).
 Die Stufen müssen unterscheidbar bleiben.
 
@@ -144,11 +157,11 @@ Systemschrift (SF Pro), gesetzt über `.appFont`, damit sie der Schriftgröße f
 ## Layout
 
 - macOS: `NavigationSplitView` mit Seitenleiste, Buchungsliste (nach Tagen gruppiert) und Inspektor.
-  Der Inspektor ist ein Stapel von Karten, Reihenfolge und Sichtbarkeit sind einstellbar.
-- iOS: Navigationsstapel; auf dem iPhone öffnet sich der Inspektor als Sheet (`.medium`, `.large`).
-- Abstände über der Buchungsliste: `ViewLayout.cardGap` (4 pt) zwischen Karten, `cardPadding` (12 pt) innen,
-  `cardSpacing` (8 pt) zwischen Elementen. Konto-Ansichten: `assetBlockSpacing` (14 pt). Karten im
-  Inspektor: 16 pt Innenabstand, 14 pt Abstand.
+  Der Inspektor ist eine Folge flacher Abschnitte mit Trennlinien; Reihenfolge und Sichtbarkeit sind einstellbar.
+- iOS: Navigationsstapel. Auf dem iPhone öffnet sich der Inspektor als Sheet (`.medium`, `.large`), bei Bedienungshilfen-Schriftgrößen in voller Höhe (`.large`).
+- Abstände der Hauptspalten: `ViewLayout.sectionInset` (12 pt) seitlich, `sectionPadding` (8 pt) oben und
+  unten, `sectionSpacing` (4 pt) zwischen Elementen; `cardGap` (4 pt) zwischen den Blöcken der Buchungsliste.
+  Konto-Ansichten: `assetBlockSpacing` (14 pt), Karten dort 16 pt Innenabstand.
 - **Feste Maße, die Text enthalten, wachsen mit** der Schriftgröße (`textScale`, `CLAUDE.md` › Text size).
 - **Lange deutsche Texte:** Ansichten bleiben bei schmalen Fenstern und auf dem iPhone lesbar; lieber eine
   zweite Zeile als ein abgeschnittenes Wort.
@@ -156,8 +169,9 @@ Systemschrift (SF Pro), gesetzt über `.appFont`, damit sie der Schriftgröße f
 
 ## Elevation & Depth
 
-Flach. Ebenen entstehen durch Flächenfarbe (`canvas` → `card`) und eine 1-pt-Haarlinie (`border`),
-nicht durch Schatten. Sheets und Popover nutzen die Systemdarstellung.
+Flach, ohne Schatten. In den Hauptspalten gliedern volle Trennlinien (`Divider()`) und Typografie die
+Abschnitte; in den übrigen Ansichten trennen Flächenfarbe (`canvas` → `card`) und eine 1-pt-Haarlinie
+(`border`). Sheets und Popover nutzen die Systemdarstellung.
 
 Bewegung ist knapp und funktional (meist 0,15–0,25 s). Animationen laufen über
 `Motion.animation(_:)` bzw. `Motion.slide(_:)` (`Formatting.swift`): Mit „Bewegung reduzieren“ erscheinen
@@ -165,16 +179,23 @@ Bewegung ist knapp und funktional (meist 0,15–0,25 s). Animationen laufen übe
 
 ## Shapes
 
-- Karten: 12 pt, `.continuous` (`CardBackground`, `.card()`).
-- Kleinere Flächen und Rahmen innerhalb von Karten: meist 6 pt oder 8 pt.
+- Abschnitte der Hauptspalten: ohne Rahmen und ohne Radius.
+- Karten (übrige Ansichten): 12 pt, `.continuous` (`CardBackground`, `.card()`).
+- Kleinere Flächen und Rahmen (Kacheln, Vorschlagsboxen, Felder): meist 5–8 pt.
 - **Offen:** Im Code kommen heute rund zehn verschiedene Radien vor (4–16 pt). Ein festes Set ist noch
   nicht entschieden; neue Ansichten verwenden 12 / 8 / 6 pt.
 
 ## Components
 
+### Flat Sections
+
+`.flatSection()` (`Formatting.swift`): kein Hintergrund, kein Rahmen, `sectionInset` / `sectionPadding` als
+Innenabstand. Abschnitte stehen untereinander und werden durch `Divider()` getrennt. Standard für Übersicht,
+Buchungsliste, Inspektor und Planung.
+
 ### Cards / Containers
 
-`.card()` (`Formatting.swift`): `card`-Fläche, Radius 12 pt, Haarlinie, 16 pt Innenabstand
+Nur noch in Ansichten außerhalb der Hauptspalten. `.card()` (`Formatting.swift`): `card`-Fläche, Radius 12 pt, Haarlinie, 16 pt Innenabstand
 (`padding:` und `vertical:` überschreibbar). Karten werden nicht in Karten geschachtelt.
 
 ### Navigation
@@ -191,14 +212,17 @@ markiert, auch in Titeln, Sheets und Popovern. Wie: `CLAUDE.md` › Sensitive UI
 
 ### Do:
 
-- Bestehende Tokens (`Theme.*`, `ViewLayout.*`, `.card()`) verwenden, bevor neue Werte entstehen.
+- Bestehende Tokens (`Theme.*`, `ViewLayout.*`, `.flatSection()`, `.card()`) verwenden, bevor neue Werte entstehen.
 - Jede geänderte Ansicht hell und dunkel, bei Schriftgröße „Sehr groß“, schmal und geschwärzt (`--redact`)
   ansehen, immer mit Demo-Daten.
 - Fehlertexte so schreiben, dass sie den nächsten Schritt nennen; Codes nur in Klammern dahinter.
+- Persönliches und Beträge für „Problem melden“ markieren, auch in Titeln, Sheets und Popovern
+  (`CLAUDE.md` › Sensitive UI); prüfen mit `--redact`.
+- Beträge nur über `Money.format` / `Money.signed`, mit `monospacedDigit` und `.fixedSize()`.
 
 ### Don't:
 
 - Keine Verläufe, Glow-Effekte oder Farbe als Schmuck; einzige Ausnahme ist die dezente Fläche unter Verlaufslinien (`Theme.chartAreaFill`).
-- Keine Karte in einer Karte.
+- Keine Karten in den Hauptspalten; keine Karte in einer Karte.
 - Keine Animation ohne `Motion`.
 - Keine Beträge verschiedener Währungen in einer Summe.

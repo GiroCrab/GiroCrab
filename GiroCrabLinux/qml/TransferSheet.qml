@@ -57,6 +57,8 @@ Sheet {
     readonly property bool gated: { void AppModel.bankingPolicy; return account !== null && AppModel.bankingGateForAccount(account.id) !== null }
     readonly property bool ibanValid: AppModel.validateIban(draft.iban)
     readonly property string bicText: draft.bic.trim()
+    /// The recipient's bank from the IBAN (#1584), "" when unknown; the BIC is not filled in from it.
+    readonly property string recipientBank: AppModel.bankNameForIban(draft.iban) || ""
     readonly property bool bicValid: bicText === "" || AppModel.looksLikeBIC(bicText)
     readonly property var cents: { const c = AppModel.parseCents(draft.amountText); return c !== null && c > 0 ? c : null }
     readonly property bool isBunq: account !== null && account.connector === "Bunq"
@@ -438,16 +440,27 @@ Sheet {
                         visible: !sheet.ownTransfer
                         label: qsTr("IBAN")
                         fillValue: true
-                        TransferField {
-                            placeholderText: "DE00 0000 0000 0000 0000 00"
-                            font.family: "monospace"
-                            inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhPreferUppercase
-                            text: sheet.draft.iban
-                            onTextEdited: AppModel.setDraft({ iban: AppModel.groupedIBAN(text) })
-                            Sensitive {}
+                        // .withBankLine: the bank under the field, the line kept while there is none (#1584)
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 4
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                TransferField {
+                                    placeholderText: "DE00 0000 0000 0000 0000 00"
+                                    font.family: "monospace"
+                                    inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhPreferUppercase
+                                    text: sheet.draft.iban
+                                    onTextEdited: AppModel.setDraft({ iban: AppModel.groupedIBAN(text) })
+                                    Layout.fillWidth: true
+                                    Sensitive {}
+                                }
+                                ValidMark { visible: sheet.draft.iban !== ""; ok: sheet.ibanValid
+                                            ToolTip.text: sheet.ibanValid ? qsTr("Prüfsumme korrekt") : qsTr("IBAN ungültig (Prüfsumme/Länge)") }
+                            }
+                            IBANBankLine { iban: sheet.draft.iban }
                         }
-                        ValidMark { visible: sheet.draft.iban !== ""; ok: sheet.ibanValid
-                                    ToolTip.text: sheet.ibanValid ? qsTr("Prüfsumme korrekt") : qsTr("IBAN ungültig (Prüfsumme/Länge)") }
                     }
                     FormRow {
                         visible: !sheet.ownTransfer
@@ -616,6 +629,7 @@ Sheet {
                 GroupedSection {
                     ReviewRow { key: qsTr("Empfänger"); value: sheet.draft.name }
                     ReviewRow { key: qsTr("IBAN"); value: sheet.draft.iban; mono: true }
+                    ReviewRow { visible: sheet.recipientBank !== ""; key: qsTr("Bank"); value: sheet.recipientBank }
                     ReviewRow { visible: sheet.bicText !== ""; key: qsTr("BIC"); value: sheet.bicText.toUpperCase(); mono: true }
                 }
                 ColumnLayout {
@@ -662,6 +676,7 @@ Sheet {
                             BigAmount {}
                             SummaryRow { key: qsTr("An"); value: sheet.draft.name }
                             SummaryRow { key: qsTr("IBAN"); value: sheet.draft.iban }
+                            SummaryRow { visible: sheet.recipientBank !== ""; key: qsTr("Bank"); value: sheet.recipientBank }
                             SummaryRow { visible: sheet.bicText !== ""; key: qsTr("BIC"); value: sheet.bicText.toUpperCase() }
                             SummaryRow { key: qsTr("Zweck"); value: sheet.draft.purpose === "" ? "–" : sheet.draft.purpose }
                             SummaryRow { key: qsTr("Von"); value: sheet.accountLabel }
@@ -832,8 +847,7 @@ Sheet {
                         x: 8; y: 4; width: parent.width - 16 - hideButton.width
                         spacing: 1
                         Text { width: parent.width; text: suggestionRow.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Sensitive {} }
-                        Text { width: parent.width; text: Fmt.iban(suggestionRow.modelData.iban); font.pixelSize: Theme.caption; font.family: "monospace"
-                               color: Theme.secondary; elide: Text.ElideRight; Sensitive {} }
+                        RecipientIBANLine { width: parent.width; maxWidth: parent.width; iban: suggestionRow.modelData.iban }
                         Text { width: parent.width; text: qsTr("zuletzt %1").arg(Fmt.medium(suggestionRow.modelData.last_used)); font.pixelSize: Theme.caption2; color: Theme.tertiary }
                     }
                     HoverHandler { onHoveredChanged: if (hovered) sheet.highlighted = suggestionRow.index }
