@@ -177,6 +177,12 @@ fn layout(version: PainVersion) -> Layout {
             other_bic: "BICFI",
             date_in_dt: false,
         },
+        PainVersion::V03Dk => Layout {
+            namespace: "urn:iso:std:iso:20022:tech:xsd:pain.001.003.03",
+            bic: "BIC",
+            other_bic: "BICFI",
+            date_in_dt: false,
+        },
         PainVersion::V09 => Layout {
             namespace: "urn:iso:std:iso:20022:tech:xsd:pain.001.001.09",
             bic: "BICFI",
