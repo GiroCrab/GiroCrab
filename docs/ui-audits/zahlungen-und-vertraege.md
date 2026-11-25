@@ -3,7 +3,7 @@
 - **Ansicht:** „Geplant“, „Lastschriften“ und „Abos & Verträge“ mit ihren Listen, Aktionen und Details in der gemeinsamen Hauptnavigation.
 - **Dateien:** `PlannedPaymentsView.swift`, `RootView.swift`, `DirectDebitsView.swift`, `MandateInspector.swift`, `SubscriptionsView.swift`, `SubscriptionRow.swift`, `SubscriptionInspector.swift` in `GiroCrabUI/`.
 - **Werkzeug:** Native Impeccable `critique` und `audit` anhand von SwiftUI-Code und Demo-Aufnahmen, dazu GiroCrab-Checkliste.
-- **Nachweis:** macOS 27.2.1, iPhone 18 Pro und Pro Max sowie iPad (iOS 27.2), Deutsch. Standard, große Schrift und Schwärzung mit Demo-Daten. iOS-Prüfkopie mit [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919).
+- **Nachweis:** macOS 27.2.1, iPhone 18 Pro und Pro Max sowie iPad (iOS 27.2), Deutsch. Standard, große Schrift und Schwärzung mit Demo-Daten. [Prüfbuild vom 25.11.2026](README.md#prüfbuilds).
 
 ## Befunde
 

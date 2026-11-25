@@ -3,7 +3,7 @@
 - **Ansicht:** Buchungsliste und Inspektor, Suche und Filter, Kontoübersicht mit Kennzahlen sowie „Neue Umsätze“.
 - **Dateien:** `BookingListView.swift`, `BalanceHeaderView.swift`, `TagFilterUI.swift`, `PlanningUI.swift`, `NewBookingsView.swift`, `NewBookings.swift`, `BookingRowText.swift`, `BookingCategoryMenu.swift`, `TagsUI.swift`, `BookingDetailView.swift`, `RootView.swift` in `GiroCrabUI/`.
 - **Werkzeug:** Native Impeccable `critique` und `audit` anhand von SwiftUI-Code und Demo-Aufnahmen, dazu GiroCrab-Checkliste.
-- **Nachweis:** macOS 27.2.1, iPhone 18 Pro und Pro Max sowie iPad (iOS 27.2), Deutsch. Standard, große Schrift und Schwärzung mit Demo-Daten. iOS-Prüfkopie mit [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919).
+- **Nachweis:** macOS 27.2.1, iPhone 18 Pro und Pro Max sowie iPad (iOS 27.2), Deutsch. Standard, große Schrift und Schwärzung mit Demo-Daten. [Prüfbuild vom 25.11.2026](README.md#prüfbuilds).
 
 ## Befunde
 
@@ -45,7 +45,7 @@
 
 ### Buchungsliste
 
-- **Demo-Einstieg:** `--demo-seed --select "Musterbank Girokonto"`. Auf dem Mac mit Standarddichte bei 1.300 pt beginnen. Für BUC-1 mit `--text-size larger --window-width 900` starten. Wegen der Mindestbreite waren es 1.237 pt. Der iPhone-Build verwendete in einer temporären Kopie den Swift-Fix aus [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919).
+- **Demo-Einstieg:** `--demo-seed --select "Musterbank Girokonto"`. Auf dem Mac mit Standarddichte bei 1.300 pt beginnen. Für BUC-1 mit `--text-size larger --window-width 900` starten. Wegen der Mindestbreite waren es 1.237 pt.
 - **BUC-1:** In der REWE-Zeile die Kategorie neben dem Tag ansehen (`booking-iphone-standard.png`, `booking-mac-gross.png`). In `BookingRow` teilt sich die einzeilige Kategorie die Breite mit `BookingTagMarkers`, deren Größe fixiert ist. Bei knapper Breite muss der Kategoriename erkennbar bleiben.
 - **BUC-2:** Auf dem Mac auf „Kompakt“ wechseln und die Bäckerei-Zeile ohne Auswahl mit der Standardliste vergleichen (`booking-mac-kompakt.png`). `ViewThatFits` in `BookingRow` blendet die Direktwahl aus, wenn ihr vollständiges Label nicht passt. Die Kategorie muss auch in einer schmalen Kompaktzeile auffindbar bleiben, etwa als klarer kompakter Zugang.
 - **BUC-3:** Auf dem Mac mit `--pick rewe` starten. In `booking-mac-auswahl.png` liegen `#B5474F` für „Supermarkt“ und `#D2DDEE` für die Auswahlfläche nach sRGB-Umrechnung bei ca. 3,9:1. `BookingCategoryLabel` nutzt `Color.readable`, während `RowSelectionBackground` den Hintergrund ändert. Abnahme ab 4,5:1 auf der normalen und der ausgewählten Zeile.
@@ -54,7 +54,7 @@
 
 ### Buchungsinspektor
 
-- **Nachprüfung:** 25.11.2026, `main` @ `09f11987`, INS-12 und INS-13. Für iOS lag der Swift-Buildfix aus [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919) in einer temporären Kopie.
+- **Nachprüfung:** 25.11.2026, `main` @ `09f11987`, INS-12 und INS-13. [Prüfbuild](README.md#prüfbuilds).
 - **Umgebung:** macOS 27.2.1 und iPhone 18 Pro (iOS 27.2), Deutsch. Standard und große Schrift, Hell/Dunkel und Schwärzung nach [Prüfmatrix](../ui-audit.md#prüfmatrix).
 - **Demo-Einstieg:** `--demo-seed --pick rewe`, Standardlayout im Inspektor. Für die Schwärzung `--redact` ergänzen.
 - **INS-12:** In `NoteCard` den rechten Rand des leeren `TextEditor` im Mac-Dunkelmodus ansehen. Der Streifen ist in `mac-inspektor-dunkel.png` sichtbar. Auf dem iPhone ist das Sheet im hellen Modus hell. Titel, Name, Konto, Betrag und Buchungstext sind in der geschwärzten Aufnahme verdeckt.

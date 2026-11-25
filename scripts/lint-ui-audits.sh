@@ -27,6 +27,22 @@ for report in "$@"; do
       sub(/[[:space:]]+$/, "", value)
       return value
     }
+    function valid_date(value,    parts, day, month, year, days) {
+      split(substr(value, 1, 10), parts, "[.]")
+      day = parts[1] + 0
+      month = parts[2] + 0
+      year = parts[3] + 0
+      split("31 28 31 30 31 30 31 31 30 31 30 31", days, " ")
+      if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) days[2] = 29
+      return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= days[month]
+    }
+    function valid_score(value, maximum,    parts, limit) {
+      if (value !~ /^[0-9]+\/[0-9]+$/) return 0
+      split(value, parts, "/")
+      limit = parts[2] + 0
+      if (maximum == 20) return limit == 20 && parts[1] + 0 <= limit
+      return limit >= 4 && limit <= maximum && limit % 4 == 0 && parts[1] + 0 <= limit
+    }
     BEGIN {
       split("Ansicht|Dateien|Werkzeug|Nachweis", metadata, "[|]")
       split("Befunde|Impeccable-Bewertung|Prüfnachweis", sections, "[|]")
@@ -39,7 +55,8 @@ for report in "$@"; do
     }
     FNR == 1 && $0 !~ /^# UI-Audit: .+/ { fail("Titel muss mit # UI-Audit: beginnen") }
     /^- \*\*/ && section == 0 {
-      if (index($0, "- **" metadata[++field] ":** ") != 1) fail("Metadaten erwartet: " metadata[field])
+      prefix = "- **" metadata[++field] ":** "
+      if (index($0, prefix) != 1 || trim(substr($0, length(prefix) + 1)) == "") fail("Metadaten erwartet: " metadata[field])
     }
     /^## / {
       if ($0 != "## " sections[++section]) fail("Abschnitt erwartet: " sections[section])
@@ -52,6 +69,10 @@ for report in "$@"; do
     section in header && $0 == header[section] { tables[section]++; expect_separator = section; next }
     section == 1 && $0 == "Keine Befunde." { empty = 1 }
     in_table && $0 !~ /^[|]/ { in_table = 0 }
+    section in header && !in_table && /^[[:space:]]*[|]/ {
+      fail("Tabellenzeile außerhalb der Tabelle")
+      next
+    }
     in_table && /^[|]/ {
       row = $0
       gsub(/\\[|]/, "PIPE", row)
@@ -68,13 +89,20 @@ for report in "$@"; do
         view = trim(cell[2])
         if (view == "" || view in scored) fail("Fehlende oder doppelte Ansicht: " view)
         scored[view] = 1
-        if (trim(cell[3]) !~ /^[0-9][0-9]\.[0-9][0-9]\.[0-9][0-9][0-9][0-9], `[^`]+` @ `[a-f0-9]+`$/) fail(view ": Prüfdatum und Commit erwartet")
-        if (trim(cell[4]) !~ /^[0-9]+\/[0-9]+$/ || trim(cell[5]) !~ /^[0-9]+\/20$/) fail(view ": Critique- und Audit-Scores erwartet")
+        stamp = trim(cell[3])
+        split(stamp, stamp_fields, "`")
+        commit_length = length(stamp_fields[4])
+        if (stamp !~ /^[0-9][0-9]\.[0-9][0-9]\.[0-9][0-9][0-9][0-9], `[^`]+` @ `[a-f0-9]+`$/ ||
+            !valid_date(stamp) || commit_length < 7 || commit_length > 40) fail(view ": Gültiges Prüfdatum und Commit erwartet")
+        if (!valid_score(trim(cell[4]), 40) || !valid_score(trim(cell[5]), 20)) fail(view ": Gültige Critique- und Audit-Scores erwartet")
       }
     }
     section == 3 && /^### / {
       view = trim(substr($0, 5))
-      if (view in evidence) fail("Doppelter Prüfnachweis: " view)
+      if (view == "" || view in evidence) fail("Fehlender oder doppelter Name im Prüfnachweis: " view)
+      evidence[view] = 0
+    }
+    section == 3 && view in evidence && /^- \*\*Demo-Einstieg:\*\* [^[:space:]]/ {
       evidence[view] = 1
     }
     END {
@@ -86,6 +114,7 @@ for report in "$@"; do
       for (view in scored) {
         score_count++
         if (!(view in evidence)) fail("Prüfnachweis fehlt: " view)
+        else if (!evidence[view]) fail("Demo-Einstieg im Prüfnachweis fehlt: " view)
       }
       for (view in evidence) {
         if (!(view in scored)) fail("Bewertung fehlt: " view)

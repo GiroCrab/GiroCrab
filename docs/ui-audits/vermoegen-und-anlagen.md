@@ -1,9 +1,9 @@
-# UI-Audit: Anlagen
+# UI-Audit: Vermögen und Anlagen
 
-- **Ansicht:** Vermögensübersicht, Sparpläne & Perks, Einzeldepot und Sachwerte-Konto mit gemeinsamen Komponenten für Sparplanraster, Wert und Zusammensetzung.
+- **Ansicht:** Vermögensübersicht, Sparpläne & Perks, Einzeldepot und Sachwerte-Konto mit gemeinsamen Prüffällen für Sparplanraster, Wert und Zusammensetzung.
 - **Dateien:** `InvestmentDashboardView.swift`, `BookingListView.swift`, `DepotDetailView.swift`, `DepotPositionsTable.swift`, `DepotValueChart.swift`, `AssetAccountFrame.swift`, `TangibleAccountDetailView.swift`, `TangibleAssetsUI.swift`, `WealthView.swift`, `AssetCompositionCard.swift`, `CompositionCharts.swift` in `GiroCrabUI/`.
 - **Werkzeug:** Native Impeccable `critique` und `audit` anhand von SwiftUI-Code und Demo-Aufnahmen, dazu GiroCrab-Checkliste.
-- **Nachweis:** macOS 27.2.1, iPhone 18 Pro und Pro Max sowie iPad (iOS 27.2), Deutsch. Standard, große Schrift und Schwärzung mit Demo-Daten. iOS-Prüfkopie mit [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919).
+- **Nachweis:** macOS 27.2.1, iPhone 18 Pro und Pro Max sowie iPad (iOS 27.2), Deutsch. Standard, große Schrift und Schwärzung mit Demo-Daten. [Prüfbuild vom 25.11.2026](README.md#prüfbuilds).
 
 ## Befunde
 
@@ -32,11 +32,11 @@
 
 ### Vermögen
 
-- **Nachprüfung:** 25.11.2026, `main` @ `09f11987`, VER-1 bis VER-6. Für iOS lag der Swift-Buildfix aus [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919) in einer temporären Kopie.
+- **Nachprüfung:** 25.11.2026, `main` @ `09f11987`, VER-1 bis VER-6. [Prüfbuild](README.md#prüfbuilds).
 - **Umgebung:** macOS 27.2.1, iPhone 18 Pro und iPad mini (iOS 27.2, Hochformat), Deutsch. Hell/Dunkel, große Schrift und `--redact=labels` nach [Prüfmatrix](../ui-audit.md#prüfmatrix).
 - **Demo-Einstieg:** `--demo-seed --view vermoegen`, Reiter „Alles“, Inhaber „Alle“.
 - **VER-1 bis VER-4:** Auf dem iPhone stapelt die Steuerung bei „Accessibility XL“ und die Summenzeilen bleiben ganz. Ohne Schuldenabzug heißt die Summe auf Mac und iPhone „Vermögenswerte“. Mit `--demo-filter wealth:cash` bleiben auf dem Mac die Legendeneinträge lesbar. Die geschwärzten Summen und Inhabernamen sind verdeckt.
-- **VER-5 und VER-6:** Auf dem iPhone in „Zusammensetzung“ mit „Nach Konto“ zum Ring scrollen. Die Zahl in der Ringmitte ragt über das Loch hinaus. In der Legende trennt sich z. B. `29.798,1` von `6 €` (`iphone-vermoegen-ring-gross.png`). Auf dem iPad überlappt die Ringsumme ebenfalls, während die Beträge der Legende ganz bleiben. Für die Aufnahme auf dem iPhone sprang die Prüfkopie per Startargument zur Karte.
+- **VER-5 und VER-6:** Auf dem iPhone in „Zusammensetzung“ mit „Nach Konto“ zum Ring scrollen. Die Zahl in der Ringmitte ragt über das Loch hinaus. In der Legende trennt sich z. B. `29.798,1` von `6 €` (`iphone-vermoegen-ring-gross.png`). Auf dem iPad überlappt die Ringsumme ebenfalls, während die Beträge der Legende ganz bleiben. Die iPhone-Aufnahme nutzte den lokalen Scroll-Patch `--audit-scroll-composition`. Zum Nachstellen genügt manuelles Scrollen.
 - **Code und Abnahme:** `CompositionRing` begrenzt den Durchmesser, der Betrag skaliert weiter. In `CompositionLegend` teilen sich Label, Betrag und Anteil eine Zeile. Bei großer Schrift müssen die Ringsumme ohne Überlagerung und jeder Legendenbetrag zusammenhängend lesbar sein. Die gemeinsame Komponente auch in Depot und Sachwerte-Konto prüfen.
 - **Status:** Die vier ursprünglichen Befunde wurden über [#1861](https://github.com/GiroCrab/GiroCrab/pull/1861) behoben. [#998](https://github.com/GiroCrab/GiroCrab/issues/998) betrifft einen Datenfall, der sich mit dem Demo-Tresor nicht nachstellen ließ.
 

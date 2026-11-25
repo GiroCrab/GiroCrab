@@ -14,7 +14,9 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
 1. **Ansicht und Stand festlegen.** Pro Audit eine Ansicht, ihren Einstieg in der App und die Hauptdateien
    festhalten. In der [Audit-Übersicht](ui-audits/README.md) und auf GitHub nach dem Namen der Ansicht sowie
    nach `[UI-Audit]` in Issues und PRs suchen. Vorhandene Berichte fortschreiben. Den geprüften Commit mit
-   `git rev-parse --short HEAD` erfassen und lokale Patches angeben, falls die Prüfung sie braucht.
+   `git rev-parse --short HEAD` erfassen. Patches mit der vollständigen Commit-SHA oder einem verlinkten Diff
+   festhalten. Das xcframework aus dem Prüfstand bauen. Hat der Core einen anderen Stand, seinen Commit und
+   etwaige lokale Änderungen ebenfalls dokumentieren.
 2. **Demo-Fall festlegen.** Startargumente, Konto oder Buchung, Klickfolge und Vergleichszustände vor dem
    Durchgang festhalten. Bei relativen Zeiträumen auch das Datum der Aufnahme nennen. Bei einem Sheet den
    Elternbildschirm und den Auslöser nennen. Für Dialoge und Fehlermeldungen simulierte Fälle mit Demo-Daten verwenden. Die [Prüfmatrix](#prüfmatrix) durchgehen und
@@ -25,7 +27,8 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
 4. **Befunde bestätigen.** Code-Stelle und Demo-Aufnahme für jeden Befund belegen. Auf macOS und iPhone
    prüfen, sofern die Ansicht dort verfügbar ist. Für iPad-spezifische Befunde das passende Gerät ergänzen.
    Im Bericht die Startargumente, Interaktionen sowie erwartetes und beobachtetes
-   Ergebnis nennen. Fälle ohne Nachweis als ausstehende Prüfung in die Übersicht aufnehmen.
+   Ergebnis nennen. Dem jeweiligen Prüfnachweis einen `Demo-Einstieg` mit Startargumenten oder Bedienfolge geben.
+   Fälle ohne Nachweis als ausstehende Prüfung in die Übersicht aufnehmen.
 5. **Bericht schreiben.** Einen vorhandenen Themenbericht in `docs/ui-audits/` ergänzen, wenn die Ansicht
    denselben Arbeitsablauf oder wichtige Komponenten teilt. Für einen neuen Bereich die
    [Vorlage](#vorlage-für-den-bericht) verwenden. Jede Ansicht erhält eine eigene Zeile in der Bewertung
@@ -42,7 +45,7 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
    - **Verworfen:** nach Prüfung kein Problem → mit Begründung im Bericht lassen.
 7. **Nachprüfen und abschließen.** Den Demo-Fall bei einem Fix im selben Zustand auf dem Ausgangsstand und
    auf dem Fix-Stand wiederholen. Datum, Commit, Plattform, Ergebnis und Beleg im Bericht ergänzen. Im PR die
-   IDs der behobenen Befunde nennen und Vorher/Nachher-Aufnahmen anhängen. Der Bericht verlinkt
+   IDs der behobenen Befunde nennen und Vorher/Nachher-Aufnahmen zuordnen. Der Bericht verlinkt
    den zuständigen PR oder das Issue und führt pro Befund genau einen Status:
    `open` für offene Befunde (auch teilweise behobene), `fixed` für vollständig behobene und nachgeprüfte
    Befunde, deren Fix auf `main` liegt oder im selben PR mitgeliefert wird,
@@ -136,22 +139,22 @@ rg -n 'withAnimation\(|\.animation\(' "$TARGET"              # Bewegung reduzier
 Immer mit Demo-Daten und ohne Banner aufnehmen. In der Demo-App unter „Einstellungen › Allgemein ›
 Mitteilungen“ die Projektmitteilungen ausstellen. `--screenshot` blendet den Demo-Hinweis aus. `--pick <Text>`
 wählt die erste Buchung, deren Händler oder Gegenpartei den Text enthält, `--select <Konto>` ein Konto.
-Screenshots gehören in den PR oder das Issue, nicht ins Repository.
+Screenshots im PR oder Issue anhängen und dort nach Befund-ID beschriften. Im Bericht beim jeweiligen Befund
+den PR, das Issue oder den Bildlink angeben, damit der Beleg über den Dateinamen hinaus auffindbar bleibt.
 
 Für Fixes gehören **Vorher/Nachher-Paare** in den PR: dieselbe Ansicht mit denselben Einstellungen, „nachher“ mit dem
-Stand des Branches, „vorher“ aus `main` in einem eigenen Worktree, damit im Branch nichts überschrieben wird. Der
-Worktree nutzt das xcframework des Branches mit (bei UI-Audits ist der Core unverändert):
+Stand des Branches, „vorher“ aus `main` in einem eigenen Worktree. Das xcframework im Worktree aus dem
+Ausgangsstand bauen. Zum Wiederholen eines früheren Audits `BASE_SHA` auf den dokumentierten Commit setzen.
 
 ```bash
 BASE_SHA=$(git rev-parse upstream/main)   # diese SHA im Bericht erfassen
 BASE_DIR=$(mktemp -d /tmp/girocrab-ui-base.XXXXXX)
 git worktree add --detach "$BASE_DIR" "$BASE_SHA"
-ln -s "$PWD/generated" "$BASE_DIR/generated"
+(cd "$BASE_DIR" && ./build-xcframework.sh) # macOS und iOS, für macOS allein: --macos-only
 (cd "$BASE_DIR/GiroCrabApp" && swift build -q && \
   .build/debug/GiroCrabMac --demo-seed --pick rewe --light --text-size standard --screenshot /tmp/vorher-standard.png)
 # iPhone: denselben Worktree unter "$BASE_DIR/GiroCrabApp/Xcode" bauen (siehe unten).
-# Erst nach allen Aufnahmen den selbst angelegten Link und Worktree entfernen.
-rm "$BASE_DIR/generated"
+# Erst nach allen Aufnahmen den Worktree entfernen.
 git worktree remove "$BASE_DIR"
 ```
 
@@ -252,6 +255,7 @@ herstellen und die genaue Folge im Bericht notieren.
 
 - **Nachprüfung:** <Datum, Commit, IDs, Plattformen, Ergebnis und Beleg, falls vorhanden>
 - **Umgebung:** <Plattformen, Versionen, Geräte, Sprache, geprüfte Varianten und Abweichungen von der Prüfmatrix>
+- **Build:** <fester Patch-Commit oder Diff und abweichender Core-Stand, falls verwendet>
 - **Demo-Einstieg:** <Startargumente, Auswahl und Bedienfolge>
 - **XYZ-2:** <Code-Stelle, Ergebnis, erwartetes Verhalten, Beleg und ggf. Issue oder PR>
 ```

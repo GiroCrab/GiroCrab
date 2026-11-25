@@ -18,10 +18,20 @@ beschreibt den Ablauf.
 | [Geplant](zahlungen-und-vertraege.md#geplant) | GPL-1 und GPL-2 offen. Filter, Summen und Detailtitel auf dem iPhone prüfen. |
 | [Lastschriften](zahlungen-und-vertraege.md#lastschriften) | LAS-1 offen. Mandatsliste bei großer Schrift erreichbar halten. Der Detailtitel ist in GPL-2 erfasst. |
 | [Abos & Verträge](zahlungen-und-vertraege.md#abos--verträge) | ABO-1 und ABO-2 offen. iPhone-Breite und Öffnen des Vertragsdetails prüfen. |
-| [Vermögen](anlagen.md#vermögen) | VER-1 bis VER-4 über [#1861](https://github.com/GiroCrab/GiroCrab/pull/1861) behoben. VER-5 und VER-6 offen. Ringsumme und Legende bei großer Schrift prüfen. |
-| [Sparpläne & Perks](anlagen.md#sparpläne--perks) | SPA-1 offen. Planraster bei großer Schrift lesbar halten. Für Saveback und Round up fehlt ein Demo-Fall. |
-| [Einzeldepot](anlagen.md#einzeldepot) | DEP-1 offen. Kopf und Wertverlauf bei großer Schrift zusammen mit SAC-1 prüfen. |
-| [Sachwerte-Konto](anlagen.md#sachwerte-konto) | SAC-1 offen. Gemeinsames Layout mit dem Depot prüfen. |
+| [Vermögen](vermoegen-und-anlagen.md#vermögen) | VER-1 bis VER-4 über [#1861](https://github.com/GiroCrab/GiroCrab/pull/1861) behoben. VER-5 und VER-6 offen. Ringsumme und Legende bei großer Schrift prüfen. |
+| [Sparpläne & Perks](vermoegen-und-anlagen.md#sparpläne--perks) | SPA-1 offen. Planraster bei großer Schrift lesbar halten. Für Saveback und Round up fehlt ein Demo-Fall. |
+| [Einzeldepot](vermoegen-und-anlagen.md#einzeldepot) | DEP-1 offen. Kopf und Wertverlauf bei großer Schrift zusammen mit SAC-1 prüfen. |
+| [Sachwerte-Konto](vermoegen-und-anlagen.md#sachwerte-konto) | SAC-1 offen. Gemeinsames Layout mit dem Depot prüfen. |
+
+## Prüfbuilds
+
+- **iOS am 25.11.2026:** Für den jeweils angegebenen App-Commit wurden die Swift-Dateien aus
+  [e7f26fd6ca4a2b7697b4afdc120e62ba1c16489d](https://github.com/GiroCrab/GiroCrab/commit/e7f26fd6ca4a2b7697b4afdc120e62ba1c16489d)
+  in einer Prüfkopie angewendet. Der Commit gehört zu [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919).
+- **Core der ursprünglichen Aufnahmen vom 25.11.2026:** Das wiederverwendete xcframework meldet
+  `v0.8.8-746-ga63b7c31-dirty` (`release`, macOS und iOS). Der Core-Fingerabdruck weicht vom sauberen
+  `a63b7c31` ab. Die damaligen lokalen Build-Eingaben sind nur teilweise bekannt. Für neue Aufnahmen den
+  Core aus dem dokumentierten App-Commit bauen und Abweichungen direkt beim Prüfnachweis erfassen.
 
 ## Weitere Audit-Kandidaten
 

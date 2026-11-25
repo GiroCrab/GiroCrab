@@ -3,7 +3,7 @@
 - **Ansicht:** Navigation, Kontenbaum mit Salden, Kontensuche und Gruppen. Kategorien werden mit dem Navigationspfad betrachtet.
 - **Dateien:** `SidebarView.swift` und `AllAccountsRoot.swift` in `GiroCrabUI/`.
 - **Werkzeug:** Native Impeccable `critique` und `audit` anhand von SwiftUI-Code und Demo-Aufnahmen, dazu GiroCrab-Checkliste.
-- **Nachweis:** macOS 27.2.1 und iPhone 18 Pro (iOS 27.2), Deutsch. Standard und große Schrift, Schwärzung auf Mac und iPhone. iOS-Prüfkopie mit [#1919](https://github.com/GiroCrab/GiroCrab/pull/1919).
+- **Nachweis:** macOS 27.2.1 und iPhone 18 Pro (iOS 27.2), Deutsch. Standard und große Schrift, Schwärzung auf Mac und iPhone. [Prüfbuild vom 25.11.2026](README.md#prüfbuilds).
 
 ## Befunde
 
