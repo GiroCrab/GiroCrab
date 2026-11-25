@@ -26,6 +26,35 @@ pub(super) fn is_content_id(id: &str, prefix: char) -> bool {
 /// same content gets the new id instead of being imported a second time.
 /// The caller checks that no row holds the new id yet: the UPDATE would hit
 /// the unique key. Returns true when a row was adopted.
+struct KeptPurchase {
+    isin: String,
+    wkn: String,
+    currency: String,
+    purchase_price_cents: i64,
+    native_purchase_price_cents: Option<i64>,
+}
+
+/// Purchase prices currently stored for a depot (only positions that have one).
+fn kept_purchase_prices(
+    conn: &rusqlite::Connection,
+    account_id: i64,
+) -> CoreResult<Vec<KeptPurchase>> {
+    let mut q = conn.prepare(
+        "SELECT isin, wkn, currency, purchase_price_cents, native_purchase_price_cents
+         FROM holdings WHERE account_id = ?1 AND purchase_price_cents <> 0",
+    )?;
+    let rows = q.query_map([account_id], |r| {
+        Ok(KeptPurchase {
+            isin: r.get(0)?,
+            wkn: r.get(1)?,
+            currency: r.get(2)?,
+            purchase_price_cents: r.get(3)?,
+            native_purchase_price_cents: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 fn adopt_legacy_content_id(
     tx: &rusqlite::Connection,
     account_id: i64,
@@ -644,9 +673,25 @@ pub(crate) fn store_fetch(
             previous.insert(*acc_id, held.into_iter().collect());
         }
         for (acc_id, list) in &by_account {
+            // #1812: a fetch without a purchase price (FinTS MT535) keeps the one
+            // already stored for the same position (e.g. from an import).
+            let old = kept_purchase_prices(&tx, *acc_id)?;
             tx.execute("DELETE FROM holdings WHERE account_id = ?1", [acc_id])?;
             for remote in list {
-                let h = &remote.holding;
+                let mut h = remote.holding.clone();
+                if h.purchase_price_cents == 0
+                    && h.profit_loss_purchase_cents.is_none()
+                    && let Some(o) = old.iter().find(|o| {
+                        !h.isin.is_empty() && o.isin == h.isin
+                            || h.isin.is_empty() && !h.wkn.is_empty() && o.wkn == h.wkn
+                    })
+                {
+                    h.purchase_price_cents = o.purchase_price_cents;
+                    if h.native_purchase_price_cents.is_none() && o.currency == h.currency {
+                        h.native_purchase_price_cents = o.native_purchase_price_cents;
+                    }
+                }
+                let h = &h;
                 tx.execute(
                     "INSERT INTO holdings(account_id, isin, wkn, name, quantity, current_price_cents, purchase_price_cents, value_cents,
                             prev_day_price_cents, prev_day_value_cents, profit_loss_purchase_cents, profit_loss_purchase_rel,

@@ -105,6 +105,83 @@ fn store_fetch_matches_depot_holdings_without_iban() {
 }
 
 #[test]
+fn store_fetch_keeps_stored_purchase_price_when_fetch_has_none() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-depot-purchase");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "login".into())
+        .unwrap();
+    let fetch = |isin: &str, price: i64, purchase: i64| FetchResult {
+        accounts: vec![RemoteAccount {
+            external_ref: "0012345678".into(),
+            name: "Depot".into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: "0012345678".into(),
+            currency: "EUR".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents: 5000,
+            balance_date: "2026-11-10".into(),
+        }],
+        holdings: vec![RemoteHolding {
+            classification: Default::default(),
+            direct_crypto: false,
+            account_ref: "0012345678".into(),
+            holding: crate::models::Holding {
+                isin: isin.into(),
+                name: "X".into(),
+                quantity: 2.0,
+                current_price_cents: price,
+                purchase_price_cents: purchase,
+                value_cents: price * 2,
+                ..Default::default()
+            },
+        }],
+        ..Default::default()
+    };
+    // synthetic data: stored purchase price (as after an import), then a fetch without one
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0001234567", 100, 80),
+    )
+    .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0001234567", 120, 0),
+    )
+    .unwrap();
+    let acc = v.list_accounts().unwrap().pop().unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.current_price_cents, 120, "price is updated");
+    assert_eq!(h.purchase_price_cents, 80, "purchase price is kept");
+    // a purchase price the fetch brings wins
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0001234567", 130, 90),
+    )
+    .unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 90);
+    // another position does not inherit it
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0007654321", 50, 0),
+    )
+    .unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 0);
+}
+
+#[test]
 fn history_bookings_arrive_checked_and_stored_documents_get_linked() {
     let p_dir = crate::test_support::TempDir::new("girocrab-history-docs");
     let p = p_dir.join("v.db");
