@@ -12189,6 +12189,17 @@
         }
       }
     },
+    "Die gespeicherten Abo-Daten sind nicht lesbar. Änderungen werden nicht gespeichert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The stored subscription data cannot be read. Changes are not saved."
+          }
+        }
+      }
+    },
     "Die kleineren Positionen stehen vollständig in der Positionsliste." : {
       "extractionState" : "manual",
       "localizations" : {

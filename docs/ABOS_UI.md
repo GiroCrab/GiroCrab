@@ -56,6 +56,16 @@ Eine JSON-Einstellung `subscriptions.v2` im Tresor: `{ entries: { seriesKey: Fel
 Schema-Schritt, kein Core-Umbau. `subscriptions.v1` (nur Notizen) wird beim Laden übernommen. Eine Serie, die nicht mehr
 erkannt wird, verschwindet aus der Liste, behält aber ihre Felder.
 
+Der Serienschlüssel hängt am typischen Betrag (`…#1299`): eine Preiserhöhung oder ein zweiter Vertrag desselben
+Anbieters ändert ihn. Deshalb speichert jeder Eintrag zusätzlich Basisschlüssel, letzten Betrag und Konto;
+`reconcileSubscriptionKeys()` ordnet einen verwaisten Eintrag der Serie mit demselben Basisschlüssel zu, wenn das
+eindeutig ist (ein freier Kandidat, oder genau einer innerhalb von 15 % des letzten Betrags). Alles Unklare bleibt
+unverändert liegen. Ist der gespeicherte Wert nicht lesbar (kaputtes JSON), wird nichts geschrieben.
+
+**Kein iCloud-Abgleich:** `merge_other_vault` übernimmt `subscriptions.v2` nicht; die Abos gelten nur im Tresor,
+in dem sie gepflegt wurden. Für einen späteren Abgleich (neueste Änderung gewinnt, Löschvermerke) ist ein eigener
+Core-Schritt nötig.
+
 ## Performance
 Die Buchungen der markierten Serien lädt (mehrere Klicks auf „Hinzufügen“ werden nacheinander und nur für das betroffene Konto geladen) `reloadSubscriptionBookings()` einmal pro Konto, abseits des Main-Threads, beim
 Öffnen der Ansicht und beim Markieren (der Core reichert jede Zeile einer solchen Abfrage an; vier Jahre, höchstens

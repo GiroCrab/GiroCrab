@@ -25,7 +25,13 @@ extension AppModel {
         do {
             let current = try vault.getSetting(key: SubscriptionStore.settingKey)
             let legacy = current == nil ? try vault.getSetting(key: SubscriptionStore.legacySettingKey) : nil
-            let loaded = SubscriptionStore.decode(current, legacy: legacy)
+            guard let loaded = SubscriptionStore.parse(current, legacy: legacy) else {
+                // stored but unreadable: keep what is shown and block writing, else the next edit would
+                // replace the real contracts by an empty snapshot
+                subscriptionDataLoaded = false
+                errorMessage = String(localized: "Die gespeicherten Abo-Daten sind nicht lesbar. Änderungen werden nicht gespeichert.")
+                return
+            }
             if loaded != subscriptionData { subscriptionData = loaded }
             subscriptionDataLoaded = true
         } catch {
@@ -57,6 +63,58 @@ extension AppModel {
         return true
     }
 
+    private static func remember(_ s: RecurringSeries, in d: inout SubscriptionDetails) {
+        d.baseKey = s.baseKey
+        d.lastAmountCents = s.amountCents
+        d.accountId = s.accountId
+    }
+
+    /// The base key an entry belongs to: stored, else the series key without its amount suffix (`…#1299`).
+    private static func baseKey(of key: String, _ d: SubscriptionDetails) -> String {
+        if let b = d.baseKey { return b }
+        guard let r = key.range(of: #"#-?\d+$"#, options: .regularExpression) else { return key }
+        return String(key[..<r.lowerBound])
+    }
+
+    /// The series key follows the typical amount, so a price rise or a second contract of the same payee
+    /// gives a marked series a new key: the entry would drop out of the list with its contract fields.
+    /// Entries whose key is no longer there move to the series with the same base key, when that is
+    /// unambiguous (one unmarked candidate, or the one clearly nearest to the last known amount).
+    /// Also keeps the identity fields of the live entries current. Only touches what is visible now:
+    /// `recurring` covers the selected accounts, so an entry of another account is left alone.
+    func reconcileSubscriptionKeys() {
+        guard subscriptionDataLoaded, !recurring.isEmpty else { return }
+        var data = subscriptionData
+        let live = Set(recurring.map(\.seriesKey))
+        for (key, d) in subscriptionData.entries where !live.contains(key) {
+            let base = Self.baseKey(of: key, d)
+            let free = recurring.filter {
+                $0.baseKey == base && data.entries[$0.seriesKey] == nil
+                    && (d.accountId == nil || d.accountId == $0.accountId)
+            }
+            var target: RecurringSeries?
+            if free.count == 1 { target = free.first } else if free.count > 1, let last = d.lastAmountCents {
+                let near = free.filter { abs($0.amountCents - last) * 100 <= abs(last) * 15 }
+                if near.count == 1 { target = near.first }
+            }
+            guard let target else { continue }
+            var moved = d
+            Self.remember(target, in: &moved)
+            data.entries[key] = nil
+            data.entries[target.seriesKey] = moved
+            if selectedSubscriptionID == key { selectedSubscriptionID = target.seriesKey }
+        }
+        for s in recurring {
+            guard var d = data.entries[s.seriesKey] else { continue }
+            let before = d
+            Self.remember(s, in: &d)
+            if d != before { data.entries[s.seriesKey] = d }
+        }
+        guard data != subscriptionData else { return }
+        let accounts = Set(recurring.compactMap { data.entries[$0.seriesKey] != nil ? $0.accountId : nil })
+        if storeSubscriptionData(data) { scheduleSubscriptionBookingsReload(accounts: accounts) }
+    }
+
     func isSubscription(_ s: RecurringSeries) -> Bool { subscriptionData.entries[s.seriesKey] != nil }
 
     /// Recurring expenses and incomes that can still be marked.
@@ -67,7 +125,11 @@ extension AppModel {
     func setSubscription(_ s: RecurringSeries, marked: Bool) {
         guard ensureSubscriptionDataLoaded() else { return }
         var data = subscriptionData
-        if marked { data.entries[s.seriesKey] = data.entries[s.seriesKey] ?? SubscriptionDetails() } else { data.entries[s.seriesKey] = nil }
+        if marked {
+            var d = data.entries[s.seriesKey] ?? SubscriptionDetails()
+            Self.remember(s, in: &d)
+            data.entries[s.seriesKey] = d
+        } else { data.entries[s.seriesKey] = nil }
         storeSubscriptionData(data)
         if marked { scheduleSubscriptionBookingsReload(accounts: [s.accountId]) }
     }
@@ -141,7 +203,7 @@ extension AppModel {
     /// Demo vault only: fills the view with a few subscriptions the first time it opens, so there is
     /// something to look at (a real vault never gets entries it did not ask for).
     func seedDemoSubscriptions() {
-        guard options.demoSeed, subscriptionData == SubscriptionData() else { return }
+        guard options.demoSeed, demoActive, subscriptionData == SubscriptionData() else { return }
         var data = SubscriptionData()
         let expenses = recurring.filter { $0.amountCents < 0 }
         let incomes = recurring.filter { $0.amountCents > 0 }

@@ -68,9 +68,11 @@ struct SubscriptionsView: View {
         .background(Theme.canvas)
         .task {
             model.refreshRecurring()
+            model.reconcileSubscriptionKeys()
             model.seedDemoSubscriptions()
             await model.reloadSubscriptionBookings()
         }
+        .onChange(of: model.recurring) { model.reconcileSubscriptionKeys() }
         .capturableSheet(isPresented: $showAdd) { SubscriptionAddSheet() }
     }
 
