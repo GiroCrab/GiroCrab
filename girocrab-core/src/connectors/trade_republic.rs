@@ -299,10 +299,7 @@ impl DocumentCandidate {
 /// The queue after a document pass: what the pass did not reach first, then what failed. A
 /// candidate that keeps failing must not hold the places of every pass while others never get
 /// a try (review of #1660).
-fn pending_after_pass(
-    not_reached: Vec<DocumentCandidate>,
-    failed: Vec<DocumentCandidate>,
-) -> Vec<DocumentCandidate> {
+fn pending_after_pass<T>(not_reached: Vec<T>, failed: Vec<T>) -> Vec<T> {
     let mut pending = not_reached;
     pending.extend(failed);
     pending
@@ -331,28 +328,98 @@ fn activity_log_stops_at(date: &str, window_start: &str, session: &StoredSession
         && !session.doc_listing_open
 }
 
-/// New candidates take precedence over queued copies of the same timeline item.
+/// The order of one document pass: the queue first (what an earlier pass did not reach, then
+/// what failed, see `pending_after_pass`), the new candidates behind it. What a pass does not
+/// reach moves ahead of the failures next time, so every candidate gets a try within a bounded
+/// number of syncs, also when 50 or more new ones arrive each time or earlier ones keep failing
+/// (review of #1660). A new copy of a queued timeline item replaces it at its place.
 /// A disabled document fetch keeps the queue for the first enabled fetch.
 fn documents_for_fetch(
-    mut candidates: Vec<DocumentCandidate>,
+    candidates: Vec<DocumentCandidate>,
     pending: &mut Vec<DocumentCandidate>,
     enabled: bool,
 ) -> Vec<DocumentCandidate> {
-    let mut seen: std::collections::HashSet<_> = candidates
-        .iter()
-        .map(|candidate| candidate.id.clone())
-        .collect();
-    candidates.extend(
-        std::mem::take(pending)
-            .into_iter()
-            .filter(|candidate| seen.insert(candidate.id.clone())),
-    );
+    let queue = queue_before_new(candidates, std::mem::take(pending), |c| c.id.as_str());
     if enabled {
-        candidates
+        queue
     } else {
-        *pending = candidates;
+        *pending = queue;
         Vec::new()
     }
+}
+
+/// `queued` in its order (each id once, a fresh copy in place of the queued one), then the rest
+/// of `fresh`.
+fn queue_before_new<T>(fresh: Vec<T>, queued: Vec<T>, id: impl Fn(&T) -> &str) -> Vec<T> {
+    let mut fresh: Vec<Option<T>> = fresh.into_iter().map(Some).collect();
+    let index: std::collections::HashMap<String, usize> = fresh
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| item.as_ref().map(|item| (id(item).to_string(), i)))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut order = Vec::with_capacity(fresh.len() + queued.len());
+    for item in queued {
+        if !seen.insert(id(&item).to_string()) {
+            continue;
+        }
+        let newer = index.get(id(&item)).and_then(|&i| fresh[i].take());
+        order.push(newer.unwrap_or(item));
+    }
+    order.extend(fresh.into_iter().flatten());
+    order
+}
+
+/// Resuming an older Activity Log listing first reads the newest pages down to the sync window:
+/// a statement that arrived meanwhile is queued before it ages out of the window, which the
+/// listing at the saved cursor would never see (review of #1660).
+fn activity_head_pass_ends(date: &str, window_start: &str) -> bool {
+    !date.is_empty() && date < window_start
+}
+
+#[cfg(test)]
+#[test]
+fn queued_documents_come_before_new_ones_and_take_the_new_copy() {
+    let fresh = vec![("n1", 1u8), ("q2", 9), ("n2", 1)];
+    let queued = vec![("q1", 0u8), ("q2", 0), ("f1", 0)];
+    let order = queue_before_new(fresh, queued, |c| c.0);
+    let ids: Vec<&str> = order.iter().map(|c| c.0).collect();
+    assert_eq!(ids, ["q1", "q2", "f1", "n1", "n2"]);
+    assert_eq!(
+        order[1].1, 9,
+        "the new copy replaces the queued one at its place"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn a_queued_document_is_reached_although_others_keep_failing_and_new_ones_keep_coming() {
+    const CAP: usize = 50;
+    let mut queue: Vec<String> = (0..CAP).map(|i| format!("f{i}")).collect();
+    queue.push("statement".to_string());
+    for pass in 0..3 {
+        let fresh: Vec<String> = (0..CAP).map(|i| format!("n{pass}-{i}")).collect();
+        let order = queue_before_new(fresh, std::mem::take(&mut queue), |c| c.as_str());
+        let (tried, not_reached) = order.split_at(CAP.min(order.len()));
+        if tried.iter().any(|c| c.as_str() == "statement") {
+            return;
+        }
+        let failed: Vec<String> = tried
+            .iter()
+            .filter(|c| c.starts_with('f'))
+            .cloned()
+            .collect();
+        queue = pending_after_pass(not_reached.to_vec(), failed);
+    }
+    panic!("the queued statement was never attempted");
+}
+
+#[cfg(test)]
+#[test]
+fn the_activity_log_head_pass_ends_below_the_window_only() {
+    assert!(!activity_head_pass_ends("2026-11-20", "2026-08-27"));
+    assert!(activity_head_pass_ends("2026-08-26", "2026-08-27"));
+    assert!(!activity_head_pass_ends("", "2026-08-27"));
 }
 
 struct TimelinePass {
@@ -2033,7 +2100,7 @@ impl BankConnector for TradeRepublicConnector {
         // --- Activity Log: timelineActivityLog
         // Covers non-transaction documents such as quarterly account/depot statements,
         // annual tax certificates, and corporate actions (which carry no cash movements).
-        let mut act_cursor = self.session.doc_listing_cursor.clone();
+        let saved_cursor = self.session.doc_listing_cursor.clone();
         // whether the listing got to its end (or to the window, where an earlier pass had finished)
         let mut listing_complete = false;
         let activity_limit = if ctx.documents.enabled() && !single_account {
@@ -2041,7 +2108,20 @@ impl BankConnector for TradeRepublicConnector {
         } else {
             0
         };
-        'activity_pages: for _ in 0..activity_limit {
+        // An older listing still open: the newest pages first, down to the window, then on at the
+        // saved cursor (see `activity_head_pass_ends`).
+        let mut head_pass = saved_cursor.is_some() && activity_limit > 0;
+        let mut act_cursor = if head_pass {
+            None
+        } else {
+            saved_cursor.clone()
+        };
+        'activity_pages: for page_no in 0..activity_limit {
+            // the head pass gets at most half the pages: the older listing keeps its share
+            if head_pass && page_no >= activity_limit / 2 {
+                head_pass = false;
+                act_cursor = saved_cursor.clone();
+            }
             let mut payload = json!({"type": "timelineActivityLog"});
             if let Some(c) = &act_cursor {
                 payload["after"] = json!(c);
@@ -2049,8 +2129,14 @@ impl BankConnector for TradeRepublicConnector {
             sub_id += 2;
             let page = match request(&mut ws, sub_id, payload, token).await {
                 Ok(p) => p,
-                // timelineActivityLog not available or failing: the listing stays open
-                Err(_) => break,
+                // timelineActivityLog not available or failing: the listing stays open, the
+                // older one at its saved place
+                Err(_) => {
+                    if head_pass {
+                        act_cursor = saved_cursor.clone();
+                    }
+                    break;
+                }
             };
             for item in page["items"].as_array().cloned().unwrap_or_default() {
                 let date: String = item["timestamp"]
@@ -2059,6 +2145,11 @@ impl BankConnector for TradeRepublicConnector {
                     .chars()
                     .take(10)
                     .collect();
+                if head_pass && activity_head_pass_ends(&date, &window_start) {
+                    head_pass = false;
+                    act_cursor = saved_cursor.clone();
+                    continue 'activity_pages;
+                }
                 if activity_log_stops_at(&date, &window_start, &self.session) {
                     listing_complete = true;
                     break 'activity_pages;
