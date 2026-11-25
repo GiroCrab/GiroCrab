@@ -142,7 +142,7 @@ fn booked_order_leaves_the_list_once_per_booking() {
     // no booking yet, and an unrelated one (other amount, other IBAN): both stay
     book(&v, a, "x1", "2999-01-10", -1, "DE89370400440532013000");
     book(&v, a, "x2", "2999-01-10", -85_000, "DE02120300000000202051");
-    super::drop_booked(&v.db().unwrap(), a).unwrap();
+    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 2);
     // one booking settles one order only
     book(
@@ -153,7 +153,7 @@ fn booked_order_leaves_the_list_once_per_booking() {
         -85_000,
         "DE89 3704 0044 0532 0130 00",
     );
-    super::drop_booked(&v.db().unwrap(), a).unwrap();
+    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 1);
 }
 
@@ -164,6 +164,42 @@ fn booking_before_the_order_does_not_settle_it() {
     v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 500))
         .unwrap();
     book(&v, a, "old", "2000-01-01", -500, "DE89370400440532013000");
-    super::drop_booked(&v.db().unwrap(), a).unwrap();
+    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+}
+
+#[test]
+fn one_booking_does_not_settle_a_second_order_in_a_later_fetch() {
+    let v = vault("planned-later-fetch");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 700))
+        .unwrap();
+    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 700))
+        .unwrap();
+    book(&v, a, "x1", "2999-01-10", -700, "DE89370400440532013000");
+    let now = crate::dates::now_ms() / 1000;
+    super::drop_booked(&v.db().unwrap(), a, now - 5).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+    // the next fetch brings no new booking
+    super::drop_booked(&v.db().unwrap(), a, now + 60).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+}
+
+#[test]
+fn pending_rows_are_no_bookings() {
+    let v = vault("planned-pending");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 900))
+        .unwrap();
+    book(
+        &v,
+        a,
+        "pending-E9",
+        "2999-01-10",
+        -900,
+        "DE89370400440532013000",
+    );
+    book(&v, a, "advanzia-hold-1", "2999-01-10", -900, "");
+    super::drop_booked(&v.db().unwrap(), a, 0).unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 1);
 }

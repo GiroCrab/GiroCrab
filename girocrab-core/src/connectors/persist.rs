@@ -214,6 +214,7 @@ pub(crate) fn store_fetch(
         {
             super::document_matching::warm_open_pdf_cache(&db, connection_id, &rules)?;
         }
+        let fetch_started_unix = crate::dates::now_ms() / 1000;
         let tx = db.unchecked_transaction()?;
         if kind == ConnectorKind::Advanzia {
             super::advanzia::prepare_import(&tx, connection_id, &mut data)?;
@@ -1069,7 +1070,7 @@ pub(crate) fn store_fetch(
             )?;
         }
         for id in account_ids.values() {
-            crate::planned::drop_booked(&tx, *id)?;
+            crate::planned::drop_booked(&tx, *id, fetch_started_unix)?;
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = &data.state {
