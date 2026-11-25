@@ -233,6 +233,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Test gesucht |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| Go & Grow | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | Monefit SmartSaver | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
@@ -506,6 +507,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Testing wanted |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| Go & Grow | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | Monefit SmartSaver | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |

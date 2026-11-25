@@ -2503,6 +2503,11 @@ fn brand_banks_with_pseudo_bank_code_map_to_their_connector() {
         connector_for("", "Monefit SmartSaver"),
         Some(ConnectorKind::Monefit)
     );
+    assert_eq!(
+        connector_for("", "Go and Grow"),
+        Some(ConnectorKind::GoAndGrow)
+    );
+    assert_eq!(connector_for("", "Bondora"), Some(ConnectorKind::GoAndGrow));
 }
 
 #[test]

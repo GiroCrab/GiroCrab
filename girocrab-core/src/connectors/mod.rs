@@ -43,6 +43,7 @@ pub mod fints_directory;
 pub mod fints_presets;
 pub mod fnz;
 pub mod fordmoney;
+pub mod goandgrow;
 pub mod hanseatic;
 pub mod ibkr;
 pub mod kontist;

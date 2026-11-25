@@ -900,6 +900,8 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
         Some(ConnectorKind::Bunq)
     } else if n.contains("monefit") {
         Some(ConnectorKind::Monefit)
+    } else if n.contains("go and grow") || n.contains("go & grow") || n.contains("bondora") {
+        Some(ConnectorKind::GoAndGrow)
     } else {
         None // incl. any other German bank with an 8-digit code
     }

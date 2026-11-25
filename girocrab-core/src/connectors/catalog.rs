@@ -234,6 +234,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             required_settings: vec![],
             note: tr("Monefit SmartSaver: Saldo und alle Umsätze des Sparkontos. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich. Eine Anmeldung mit zweitem Faktor wird noch nicht unterstützt.").into(),
         },
+        ConnectorKind::GoAndGrow => BankDescriptor {
+            kind,
+            name: "Go & Grow".into(),
+            protocol: tr("Web-App (Direkt-Login)").into(),
+            bank_code: String::new(),
+            sf_symbol: "leaf".into(),
+            login_label: tr("E-Mail-Adresse").into(),
+            secret_label: tr("Passwort").into(),
+            required_settings: vec![],
+            note: tr("Go & Grow (ehemals Bondora): Saldo und Umsätze. Die Schnittstelle liefert nur die letzten zehn Buchungen (Zinsen, Ein- und Auszahlungen); ältere lassen sich nur per Import übernehmen. Darum abrufen, bevor mehr als zehn neue Buchungen anfallen – bei täglichen Zinsen ohne weitere Buchungen also spätestens alle zehn Tage. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich.").into(),
+        },
         ConnectorKind::Bhw => BankDescriptor {
             kind,
             name: "BHW Bausparkasse".into(),
@@ -781,6 +792,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Go & Grow",
+        kind: Some(ConnectorKind::GoAndGrow),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[Capability::Transactions, Capability::Balances],
+        status: Status::Verified,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "Uberspace",
         kind: Some(ConnectorKind::Uberspace),
         interface: Interface::WebPortal,
@@ -1045,6 +1065,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::Bitcoin => Box::new(bitcoin::BitcoinConnector::new()),
         ConnectorKind::Kontist => Box::new(kontist::KontistConnector::new()),
         ConnectorKind::Monefit => Box::new(monefit::MonefitConnector::new()),
+        ConnectorKind::GoAndGrow => Box::new(goandgrow::GoAndGrowConnector::new()),
         ConnectorKind::ScalableCapital => Box::new(scalable::ScalableConnector::new()),
         ConnectorKind::EnableBanking => {
             let (country, aspsp) = ConnectorKind::enable_banking_target(key).unwrap_or(("DE", ""));

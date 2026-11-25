@@ -144,7 +144,7 @@ impl BankConnector for DemoConnector {
                 expires_in_seconds: Some(900),
                 poll_interval_seconds: 0,
             },
-            ConnectorKind::PayPal | ConnectorKind::Bunq | ConnectorKind::Ibkr | ConnectorKind::AlteLeipziger | ConnectorKind::Uberspace | ConnectorKind::BitcoinCore | ConnectorKind::Ffb | ConnectorKind::Finpension | ConnectorKind::Monefit | ConnectorKind::Bitcoin => return Ok(Phase::Ready),
+            ConnectorKind::PayPal | ConnectorKind::Bunq | ConnectorKind::Ibkr | ConnectorKind::AlteLeipziger | ConnectorKind::Uberspace | ConnectorKind::BitcoinCore | ConnectorKind::Ffb | ConnectorKind::Finpension | ConnectorKind::Monefit | ConnectorKind::Bitcoin | ConnectorKind::GoAndGrow => return Ok(Phase::Ready),
         };
         self.challenge = Some(c.clone());
         Ok(Phase::Challenge(c))

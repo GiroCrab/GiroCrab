@@ -198,7 +198,7 @@ struct ConnectionEditSheet: View {
         case .bunq: return ["bunq.environment"]
         case .bitcoinCore: return ["bitcoin_core.datadir", "bitcoin_core.rpc_url"]
         case .enableBanking: return ["enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url"]
-        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .sharinbox, .axaShareplan, .unionInvestment, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .finpension, .monefit: return []
+        case .scalableCapital, .amazonOrders, .fnz, .ibkr, .quirion, .sharinbox, .axaShareplan, .unionInvestment, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .schwaebischHall, .equatePlus, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .finpension, .monefit, .goAndGrow: return []
         }
     }
 
@@ -276,9 +276,9 @@ struct ConnectionEditSheet: View {
     }
     @State private var showAdvanced = false
 
-    private var usesPin: Bool { [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .comdirect, .tradeRepublic, .bunq, .ibkr, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .kontist, .monefit, .finpension].contains(connection.connector) }
+    private var usesPin: Bool { [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .comdirect, .tradeRepublic, .bunq, .ibkr, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .kontist, .monefit, .finpension, .goAndGrow].contains(connection.connector) }
     /// Logins whose stored secret is a password, not a PIN.
-    private var usesPassword: Bool { [.easybank, .alteLeipziger, .uberspace, .fordMoney, .opelDirektbank, .hanseaticBank, .kontist, .monefit, .finpension].contains(connection.connector) }
+    private var usesPassword: Bool { [.easybank, .alteLeipziger, .uberspace, .fordMoney, .opelDirektbank, .hanseaticBank, .kontist, .monefit, .finpension, .goAndGrow].contains(connection.connector) }
     private var isTR: Bool { connection.connector == .tradeRepublic }
     /// Amex and Amazon Visa: portal credentials are kept as vault secrets and
     /// filled into the login form of the portal window.

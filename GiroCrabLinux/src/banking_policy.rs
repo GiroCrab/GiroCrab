@@ -409,6 +409,7 @@ pub fn display_name(id: &str) -> String {
         "kontist" => "Kontist",
         "monefit" => "Monefit SmartSaver",
         "bitcoin" => "Bitcoin-Wallet",
+        "goandgrow" => "Go & Grow",
         other => other,
     };
     match tail {

@@ -89,6 +89,9 @@ pub enum ConnectorKind {
     /// Bitcoin wallet, watch-only from an extended public key (xpub / ypub /
     /// zpub) via an Esplora server (mempool.space or the user's own).
     Bitcoin,
+    /// Go & Grow (formerly Bondora Go & Grow) via the investor web app's JSON API
+    /// behind its Keycloak login (unofficial).
+    GoAndGrow,
 }
 
 impl ConnectorKind {
@@ -130,6 +133,7 @@ impl ConnectorKind {
             ConnectorKind::Bitcoin => "bitcoin",
             ConnectorKind::HanseaticBank => "hanseatic",
             ConnectorKind::Monefit => "monefit",
+            ConnectorKind::GoAndGrow => "goandgrow",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -200,6 +204,7 @@ impl ConnectorKind {
             ConnectorKind::Kontist,
             ConnectorKind::Monefit,
             ConnectorKind::Bitcoin,
+            ConnectorKind::GoAndGrow,
         ]
     }
 }
