@@ -2337,6 +2337,8 @@ async fn the_closing_balance_of_the_bookings_is_the_balance_with_its_date() {
 /// An HKWPD answer that carries no holdings statement and no error (#1743).
 const WPD_WITHOUT_DATA: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+3050::UPD nicht mehr aktuell.'";
 const WPD_WITH_DATA: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+0020::Auftrag ausgefuehrt.'HIWPD:4:6:3+@10@:16R:GENL-'";
+/// An HIWPD segment whose binary is empty: no statement, not an empty depot.
+const WPD_WITH_EMPTY_BINARY: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HIRMS:3:2:3+0020::Auftrag ausgefuehrt.'HIWPD:4:6:3+@0@'";
 
 #[tokio::test]
 async fn holdings_answer_without_a_statement_is_an_error_not_an_empty_depot() {
@@ -2361,6 +2363,18 @@ async fn holdings_answer_with_a_statement_is_read() {
         .await
         .expect("a statement without positions is an empty depot");
     assert!(st.holdings.is_empty());
+}
+
+#[tokio::test]
+async fn holdings_answer_with_an_empty_statement_is_an_error_not_an_empty_depot() {
+    let (url, _) = mock_bank(vec![WPD_WITH_EMPTY_BINARY]);
+    let mut c = two_step_connector(&url, synced());
+    // the CRLF separator after an empty binary must not count as a statement (value 0)
+    let r = c.holdings(&test_ctx(), &sepa_acc(IBAN_A, "1234567")).await;
+    assert!(
+        r.is_err(),
+        "an empty HIWPD binary must not become an empty depot"
+    );
 }
 
 #[test]

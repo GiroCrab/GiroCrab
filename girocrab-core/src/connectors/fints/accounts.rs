@@ -268,6 +268,8 @@ impl FinTsConnector {
         let mut data = Vec::<u8>::new();
         let mut touchdown: Option<String> = None;
         let mut seen_codes: Vec<String> = Vec::new();
+        // bytes of holdings statements received; the CRLF separators below do not count
+        let mut payload_len = 0usize;
         crate::depot_debug::log(&format!(
             "fints HKWPD: bpd HIWPDS versions={:?} (bank_supports={}), sending v{v} with KTV",
             self.st.versions.get("HKWPD"),
@@ -308,6 +310,7 @@ impl FinTsConnector {
             ));
             for s in r.all("HIWPD") {
                 if let Some(b) = s.binary(1) {
+                    payload_len += b.len();
                     data.extend_from_slice(b);
                     data.extend_from_slice(b"\r\n");
                 }
@@ -329,7 +332,8 @@ impl FinTsConnector {
         }
         // No error code, but no holdings statement either: the bank did not answer the order
         // (#1743). That is not an empty depot, and its stored value must not look current.
-        if data.is_empty() {
+        // An HIWPD with a zero-length binary (`@0@`) carries no statement either.
+        if payload_len == 0 {
             return Err(CoreError::protocol(no_holdings_message(&seen_codes)));
         }
         Ok(mt535::parse(&crate::text::decode_bank_bytes(&data)))
