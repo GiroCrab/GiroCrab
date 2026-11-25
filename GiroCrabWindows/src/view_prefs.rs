@@ -131,19 +131,31 @@ impl PrefsState {
 
 static STATE: Mutex<Option<PrefsState>> = Mutex::new(None);
 
+/// Gespeicherte Schalter, die beim Start im Demo-Modus noch nicht gelesen wurden: Sie werden
+/// erst beim ersten erfolgreichen Wechsel in den eigenen Tresor geladen.
+static PENDING_LOAD: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 fn state() -> MutexGuard<'static, Option<PrefsState>> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Lädt die Schalter ins Fenster und speichert jede Änderung. `None` (Demo/Screenshot):
-/// Standardwerte, nichts wird geschrieben.
-pub fn install(win: &MainWindow, path: Option<PathBuf>) {
-    let initial = path.as_deref().map(ViewPrefs::load).unwrap_or_default();
-    initial.apply(win);
-    *state() = Some(PrefsState {
+/// Lädt die Schalter ins Fenster und speichert jede Änderung außerhalb des Demo-Modus.
+/// `path: None` (Screenshot): Standardwerte, keine Datei wird gelesen oder geschrieben.
+/// `start_demo`: Standardwerte; die Datei wird erst beim Verlassen des Demo-Modus gelesen.
+pub fn install(win: &MainWindow, path: Option<PathBuf>, start_demo: bool) {
+    let mut s = PrefsState {
         demo: false,
-        normal: initial,
-    });
+        normal: ViewPrefs::default(),
+    };
+    let initial = if start_demo {
+        *PENDING_LOAD.lock().unwrap_or_else(|e| e.into_inner()) = path.clone();
+        s.set_demo(true)
+    } else {
+        s.normal = path.as_deref().map(ViewPrefs::load).unwrap_or_default();
+        s.normal
+    };
+    initial.apply(win);
+    *state() = Some(s);
     let weak = win.as_weak();
     win.on_view_prefs_changed(move || {
         let (Some(win), Some(path)) = (weak.upgrade(), path.as_deref()) else {
@@ -162,16 +174,50 @@ pub fn install(win: &MainWindow, path: Option<PathBuf>) {
 /// Demo-Modus der App ein- oder ausgeschaltet: im Demo-Modus Standardwerte und kein
 /// Speichern, danach wieder die normalen Geräte-Schalter.
 pub fn set_demo(win: &MainWindow, demo: bool) {
-    let prefs = state().as_mut().map(|s| s.set_demo(demo));
+    let pending = if demo {
+        None
+    } else {
+        PENDING_LOAD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    };
+    let prefs = state()
+        .as_mut()
+        .map(|s| switch_demo(s, demo, pending.as_deref()));
     if let Some(prefs) = prefs {
         prefs.apply(win);
     }
+}
+
+/// Wechsel des Demo-Modus; beim ersten Verlassen nach einem Demo-Start zuerst die
+/// gespeicherten Schalter lesen, damit sie angezeigt und Änderungen wieder gespeichert werden.
+fn switch_demo(s: &mut PrefsState, demo: bool, pending: Option<&std::path::Path>) -> ViewPrefs {
+    if let Some(path) = pending {
+        s.normal = ViewPrefs::load(path);
+    }
+    s.set_demo(demo)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn demo_start_switches_to_saved_values_when_leaving_demo() {
+        let path = temp_file("demo-start");
+        assert!(ViewPrefs::default().save(&path).is_ok());
+        let mut s = PrefsState {
+            demo: false,
+            normal: ViewPrefs::default(),
+        };
+        let _ = switch_demo(&mut s, true, None);
+        assert!(s.demo, "Start im Demo-Modus: kein Speichern");
+        let _ = switch_demo(&mut s, false, Some(&path));
+        assert!(!s.demo, "nach dem Wechsel wird wieder gespeichert");
+        let _ = std::fs::remove_file(&path);
+    }
 
     fn temp_file(name: &str) -> PathBuf {
         let nanos = SystemTime::now()

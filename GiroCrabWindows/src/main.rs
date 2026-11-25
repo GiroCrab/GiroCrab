@@ -693,20 +693,17 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
             }
             let privacy = privacy_on(&win);
             let (bars, ticks) = cockpit::chart(&flow);
-            win.set_cashflow_bars(ModelRc::new(VecModel::from(
-                bars.into_iter()
-                    .map(|b| BarGroup {
-                        label: b.label.into(),
-                        income: if privacy { 0.0 } else { b.income },
-                        expense: if privacy { 0.0 } else { b.expense },
-                    })
-                    .collect::<Vec<_>>(),
-            )));
-            let ticks: Vec<SharedString> = ticks
+            let bars = bars
                 .into_iter()
-                .map(|t| if privacy { "•".into() } else { t.into() })
+                .map(|b| BarGroup {
+                    label: b.label.into(),
+                    income: b.income,
+                    expense: b.expense,
+                })
                 .collect();
-            win.set_cashflow_ticks(ModelRc::new(VecModel::from(ticks)));
+            let ticks = ticks.into_iter().map(SharedString::from).collect();
+            // Echte Werte merken, damit der Privatmodus-Schalter sofort umstellen kann.
+            cashflow_view::set(&win, bars, ticks, privacy);
             let mut lines = cockpit::budgets(&status);
             let has_budgets = !lines.is_empty();
             if !has_budgets {
@@ -1941,6 +1938,8 @@ for w in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnl
         .is_ok_and(|s| s.success())
 }
 
+mod cashflow_view;
+
 fn main() -> Result<(), slint::PlatformError> {
     views_ui::purge_stale_documents();
     let screenshot = screenshot_path_from_args(std::env::args().skip(1));
@@ -1954,10 +1953,14 @@ fn main() -> Result<(), slint::PlatformError> {
     if demo_title {
         win.set_window_title("GiroCrab Windows Demo".into());
     }
-    // Menü „Ansicht“: geräte-lokale Schalter; Demo/Screenshot bleiben bei den Standardwerten.
+    // Menü „Ansicht“: geräte-lokale Schalter. Demo startet mit Standardwerten und lädt die
+    // gespeicherten Schalter beim Wechsel in den eigenen Tresor; Screenshot fasst nichts an.
     view_prefs::install(
         &win,
-        (!demo_title).then(|| view_prefs::prefs_path(&vault_path())),
+        screenshot
+            .is_none()
+            .then(|| view_prefs::prefs_path(&vault_path())),
+        demo_title,
     );
     if let Some(path) = screenshot {
         let timer = slint::Timer::default();
@@ -2234,6 +2237,8 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = render_header(&win, &v, sel);
             render_bookings(&win);
             views_ui::rerender(&win);
+            // Diagramm synchron umstellen, nicht erst beim nächsten Laden des Dashboards.
+            cashflow_view::render(&win, privacy_on(&win));
             apply_transfer_rule(&win, win.get_tr_account_index());
         });
     }
