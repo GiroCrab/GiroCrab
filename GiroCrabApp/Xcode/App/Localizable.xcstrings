@@ -4392,6 +4392,28 @@
         }
       }
     },
+    "Alle Regeln exportieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export All Rules …"
+          }
+        }
+      }
+    },
+    "Alle Tags exportieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export All Tags …"
+          }
+        }
+      }
+    },
     "Alle Turnusse" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4586,6 +4608,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "All"
+          }
+        }
+      }
+    },
+    "Alles ist ausgewählt. Was nicht importiert werden soll, abwählen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Everything is selected. Deselect what should not be imported."
           }
         }
       }
@@ -6385,6 +6418,28 @@
         }
       }
     },
+    "Ausgewählte Regel exportieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Selected Rule …"
+          }
+        }
+      }
+    },
+    "Ausgewählte Tags exportieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Selected Tags …"
+          }
+        }
+      }
+    },
     "Ausgewählte Tags löschen …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6425,6 +6480,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Remove selected rows (⌘Z undoes it)"
+          }
+        }
+      }
+    },
+    "Ausgewählten Tag exportieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Export Selected Tag …"
           }
         }
       }
@@ -8048,6 +8114,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Held on this day: %@. Sold assets then appear under “Former positions”; their value until the sale stays in the history."
+          }
+        }
+      }
+    },
+    "Bestehende Buchungen ändern sich erst mit „Alle Regeln anwenden“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Existing transactions change only with “Apply All Rules”."
           }
         }
       }
@@ -11857,6 +11934,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The booking is removed from the account and the balance is recalculated. This cannot be undone."
+          }
+        }
+      }
+    },
+    "Die Datei enthält keine Regeln oder Tags." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The file contains no rules or tags."
           }
         }
       }
@@ -17337,6 +17425,28 @@
         }
       }
     },
+    "GiroCrab-Regel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab-Rule"
+          }
+        }
+      }
+    },
+    "GiroCrab-Regeln" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab-Rules"
+          }
+        }
+      }
+    },
     "GiroCrab-Registrierung (empfohlen)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17355,6 +17465,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use GiroCrab’s registration (recommended)"
+          }
+        }
+      }
+    },
+    "GiroCrab-Tag" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab-Tag"
+          }
+        }
+      }
+    },
+    "GiroCrab-Tags" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GiroCrab-Tags"
           }
         }
       }
@@ -18924,6 +19056,28 @@
         }
       }
     },
+    "Import auswählen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose What to Import"
+          }
+        }
+      }
+    },
+    "Import fehlgeschlagen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Failed"
+          }
+        }
+      }
+    },
     "Import läuft" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19019,6 +19173,17 @@
         }
       }
     },
+    "Importieren (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import (%lld)"
+          }
+        }
+      }
+    },
     "Importieren …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19037,6 +19202,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Imported"
+          }
+        }
+      }
+    },
+    "Importierte Regeln" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported Rules"
+          }
+        }
+      }
+    },
+    "Importierte Tags" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported Tags"
           }
         }
       }
@@ -28805,6 +28992,17 @@
         }
       }
     },
+    "Regeln (%lld von %lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rules (%1$lld of %2$lld)"
+          }
+        }
+      }
+    },
     "Regeln angewendet – %u Buchungen neu zugeordnet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28852,6 +29050,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Filter rules (e.g. deu*b) …"
+          }
+        }
+      }
+    },
+    "Regeln importieren oder exportieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import or export rules"
+          }
+        }
+      }
+    },
+    "Regeln importieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Rules …"
+          }
+        }
+      }
+    },
+    "Regeln importiert: %u · übersprungen: %u" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rules imported: %u · skipped: %u"
           }
         }
       }
@@ -32130,6 +32361,17 @@
         }
       }
     },
+    "Tags (%lld von %lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tags (%1$lld of %2$lld)"
+          }
+        }
+      }
+    },
     "Tags bearbeiten" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32148,6 +32390,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search Tags"
+          }
+        }
+      }
+    },
+    "Tags importieren oder exportieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import or export tags"
+          }
+        }
+      }
+    },
+    "Tags importieren …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Tags …"
+          }
+        }
+      }
+    },
+    "Tags importiert: %u · übersprungen: %u" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tags imported: %u · skipped: %u"
           }
         }
       }
@@ -35819,6 +36094,17 @@
         }
       }
     },
+    "Wird übersprungen: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Will be skipped: %@"
+          }
+        }
+      }
+    },
     "Wochen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36996,6 +37282,17 @@
         }
       }
     },
+    "bereits vorhanden, wird übernommen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "already present, will be reused"
+          }
+        }
+      }
+    },
     "bis auf Widerruf" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -37327,6 +37624,17 @@
         }
       }
     },
+    "neu" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "new"
+          }
+        }
+      }
+    },
     "neue Buchungen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -37564,6 +37872,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "quarterly"
+          }
+        }
+      }
+    },
+    "von einer ausgewählten Regel verwendet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "used by a selected rule"
           }
         }
       }
@@ -38195,6 +38514,28 @@
         }
       }
     },
+    "Übersprungene Regeln" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped Rules"
+          }
+        }
+      }
+    },
+    "Übersprungene Tags" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped Tags"
+          }
+        }
+      }
+    },
     "Überweisen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38754,6 +39095,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%1$@”: %2$u new, %3$u updated"
+          }
+        }
+      }
+    },
+    "„%@“: bereits vorhanden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@”: already present"
           }
         }
       }
