@@ -66,7 +66,6 @@ import de.girocrab.app.model.Booking
 import de.girocrab.app.model.CorePaymentDetails
 import de.girocrab.app.model.CorePaymentParser
 import de.girocrab.app.model.DirectDebitMandate
-import de.girocrab.app.model.Interval
 import de.girocrab.app.model.StandingOrder
 import java.time.Instant
 import java.time.LocalDate
