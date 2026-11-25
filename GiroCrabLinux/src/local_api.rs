@@ -165,7 +165,6 @@ fn reconcile(target: &Arc<Vault>) -> Option<ShareScope> {
     }
     s.start_error = None;
     let started = socket_path().and_then(|p| {
-        // No change listener: the Linux front end does not refresh on edits made through the socket.
         LocalApiServer::start(target.clone(), p.display().to_string(), None)
             .map_err(|e| describe(&e))
     });
