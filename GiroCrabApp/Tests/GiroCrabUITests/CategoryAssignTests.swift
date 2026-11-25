@@ -62,6 +62,39 @@ final class CategoryAssignTests: XCTestCase {
         XCTAssertEqual(derived(), want, "the background refresh did not publish", file: file, line: line)
     }
 
+    #if os(macOS)
+    func testInlinePickerShowsAllLevelsInSidebarOrder() throws {
+        let categories = Array(model.categories.prefix(4))
+        try XCTSkipUnless(categories.count == 4, "The demo needs four categories")
+        let leaf = CategoryNode(category: categories[2])
+        let child = CategoryNode(category: categories[1], children: [leaf])
+        let root = CategoryNode(category: categories[0], children: [child])
+        let sibling = CategoryNode(category: categories[3])
+
+        let rows = BookingCategoryPicker.rows(for: [root, sibling])
+        XCTAssertEqual(rows.map(\.id), categories.map(\.id))
+        XCTAssertEqual(rows.map(\.depth), [0, 1, 2, 0])
+        XCTAssertEqual(rows.map(\.isGroup), [true, true, false, false])
+    }
+    #endif
+
+    func testPickerAppliesCategoryToSelectionWhenClickedBookingAlreadyHasIt() throws {
+        let clicked = try XCTUnwrap(model.bookings.first { $0.categoryId != nil })
+        let category = try XCTUnwrap(clicked.categoryId)
+        let others = model.bookings.filter { $0.categoryId == nil }
+        let selected = try XCTUnwrap(others.first)
+        let outside = try XCTUnwrap(others.dropFirst().first)
+        model.selectedBookingID = clicked.id
+        model.selectedBookingIDs = [clicked.id, selected.id]
+
+        model.setCategoryFromPicker(category, for: clicked)
+
+        XCTAssertEqual(model.bookings.first { $0.id == clicked.id }?.categorySource, clicked.categorySource)
+        XCTAssertEqual(model.bookings.first { $0.id == selected.id }?.categoryId, category)
+        XCTAssertNil(model.bookings.first { $0.id == outside.id }?.categoryId)
+        XCTAssertEqual(model.selectedBookingIDs, [clicked.id, selected.id])
+    }
+
     func testAssignmentShowsAtOnceAndRefreshesInBackground() async throws {
         let (b, c) = try uncategorizedBooking()
         let before = derived()
