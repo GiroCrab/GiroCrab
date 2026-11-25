@@ -1191,10 +1191,15 @@ private struct SelectionScroller: View {
     }
 
     private func scroll(to id: Booking.ID) {
+        let byKeyboard = model.keyboardSelectedBookingID == id
+        model.keyboardSelectedBookingID = nil
         // Every row is an element of the lazy stream, so the proxy finds it
         // even while it is off-screen; its target is its position (`StreamItem`).
-        guard let slot = model.streamSlots.booking[id] else { return }
-        withAnimation(Motion.animation(.easeOut(duration: 0.15))) {
+        // „Neue Umsätze“ shows its cards instead of the stream.
+        guard let slot = model.showsNewBookings ? .newBooking(id) : model.streamSlots.booking[id] else { return }
+        // Without animation for the keyboard: while an arrow key is held down each step restarted
+        // it, and the list fell behind the selection until the key was released.
+        withAnimation(byKeyboard ? nil : Motion.animation(.easeOut(duration: 0.15))) {
             // Expanded rows can exceed the viewport: keep their title visible.
             proxy.scrollTo(slot, anchor: density == .standard ? nil : .top)
         }
