@@ -72,6 +72,19 @@ class SecurityChecklist(unittest.TestCase):
                      "~~~\n- [ ] x\n```\n- [x] **Security-Check:** still inside the example"):
             self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
 
+    def test_over_indented_closer_does_not_close_the_block(self):
+        for body in ("~~~\n    ~~~~\n- [x] **Security-Check:** example",
+                     "```\n    ```\n- [x] **Security-Check:** example"):
+            self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
+        body = "~~~\n- [ ] x\n   ~~~~\n- [x] **Security-Check:** Nothing relevant: nur CI"
+        self.assertTrue(chk.verdict(CRITICAL, body)[0], body)
+
+    def test_inline_backticks_do_not_open_a_fence(self):
+        body = "```example```\n\n- [x] **Security-Check:** Nothing relevant: nur CI"
+        self.assertTrue(chk.verdict(CRITICAL, body)[0], body)
+        body = "~~~ `md`\n- [x] **Security-Check:** example\n~~~\n- [ ] **Security-Check:**"
+        self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
+
     def test_message_names_the_fix(self):
         msg = chk.verdict(["scripts/x.sh"], "")[1]
         self.assertIn("- [x] **Security-Check:**", msg)
