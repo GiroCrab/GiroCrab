@@ -1,3 +1,4 @@
+// test: serial-defaults
 import XCTest
 import GiroCrabCore
 #if os(macOS)
@@ -470,13 +471,17 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertNil(discarded)
     }
 
-    func testSnapshotIsScopedToBookingDay() async throws {
+    /// A peer may move the booking to another day while the sheet is open: the snapshot reads the
+    /// current day from the vault, finds the booking and keeps the sheet open.
+    func testSnapshotFollowsTheCurrentBookingDate() async throws {
         try await settle()
         var booking = try XCTUnwrap(bookings[refund])
         booking.bookingDate = "1900-01-01"
+        model.openRefundPicker(for: booking)
         let key = RefundLoadKey(vaultRevision: model.vaultRevision, bookingID: refund, ownPart: "", revision: model.refundRevision)
         let result = try await model.refundSnapshot(for: key, booking: booking)
-        XCTAssertNil(result)
+        XCTAssertEqual(result?.booking.bookingDate, "2026-04-01")
+        XCTAssertEqual(model.refundPickerBooking?.id, refund)
     }
 
     func testVaultSwitchClosesPickerAndUndoCannotChangeNewVault() async throws {

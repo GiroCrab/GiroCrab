@@ -353,7 +353,10 @@ struct RefundPickerSheet: View {
                     let suggested = Set(data.suggestions.map(\.candidate))
                     let others = rows.filter { !query.isEmpty || !suggested.contains($0) }
                     ForEach(others, id: \.self) { candidate($0, data: data) }
-                    if others.isEmpty && data.suggestions.isEmpty && !data.links.isEmpty {
+                    // a search without hits says so, also while suggestions stay in their own
+                    // section; with nothing at all the overlay covers the whole list instead
+                    let overlay = rows.isEmpty && data.suggestions.isEmpty && data.links.isEmpty
+                    if others.isEmpty && !overlay && (!query.isEmpty || data.suggestions.isEmpty) {
                         emptySearch.padding(.vertical, 20)
                     }
                 } else {
