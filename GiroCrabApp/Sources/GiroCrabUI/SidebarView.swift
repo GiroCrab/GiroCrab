@@ -630,8 +630,8 @@ struct SidebarView: View {
     }
 }
 
-/// Gives single-line rows ("Alle Konten") the height of a two-line account row,
-/// text centred vertically in the selection pill (#658).
+/// Sets the minimum height of the "Alle Konten" row for the chosen density,
+/// keeping its text centred in the selection pill (#658).
 private struct AccountRowHeight: ViewModifier {
     @Environment(\.textScale) private var scale
     let density: SidebarDensity
