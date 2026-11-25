@@ -719,14 +719,27 @@ extension AppModel {
         syncingConnectionID = nil
         // Trade Republic or Kontist on its stored session alone (no PIN given, none stored) whose
         // session expired (#1128): the core asks for the PIN/password, which only the PIN sheet
-        // takes (for Trade Republic it also offers the browser login). One typed there that fails
-        // stays an error.
-        if let ce = error as? CoreError, case .Authentication = ce, retrySecret?.isEmpty ?? true,
-           let conn = connections.first(where: { $0.id == syncingConnectionIDBeforeError }),
-           [.tradeRepublic, .kontist].contains(conn.connector), connectionStatus(conn.id)?.hasPin != true {
-            toast = describe(error)
-            pendingLogin = PendingLogin(connection: conn)
-            return
+        // takes (for Trade Republic it also offers the browser login). FNZ: a failed direct
+        // login with a saved PIN — rejected sign-in or changed portal — gets the same sheet
+        // with the browser fallback (#1863), otherwise no window could reach it again.
+        if let ce = error as? CoreError, retrySecret?.isEmpty ?? true,
+           let conn = connections.first(where: { $0.id == syncingConnectionIDBeforeError }) {
+            if [.tradeRepublic, .kontist].contains(conn.connector),
+               case .Authentication = ce, connectionStatus(conn.id)?.hasPin != true {
+                toast = describe(error)
+                pendingLogin = PendingLogin(connection: conn)
+                return
+            }
+            if conn.connector == .fnz {
+                var fallback = false
+                if case .Authentication = ce { fallback = true }
+                if case .Protocol = ce { fallback = true }
+                if fallback {
+                    toast = describe(error)
+                    pendingLogin = PendingLogin(connection: conn)
+                    return
+                }
+            }
         }
         // "Alle abrufen" (#1041): an error ends only this login. Its alert shows right away;
         // the batch goes on once it is closed ("Überspringen"), retries this login, or ends.

@@ -83,6 +83,23 @@ struct PinSheet: View {
                     }
                 }
             }
+            if connection.connector == .fnz {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Direkt-Login nicht möglich?").appFont(.caption, weight: .semibold)
+                    Text("Melden Sie sich im eingebauten Browser-Fenster an und geben Sie die Anmeldung in der FNZsecure-App frei. Der Abruf im Browser-Fenster übernimmt die Konten wie bisher.")
+                        .appFont(.caption).foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        saveLoginIfChanged()
+                        dismiss()
+                        model.pendingLogin = nil
+                        model.webLoginConnection = currentConnection
+                    } label: {
+                        Label("Im Browser-Fenster anmelden …", systemImage: "safari")
+                    }
+                }
+            }
             SyncPromptButtons(cancel: model.cancelPendingLogin) {
                 Button(action: start) {
                     Text("Abrufen").frame(maxWidth: .infinity)
@@ -276,7 +293,7 @@ struct ConnectionEditSheet: View {
     }
     @State private var showAdvanced = false
 
-    private var usesPin: Bool { [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .comdirect, .tradeRepublic, .bunq, .ibkr, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .kontist, .monefit, .finpension, .goAndGrow].contains(connection.connector) }
+    private var usesPin: Bool { [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .comdirect, .tradeRepublic, .bunq, .ibkr, .easybank, .alteLeipziger, .volkswagenBank, .uberspace, .ffb, .fordMoney, .opelDirektbank, .hanseaticBank, .bhw, .kontist, .monefit, .finpension, .goAndGrow, .fnz].contains(connection.connector) }
     /// Logins whose stored secret is a password, not a PIN.
     private var usesPassword: Bool { [.easybank, .alteLeipziger, .uberspace, .fordMoney, .opelDirektbank, .hanseaticBank, .kontist, .monefit, .finpension, .goAndGrow].contains(connection.connector) }
     private var isTR: Bool { connection.connector == .tradeRepublic }

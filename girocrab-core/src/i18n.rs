@@ -506,8 +506,64 @@ fn english(de: &str) -> Option<&'static str> {
         "quirion: Depotpositionen, Liquiditätskonto, Verrechnungskonto und gebuchte Umsätze. Anmeldung im Browserfenster. Interne Portal-API; Änderungen sind möglich." => {
             "quirion: securities positions, liquidity account, clearing account and booked transactions. Sign in in the browser window. Internal portal API; subject to change."
         }
-        "FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Anmeldung im Browserfenster mit FNZsecure-Freigabe. Die PIN wird nicht gespeichert." => {
-            "FNZ Bank / ebase / finvesto: account balances, fund positions, cash and depot transactions, and PDF mailbox including the archive. Sign in in the browser window and approve with FNZsecure. Your PIN is not stored."
+        "FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Direkt-Login mit Zugangsnummer und PIN; wird „PIN im Tresor speichern“ abgewählt, gilt die PIN nur für diesen Abruf. Danach die Freigabe in der FNZsecure-App. Ohne Zugangsdaten öffnet sich das Browserfenster." => {
+            "FNZ Bank / ebase / finvesto: account balances, fund positions, cash and depot transactions, and PDF mailbox including the archive. Direct login with access number and PIN; if \"save the PIN in the vault\" is switched off, the PIN is used for this fetch only. Then approve with FNZsecure. Without credentials the browser window opens."
+        }
+        "Direkt-Login (Zugangsnummer + PIN)" => "Direct login (access number + PIN)",
+        "FNZ: Die Anmeldung hat unerwartet geantwortet. Wahrscheinlich wurde die Portal-Schnittstelle geändert; bitte GiroCrab aktualisieren." => {
+            "FNZ: The sign-in answered unexpectedly. The portal interface has most likely changed; please update GiroCrab."
+        }
+        "FNZ: Anmeldung fehlgeschlagen. Bitte Zugangsnummer und PIN prüfen." => {
+            "FNZ: Sign-in failed. Please check the access number and PIN."
+        }
+        "FNZ: Die Anmeldung ist nicht mehr gültig. Bitte den Abruf erneut starten." => {
+            "FNZ: The session is no longer valid. Please start the fetch again."
+        }
+        "FNZ: Unerwartete Weiterleitung. Der Abruf wurde abgebrochen." => {
+            "FNZ: Unexpected redirect. The fetch was aborted."
+        }
+        "FNZ: Die Anmeldung wurde nicht abgeschlossen. Bitte den Abruf erneut starten (FNZsecure-Freigabe nötig?)." => {
+            "FNZ: The sign-in was not completed. Please start the fetch again (FNZsecure approval needed?)."
+        }
+        "FNZ: {0} wurde abgelehnt (HTTP {1})." => "FNZ: {0} was rejected (HTTP {1}).",
+        "FNZ: Das Portal hat die Anfrage abgelehnt (HTTP {0})." => {
+            "FNZ: The portal rejected the request (HTTP {0})."
+        }
+        "FNZ: Das Portal ist nicht erreichbar. Bitte später erneut versuchen." => {
+            "FNZ: The portal is unreachable. Please try again later."
+        }
+        "FNZsecure verlangt die Freigabe in der FNZsecure-App; ein Code kann die Anmeldung nicht abschließen. Bitte in der App bestätigen." => {
+            "FNZsecure requires approval in the FNZsecure app; a code cannot complete the sign-in. Please approve in the app."
+        }
+        "Bitte die Anmeldung in der FNZsecure-App bestätigen." => {
+            "Please approve the sign-in in the FNZsecure app."
+        }
+        "FNZ: Unvollständige Umsatzliste. Bitte den Abruf erneut starten." => {
+            "FNZ: Incomplete transaction list. Please start the fetch again."
+        }
+        "FNZ: Unvollständige Dokumentenliste. Bitte den Abruf erneut starten." => {
+            "FNZ: Incomplete document list. Please start the fetch again."
+        }
+        "FNZ: Keine Kontoübersicht erkannt. Bitte den Abruf erneut starten." => {
+            "FNZ: No account overview found. Please start the fetch again."
+        }
+        "FNZ: Konto ohne eindeutige Kennung." => "FNZ: Account without a unique identifier.",
+        "FNZ: Der Depotbestand stimmt nicht mit der Kontoübersicht überein." => {
+            "FNZ: The depot inventory does not match the account overview."
+        }
+        "FNZ: Konto {0}: Angaben konnten nicht geladen werden – der nächste Abruf wiederholt es." => {
+            "FNZ: Account {0}: details could not be loaded – the next fetch tries again."
+        }
+        "FNZ: Das Dokument ist keine gültige PDF-Datei." => {
+            "FNZ: The document is not a valid PDF file."
+        }
+        "FNZ: Umsatz ohne Kennung." => "FNZ: Transaction without an identifier.",
+        "FNZ: Wiederholte Umsatzseite. Bitte den Abruf erneut starten." => {
+            "FNZ: Repeated transaction page. Please start the fetch again."
+        }
+        "FNZ: Dokument ohne Kennung." => "FNZ: Document without an identifier.",
+        "FNZ: Wiederholte Dokumentenseite. Bitte den Abruf erneut starten." => {
+            "FNZ: Repeated document page. Please start the fetch again."
         }
         "Bitte bei FNZ anmelden und in FNZsecure freigeben." => {
             "Please sign in to FNZ and approve with FNZsecure."
@@ -1732,6 +1788,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Benutzername" => "User name",
         "Benutzername und Passwort erforderlich" => "User name and password required",
         "Passwort" => "Password",
+        "PIN" => "PIN",
         "easybank (ehemals Barclays Deutschland): Kreditkarten und Umsätze der letzten zwei Jahre. Beim ersten Abruf fragt easybank eine SMS-TAN ab, danach erkennt die Bank GiroCrab wieder. Interne Portal-API; Änderungen sind möglich." => {
             "easybank (formerly Barclays Germany): credit cards and transactions of the last two years. On the first sync easybank asks for an SMS TAN; afterwards it recognises GiroCrab. Internal portal API; subject to change."
         }
