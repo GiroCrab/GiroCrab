@@ -311,6 +311,57 @@ impl Vault {
     }
 }
 
+/// Removes the planned payments of `account_id` the bank has booked by now (#1881): the
+/// same IBAN (when both sides have one) and amount, booked on or after the day the order
+/// was placed. A booking settles one order only. Orders the bank executes early or on
+/// another day (weekend, holiday) would otherwise stay until their date has passed.
+pub(crate) fn drop_booked(db: &Connection, account_id: i64) -> CoreResult<()> {
+    let mut q = db.prepare(
+        "SELECT id, execution_date, recipient_iban, amount_cents, kind,
+                date(created_ms / 1000, 'unixepoch', '-1 day')
+         FROM planned_transfers WHERE account_id = ?1 ORDER BY id",
+    )?;
+    let orders: Vec<(i64, String, String, i64, String, String)> = q
+        .query_map([account_id], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    if orders.is_empty() {
+        return Ok(());
+    }
+    let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
+    let mut used: std::collections::HashSet<i64> = Default::default();
+    let mut find = db.prepare(
+        "SELECT id, counterparty_iban FROM transactions
+         WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
+           AND booking_date >= ?3 ORDER BY booking_date, id",
+    )?;
+    for (id, _date, iban, cents, kind, since) in orders {
+        let signed = if kind == "debit" { cents } else { -cents };
+        let cands: Vec<(i64, String)> = find
+            .query_map(params![account_id, signed, since], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<Result<_, _>>()?;
+        let hit = cands.iter().find(|(tid, tiban)| {
+            !used.contains(tid)
+                && (iban.is_empty() || tiban.is_empty() || norm(&iban) == norm(tiban))
+        });
+        if let Some((tid, _)) = hit {
+            used.insert(*tid);
+            db.execute("DELETE FROM planned_transfers WHERE id = ?1", [id])?;
+        }
+    }
+    Ok(())
+}
+
 /// Vault merge: adds the other vault's scheduled transfers we do not have yet
 /// (by `end_to_end_id`); account ids are mapped.
 pub(crate) fn merge_attached(

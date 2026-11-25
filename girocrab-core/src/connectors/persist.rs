@@ -1068,6 +1068,9 @@ pub(crate) fn store_fetch(
                 &new_booking_ids,
             )?;
         }
+        for id in account_ids.values() {
+            crate::planned::drop_booked(&tx, *id)?;
+        }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = &data.state {
             crate::vault::connections::store_state(&tx, connection_id, state)?;

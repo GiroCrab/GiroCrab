@@ -119,3 +119,51 @@ fn planned_payments_are_counted_without_past_ones() {
         .unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 2);
 }
+
+fn book(v: &Vault, acc: i64, ext: &str, date: &str, cents: i64, iban: &str) {
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty_iban)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![acc, ext, date, cents, iban],
+        )
+        .unwrap();
+}
+
+#[test]
+fn booked_order_leaves_the_list_once_per_booking() {
+    let v = vault("planned-booked");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 85_000))
+        .unwrap();
+    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 85_000))
+        .unwrap();
+    // no booking yet, and an unrelated one (other amount, other IBAN): both stay
+    book(&v, a, "x1", "2999-01-10", -1, "DE89370400440532013000");
+    book(&v, a, "x2", "2999-01-10", -85_000, "DE02120300000000202051");
+    super::drop_booked(&v.db().unwrap(), a).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 2);
+    // one booking settles one order only
+    book(
+        &v,
+        a,
+        "x3",
+        "2999-01-10",
+        -85_000,
+        "DE89 3704 0044 0532 0130 00",
+    );
+    super::drop_booked(&v.db().unwrap(), a).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+}
+
+#[test]
+fn booking_before_the_order_does_not_settle_it() {
+    let v = vault("planned-old-booking");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 500))
+        .unwrap();
+    book(&v, a, "old", "2000-01-01", -500, "DE89370400440532013000");
+    super::drop_booked(&v.db().unwrap(), a).unwrap();
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+}
