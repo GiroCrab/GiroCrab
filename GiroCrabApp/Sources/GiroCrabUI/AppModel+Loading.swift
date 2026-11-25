@@ -260,45 +260,85 @@ extension AppModel {
         loadMoreTask?.cancel()
         loadMoreTask = nil
         isLoadingMoreBookings = false
+        isSelectingAllBookings = false
     }
 
     /// More bookings match the current filter than are loaded (list limit reached).
     var hasMoreBookings: Bool {
         // the previous selection's page may still show during a selection load
         guard selectionLoadTask == nil, let total = page?.totalCount else { return false }
-        return UInt32(bookings.count) < total
+        return UInt32(loadedMatchingCount) < total
     }
 
     var remainingBookingCount: Int {
-        max(0, Int(page?.totalCount ?? 0) - bookings.count)
+        max(0, Int(page?.totalCount ?? 0) - loadedMatchingCount)
+    }
+
+    /// The lingering row, when it is on screen without matching the filter.
+    var lingeringRowOutsideFilterID: Booking.ID? {
+        guard lingeringRowOutsideFilter, let id = lingeringBookingID, booking(withID: id) != nil else { return nil }
+        return id
+    }
+
+    /// Loaded bookings that match the filter: the core's offset counts only those.
+    var loadedMatchingCount: Int {
+        bookings.count - (lingeringRowOutsideFilterID == nil ? 0 : 1)
     }
 
     /// Fetches the next page off the main thread and appends it. Nothing loaded
     /// so far is fetched again, so scrolling stays smooth.
     func loadMoreBookings() {
-        guard let vault, hasMoreBookings, !isLoadingMoreBookings, selectionLoadTask == nil else { return }
-        var next = listFilter
-        next.offset = UInt32(bookings.count)
-        next.limit = appendPageSize
+        guard !isLoadingMoreBookings else { return }
+        appendBookings(limit: appendPageSize)
+    }
+
+    /// Appends up to `limit` further bookings in the background, then runs `done` with
+    /// the error, if any (only when the page belongs to the list still on screen).
+    /// False: nothing to fetch.
+    @discardableResult
+    func appendBookings(limit: UInt32, then done: (@MainActor (Error?) -> Void)? = nil) -> Bool {
+        guard let vault, hasMoreBookings, selectionLoadTask == nil, let shown = shownListFilter else { return false }
+        // a page still on its way would only fetch part of the rest again
+        loadMoreTask?.cancel()
+        // the offset counts the list on screen: page on with its filter, never with a newer one
+        var next = shown
+        next.offset = UInt32(loadedMatchingCount)
+        next.limit = limit
         let filter = next
         let generation = listGeneration
         isLoadingMoreBookings = true
         loadMoreTask = Task { [weak self] in
-            let next = try? await Self.offMain {
-                try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
+            let result: Result<BookingPage, Error>
+            do {
+                result = .success(try await Self.offMain {
+                    try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
+                })
+            } catch {
+                result = .failure(error)
             }
             // A full reload in the meantime has replaced the list this page belongs to.
             guard let self, !Task.isCancelled, generation == self.listGeneration else { return }
             self.loadMoreTask = nil
             self.isLoadingMoreBookings = false
-            guard let next, !next.transactions.isEmpty else { return }
-            Perf.interval("publishBookings") {
-                self.listBalances.merge(next)
-                self.bookings.append(contentsOf: next.transactions)
+            if case .success(let next) = result, !next.transactions.isEmpty {
+                // the lingering row was put in place without being on the loaded pages: when
+                // it matches after all, its own place in the list takes over (#1696)
+                if let id = self.lingeringRowOutsideFilterID, next.transactions.contains(where: { $0.id == id }) {
+                    self.bookings.removeAll { $0.id == id }
+                    self.lingeringRowOutsideFilter = false
+                    // the row is a regular one now: a later selection change must not remove it
+                    self.lingeringBookingID = nil
+                }
+                Perf.interval("publishBookings") {
+                    self.listBalances.merge(next)
+                    self.bookings.append(contentsOf: next.transactions)
+                }
+                // an edit reloads exactly what is on screen
+                self.listLimit = UInt32(self.bookings.count)
             }
-            // an edit reloads exactly what is on screen
-            self.listLimit = UInt32(self.bookings.count)
+            if case .failure(let error) = result { done?(error) } else { done?(nil) }
         }
+        return true
     }
 
     /// Loads the list far enough back to contain `day` (plus some older context).
@@ -560,8 +600,10 @@ extension AppModel {
         runCore {
             let filter = listFilter
             let p = try Perf.interval("listTransactions") { try vault.listTransactions(filter: filter) }
-            Perf.interval("publishBookings") { publish(p) }
+            Perf.interval("publishBookings") { publish(p, filter: filter) }
         }
+        // a failed reload ends a ⌘A waiting for it (#1696); on success `publish` has taken it
+        selectAllAfterReload = false
         // a failed load published nothing: the switch is over (#1808)
         viewSwitchPending = false
         reloadSelectionKPIs()
@@ -592,7 +634,11 @@ extension AppModel {
     /// Shows a freshly loaded list page. A selected booking the page no longer
     /// contains falls back to the first row, unless it is sticky (kept in the
     /// inspector after an edit moved it out of the filter).
-    func publish(_ p: BookingPage) {
+    func publish(_ p: BookingPage, filter: BookingFilter) {
+        shownListFilter = filter
+        // taken first: the fallback selection below would otherwise cancel it
+        let selectAll = selectAllAfterReload
+        selectAllAfterReload = false
         page = p
         if viewSwitchPending {
             // a booking kept in the inspector after an edit belongs to the list it left: the other
@@ -617,6 +663,7 @@ extension AppModel {
         }
         viewSwitchPending = false
         pruneMultiSelection()
+        if selectAll { selectAllShownBookings() }
     }
 
     /// Running balances (#577) fit only a selection of accounts (one account, a
@@ -666,9 +713,11 @@ extension AppModel {
     /// The lingering booking (checked while selected) at its old place in a
     /// new page that no longer contains it: before the row that followed it.
     private func keepingLingeringRow(_ rows: [Booking]) -> [Booking] {
+        lingeringRowOutsideFilter = false
         guard let id = lingeringBookingID, let kept = stickyBooking, kept.id == id,
               !rows.contains(where: { $0.id == id }),
               let old = bookings.firstIndex(where: { $0.id == id }) else { return rows }
+        lingeringRowOutsideFilter = true
         let ids = Set(rows.map(\.id))
         let next = bookings[(old + 1)...].first { ids.contains($0.id) }
         var out = rows
@@ -680,7 +729,11 @@ extension AppModel {
     /// the background (the menu closes at once, the old list stays until the new one is in);
     /// set from code it stays synchronous, callers read the list right after.
     func reloadAfterFilterChange() {
-        if loadsFilterInBackground, vault != nil {
+        let inBackground = loadsFilterInBackground && vault != nil
+        // rows chosen in the previous list would stay selected without being shown, like a
+        // sidebar or period change (#1696); a ⌘A pressed before waits for the new list
+        dropMultiSelection(keepingPendingSelectAll: inBackground)
+        if inBackground {
             startSelectionLoad(keepingShown: true)
         } else {
             reloadBookings()
@@ -691,6 +744,8 @@ extension AppModel {
     /// The search text only narrows the list: the KPIs, history and merchant data do not
     /// depend on it, so just the page reloads, in the background.
     func reloadListInBackground() {
+        // another search: same rule as a status change (#1696)
+        dropMultiSelection(keepingPendingSelectAll: true)
         if selectionLoadTask != nil { startSelectionLoad() } else { reloadScopeBookings() }
     }
 
@@ -702,6 +757,8 @@ extension AppModel {
         guard let vault else { return }
         let filter = listFilter
         scopeLoadTask = Task { [weak self] in
+            // a newer request cancels this one first: not cancelled = still the current task
+            defer { if !Task.isCancelled { self?.scopeLoadTask = nil } }
             guard !Task.isCancelled else { return }
             let load = Task.detached(priority: .userInitiated) {
                 try Task.checkCancellation()
@@ -718,10 +775,13 @@ extension AppModel {
                 guard !Task.isCancelled, let self else { return }
                 // a page requested while this scope was loading belongs to no list
                 self.dropPendingPage()
-                self.publish(p)
+                self.scopeLoadTask = nil // done: a ⌘A taken over by `publish` may load the rest
+                self.publish(p, filter: filter)
                 // selectionFlow always uses scope .all and is unchanged here.
             } catch {
                 guard !Task.isCancelled, let self else { return }
+                // no new list: a ⌘A waiting for it ends with the error (#1696)
+                self.selectAllAfterReload = false
                 self.errorMessage = describe(error)
             }
         }

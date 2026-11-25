@@ -85,6 +85,150 @@ final class BookingPagingTests: XCTestCase {
         XCTAssertEqual(model.bookings.last?.checked, !booking.checked)
     }
 
+    /// ⌘A selects every booking matching the filter, not only the loaded pages (#1696).
+    func testSelectAllLoadsAndSelectsEveryBooking() async throws {
+        let all = try allMatching()
+        loadFirstPage(of: 20)
+        XCTAssertTrue(model.hasMoreBookings)
+        model.selectAllBookings()
+        XCTAssertTrue(model.isSelectingAllBookings)
+        XCTAssertFalse(model.isMultiSelection, "no partial selection while the rest loads")
+        try await awaitSelectAll()
+        XCTAssertFalse(model.hasMoreBookings)
+        XCTAssertEqual(model.bookings.map(\.id), all.map(\.id))
+        XCTAssertEqual(model.selectedBookingIDs, Set(all.map(\.id)))
+        XCTAssertEqual(model.selectedBookingIDs.count, model.bookingCountLabel)
+        // the sum and every action on the selection cover all bookings
+        let sums = Dictionary(grouping: all, by: \.currency).mapValues { $0.reduce(Int64(0)) { $0 + $1.amountCents } }
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: model.selectionTotals.map { ($0.currency, $0.cents) }), sums)
+        let first = try XCTUnwrap(model.bookings.first)
+        XCTAssertEqual(Set(model.categorizeTargets(for: first).map(\.id)), Set(all.map(\.id)))
+        // an edit keeps the whole list loaded
+        model.setChecked(!first.checked, for: first)
+        XCTAssertEqual(model.bookings.count, all.count)
+    }
+
+    func testAFullReloadCancelsSelectAll() async throws {
+        let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
+        loadFirstPage(of: 20)
+        model.selectAllBookings()
+        XCTAssertTrue(model.isSelectingAllBookings)
+        model.sidebarSelection = .account(account.id) // synchronous full reload
+        XCTAssertFalse(model.isSelectingAllBookings)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(model.isMultiSelection, "the old list's bookings are not selected")
+    }
+
+    private func awaitSelectAll() async throws {
+        for _ in 0..<300 where model.isSelectingAllBookings || model.selectAllAfterReload {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(model.isSelectingAllBookings)
+        XCTAssertFalse(model.selectAllAfterReload)
+    }
+
+    func testANewerSelectionSupersedesSelectAll() async throws {
+        loadFirstPage(of: 20)
+        let row = try XCTUnwrap(model.bookings.dropFirst().first)
+        model.selectAllBookings()
+        XCTAssertTrue(model.isSelectingAllBookings)
+        model.selectBooking(row.id) // click while the rest loads
+        XCTAssertFalse(model.isSelectingAllBookings)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.selectedBookingIDs, [row.id], "the click is not overwritten")
+    }
+
+    func testACommandClickSupersedesSelectAll() async throws {
+        loadFirstPage(of: 20)
+        let first = try XCTUnwrap(model.bookings.first)
+        let second = try XCTUnwrap(model.bookings.dropFirst().first)
+        model.selectBooking(first.id)
+        model.selectBooking(second.id, toggle: true)
+        XCTAssertEqual(model.selectedBookingIDs, [first.id, second.id])
+        model.selectAllBookings()
+        XCTAssertTrue(model.isSelectingAllBookings)
+        // ⌘-click removes a row other than the one in the inspector: only the set changes
+        let removed = model.selectedBookingID == first.id ? second.id : first.id
+        model.selectBooking(removed, toggle: true)
+        XCTAssertFalse(model.isSelectingAllBookings)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.selectedBookingIDs.count, 1, "the ⌘-click is not overwritten")
+    }
+
+    /// ⌘A while the search still loads: it waits for the new list instead of
+    /// selecting the previous list's rows.
+    func testSelectAllWaitsForAListStillLoading() async throws {
+        loadFirstPage(of: 20)
+        let name = try XCTUnwrap(model.bookings.first { !$0.counterparty.isEmpty }?.counterparty)
+        model.searchText = name // the search reloads after a short pause
+        XCTAssertTrue(model.isReloadingList)
+        model.selectAllBookings()
+        XCTAssertTrue(model.selectAllAfterReload)
+        XCTAssertFalse(model.isMultiSelection, "the previous list's rows are not selected")
+        try await awaitSelectAll()
+        XCTAssertFalse(model.isReloadingList)
+        let matching = try allMatching()
+        XCTAssertFalse(matching.isEmpty)
+        XCTAssertEqual(model.selectedBookingIDs, Set(matching.map(\.id)), "the new list's bookings")
+    }
+
+    /// The filter changed but its list has not arrived (or failed to load): further pages
+    /// continue the list on screen instead of appending the new filter's rows to it.
+    func testFurtherPagesContinueTheListOnScreen() async throws {
+        let all = try allMatching()
+        loadFirstPage(of: 20)
+        let before = model.bookings.count
+        model.suspendsFilterReloads = true // the new list is never loaded
+        model.statusFilter = .new
+        model.suspendsFilterReloads = false
+        XCTAssertEqual(model.listFilter.checked, false)
+        model.selectAllBookings()
+        try await awaitSelectAll()
+        XCTAssertGreaterThan(model.bookings.count, before)
+        XCTAssertEqual(model.bookings.map(\.id), all.map(\.id), "one list, not two mixed")
+        XCTAssertEqual(model.selectedBookingIDs, Set(all.map(\.id)))
+    }
+
+    /// A checked row kept in place in „Neu“ does not match the filter: the next page starts
+    /// at the right booking and ⌘A selects exactly the matching ones.
+    func testSelectAllSkipsTheLingeringRowAndNoMatchingBooking() async throws {
+        model.statusFilter = .new
+        loadFirstPage(of: 5)
+        XCTAssertTrue(model.hasMoreBookings)
+        let booking = try XCTUnwrap(model.bookings.first)
+        model.selectedBookingID = booking.id
+        model.setChecked(true, for: booking)
+        XCTAssertTrue(model.bookings.contains { $0.id == booking.id }, "the row lingers")
+        let matching = try allMatching()
+        XCTAssertFalse(matching.contains { $0.id == booking.id })
+        XCTAssertGreaterThan(matching.count, model.loadedMatchingCount)
+        model.selectAllBookings()
+        try await awaitSelectAll()
+        XCTAssertEqual(model.selectedBookingIDs, Set(matching.map(\.id)))
+        XCTAssertFalse(model.bookings.contains { $0.id == booking.id }, "the selection moved on")
+        XCTAssertEqual(model.bookings.map(\.id), matching.map(\.id), "nothing skipped, nothing twice")
+    }
+
+    /// Another account or period ends a multiple selection: kept, it would cover only the
+    /// rows the new list happens to share with the old one.
+    func testChangingTheSidebarSelectionOrPeriodDropsTheMultipleSelection() async throws {
+        let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
+        model.sidebarSelection = .account(account.id)
+        loadFirstPage(of: 20)
+        model.selectAllBookings()
+        try await awaitSelectAll()
+        XCTAssertTrue(model.isMultiSelection)
+        model.sidebarSelection = .allAccounts
+        XCTAssertFalse(model.isMultiSelection)
+        XCTAssertLessThanOrEqual(model.selectedBookingIDs.count, 1)
+
+        model.selectAllBookings()
+        try await awaitSelectAll()
+        XCTAssertTrue(model.isMultiSelection)
+        model.period = model.period == .all ? .months12 : .all
+        XCTAssertFalse(model.isMultiSelection)
+    }
+
     func testAFullReloadDropsAPageStillOnItsWay() async throws {
         let account = try XCTUnwrap(model.allAccounts.first { $0.kind == .checking })
         loadFirstPage(of: 20)

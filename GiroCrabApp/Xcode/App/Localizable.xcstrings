@@ -3713,6 +3713,17 @@
         }
       }
     },
+    "Alle %lld Buchungen werden ausgewählt …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selecting all %lld transactions …"
+          }
+        }
+      }
+    },
     "Alle %lld Konten stimmen mit den importierten Daten überein." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24462,6 +24473,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not active (no verification key in this build)"
+          }
+        }
+      }
+    },
+    "Nicht alle Buchungen konnten ausgewählt werden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not all transactions could be selected"
           }
         }
       }

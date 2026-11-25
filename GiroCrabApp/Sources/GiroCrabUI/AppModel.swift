@@ -169,6 +169,7 @@ public final class AppModel {
                 oldValue.flatMap { sidebarRowSelections[$0] }?.isSelected = false
                 sidebarSelection.flatMap { sidebarRowSelections[$0] }?.isSelected = true
                 requestStreamTop()
+                dropMultiSelection()
                 // the next list belongs to this switch: `publish` keeps only what it still shows (#1808)
                 viewSwitchPending = MainColumn(sidebarSelection) == .bookings
             }
@@ -293,7 +294,7 @@ public final class AppModel {
     }
     var period: Period = .all {
         didSet {
-            if oldValue != period { requestStreamTop() }
+            if oldValue != period { requestStreamTop(); dropMultiSelection() }
             periodDidChange()
         }
     }
@@ -487,6 +488,8 @@ public final class AppModel {
     var selectedBookingID: Booking.ID? {
         didSet {
             if stickyBooking?.id != selectedBookingID { stickyBooking = nil }
+            // a newer selection (click, arrow keys) supersedes a pending ⌘A (#1696)
+            if selectedBookingID != oldValue { isSelectingAllBookings = false; selectAllAfterReload = false }
             if let id = lingeringBookingID, id != selectedBookingID {
                 lingeringBookingID = nil
                 bookings.removeAll { $0.id == id }
@@ -527,7 +530,14 @@ public final class AppModel {
 
     /// All selected bookings (⌘-click adds/removes, ⇧-click selects a range,
     /// ⌘A all visible). `selectedBookingID` is the one shown in the inspector.
-    var selectedBookingIDs: Set<Booking.ID> = []
+    var selectedBookingIDs: Set<Booking.ID> = [] {
+        // a newer selection (also a ⌘-click) supersedes a pending ⌘A (#1696)
+        didSet {
+            guard selectedBookingIDs != oldValue else { return }
+            if isSelectingAllBookings { isSelectingAllBookings = false }
+            if selectAllAfterReload { selectAllAfterReload = false }
+        }
+    }
 
     /// A booking that left the filtered list because the user just edited it
     /// (e.g. "kein Gehalt" in the salary period). It stays selected and visible
@@ -537,6 +547,9 @@ public final class AppModel {
     /// bookings: its row stays in place (shown as checked) until the user
     /// selects something else, instead of vanishing under the cursor.
     var lingeringBookingID: Booking.ID?
+    /// The lingering row was put back into a list whose filter it no longer matches:
+    /// it does not count towards the loaded pages (offset of the next page, ⌘A).
+    @ObservationIgnored var lingeringRowOutsideFilter = false
     /// iOS: set by a tap on a row (booking, planned payment, mandate), presents the detail
     /// sheet when the window has no room for the detail column; cleared when the column changes,
     /// a depot or Sachwerte account is shown, or an editor opens from the sheet.
@@ -923,6 +936,14 @@ public final class AppModel {
     var appendPageSize: UInt32 = AppModel.defaultListLimit
     /// The next page is being fetched in the background.
     var isLoadingMoreBookings = false
+    /// ⌘A is loading the rest of the list before it selects everything (#1696).
+    var isSelectingAllBookings = false
+    /// ⌘A came while a new list was on its way (edit, search, scope): it runs on that list
+    /// once it is published, not on the rows of the previous one (#1696).
+    var selectAllAfterReload = false
+    /// The filter the list on screen was loaded with: further pages continue that list,
+    /// even when `listFilter` already describes the next one (#1696).
+    @ObservationIgnored var shownListFilter: BookingFilter?
     @ObservationIgnored var loadMoreTask: Task<Void, Never>?
     /// Bumped by every full reload of the list; a page requested before is dropped.
     @ObservationIgnored var listGeneration = 0
@@ -1856,6 +1877,9 @@ public final class AppModel {
         dashboardTask?.cancel()
         endSelectionLoad()
         dropPendingPage()
+        // a ⌘A waiting at lock time must not run on the first list after unlocking (#1696)
+        selectAllAfterReload = false
+        shownListFilter = nil
         merchantStatsTask?.cancel()
         merchantStatsCache = [:]
         categorySuggestionTask?.cancel()
