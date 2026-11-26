@@ -101,6 +101,7 @@ pub fn on_lock(win: &MainWindow) {
     gs.set_backup_password(SharedString::new());
     gs.set_backup_repeat(SharedString::new());
     gs.set_setting_value(SharedString::new());
+    gs.set_net_refunds(false);
     if let Some(c) = with_ui(|u| u.cancel.clone()) {
         c.store(true, Ordering::SeqCst);
     }
@@ -938,6 +939,7 @@ fn wire_backup(win: &MainWindow) {
 // ---- settings -------------------------------------------------------------------------------------
 
 fn load_settings(win: &MainWindow, v: &Arc<Vault>) {
+    let vault = v.clone();
     let v = v.clone();
     spawn(
         win,
@@ -950,7 +952,11 @@ fn load_settings(win: &MainWindow, v: &Arc<Vault>) {
             let refunds = v.net_refunds_in_stats().map_err(|e| e.to_string())?;
             Ok((list, mode, source, prefs, refunds))
         },
-        |win, (list, mode, source, prefs, refunds)| {
+        move |win, (list, mode, source, prefs, refunds)| {
+            // a load of a vault locked or swapped meanwhile never fills the current dialog
+            if !crate::is_current(&vault) {
+                return;
+            }
             show_update_prefs(win, prefs);
             let gs = win.global::<SettingsImportState>();
             gs.set_net_refunds(refunds);
@@ -1036,7 +1042,10 @@ fn wire_settings(win: &MainWindow) {
                 if !crate::is_current(&vault) {
                     return;
                 }
-                win.global::<SettingsImportState>().set_net_refunds(stored);
+                // only a value read back from the vault; an unreadable one leaves the box as is
+                if let Some(stored) = stored {
+                    win.global::<SettingsImportState>().set_net_refunds(stored);
+                }
                 match saved {
                     // every total, budget and chart reads the setting: reload like a refund link change
                     Ok(()) => {
@@ -1073,10 +1082,10 @@ fn wire_settings(win: &MainWindow) {
 }
 
 /// Stores the switch and reads it back; the stored state is what the checkbox shows, also when
-/// saving failed.
-fn save_net_refunds(v: &Vault, on: bool) -> (bool, Result<(), String>) {
+/// saving failed. `None`: the read-back failed, so the stored state is unknown.
+fn save_net_refunds(v: &Vault, on: bool) -> (Option<bool>, Result<(), String>) {
     let saved = v.set_net_refunds_in_stats(on).map_err(|e| e.to_string());
-    let stored = v.net_refunds_in_stats().unwrap_or(!on);
+    let stored = v.net_refunds_in_stats().ok();
     (stored, saved)
 }
 
@@ -1438,11 +1447,11 @@ mod tests {
         let path = dir.join("v.db").display().to_string();
         let v = girocrab_core::Vault::open(path.clone(), vec![7; 32]).unwrap();
         assert!(!v.net_refunds_in_stats().unwrap(), "off by default");
-        assert_eq!(super::save_net_refunds(&v, true), (true, Ok(())));
+        assert_eq!(super::save_net_refunds(&v, true), (Some(true), Ok(())));
         drop(v);
         let v = girocrab_core::Vault::open(path, vec![7; 32]).unwrap();
         assert!(v.net_refunds_in_stats().unwrap());
-        assert_eq!(super::save_net_refunds(&v, false), (false, Ok(())));
+        assert_eq!(super::save_net_refunds(&v, false), (Some(false), Ok(())));
         drop(v);
         let _ = std::fs::remove_dir_all(&dir);
     }

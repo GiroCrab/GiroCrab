@@ -238,11 +238,9 @@ extension AppModel {
         }
         guard self.vault === vault, generation == netRefundsWriteGeneration else { return }
         if let stored { netRefundsInStats = stored }
-        if let failure {
-            errorMessage = describe(failure)
-        } else {
-            refundStatsChanged()
-        }
+        if let failure { errorMessage = describe(failure) }
+        // also after a failure: the write may have committed before the read-back failed
+        refundStatsChanged()
     }
 
     /// Category totals and history, budgets, KPI tiles, cashflow card and dashboard load again.
