@@ -298,9 +298,10 @@ fn main_v43_keeps_fetch_and_settlement_when_upgrading_category_roles() {
         )
         .unwrap();
 
+    let current_version = user_version(&fresh_vault(&tmp));
     for _ in 0..2 {
         let v = Vault::open(path.clone(), KEY.to_vec()).unwrap();
-        assert_eq!(user_version(&path), 44);
+        assert_eq!(user_version(&path), current_version);
         assert_eq!(
             count(
                 &path,
@@ -350,7 +351,7 @@ fn half_migrated_v8_vault_is_repaired() {
              ALTER TABLE transactions DROP COLUMN salary_flag;
              DROP INDEX tx_rule;
              CREATE INDEX tx_rule ON transactions(rule_id);
-             DROP INDEX categories_unique_name;
+             DROP INDEX categories_sibling_name;
              CREATE UNIQUE INDEX categories_unique_name ON categories(IFNULL(parent_id, 0), name);
              ALTER TABLE user_groups DROP COLUMN color_hex;
              ALTER TABLE user_groups DROP COLUMN color_ms;

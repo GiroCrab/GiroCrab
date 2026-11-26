@@ -1,13 +1,10 @@
-//! Category merge: newest edit per field wins, same-named live siblings are combined.
+//! Category merge: newest edit per field wins for each UUID.
 
 use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::{Connection, params};
 
-use super::{
-    category_uuid_for_path, fill_missing_uuids, fold, merge_deletion, pick_match, survivor,
-    take_newer,
-};
+use super::{fill_missing_uuids, merge_deletion, survivor, take_newer};
 use crate::error::CoreResult;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -35,8 +32,8 @@ struct Cat {
 
 impl Cat {
     fn merge(&mut self, o: Cat) {
-        // Identity is immutable; when combining a custom entry and a built-in,
-        // custom provenance wins so its name can never become translated.
+        // A peer can clear built-in provenance when importing into the same
+        // UUID. Preserve custom provenance so its name remains literal.
         merge_category_role(&mut self.builtin_role, o.builtin_role);
         take_newer(&mut self.name, &mut self.name_ms, o.name, o.name_ms);
         take_newer(&mut self.parent, &mut self.parent_ms, o.parent, o.parent_ms);
@@ -110,26 +107,6 @@ fn load_categories(conn: &Connection, schema: &str) -> CoreResult<Vec<Cat>> {
     Ok(rows)
 }
 
-/// uuid -> uuid of the category's current path (names from the root).
-fn path_uuids(cats: &[Cat]) -> HashMap<String, String> {
-    let by_uuid: HashMap<&str, &Cat> = cats.iter().map(|c| (c.uuid.as_str(), c)).collect();
-    cats.iter()
-        .map(|c| {
-            let mut path = vec![c.name.as_str()];
-            let mut cur = c.parent.as_deref();
-            while let Some(p) = cur.and_then(|p| by_uuid.get(p)) {
-                if path.len() > 64 {
-                    break;
-                }
-                path.push(p.name.as_str());
-                cur = p.parent.as_deref();
-            }
-            path.reverse();
-            (c.uuid.clone(), category_uuid_for_path(&path))
-        })
-        .collect()
-}
-
 fn cat_survivor<'a>(state: &'a BTreeMap<String, Cat>, uuid: &'a str) -> Option<&'a str> {
     survivor(uuid, |u| {
         state
@@ -195,38 +172,6 @@ fn resolve_parents(state: &mut BTreeMap<String, Cat>) {
     }
 }
 
-/// Live categories with the same parent and case-folded name are combined
-/// into the lowest uuid. Returns whether anything was combined.
-fn combine_categories(state: &mut BTreeMap<String, Cat>) -> bool {
-    let mut groups: BTreeMap<(Option<String>, String), Vec<String>> = BTreeMap::new();
-    for c in state.values().filter(|c| c.deleted_ms.is_none()) {
-        groups
-            .entry((c.parent.clone(), fold(&c.name)))
-            .or_default()
-            .push(c.uuid.clone());
-    }
-    let mut any = false;
-    for uuids in groups.into_values().filter(|g| g.len() > 1) {
-        // BTreeMap order: the first is the lowest uuid
-        let keep = &uuids[0];
-        for u in &uuids[1..] {
-            // The financial role stays on the duplicate: `role_winners` counts it for the
-            // survivor when reading, so the result does not depend on the order of syncs.
-            let builtin_role = state[u].builtin_role.clone();
-            let kept = state.get_mut(keep).unwrap();
-            merge_category_role(&mut kept.builtin_role, builtin_role);
-        }
-        let keep_ms = state[keep].name_ms;
-        for u in &uuids[1..] {
-            let c = state.get_mut(u).unwrap();
-            c.deleted_ms = Some(c.name_ms.max(keep_ms).max(1));
-            c.merged_into = Some(keep.clone());
-            any = true;
-        }
-    }
-    any
-}
-
 /// A category's role as stored, for [`role_winners`].
 pub(crate) struct RoleEntry<'a> {
     pub uuid: &'a str,
@@ -237,9 +182,9 @@ pub(crate) struct RoleEntry<'a> {
 }
 
 /// The role that counts for each live category (#931): the newest of its own and the
-/// chosen ones (`role_ms > 0`) of the duplicates combined into it (`merged_into`, followed
-/// like the bookings, [`survivor`]), with the tie-break of [`take_newer`]. A role nobody
-/// chose (stamp 0, seeded by schema step 42 or an import) described the duplicate's own
+/// chosen ones (`role_ms > 0`) of categories with an existing redirect (`merged_into`,
+/// followed like the bookings, [`survivor`]), with the tie-break of [`take_newer`]. A role
+/// nobody chose (stamp 0, seeded by schema step 44 or an import) described the duplicate's own
 /// place and stays there. Resolved when reading, not written into the survivor on merge: a
 /// written role would stay where an earlier merge put it, and the result would depend on
 /// the order of syncs. Ordinary deletions count for nobody.
@@ -265,20 +210,8 @@ pub(crate) fn role_winners<'a>(rows: &[RoleEntry<'a>]) -> HashMap<&'a str, (Opti
     out
 }
 
-/// After the rows of both vaults are merged: parents follow combined and deleted
-/// categories, and same-named live siblings are combined until none are left.
-fn settle(state: &mut BTreeMap<String, Cat>) {
-    loop {
-        resolve_parents(state);
-        if !combine_categories(state) {
-            break;
-        }
-    }
-}
-
 pub(crate) fn merge_categories(
     conn: &Connection,
-    legacy: bool,
     stats: &mut crate::vault::MergeStats,
 ) -> CoreResult<HashMap<i64, i64>> {
     fill_missing_uuids(conn)?;
@@ -289,63 +222,17 @@ pub(crate) fn merge_categories(
     let mut state: BTreeMap<String, Cat> =
         local.iter().map(|c| (c.uuid.clone(), c.clone())).collect();
 
-    // v7 rows: other uuid -> the local uuid they stand for
-    let mut alias: HashMap<String, String> = HashMap::new();
-    if legacy {
-        let mut by_path: HashMap<String, Vec<(&str, bool)>> = HashMap::new();
-        for (u, p) in path_uuids(&local) {
-            let live = original[&u].deleted_ms.is_none();
-            let u = original.get_key_value(&u).unwrap().0.as_str();
-            by_path.entry(p).or_default().push((u, live));
-        }
-        for (u, p) in path_uuids(&other) {
-            if original.contains_key(&u) {
-                continue;
-            }
-            if let Some(m) = by_path.get(&p).and_then(|c| pick_match(c)) {
-                alias.insert(u, m.to_string());
-            }
-        }
-    }
-    let local_uuid = |u: Option<String>| u.map(|u| alias.get(&u).cloned().unwrap_or(u));
-
     for o in &other {
-        let mut row = o.clone();
-        row.parent = local_uuid(row.parent);
-        row.merged_into = local_uuid(row.merged_into);
-        match alias.get(&o.uuid) {
-            Some(target) => {
-                // merged into its match; the row itself stays as a tombstone
-                let t = state.get_mut(target).unwrap();
-                let mut incoming = Cat {
-                    uuid: target.clone(),
-                    ..row.clone()
-                };
-                // like a merged duplicate (`role_winners`), only a chosen role reaches the
-                // match; the row keeps a role nobody chose (stamp 0) for itself
-                if incoming.role_ms == 0 {
-                    incoming.category_role = None;
-                }
-                t.merge(incoming);
-                let ms = t.name_ms;
-                row.id = 0;
-                row.deleted_ms = Some(ms.max(1));
-                row.merged_into = Some(target.clone());
-                state.insert(row.uuid.clone(), row);
+        match state.get_mut(&o.uuid) {
+            Some(c) => c.merge(o.clone()),
+            None => {
+                state.insert(o.uuid.clone(), Cat { id: 0, ..o.clone() });
             }
-            None => match state.get_mut(&o.uuid) {
-                Some(c) => c.merge(row),
-                None => {
-                    row.id = 0;
-                    state.insert(row.uuid.clone(), row);
-                }
-            },
         }
     }
-    settle(&mut state);
+    resolve_parents(&mut state);
 
-    // write: new rows first (parked as deleted = -1, outside the unique name
-    // index), then every changed row, then unpark the live ones at once
+    // Allocate all local IDs before assigning parent edges.
     let mut ids: HashMap<String, i64> = state.values().map(|c| (c.uuid.clone(), c.id)).collect();
     let changed: Vec<&Cat> = state
         .values()
@@ -354,18 +241,13 @@ pub(crate) fn merge_categories(
     for c in &changed {
         if c.id == 0 {
             conn.execute(
-                "INSERT INTO categories(uuid, name, deleted_ms) VALUES (?1, ?2, -1)",
+                "INSERT INTO categories(uuid, name) VALUES (?1, ?2)",
                 params![c.uuid, c.name],
             )?;
             ids.insert(c.uuid.clone(), conn.last_insert_rowid());
             if c.deleted_ms.is_none() {
                 stats.categories_added += 1;
             }
-        } else {
-            conn.execute(
-                "UPDATE categories SET deleted_ms = -1 WHERE id = ?1",
-                [c.id],
-            )?;
         }
     }
     for c in &changed {
@@ -374,7 +256,7 @@ pub(crate) fn merge_categories(
             "UPDATE categories SET name = ?2, parent_id = ?3, sf_symbol = ?4, color_hex = ?5,
                     budget_cents = ?6, sort_order = ?7, name_ms = ?8, parent_ms = ?9,
                     symbol_ms = ?10, color_ms = ?11, budget_ms = ?12, order_ms = ?13,
-                    deleted_ms = IFNULL(?14, -1), merged_into = ?15, builtin_role = ?16,
+                    deleted_ms = ?14, merged_into = ?15, builtin_role = ?16,
                     role = ?17, role_ms = ?18
              WHERE id = ?1",
             params![
@@ -399,10 +281,6 @@ pub(crate) fn merge_categories(
             ],
         )?;
     }
-    conn.execute(
-        "UPDATE categories SET deleted_ms = NULL WHERE deleted_ms = -1",
-        [],
-    )?;
 
     // whatever points at a deleted category follows its survivor or becomes
     // uncategorised (as a deletion does); derived, no stamps
@@ -441,8 +319,7 @@ pub(crate) fn merge_categories(
     Ok(other
         .iter()
         .map(|o| {
-            let u = alias.get(&o.uuid).unwrap_or(&o.uuid);
-            let target = cat_survivor(&state, u).unwrap_or(u.as_str());
+            let target = cat_survivor(&state, &o.uuid).unwrap_or(o.uuid.as_str());
             (o.id, ids[target])
         })
         .collect())
@@ -522,62 +399,23 @@ mod forward_tests {
         );
     }
 
-    /// Same-named duplicates with different roles nobody chose (stamp 0): the survivor
-    /// keeps its own whether the duplicate arrives live and gets combined, or already
-    /// merged into it by another device. A chosen role of the duplicate counts.
     #[test]
-    fn stamp_0_roles_of_duplicates_do_not_depend_on_sync_order() {
-        let mut live_first = BTreeMap::new();
-        for c in [
-            cat("x", None, Some("investment"), 0),
-            cat("y", None, Some("neutral"), 0),
-        ] {
-            live_first.insert(c.uuid.clone(), c);
-        }
-        for c in live_first.values_mut() {
-            c.name = "Kaution".into();
-        }
-        assert!(combine_categories(&mut live_first));
-
-        let mut merged_first = BTreeMap::new();
-        for c in [
+    fn only_a_chosen_role_follows_an_existing_redirect() {
+        let mut state = [
             cat("x", None, Some("investment"), 0),
             cat("y", Some("x"), Some("neutral"), 0),
-        ] {
-            merged_first.insert(c.uuid.clone(), c);
-        }
+        ]
+        .into_iter()
+        .map(|c| (c.uuid.clone(), c))
+        .collect::<BTreeMap<_, _>>();
 
-        assert_eq!(winners(&live_first)["x"], (Some("investment".into()), 0));
-        assert_eq!(winners(&merged_first), winners(&live_first));
-
-        merged_first.get_mut("y").unwrap().role_ms = 7;
-        assert_eq!(winners(&merged_first)["x"], (Some("neutral".into()), 7));
-    }
-
-    /// Two live same-named categories from two devices, one without a role and one with a
-    /// seeded role (stamp 0): the survivor keeps its own role in both sync directions; the
-    /// seeded role of the duplicate does not count.
-    #[test]
-    fn stamp_0_role_of_a_live_duplicate_does_not_reach_the_survivor() {
-        let device = |uuid: &str, role: Option<&str>| {
-            let c = Cat {
-                name: "Kaution".into(),
-                ..cat(uuid, None, role, 0)
-            };
-            BTreeMap::from([(c.uuid.clone(), c)])
-        };
-        for (x_role, y_role) in [(None, Some("investment")), (Some("investment"), None)] {
-            let a = device("x", x_role);
-            let b = device("y", y_role);
-            for merged in [merge_into(&a, &b), merge_into(&b, &a)] {
-                assert_eq!(merged["y"].merged_into.as_deref(), Some("x"));
-                assert_eq!(winners(&merged)["x"], (x_role.map(String::from), 0));
-            }
-        }
+        assert_eq!(winners(&state)["x"], (Some("investment".into()), 0));
+        state.get_mut("y").unwrap().role_ms = 7;
+        assert_eq!(winners(&state)["x"], (Some("neutral".into()), 7));
     }
 
     /// Merges `other` into `local` as `merge_categories` does for a vault of the current
-    /// schema: upsert by uuid (newest stamp per field), then [`settle`].
+    /// schema: upsert by uuid (newest stamp per field), then [`resolve_parents`].
     fn merge_into(
         local: &BTreeMap<String, Cat>,
         other: &BTreeMap<String, Cat>,
@@ -591,7 +429,7 @@ mod forward_tests {
                 }
             }
         }
-        settle(&mut state);
+        resolve_parents(&mut state);
         state
     }
 
@@ -623,7 +461,7 @@ mod forward_tests {
     }
 
     /// Three devices start from one category tree whose roles nobody chose (stamp 0) and
-    /// change it on their own: new categories (also same-named ones, which get combined),
+    /// change it on their own: new categories (including same-named siblings),
     /// renames, moves, deletions and role choices. Device A then merges B and C in either
     /// order. Where both orders give the same tree, they must give the same roles.
     #[test]
@@ -646,7 +484,7 @@ mod forward_tests {
                 c.parent = (i > 0 && next(2) == 0).then(|| format!("u{}", next(i)));
                 base.insert(c.uuid.clone(), c);
             }
-            settle(&mut base);
+            resolve_parents(&mut base);
             let mut device = |dev: u64| {
                 let mut state = base.clone();
                 for k in 0..3 {
@@ -691,7 +529,7 @@ mod forward_tests {
                             c.role_ms = ms;
                         }
                     }
-                    settle(&mut state);
+                    resolve_parents(&mut state);
                 }
                 state
             };

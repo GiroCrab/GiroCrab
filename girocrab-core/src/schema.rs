@@ -76,6 +76,8 @@
 //!   decided the classification before; `income` and `salary` as defaults that change no
 //!   classification yet. Exception: categories 32 or more levels deep, where the old walk
 //!   stopped after 32 categories.
+//! - 45: sibling category names may repeat. The schema version prevents older clients
+//!   from reading snapshots that can hold separate categories with the same name.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -136,7 +138,14 @@ const STEPS: &[Step] = &[
     Step::Hook(account_last_fetch),                            // 42 (#1716)
     Step::Hook(crate::planned::planned_settled),               // 43 (#1900)
     Step::Hook(category_roles),                                // 44 (#931)
+    Step::Sql(CATEGORY_SIBLING_LOOKUP),                        // 45
 ];
+
+const CATEGORY_SIBLING_LOOKUP: &str = "
+DROP INDEX IF EXISTS categories_unique_name;
+CREATE INDEX IF NOT EXISTS categories_sibling_name
+    ON categories(parent_id, name COLLATE NOCASE) WHERE deleted_ms IS NULL;
+";
 
 /// Step 44 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
 /// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
@@ -1314,7 +1323,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 44);
+        assert_eq!(SCHEMA_VERSION, 45);
     }
 
     /// #1716: a vault at version 41 gets the fetch time of step 42.

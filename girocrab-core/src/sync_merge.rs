@@ -2,8 +2,7 @@
 //!
 //! This module holds the groundwork shared by the merge steps: the v8 schema
 //! (per-field edit stamps, soft-delete columns, uuids), the sync keys that
-//! identify a row on every device, and deterministic uuids so that two vaults
-//! which never met still agree on what "Lebensmittel > Supermarkt" is. It
+//! identify a row on every device, and deterministic UUIDs for starter categories and legacy migrations. It
 //! also holds the soft-delete and revive helpers every write path uses, so
 //! that a deletion reaches the other devices.
 //!
@@ -123,7 +122,7 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
             ))?;
         }
     }
-    fill_missing_uuids(conn)
+    fill_missing_sync_keys(conn, true)
 }
 
 /// Booking indexes widened by `deleted_ms` (vaults from before schema v8 have them without).
@@ -218,6 +217,10 @@ type RuleRow = (
 /// Gives every category and rule without a uuid one: the deterministic uuid if
 /// no row (live or deleted) has it yet, else a random one.
 pub(crate) fn fill_missing_uuids(conn: &Connection) -> CoreResult<()> {
+    fill_missing_sync_keys(conn, false)
+}
+
+fn fill_missing_sync_keys(conn: &Connection, legacy_categories: bool) -> CoreResult<()> {
     // includes soft-deleted rows
     let missing: i64 = conn.query_row(
         "SELECT (SELECT count(*) FROM categories WHERE uuid IS NULL)
@@ -228,39 +231,50 @@ pub(crate) fn fill_missing_uuids(conn: &Connection) -> CoreResult<()> {
     if missing == 0 {
         return Ok(());
     }
-    // categories
-    let rows: Vec<(i64, Option<i64>, String, Option<String>)> = conn
-        .prepare("SELECT id, parent_id, name, uuid FROM categories ORDER BY id")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+    // Existing UUIDs remain authoritative. Historic v8 backfills and starter
+    // categories use their established deterministic keys. For all other
+    // rows, sharing a name or path does not imply a shared identity.
+    let has_builtin = has_column(conn, "main", "categories", "builtin_role")?;
+    let builtin = if has_builtin { "builtin_role" } else { "NULL" };
+    type CategoryKeyRow = (i64, Option<i64>, String, Option<String>, Option<String>);
+    let rows: Vec<CategoryKeyRow> = conn
+        .prepare(&format!(
+            "SELECT id, parent_id, name, uuid, {builtin} FROM categories ORDER BY id"
+        ))?
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
         .collect::<Result<_, _>>()?;
-    let by_id: HashMap<i64, (Option<i64>, &str)> = rows
-        .iter()
-        .map(|(id, p, n, _)| (*id, (*p, n.as_str())))
-        .collect();
+    let by_id: HashMap<i64, &CategoryKeyRow> = rows.iter().map(|r| (r.0, r)).collect();
     let mut used: HashSet<String> = rows.iter().filter_map(|r| r.3.clone()).collect();
-    for (id, _, _, uuid) in &rows {
+    for (id, _, _, uuid, builtin_role) in &rows {
         if uuid.is_some() {
             continue;
         }
-        let mut path = Vec::new();
-        let mut cur = Some(*id);
-        while let Some(c) = cur {
-            let Some((p, n)) = by_id.get(&c) else { break };
-            path.push(*n);
-            if path.len() > 64 {
-                break;
+        let mut uuid = None;
+        if legacy_categories
+            || builtin_role
+                .as_ref()
+                .is_some_and(|role| !role.starts_with("import:"))
+        {
+            let mut path = Vec::new();
+            let mut cur = Some(*id);
+            while let Some(row) = cur.and_then(|id| by_id.get(&id)) {
+                path.push(row.2.as_str());
+                if path.len() > 64 {
+                    break;
+                }
+                cur = row.1;
             }
-            cur = *p;
+            path.reverse();
+            let candidate = category_uuid_for_path(&path);
+            if used.insert(candidate.clone()) {
+                uuid = Some(candidate);
+            }
         }
-        path.reverse();
-        let mut u = category_uuid_for_path(&path);
-        if used.contains(&u) {
-            u = Uuid::new_v4().to_string();
-        }
-        used.insert(u.clone());
         conn.execute(
             "UPDATE categories SET uuid = ?1 WHERE id = ?2",
-            params![u, id],
+            params![uuid.unwrap_or_else(|| Uuid::new_v4().to_string()), id],
         )?;
     }
     // rules

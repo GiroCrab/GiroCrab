@@ -288,7 +288,7 @@ enum GroupDialog {
         case .rename(let g): g.name
         case .renameAccount(let a): a.name
         case .editOwner(let a): a.owner
-        case .renameCategory(let c): c.name
+        case .renameCategory(let c): c.editName
         case .renameUncategorized: ""
         default: ""
         }

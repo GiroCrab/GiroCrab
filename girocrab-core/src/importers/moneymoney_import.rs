@@ -911,19 +911,29 @@ pub(crate) fn find_or_create_category(
     let mut parent: Option<i64> = None;
     let mut key = String::new();
     for part in path {
+        let folded = part.trim().to_lowercase();
         key.push('\u{1}');
-        key.push_str(&part.to_lowercase());
+        key.push_str(&folded);
         if let Some(id) = cache.get(&key) {
             parent = Some(*id);
             continue;
         }
-        let found: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM categories WHERE parent_id IS ?1 AND name = ?2 COLLATE NOCASE AND deleted_ms IS NULL",
-                params![parent, part],
-                |r| r.get(0),
-            )
-            .optional()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name FROM categories WHERE parent_id IS ?1 AND deleted_ms IS NULL",
+        )?;
+        let mut candidates = stmt.query([parent])?;
+        let mut found = None;
+        while let Some(row) = candidates.next()? {
+            if row.get::<_, String>(1)?.trim().to_lowercase() == folded {
+                if found.is_some() {
+                    return Err(CoreError::invalid(trf(
+                        "Der Kategorienpfad „{0}“ ist mehrdeutig.",
+                        &[&path.join(" › ")],
+                    )));
+                }
+                found = Some(row.get::<_, i64>(0)?);
+            }
+        }
         let id = match found {
             Some(id) => {
                 // An imported path is user-owned even when it reuses a starter
@@ -938,14 +948,12 @@ pub(crate) fn find_or_create_category(
                     |r| r.get(0),
                 )?;
                 conn.execute(
-                    "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, name_ms, parent_ms, symbol_ms, color_ms, order_ms)
-                     VALUES (?1, ?2, 'tag', '#8E8E93', ?3, ?4, ?4, ?4, ?4, ?4)",
-                    params![parent, part, order, now_ms()],
+                    "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, name_ms, parent_ms, symbol_ms, color_ms, order_ms, uuid)
+                     VALUES (?1, ?2, 'tag', '#8E8E93', ?3, ?4, ?4, ?4, ?4, ?4, ?5)",
+                    params![parent, part, order, now_ms(), uuid::Uuid::new_v4().to_string()],
                 )?;
                 *created += 1;
-                let id = conn.last_insert_rowid();
-                crate::sync_merge::fill_missing_uuids(conn)?;
-                id
+                conn.last_insert_rowid()
             }
         };
         // Preserve the importer's established transfer semantics explicitly;
@@ -3221,6 +3229,29 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
             statement_account(&mt(&[iban, "DE02120300000000202051"])),
             None
         );
+    }
+
+    #[test]
+    fn import_refuses_an_ambiguous_category_path() {
+        let (_dir, v) = vault();
+        for name in ["Überweisung", "überweisung"] {
+            v.create_category(name.into(), None, "tag".into(), String::new())
+                .unwrap();
+        }
+        let conn = v.db().unwrap();
+        let mut created = 0;
+        assert!(
+            find_or_create_category(
+                &conn,
+                &["Überweisung".into(), "Kind".into()],
+                &mut HashMap::new(),
+                &mut created,
+            )
+            .is_err()
+        );
+        drop(conn);
+        assert_eq!(created, 0);
+        assert_eq!(v.list_categories(None, None).unwrap().len(), 2);
     }
 
     #[test]

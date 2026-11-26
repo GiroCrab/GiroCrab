@@ -4,7 +4,7 @@ import GiroCrabCore
 
 final class HeaderPieSlicesTests: XCTestCase {
     private func cat(_ id: Int64, parent: Int64?, name: String, own: Int64, total: Int64, depth: UInt32) -> GiroCrabCore.Category {
-        GiroCrabCore.Category(id: id, parentId: parent, name: name, sfSymbol: "tag", colorHex: "", sortOrder: 0, depth: depth,
+        GiroCrabCore.Category(id: id, parentId: parent, name: name, editName: name, sfSymbol: "tag", colorHex: "", sortOrder: 0, depth: depth,
                               path: name, ownTotalCents: own, totalCents: total, transactionCount: 1, budgetCents: nil,
                               role: nil, effectiveRole: .consumption)
     }

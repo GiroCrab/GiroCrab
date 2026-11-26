@@ -1,6 +1,6 @@
 //! The category tree: listing with period totals, create, edit, delete.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -9,7 +9,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::i18n::{role_name, tr, trf};
 use crate::models::*;
 
-type CategoryRow = (
+pub(crate) type CategoryRow = (
     i64,
     Option<i64>,
     String,
@@ -18,38 +18,70 @@ type CategoryRow = (
     i32,
     Option<i64>,
     Option<CategoryRole>,
+    String,
 );
 
 impl Vault {
-    fn category_rows(conn: &Connection) -> CoreResult<Vec<CategoryRow>> {
+    pub(crate) fn category_rows(conn: &Connection) -> CoreResult<Vec<CategoryRow>> {
         let mut stmt = conn.prepare(
-            "SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role
+            "SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role, uuid
                FROM categories WHERE deleted_ms IS NULL",
         )?;
         let explicit = Self::explicit_roles(conn)?;
-        let rows = stmt
+        let mut rows = stmt
             .query_map([], |r| {
                 let role = explicit.get(&r.get::<_, i64>(0)?).and_then(|e| e.0);
                 Ok((
-                    r.get(0)?,
-                    r.get(1)?,
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
                     role_name(
                         &r.get::<_, String>(2)?,
                         r.get::<_, Option<String>>(7)?.as_deref(),
                     ),
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i32>(5)?,
+                    r.get::<_, Option<i64>>(6)?,
                     role,
+                    r.get::<_, Option<String>>(8)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        // Use UUID order so peers assign the same suffixes even when their
+        // local IDs and sort orders differ. Reserve real names first so a
+        // literal name such as "Savings (2)" remains distinguishable.
+        rows.sort_by(|a, b| a.8.cmp(&b.8).then(a.0.cmp(&b.0)));
+        let mut reserved: HashSet<_> = rows
+            .iter()
+            .map(|r| (r.1, r.2.trim().to_lowercase()))
+            .collect();
+        let mut seen = HashSet::new();
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, parent, edit_name, symbol, color, order, budget, role, _)| {
+                    let folded = edit_name.trim().to_lowercase();
+                    let name = if seen.insert((parent, folded.clone())) {
+                        edit_name.clone()
+                    } else {
+                        (2..)
+                            .find_map(|n| {
+                                reserved
+                                    .insert((parent, format!("{folded} ({n})")))
+                                    .then(|| format!("{} ({n})", edit_name.trim()))
+                            })
+                            .unwrap()
+                    };
+                    (
+                        id, parent, name, symbol, color, order, budget, role, edit_name,
+                    )
+                },
+            )
+            .collect())
     }
 
     /// The explicit role of every live category (#931) with the stamp that decides it:
-    /// its own, or a newer one of a duplicate combined into it on sync
+    /// its own, or a newer one from a category with an existing merge redirect
     /// ([`crate::sync_merge::role_winners`]). `None` = inherit.
     pub(crate) fn explicit_roles(
         conn: &Connection,
@@ -128,11 +160,16 @@ impl Vault {
     pub(crate) fn category_paths(
         conn: &Connection,
     ) -> CoreResult<HashMap<i64, (String, String, String, String)>> {
+        Ok(Self::category_paths_from_rows(&Self::category_rows(conn)?))
+    }
+
+    pub(crate) fn category_paths_from_rows(
+        rows: &[CategoryRow],
+    ) -> HashMap<i64, (String, String, String, String)> {
         // id -> (name, path, color, symbol)
-        let rows = Self::category_rows(conn)?;
         let by_id: HashMap<i64, &CategoryRow> = rows.iter().map(|r| (r.0, r)).collect();
         let mut out = HashMap::new();
-        for r in &rows {
+        for r in rows {
             let mut parts = vec![r.2.clone()];
             let mut cur = r.1;
             let mut guard = 0;
@@ -154,7 +191,7 @@ impl Vault {
                 (r.2.clone(), parts.join(" › "), r.4.clone(), r.3.clone()),
             );
         }
-        Ok(out)
+        out
     }
 }
 
@@ -456,8 +493,8 @@ impl Vault {
         )?;
         db.execute(
             "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order,
-                    name_ms, parent_ms, symbol_ms, color_ms, order_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?6, ?6)",
+                    name_ms, parent_ms, symbol_ms, color_ms, order_ms, uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?6, ?6, ?7)",
             params![
                 parent_id,
                 name,
@@ -468,12 +505,11 @@ impl Vault {
                 },
                 color_hex,
                 order,
-                crate::dates::now_ms()
+                crate::dates::now_ms(),
+                uuid::Uuid::new_v4().to_string(),
             ],
         )?;
-        let id = db.last_insert_rowid();
-        crate::sync_merge::fill_missing_uuids(&db)?;
-        Ok(id)
+        Ok(db.last_insert_rowid())
     }
 
     pub fn update_category(
@@ -818,6 +854,7 @@ impl Vault {
                         id: k.0,
                         parent_id: k.1,
                         name: k.2.clone(),
+                        edit_name: k.8.clone(),
                         sf_symbol: k.3.clone(),
                         color_hex: k.4.clone(),
                         sort_order: k.5,

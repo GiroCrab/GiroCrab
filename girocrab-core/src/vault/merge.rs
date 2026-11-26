@@ -47,7 +47,7 @@ impl Vault {
         st.groups_updated = crate::user_groups::merge_attached(&tx, &acc_map, &acc_inserted)?;
 
         // categories and rules (newest edit wins, deletions stay deleted)
-        let cat_map = crate::sync_merge::merge_categories(&tx, legacy, &mut st)?;
+        let cat_map = crate::sync_merge::merge_categories(&tx, &mut st)?;
         let rule_map = crate::sync_merge::merge_rules(&tx, &cat_map, &acc_map, legacy, &mut st)?;
         // bookings only point at live categories and rules
         let cat_map = crate::sync_merge::live_targets(&tx, "categories", &cat_map)?;
@@ -120,8 +120,8 @@ impl Vault {
     }
 
     /// Merges another vault file (e.g. a copy synced via iCloud) into this one.
-    /// Categories and rules: newest edit wins, deletions stay deleted, same
-    /// ones created on both sides are combined. Missing connections, accounts
+    /// Category edits merge per UUID, and deletions stay deleted. Equivalent
+    /// rules created on both sides are combined. Missing connections, accounts
     /// and bookings are added; existing bookings (matched by account +
     /// external id, else import fingerprint) take the newest edit per field
     /// (category, note, checked, text, splits, tags) and stay deleted once deleted.

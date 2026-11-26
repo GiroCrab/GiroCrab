@@ -49,7 +49,8 @@ and `migrate` runs the missing ones in a single transaction.
 | 42 | `accounts.last_fetch_unix`: last single-account fetch timestamp (#1716) |
 | 43 | `planned_transfers.settled_ms`: settled scheduled orders (NULL = open), date index over `(execution_date, settled_ms)` (#1900) |
 | 44 | `categories.role` / `role_ms`: financial role of a category, inherited down the tree (#931); seeded with stamp 0: `investment`/`loan`/`neutral` only where `builtin_role` decided the classification before, plus the defaults `income` (top-level `Einnahmen`) and `salary` (`Gehalt`), which change no classification yet |
-| 45+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 45 | Replace the unique live sibling-name index with a lookup index. Separate category UUIDs can share a name. Older schema-aware clients refuse the upgraded snapshot before merging it. |
+| 46+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 

@@ -89,7 +89,8 @@ counterpart booking.
   "inherit", `role_ms = 0` a role nobody chose.
 - The iCloud merge ([`sync_merge/categories.rs`](../../girocrab-core/src/sync_merge/categories.rs))
   takes `role` and `role_ms` together: the newer change wins.
-- When the merge combines duplicate categories, each keeps its own role. Reading counts the
+- Category sync matches UUIDs. Live siblings can share a name and receive distinct display
+  labels. Older snapshots can contain rows with an existing merge redirect. Reading counts the
   newest of a category's role and the roles chosen on the duplicates combined into it
   (`role_winners`); a role nobody chose stays with its duplicate. Written into the survivor, a
   role would stay where an earlier merge put it, and the result would depend on the order in

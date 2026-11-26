@@ -265,10 +265,6 @@ fn deleted_category_name_can_be_reused() {
     let db = v.db().unwrap();
     db.execute("INSERT INTO categories(name) VALUES ('Food')", [])
         .unwrap();
-    assert!(
-        db.execute("INSERT INTO categories(name) VALUES ('Food')", [])
-            .is_err()
-    );
     db.execute(
         "UPDATE categories SET deleted_ms = 1 WHERE name = 'Food'",
         [],
@@ -285,8 +281,6 @@ fn deleted_category_name_can_be_reused() {
         .map(|r| r.unwrap())
         .collect();
     assert_eq!(u.len(), 2);
-    // the deleted row keeps the path uuid, the new one gets a random one
-    assert_eq!(u[0], category_uuid_for_path(&["Food"]));
     assert_ne!(u[0], u[1]);
 }
 
@@ -300,7 +294,7 @@ fn identical_pair(dir: &std::path::Path) -> (Arc<Vault>, Arc<Vault>) {
              INSERT INTO accounts(id, group_id, external_ref, name) VALUES (1, 1, 'DE1', 'A');
              INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, note_ms)
                  VALUES (1, 'e1', '2026-01-01', 5, 10);
-             INSERT INTO categories(name) VALUES ('Food');",
+             INSERT INTO categories(name, uuid) VALUES ('Food', 'shared-food');",
         )
         .unwrap();
         fill_missing_uuids(&db).unwrap();
@@ -2023,7 +2017,7 @@ fn deleted_category_stays_deleted_against_older_edit() {
 }
 
 #[test]
-fn same_import_on_two_vaults_has_no_duplicate_categories() {
+fn starter_categories_converge_and_custom_categories_keep_separate_uuids() {
     let dir = temp_dir("cat-import");
     let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
     for v in [&a, &b] {
@@ -2036,7 +2030,7 @@ fn same_import_on_two_vaults_has_no_duplicate_categories() {
     assert!(cats > 1 && rules > 0);
     both_ways(&a, &b);
     for v in [&a, &b] {
-        assert_eq!(n(v, "SELECT count(*) FROM categories"), cats);
+        assert_eq!(n(v, "SELECT count(*) FROM categories"), cats + 1);
         assert_eq!(n(v, "SELECT count(*) FROM rules"), rules);
         assert_eq!(
             n(
@@ -2049,8 +2043,8 @@ fn same_import_on_two_vaults_has_no_duplicate_categories() {
 }
 
 #[test]
-fn independently_created_same_name_categories_are_combined() {
-    let dir = temp_dir("cat-combine");
+fn independently_created_same_name_category_trees_survive_sync() {
+    let dir = temp_dir("cat-separate");
     let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
     for (v, name, food, bio, rule) in [
         (&a, "Food", "aaaa", "cccc", "r-1"),
@@ -2082,19 +2076,17 @@ fn independently_created_same_name_categories_are_combined() {
         .unwrap();
         db.execute(
             "INSERT INTO transactions(id, account_id, external_id, booking_date, amount_cents,
-                 category_id, category_source, category_ms)
-             VALUES (1, 1, 'e1', '2026-01-01', -5, ?1, 'manual', 7)",
-            [f],
+                 category_id, category_source, category_ms, purpose)
+             VALUES (1, 1, ?2, '2026-01-01', -5, ?1, 'manual', 7, ?2)",
+            params![f, food],
         )
         .unwrap();
         db.execute(
-            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, uuid, position) VALUES (1, ?1, -5, 'part-1', 0)",
-            [c],
+            "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, uuid, position) VALUES (1, ?1, -5, ?2, 0)",
+            params![c, bio],
         )
         .unwrap();
     }
-    let stamp = n(&b, "SELECT name_ms FROM categories WHERE uuid = 'bbbb'")
-        .max(n(&a, "SELECT name_ms FROM categories WHERE uuid = 'aaaa'"));
     both_ways(&a, &b);
     for v in [&a, &b] {
         assert_eq!(
@@ -2102,50 +2094,35 @@ fn independently_created_same_name_categories_are_combined() {
                 v,
                 "SELECT uuid FROM categories WHERE deleted_ms IS NULL ORDER BY uuid"
             ),
-            vec!["aaaa", "cccc"]
+            ["aaaa", "bbbb", "cccc", "dddd"]
         );
         assert_eq!(
-            text(v, "SELECT merged_into FROM categories WHERE uuid = 'bbbb'"),
-            "aaaa"
-        );
-        assert_eq!(
-            n(v, "SELECT deleted_ms FROM categories WHERE uuid = 'bbbb'"),
-            stamp
-        );
-        assert_eq!(
-            text(v, "SELECT merged_into FROM categories WHERE uuid = 'dddd'"),
-            "cccc"
-        );
-        // bookings, splits, rules and children follow the survivor
-        assert_eq!(
-            text(
+            uuids(
                 v,
-                "SELECT c.uuid FROM transactions t JOIN categories c ON c.id = t.category_id"
+                "SELECT c.uuid FROM transactions t JOIN categories c ON c.id = t.category_id ORDER BY t.external_id"
             ),
-            "aaaa"
+            ["aaaa", "bbbb"]
         );
         assert_eq!(
-            text(
+            uuids(
                 v,
-                "SELECT c.uuid FROM transaction_splits s JOIN categories c ON c.id = s.category_id"
+                "SELECT c.uuid FROM transaction_splits s JOIN categories c ON c.id = s.category_id ORDER BY s.uuid"
             ),
-            "cccc"
+            ["cccc", "dddd"]
         );
         assert_eq!(
-            uuids(v, "SELECT uuid FROM rules WHERE deleted_ms IS NULL"),
-            vec!["r-1"]
-        );
-        assert_eq!(
-            text(v, "SELECT merged_into FROM rules WHERE uuid = 'r-2'"),
-            "r-1"
-        );
-        assert_eq!(
-            text(
+            uuids(
                 v,
-                "SELECT c.uuid FROM rules r JOIN categories c ON c.id = r.category_id WHERE r.uuid = 'r-2'"
+                "SELECT c.uuid FROM rules r JOIN categories c ON c.id = r.category_id WHERE r.deleted_ms IS NULL ORDER BY r.uuid"
             ),
-            "aaaa"
+            ["aaaa", "bbbb"]
         );
+        let cats = v.list_categories(None, None).unwrap();
+        assert!(
+            cats.iter()
+                .any(|c| c.name == "food (2)" && c.edit_name == "food")
+        );
+        assert!(cats.iter().any(|c| c.path == "food (2) › Bio"));
     }
 }
 
@@ -2210,17 +2187,15 @@ fn rule_edit_newest_wins_and_deleted_rule_stays_deleted() {
     }
 }
 
-/// A v7 snapshot's row merged into its local match by path (#931): a role it got from the
-/// upgrade (stamp 0, step 42 from its starter `Umbuchungen`) is nobody's choice and stays out
-/// of the local category, as when the row is already known as a merged duplicate.
+/// A v7 snapshot receives a migration UUID. An unrelated local category with the same
+/// name retains its own identity and classification.
 #[test]
-fn v7_snapshot_seeded_role_does_not_reach_local_match() {
+fn v7_snapshot_keeps_same_named_category_with_a_distinct_uuid() {
     let dir = temp_dir("v7-role");
     let a = open(&dir, "a.db");
     let own = a
         .create_category("Umbuchungen".into(), None, "tag".into(), "#123456".into())
         .unwrap();
-    // a uuid of its own (not the path uuid), so the v7 row is matched by its path
     a.db()
         .unwrap()
         .execute("UPDATE categories SET uuid = 'u-own' WHERE id = ?1", [own])
@@ -2243,12 +2218,9 @@ fn v7_snapshot_seeded_role_does_not_reach_local_match() {
         conn.execute_batch("PRAGMA user_version = 7;").unwrap();
     }
     a.merge_other_vault(path, vec![7u8; 32]).unwrap();
-    let cat = a
-        .list_categories(None, None)
-        .unwrap()
-        .into_iter()
-        .find(|c| c.id == own)
-        .unwrap();
+    let cats = a.list_categories(None, None).unwrap();
+    assert_eq!(cats.len(), 2);
+    let cat = cats.iter().find(|c| c.id == own).unwrap();
     assert_eq!(cat.role, None);
     assert_eq!(cat.effective_role, crate::models::CategoryRole::Consumption);
 }
@@ -2257,11 +2229,16 @@ fn v7_snapshot_seeded_role_does_not_reach_local_match() {
 fn v7_snapshot_cannot_revive_deleted_category() {
     let dir = temp_dir("v7-revive");
     let a = open(&dir, "a.db");
-    // A created "Essen", renamed it "Food" (uuid stays the "Essen" path uuid)
+    // A and the v7 snapshot share the historical sync identity for "Food".
     let food = a
-        .create_category("Essen".into(), None, "tag".into(), "#111111".into())
+        .create_category("Food".into(), None, "tag".into(), "#111111".into())
         .unwrap();
-    a.update_category(food, "Food".into(), None, "tag".into(), "#111111".into())
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE categories SET uuid = ?1 WHERE id = ?2",
+            params![category_uuid_for_path(&["Food"]), food],
+        )
         .unwrap();
     a.save_rule(plain_rule(food, "lidl")).unwrap();
     // an old (v7) device got "Food" and its rule before A deleted them
