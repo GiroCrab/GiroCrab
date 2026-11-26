@@ -31,7 +31,7 @@
 //! The bank delivers no booking ids, so bookings get content ids. Documents
 //! have no ids either: they are remembered by date, subject and product.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -50,7 +50,7 @@ use super::{
 };
 use crate::documents::RemoteDocument;
 use crate::error::{CoreError, CoreResult};
-use crate::i18n::tr;
+use crate::i18n::{tr, trf};
 use crate::models::AccountKind;
 
 const HOST: &str = "ebanking.fordmoney.de";
@@ -73,7 +73,11 @@ static SPAN_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<span\b([^
 /// may be escaped inside `jsf.util.chain`).
 static JSF_PARAM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\\?'([^'\\]+)\\?'\s*:").unwrap());
-static ACCOUNT_NO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"collapse_(\d{5,})").unwrap());
+/// Target of an account's accordion header: `#collapse_<account number>`.
+static ACCOUNT_HEADER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"#collapse_(\d{5,})").unwrap());
+static SECTION_TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<section\b([^>]*)>").unwrap());
 static PRODUCT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?s)col-sm-10 col-xs-8">\s*<div>([^<]*)</div>"#).unwrap());
 static LABEL_VALUE: LazyLock<Regex> = LazyLock::new(|| {
@@ -342,12 +346,70 @@ fn trace(msg: &str) {
     crate::depot_debug::log(&format!("fordmoney {msg}"));
 }
 
-fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
+/// The overview cut into one part per account, with its number. From the
+/// first accordion section on, a part starts at the tag that holds an
+/// account's first `#collapse_<number>` (its header): Festgeld sections are
+/// marked up differently from the Tagesgeld one, and cutting at
+/// `<section class="accordion">` gave them all to the account before them (#1766).
+fn account_parts(html: &str) -> Vec<(String, &str)> {
+    let Some(first) = SECTION_TAG
+        .find_iter(html)
+        .find(|m| m.as_str().contains("accordion"))
+    else {
+        return Vec::new();
+    };
+    let list = &html[first.start()..];
+    let mut seen = HashSet::new();
+    let starts: Vec<(String, usize)> = ACCOUNT_HEADER
+        .captures_iter(list)
+        .filter(|c| seen.insert(c[1].to_string()))
+        .map(|c| {
+            let at = c.get(0).map_or(0, |m| m.start());
+            (c[1].to_string(), list[..at].rfind('<').unwrap_or(0))
+        })
+        .collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(i, (number, start))| {
+            let end = starts.get(i + 1).map_or(list.len(), |(_, s)| *s);
+            (number.clone(), &list[*start..end])
+        })
+        .collect()
+}
+
+/// Layout of the overview for the trace: counts and the sections' class
+/// names without digits, never numbers, names or amounts.
+fn overview_layout(html: &str, accounts: usize) -> String {
+    let mut classes: Vec<String> = SECTION_TAG
+        .captures_iter(html)
+        .map(|c| {
+            attr(&attrs(&c[1]), "class")
+                .unwrap_or("")
+                .chars()
+                .filter(|ch| !ch.is_ascii_digit())
+                .take(60)
+                .collect()
+        })
+        .collect();
+    let sections = classes.len();
+    classes.sort();
+    classes.dedup();
+    classes.truncate(8);
+    format!(
+        "overview layout: sections={sections} section_classes={classes:?} collapse_targets={} account_headers={accounts}",
+        html.matches("id=\"collapse").count()
+    )
+}
+
+/// The accounts of the overview, and the numbers of those whose balance is
+/// unreadable: they are left out, the others are still read.
+fn parse_accounts(html: &str) -> CoreResult<(Vec<Account>, Vec<String>)> {
+    let parts = account_parts(html);
+    trace(&overview_layout(html, parts.len()));
     let mut out = Vec::new();
-    for part in html.split("<section class=\"accordion\">").skip(1) {
-        let Some(number) = ACCOUNT_NO.captures(part).map(|c| c[1].to_string()) else {
-            continue;
-        };
+    let mut unreadable = Vec::new();
+    for (i, (number, part)) in parts.into_iter().enumerate() {
         let labels: Vec<(String, String)> = LABEL_VALUE
             .captures_iter(part)
             .map(|c| (text(&c[1]), text(&c[2])))
@@ -367,10 +429,11 @@ fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
         let Some(balance_cents) = RIGHT_SUM.captures(part).and_then(|c| parse_amount(&c[1])) else {
             trace(&format!(
                 "account #{}: balance unreadable (sum={})",
-                out.len() + 1,
+                i + 1,
                 RIGHT_SUM.is_match(part)
             ));
-            return Err(invalid());
+            unreadable.push(number);
+            continue;
         };
         let bookings_link = A_TAG.captures_iter(part).find_map(|c| {
             let a = attrs(&c[1]);
@@ -389,7 +452,7 @@ fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
             .unwrap_or_else(|| "Tagesgeld".into());
         trace(&format!(
             "account #{}: festgeld={} iban_labels={} own_iban={} bookings_link={}",
-            out.len() + 1,
+            i + 1,
             product.to_lowercase().contains("festgeld"),
             ibans.len(),
             !iban.is_empty(),
@@ -408,7 +471,23 @@ fn parse_accounts(html: &str) -> CoreResult<Vec<Account>> {
             bookings_link,
         });
     }
-    Ok(out)
+    if out.is_empty() && !unreadable.is_empty() {
+        return Err(invalid());
+    }
+    Ok((out, unreadable))
+}
+
+/// What a failed transaction list of one account means for the sync: an
+/// ended session or a cancel fails it (the other accounts would fail the
+/// same way), anything else is a warning and the account keeps its balance.
+fn bookings_failure(e: CoreError, account: &Account) -> CoreResult<String> {
+    match e {
+        CoreError::SessionClosed | CoreError::Authentication { .. } => Err(e),
+        _ => Ok(trf(
+            "Ford Money: Die Umsätze von Konto {0} konnten nicht gelesen werden, übernommen wurde nur der Kontostand.",
+            &[&account.number],
+        )),
+    }
 }
 
 /// Bookings of an expanded transaction list, newest first as the bank
@@ -956,8 +1035,12 @@ impl BankConnector for FordMoneyConnector {
     async fn fetch(&mut self, ctx: &ConnectContext) -> CoreResult<FetchResult> {
         let today = super::today();
         let overview = self.overview().await?;
-        let accounts = parse_accounts(&overview)?;
-        trace(&format!("overview: {} accounts", accounts.len()));
+        let (accounts, unreadable) = parse_accounts(&overview)?;
+        trace(&format!(
+            "overview: {} accounts, {} unreadable",
+            accounts.len(),
+            unreadable.len()
+        ));
         if accounts.is_empty() {
             return Err(page_changed());
         }
@@ -979,10 +1062,26 @@ impl BankConnector for FordMoneyConnector {
         }
 
         let mut out = FetchResult::default();
+        for number in &unreadable {
+            out.warnings.push(trf(
+                "Ford Money: Der Kontostand von Konto {0} konnte nicht gelesen werden, das Konto wurde nicht abgerufen.",
+                &[number],
+            ));
+        }
         for account in &accounts {
             let account_ref = account.external_ref();
             let since = ctx.since_for(&account_ref).to_string();
-            let bookings = self.bookings(account, &account_ref, &since, &today).await?;
+            let bookings = match self.bookings(account, &account_ref, &since, &today).await {
+                Ok(bookings) => bookings,
+                Err(e) => {
+                    trace(&format!(
+                        "account #{}: transaction list failed",
+                        out.accounts.len() + 1
+                    ));
+                    out.warnings.push(bookings_failure(e, account)?);
+                    Vec::new()
+                }
+            };
             trace(&format!(
                 "account #{}: {} bookings",
                 out.accounts.len() + 1,
@@ -1253,7 +1352,8 @@ mod tests {
 
     #[test]
     fn reads_accounts_with_iban_balance_and_bookings_link() {
-        let accounts = parse_accounts(&overview()).unwrap();
+        let (accounts, unreadable) = parse_accounts(&overview()).unwrap();
+        assert!(unreadable.is_empty());
         assert_eq!(accounts.len(), 2);
         let a = &accounts[0];
         assert_eq!(a.number, "1000000001");
@@ -1266,13 +1366,13 @@ mod tests {
             Some("contentForm:j_idt331:0:j_idt340")
         );
         assert_eq!(accounts[1].balance_cents, 6_544);
-        assert!(parse_accounts("<p>keine Konten</p>").unwrap().is_empty());
+        assert!(parse_accounts("<p>keine Konten</p>").unwrap().0.is_empty());
         assert_eq!(a.external_ref(), "fordmoney:DE00123456781000000001");
         // an IBAN that does not end with the number is never taken as the
         // account's own (Festgeld shows that of its reference account)
         let foreign =
             overview().replace("DE00 1234 5678 1000 0000 01", "DE00 9999 9999 9999 9999 99");
-        let accounts = parse_accounts(&foreign).unwrap();
+        let (accounts, _) = parse_accounts(&foreign).unwrap();
         assert_eq!(accounts[0].iban, "");
         assert_eq!(accounts[0].external_ref(), "fordmoney:1000000001");
     }
@@ -1314,7 +1414,7 @@ mod tests {
             festgeld("2000000001", "", "10.000,00 €"),
             festgeld("2000000002", reference, "5.000,00 €"),
         );
-        let accounts = parse_accounts(&html).unwrap();
+        let (accounts, _) = parse_accounts(&html).unwrap();
         assert_eq!(accounts.len(), 3);
         assert_eq!(accounts[0].iban, "DE00123456781000000001");
         for (a, cents) in accounts[1..].iter().zip([1_000_000, 500_000]) {
@@ -1327,6 +1427,178 @@ mod tests {
         let refs: std::collections::HashSet<String> =
             accounts.iter().map(Account::external_ref).collect();
         assert_eq!(refs.len(), 3, "every account keeps its own ref");
+    }
+
+    /// A Festgeld account whose header is not wrapped like the Tagesgeld one.
+    fn festgeld_entry(open: &str, close: &str, number: &str, iban: &str, sum: &str) -> String {
+        format!(
+            r##"{open}
+              <a class="row accordion-container__header collapsed" data-bs-toggle="collapse" href="#collapse_{number}">
+                <div class="col-sm-10 col-xs-8"><div>Festgeld</div><div class="tg-savings-headline-blue"> {iban}</div></div>
+                <div class="col-sm-12 col xs-5 text-right"><span class="content-header__right-sum">{sum}</span></div>
+              </a>
+              <div id="collapse_{number}" class="accordion-container__collapse collapse ">
+                <a href="javascript:void(0)" onclick="mojarra.jsfcljs(document.getElementById('contentForm'),{{'contentForm:fg:{number}':'contentForm:fg:{number}'}},'');return false" class="btn btn-light-blue" data-wt=".button-umsätze-anzeigen"><span class="btn-value">Umsätze anzeigen</span></a>
+                <div class="row eb-row__v-separator-small">
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-label">IBAN</div>
+                  <div class="col-sm-6 col-xs-12 col-xs-push-1 eb-text">{iban}</div>
+                </div>
+              </div>
+            {close}"##
+        )
+    }
+
+    /// #1766: the Festgeld sections did not start with `<section class="accordion">`,
+    /// so all of them ended up in the Tagesgeld account's part (one account,
+    /// five IBAN labels). Each one is an account of its own, with its IBAN,
+    /// balance and transaction list, whatever wraps its header.
+    #[test]
+    fn festgeld_sections_with_other_markup_are_accounts_of_their_own() {
+        let html = format!(
+            r##"<nav><a href="#collapse_99999999" data-bs-toggle="collapse">Menü</a></nav>{}{}{}{}"##,
+            account_section(
+                "1000000001",
+                "DE00 1234 5678 1000 0000 01",
+                "1.234,56 €",
+                "contentForm:j_idt331:0:j_idt340"
+            ),
+            festgeld_entry(
+                r#"<section class="accordion accordion--festgeld">"#,
+                "</section>",
+                "2000000001",
+                "DE00 1234 5678 2000 0000 01",
+                "10.000,00 €"
+            ),
+            festgeld_entry(
+                r#"<div class="accordion">"#,
+                "</div>",
+                "2000000002",
+                "DE00 1234 5678 2000 0000 02",
+                "5.000,00 €"
+            ),
+            festgeld_entry(
+                "",
+                "",
+                "2000000003",
+                "DE00 1234 5678 2000 0000 03",
+                "2.500,00 €"
+            ),
+        );
+        let (accounts, unreadable) = parse_accounts(&html).unwrap();
+        assert!(unreadable.is_empty());
+        let numbers: Vec<&str> = accounts.iter().map(|a| a.number.as_str()).collect();
+        assert_eq!(
+            numbers,
+            ["1000000001", "2000000001", "2000000002", "2000000003"],
+            "a collapse link before the account list is no account"
+        );
+        let t = &accounts[0];
+        assert_eq!(
+            (t.product.as_str(), t.iban.as_str(), t.balance_cents),
+            ("Tagesgeld", "DE00123456781000000001", 123_456)
+        );
+        assert_eq!(
+            t.bookings_link.as_deref(),
+            Some("contentForm:j_idt331:0:j_idt340")
+        );
+        for (a, cents) in accounts[1..].iter().zip([1_000_000, 500_000, 250_000]) {
+            assert_eq!(a.product, "Festgeld");
+            assert_eq!(a.iban, format!("DE0012345678{}", a.number));
+            assert_eq!(a.balance_cents, cents);
+            assert_eq!(
+                a.bookings_link,
+                Some(format!("contentForm:fg:{}", a.number)),
+                "its own transaction list, not the Tagesgeld one"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreadable_balance_leaves_out_only_that_account() {
+        let html = format!(
+            "{}{}",
+            account_section(
+                "1000000001",
+                "DE00 1234 5678 1000 0000 01",
+                "1.234,56 €",
+                "contentForm:j_idt331:0:j_idt340"
+            ),
+            festgeld_entry(
+                r#"<section class="accordion">"#,
+                "</section>",
+                "2000000001",
+                "DE00 1234 5678 2000 0000 01",
+                "—"
+            ),
+        );
+        let (accounts, unreadable) = parse_accounts(&html).unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].number, "1000000001");
+        assert_eq!(unreadable, ["2000000001"]);
+        // nothing readable: the page is not what it seems
+        let only = account_section(
+            "1000000001",
+            "DE00 1234 5678 1000 0000 01",
+            "—",
+            "contentForm:j_idt331:0:j_idt340",
+        );
+        assert!(parse_accounts(&only).is_err());
+    }
+
+    #[test]
+    fn a_failed_transaction_list_is_a_warning_unless_the_session_ended() {
+        let html = account_section(
+            "1000000001",
+            "DE00 1234 5678 1000 0000 01",
+            "1.234,56 €",
+            "contentForm:j_idt331:0:j_idt340",
+        );
+        let (accounts, _) = parse_accounts(&html).unwrap();
+        let warning = crate::i18n::with_language(crate::i18n::Lang::De, || {
+            bookings_failure(page_changed(), &accounts[0])
+        })
+        .unwrap();
+        assert!(warning.contains("1000000001") && warning.contains("Kontostand"));
+        assert!(bookings_failure(invalid(), &accounts[0]).is_ok());
+        assert!(matches!(
+            bookings_failure(CoreError::SessionClosed, &accounts[0]),
+            Err(CoreError::SessionClosed)
+        ));
+        assert!(matches!(
+            bookings_failure(session_ended(), &accounts[0]),
+            Err(CoreError::Authentication { .. })
+        ));
+    }
+
+    /// The trace for bug reports shows the page's layout, never account
+    /// numbers, IBANs, names or amounts.
+    #[test]
+    fn overview_layout_holds_no_account_data() {
+        let html = format!(
+            "{}{}",
+            overview(),
+            festgeld_entry(
+                r#"<section class="accordion fg-2000000001">"#,
+                "</section>",
+                "2000000001",
+                "DE00 1234 5678 2000 0000 01",
+                "10.000,00 €"
+            ),
+        );
+        let layout = overview_layout(&html, account_parts(&html).len());
+        assert!(layout.contains("sections=3"), "{layout}");
+        assert!(layout.contains("account_headers=3"), "{layout}");
+        assert!(layout.contains("accordion fg-"), "{layout}");
+        for secret in [
+            "1000000001",
+            "2000000001",
+            "DE00",
+            "Erika",
+            "1.234",
+            "10.000",
+        ] {
+            assert!(!layout.contains(secret), "{secret} in {layout}");
+        }
     }
 
     #[test]
