@@ -143,6 +143,37 @@ class LintTransferIntegrityTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("unsupported CODEOWNERS pattern", r.stderr)
 
+    def test_character_class_pattern_fails_closed(self):
+        # The literal ownerless rule is followed by a class rule that bash would match too.
+        self.owners(OWNERS + "/girocrab-core/src/payment_input.rs\n/girocrab-core/src/[p]ayment_input.rs @o\n")
+        r = self.lint()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("unsupported CODEOWNERS pattern", r.stderr)
+        self.assertNotIn("lint-transfer-integrity: ok", r.stdout)
+
+    def test_question_mark_and_backslash_patterns_fail_closed(self):
+        for pattern in ("/girocrab-core/src/payment_inpu?.rs", "/girocrab-core/src/payment\\_input.rs"):
+            with self.subTest(pattern=pattern):
+                self.owners(OWNERS + pattern + " @o\n")
+                r = self.lint()
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("unsupported CODEOWNERS pattern", r.stderr)
+
+    def test_malformed_owner_token_is_ownerless(self):
+        for tail in ("foo", "@o foo", "o@", "@", "@o/"):
+            with self.subTest(tail=tail):
+                self.owners(OWNERS + "/policy/ " + tail + "\n")
+                r = self.lint()
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("policy/x is not covered", r.stderr)
+
+    def test_valid_owner_forms_pass(self):
+        for tail in ("@o", "@org/team", "sec@example.com", "@o @org/team sec@example.com # note"):
+            with self.subTest(tail=tail):
+                self.owners(OWNERS + "/policy/ " + tail + "\n")
+                r = self.lint()
+                self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_wildcard_does_not_cross_directories(self):
         # The ownerless connectors/ rule is the last one that matches the nested file; the
         # single-level `*.rs` rule after it must not give connectors/fints/sepa.rs an owner.
@@ -169,6 +200,8 @@ class LintTransferIntegrityTest(unittest.TestCase):
         }
         for name, line in lines.items():
             with self.subTest(file=name):
+                # Back to the base: earlier cases must not leak into this case's diff.
+                self.git("reset", "-q", "--hard", "main")
                 (self.repo / "girocrab-core/src" / name).write_text(line)
                 self.commit(f"touch {name}")
                 r = self.lint(GITHUB_BASE_REF="main", PR_BODY="")

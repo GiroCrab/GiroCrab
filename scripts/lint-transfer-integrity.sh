@@ -34,16 +34,25 @@ err() { echo "lint-transfer-integrity: $*" >&2; fail=1; }
 
 # Only anchored patterns (leading `/`, no `**`) are understood below. GitHub applies an
 # unanchored rule such as `payment_input.rs` anywhere in the tree; rather than guess, fail closed.
+# Character classes, `?` and escapes are not understood either: bash would glob them in covered().
 while read -r pat _ || [[ -n "$pat" ]]; do
   [[ -z "$pat" || "$pat" == \#* ]] && continue
-  [[ "$pat" == /* && "$pat" != *'**'* ]] || err "unsupported CODEOWNERS pattern (anchor it with a leading /, no **): $pat"
+  case "$pat" in
+    *'**'* | *'['* | *'?'* | *'\'*) err "unsupported CODEOWNERS pattern (anchor it with a leading /; no **, [, ? or backslash): $pat" ;;
+    /*) ;;
+    *) err "unsupported CODEOWNERS pattern (anchor it with a leading /; no **, [, ? or backslash): $pat" ;;
+  esac
 done < "$CODEOWNERS"
+
+# An owner is @user, @org/team or an e-mail address; anything else is no owner.
+OWNER_HANDLE='^@[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)?$'
+OWNER_MAIL='^[^@[:space:]/]+@[^@[:space:]/]+\.[^@[:space:]]+$'
 
 # Does CODEOWNERS give the file an owner? Like GitHub, the last matching rule wins; a rule
 # without owners (or with only a comment after the pattern) is an ownerless exception.
 # Patterns: anchored, optional trailing `/` or `*`.
 covered() {
-  local f=$1 pat owners owned=1 slashes head
+  local f=$1 pat owners owned=1 slashes head toks tok
   while read -r pat owners || [[ -n "$pat" ]]; do
     [[ -z "$pat" || "$pat" == \#* ]] && continue
     pat=${pat#/}; pat=${pat%/}
@@ -54,7 +63,13 @@ covered() {
     # shellcheck disable=SC2254
     case "$head" in $pat) ;; *) continue ;; esac
     owners=${owners%%#*}
-    if [[ -n "${owners//[[:space:]]/}" ]]; then owned=0; else owned=1; fi
+    # Every token must be a valid owner; one malformed token makes the rule ownerless.
+    owned=1
+    toks=()
+    read -ra toks <<<"$owners" || true
+    for tok in ${toks[@]+"${toks[@]}"}; do
+      if [[ "$tok" =~ $OWNER_HANDLE || "$tok" =~ $OWNER_MAIL ]]; then owned=0; else owned=1; break; fi
+    done
   done < "$CODEOWNERS"
   return "$owned"
 }
