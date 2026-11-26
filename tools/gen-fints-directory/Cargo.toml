@@ -1,0 +1,11 @@
+[package]
+name = "gen-fints-directory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Generates girocrab-core's BLZ -> FinTS endpoint table from hbci4java's blz.properties"
+
+[lints]
+workspace = true

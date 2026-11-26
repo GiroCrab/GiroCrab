@@ -39,9 +39,9 @@ Everything in the Status table marked ✅ was verified with a real card on 2026-
 | TAN method | approval in the bank's security app (decoupled) |
 | TAN medium | **required**: the device name shown in the security app's device management |
 
-The bank code is not part of the generated FinTS directory dataset; the row in
-`girocrab-core/data/fints_directory.tsv` was added by hand (see the note in the file
-header). A regeneration of that file must keep it.
+The source dataset lists this bank code with a different address; the row in
+`girocrab-core/data/fints_directory.tsv` is pinned in `tools/gen-fints-directory`
+(`PINNED`), so a regeneration keeps it.
 
 ## What the bank sends
 
