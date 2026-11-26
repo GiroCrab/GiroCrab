@@ -190,12 +190,9 @@ struct FinTsAddForm: View {
     /// Fills in name and URL from the directory once a full BLZ is typed.
     private func lookup() {
         guard blzValid, let info = lookupFintsBankByBlz(blz: blz) else {
-            // BLZ no longer matches: drop what we filled in ourselves, the directory's
-            // name too, so no bank-specific hint (Deutsche Bank, Postbank) stays for
-            // another bank. A name from a preset or a search result stays.
-            if let previous = found {
+            // BLZ no longer matches: drop what we filled in ourselves
+            if found != nil {
                 found = nil
-                if bankName == previous.name { bankName = "" }
                 if !urlEdited, url == autoURL { url = ""; autoURL = "" }
             }
             return

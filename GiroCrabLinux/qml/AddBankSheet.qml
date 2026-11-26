@@ -329,14 +329,11 @@ Sheet {
             function lookup() {
                 const info = blzValid ? AppModel.core("lookup_fints_bank_by_blz", { blz: blz }) : null
                 if (!info) {
-                    // the name the directory filled in no longer describes the BLZ: no hint
-                    // (Deutsche Bank, Postbank) for another bank; a preset's or search result's name stays
-                    if (found) { if (bankName === found.name) bankName = ""; found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
+                    if (found) { found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
                     return
                 }
-                // an empty name, or the one the directory filled in for the previous BLZ (FinTsAddForm.swift › lookup)
-                if (bankName === "" || (found && bankName === found.name)) bankName = info.name
                 found = info
+                if (bankName === "") bankName = info.name
                 if (!urlEdited || url === "") { autoURL = info.url; url = info.url; urlEdited = false }
             }
             function commit() {
