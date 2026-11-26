@@ -75,6 +75,10 @@ fn kept_purchase_for<'a>(
 /// One-time migration of ids from older versions: a booking stored under a
 /// legacy content id (`h…`, `DefaultHasher` / list position) with exactly the
 /// same content gets the new id instead of being imported a second time.
+/// Older versions stored the `Cdtr`/`Dbtr` name, so a booking whose ultimate
+/// party replaced it matches by `original_counterparty` (#1721). The IBAN alone
+/// is no identity: another booking at the same payment provider can share it
+/// and every other compared field.
 /// The caller checks that no row holds the new id yet: the UPDATE would hit
 /// the unique key. Returns true when a row was adopted.
 fn adopt_legacy_content_id(
@@ -94,7 +98,7 @@ fn adopt_legacy_content_id(
                              AND booking_date = ?4 AND value_date = ?5 AND amount_cents = ?6
                              AND purpose = ?8
                              AND (counterparty = ?7
-                                  OR (?9 != '' AND counterparty_iban = ?9))
+                                  OR (?9 != '' AND counterparty = ?9))
                            ORDER BY (counterparty = ?7) DESC, id LIMIT 1)",
         )?
         .execute(params![
@@ -106,10 +110,13 @@ fn adopt_legacy_content_id(
             t.amount_cents,
             t.counterparty,
             t.purpose,
-            t.counterparty_iban
+            t.original_counterparty
         ])?;
     Ok(n > 0)
 }
+
+#[cfg(test)]
+mod legacy_adoption_tests;
 
 /// The row stored under a fetched booking's `(account_id, external_id)`,
 /// soft-deleted ones included: the one read that decides whether the booking

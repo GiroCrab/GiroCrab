@@ -408,7 +408,8 @@ fn parse_doc(
         };
         // The ultimate party (the merchant behind a processing bank) is shown and
         // matched instead of `Cdtr`/`Dbtr`. It is set after the id is derived, so
-        // ids of bookings synced before stay the same.
+        // ids of bookings synced before stay the same. The delivered name stays
+        // in `original_counterparty`.
         let ultimate = if debit {
             e.ultimate_creditor.trim()
         } else {
@@ -482,7 +483,7 @@ fn parse_doc(
                     card_timestamp_date(&t.purpose).unwrap_or_else(crate::connectors::today);
             }
             if !ultimate.is_empty() {
-                t.counterparty = ultimate;
+                t.original_counterparty = std::mem::replace(&mut t.counterparty, ultimate);
             }
             report.pending.push(t);
             continue;
@@ -503,7 +504,7 @@ fn parse_doc(
         };
         *n += 1;
         if !ultimate.is_empty() {
-            t.counterparty = ultimate;
+            t.original_counterparty = std::mem::replace(&mut t.counterparty, ultimate);
         }
         out.push(t);
     }

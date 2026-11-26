@@ -319,7 +319,7 @@ pub fn parse(
     }
     for (i, name) in ultimate {
         if !name.is_empty() {
-            txs[i].counterparty = name;
+            txs[i].original_counterparty = std::mem::replace(&mut txs[i].counterparty, name);
         }
     }
     (txs, stmt)
