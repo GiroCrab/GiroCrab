@@ -478,6 +478,11 @@ pub struct RemoteHolding {
 
 #[derive(Debug, Clone, Default)]
 pub struct RemoteTransaction {
+    /// The `Cdtr`/`Dbtr` name as delivered when an ultimate party
+    /// (`UltmtCdtr`/`UltmtDbtr`, MT940 `ABWE+`/`ABWA+`) replaced it in
+    /// `counterparty`; empty otherwise. Older versions stored this name, so
+    /// legacy ids are adopted by it (#1721).
+    pub original_counterparty: String,
     pub account_ref: String,
     /// De-duplication key; derived from bank ids or a content hash.
     pub external_id: String,
