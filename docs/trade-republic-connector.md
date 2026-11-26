@@ -1,5 +1,10 @@
 # Trade Republic – Historie in Etappen
 
+<!-- sync:connector-note:start -->
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Trade Republic. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Trade Republic. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
+<!-- sync:connector-note:end -->
+
 Beim Abruf aktualisiert GiroCrab zuerst die jüngeren Buchungen und liest bei
 Bedarf ältere Buchungen, Wertpapieraktivitäten und Belege nach. Die App zeigt
 eine offene Historie an und bietet im Depot „Weiter abrufen“ an. Neu eingelesene

@@ -105,9 +105,7 @@ struct StandingOrderSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text(title).appFont(.title2, weight: .semibold)
-                Spacer()
+            EntryHeader(title: title) {
                 if editing {
                     // the helpers of the transfer form: templates, recipients, paste
                     TransferTemplatesMenu(standing: true)
@@ -126,8 +124,6 @@ struct StandingOrderSheet: View {
                     #endif
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20).padding(.vertical, 14)
             // Überweisung ⇄ Umbuchung under the title, as in the transfer form (#1475); offered when there is an own account to book to
             if editing && (!ownTargets.isEmpty || draft.ownTransfer) {
                 OwnTransferSwitch(own: Binding(get: { draft.ownTransfer }, set: { setOwnTransfer($0) }))
