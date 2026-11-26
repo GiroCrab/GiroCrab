@@ -262,6 +262,12 @@ fn english(de: &str) -> Option<&'static str> {
             "Please sign in to Advanzia in the bank window and confirm the chosen approval method."
         }
         "Bitte Advanzia im Bankfenster abrufen." => "Please fetch Advanzia in the bank window.",
+        "Bitte im Portal-Fenster anmelden und abrufen." => {
+            "Please sign in and fetch in the portal window."
+        }
+        "Edenred-Benefitkarten (z. B. Essenszuschuss, Sachbezug): Guthaben und Kartenumsätze aus nutzer.edenred.de. Anmeldung im eingebetteten Browser-Fenster wie gewohnt. Inoffiziell: liest die Daten, die das Portal selbst lädt, Änderungen sind möglich." => {
+            "Edenred benefit cards (e.g. meal allowance, benefits in kind): balance and card transactions from nutzer.edenred.de. Sign in as usual in the embedded browser window. Unofficial: reads the data the portal loads itself, changes are possible."
+        }
         "Ungültige Konto-Zuordnung." => "Invalid account mapping.",
         "Bankzugang nicht gefunden." => "Bank connection not found.",
         "Falscher Bankzugang." => "Wrong bank connection.",
@@ -415,6 +421,19 @@ fn english(de: &str) -> Option<&'static str> {
         "Bitte bei quirion im Browserfenster abrufen." => {
             "Please fetch your data in the quirion browser window."
         }
+        "AirPlus: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "AirPlus: Incomplete or invalid portal response. No data was imported."
+        }
+        "AirPlus Corporate Card" => "AirPlus Corporate Card",
+        "Bitte bei AirPlus im Browserfenster anmelden und die Umsätze abrufen." => {
+            "Please sign in to AirPlus in the browser window and fetch your transactions."
+        }
+        "Bitte bei AirPlus im Browserfenster abrufen." => {
+            "Please fetch your data in the AirPlus browser window."
+        }
+        "AirPlus Corporate Card: gebuchte Umsätze und verbrauchtes Limit. Anmeldung im Browserfenster mit SMS-TAN. Inoffizielle Portal-Schnittstelle; Änderungen und Einschränkungen durch Nutzungsbedingungen sind möglich. Vorgemerkte Umsätze und Abrechnungs-PDFs werden noch nicht übernommen." => {
+            "AirPlus Corporate Card: booked transactions and used limit. Sign in in the browser window with an SMS TAN. Unofficial portal interface; subject to change and restrictions under the terms of use. Pending transactions and statement PDFs are not imported yet."
+        }
         "Schwäbisch Hall: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
             "Schwäbisch Hall: Incomplete or invalid portal response. No data was imported."
         }
@@ -434,10 +453,51 @@ fn english(de: &str) -> Option<&'static str> {
             "Sharinbox: document {0} rejected, field {1} invalid."
         }
         "Mitarbeiteraktien" => "Employee shares",
+        "Mitarbeiter Shareplan" => "Employee share plan",
+        "AXA Shareplan: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "AXA Shareplan: incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte beim AXA Mitarbeiter Shareplan im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to the AXA employee share plan in the browser window and fetch your data."
+        }
+        "Bitte beim AXA Mitarbeiter Shareplan im Browserfenster abrufen." => {
+            "Please fetch your data in the AXA employee share plan browser window."
+        }
+        "AXA Mitarbeiter Shareplan: Anteile des Mitarbeiterbeteiligungsplans (PEEG) mit Stückzahl, Einstandspreis und Wert, eine Position je Plan. Anmeldung im Browserfenster mit SMS-Code. Interne Portal-Schnittstelle; Änderungen sind möglich." => {
+            "AXA employee share plan: the funds of the employee savings plan (PEEG) with quantity, average purchase price and value, one position per fund. Sign in in the browser window with an SMS code. Internal portal interface; subject to change."
+        }
+        "Weindepot" => "Wine depot",
+        "Berghaus: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "Berghaus & Cie: Incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte bei Berghaus & Cie im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to Berghaus & Cie in the browser window and fetch your data."
+        }
+        "Bitte bei Berghaus & Cie im Browserfenster abrufen." => {
+            "Please fetch your data in the Berghaus & Cie browser window."
+        }
+        "Berghaus & Cie: Weindepot mit Flaschen, Einstandspreis und aktueller Bewertung als Depotpositionen. Anmeldung im Browserfenster mit E-Mail und Passwort. Interne Portal-Schnittstelle; Änderungen sind möglich." => {
+            "Berghaus & Cie: wine depot with bottles, purchase price and current valuation as depot positions. Sign in in the browser window with e-mail and password. Internal portal interface; subject to change."
+        }
         "Aktienrechte (noch nicht zugeteilt)" => "Share rights (not yet allotted)",
         "noch nicht zugeteilt" => "not yet allotted",
         "Sharinbox (Société Générale): Mitarbeiteraktien mit Stückzahl und Wert, optional die PDF-Dokumente aus der Postbox. Anmeldung im Browserfenster mit E-Mail, Passwort und Authenticator-App. Interne Portal-Seiten; Änderungen sind möglich." => {
             "Sharinbox (Société Générale): employee shares with quantity and value, optionally the PDF documents from the mailbox. Sign in in the browser window with e-mail, password and authenticator app. Internal portal pages; subject to change."
+        }
+        "Union Investment: Postbox-Eintrag {0} abgelehnt, Feld {1} ungültig." => {
+            "Union Investment: mailbox entry {0} rejected, field {1} invalid."
+        }
+        "Union Investment: Unvollständige oder ungültige Portalantwort. Es wurden keine Daten übernommen." => {
+            "Union Investment: Incomplete or invalid portal response. No data was imported."
+        }
+        "Bitte bei Union Investment im Browserfenster anmelden und die Daten abrufen." => {
+            "Please sign in to Union Investment in the browser window and fetch your data."
+        }
+        "Bitte bei Union Investment im Browserfenster abrufen." => {
+            "Please fetch your data in the Union Investment browser window."
+        }
+        "Union Investment (UnionDepot): Depotwert, Fondspositionen und PDF-Postbox. Anmeldung im Browserfenster mit SMS-TAN. Interne Portal-Schnittstelle; Änderungen sind möglich." => {
+            "Union Investment (UnionDepot): depot value, fund positions and PDF mailbox. Sign in in the browser window with an SMS code. Internal portal interface; subject to change."
         }
         "Schwäbisch Hall Dokument" => "Schwäbisch Hall document",
         "Bausparkasse Schwäbisch Hall: Bausparverträge mit Saldo und Umsätzen, optional die PDF-Dokumente aus dem Postfach. Anmeldung im Browserfenster von „Mein Konto“. Interne Portal-API; Änderungen sind möglich." => {
@@ -446,8 +506,64 @@ fn english(de: &str) -> Option<&'static str> {
         "quirion: Depotpositionen, Liquiditätskonto, Verrechnungskonto und gebuchte Umsätze. Anmeldung im Browserfenster. Interne Portal-API; Änderungen sind möglich." => {
             "quirion: securities positions, liquidity account, clearing account and booked transactions. Sign in in the browser window. Internal portal API; subject to change."
         }
-        "FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Anmeldung im Browserfenster mit FNZsecure-Freigabe. Die PIN wird nicht gespeichert." => {
-            "FNZ Bank / ebase / finvesto: account balances, fund positions, cash and depot transactions, and PDF mailbox including the archive. Sign in in the browser window and approve with FNZsecure. Your PIN is not stored."
+        "FNZ Bank / ebase / finvesto: Kontosalden, Fondspositionen, Konto- und Depotumsätze sowie PDF-Postkorb einschließlich Archiv. Direkt-Login mit Zugangsnummer und PIN; wird „PIN im Tresor speichern“ abgewählt, gilt die PIN nur für diesen Abruf. Danach die Freigabe in der FNZsecure-App. Ohne Zugangsdaten öffnet sich das Browserfenster." => {
+            "FNZ Bank / ebase / finvesto: account balances, fund positions, cash and depot transactions, and PDF mailbox including the archive. Direct login with access number and PIN; if \"save the PIN in the vault\" is switched off, the PIN is used for this fetch only. Then approve with FNZsecure. Without credentials the browser window opens."
+        }
+        "Direkt-Login (Zugangsnummer + PIN)" => "Direct login (access number + PIN)",
+        "FNZ: Die Anmeldung hat unerwartet geantwortet. Wahrscheinlich wurde die Portal-Schnittstelle geändert; bitte GiroCrab aktualisieren." => {
+            "FNZ: The sign-in answered unexpectedly. The portal interface has most likely changed; please update GiroCrab."
+        }
+        "FNZ: Anmeldung fehlgeschlagen. Bitte Zugangsnummer und PIN prüfen." => {
+            "FNZ: Sign-in failed. Please check the access number and PIN."
+        }
+        "FNZ: Die Anmeldung ist nicht mehr gültig. Bitte den Abruf erneut starten." => {
+            "FNZ: The session is no longer valid. Please start the fetch again."
+        }
+        "FNZ: Unerwartete Weiterleitung. Der Abruf wurde abgebrochen." => {
+            "FNZ: Unexpected redirect. The fetch was aborted."
+        }
+        "FNZ: Die Anmeldung wurde nicht abgeschlossen. Bitte den Abruf erneut starten (FNZsecure-Freigabe nötig?)." => {
+            "FNZ: The sign-in was not completed. Please start the fetch again (FNZsecure approval needed?)."
+        }
+        "FNZ: {0} wurde abgelehnt (HTTP {1})." => "FNZ: {0} was rejected (HTTP {1}).",
+        "FNZ: Das Portal hat die Anfrage abgelehnt (HTTP {0})." => {
+            "FNZ: The portal rejected the request (HTTP {0})."
+        }
+        "FNZ: Das Portal ist nicht erreichbar. Bitte später erneut versuchen." => {
+            "FNZ: The portal is unreachable. Please try again later."
+        }
+        "FNZsecure verlangt die Freigabe in der FNZsecure-App; ein Code kann die Anmeldung nicht abschließen. Bitte in der App bestätigen." => {
+            "FNZsecure requires approval in the FNZsecure app; a code cannot complete the sign-in. Please approve in the app."
+        }
+        "Bitte die Anmeldung in der FNZsecure-App bestätigen." => {
+            "Please approve the sign-in in the FNZsecure app."
+        }
+        "FNZ: Unvollständige Umsatzliste. Bitte den Abruf erneut starten." => {
+            "FNZ: Incomplete transaction list. Please start the fetch again."
+        }
+        "FNZ: Unvollständige Dokumentenliste. Bitte den Abruf erneut starten." => {
+            "FNZ: Incomplete document list. Please start the fetch again."
+        }
+        "FNZ: Keine Kontoübersicht erkannt. Bitte den Abruf erneut starten." => {
+            "FNZ: No account overview found. Please start the fetch again."
+        }
+        "FNZ: Konto ohne eindeutige Kennung." => "FNZ: Account without a unique identifier.",
+        "FNZ: Der Depotbestand stimmt nicht mit der Kontoübersicht überein." => {
+            "FNZ: The depot inventory does not match the account overview."
+        }
+        "FNZ: Konto {0}: Angaben konnten nicht geladen werden – der nächste Abruf wiederholt es." => {
+            "FNZ: Account {0}: details could not be loaded – the next fetch tries again."
+        }
+        "FNZ: Das Dokument ist keine gültige PDF-Datei." => {
+            "FNZ: The document is not a valid PDF file."
+        }
+        "FNZ: Umsatz ohne Kennung." => "FNZ: Transaction without an identifier.",
+        "FNZ: Wiederholte Umsatzseite. Bitte den Abruf erneut starten." => {
+            "FNZ: Repeated transaction page. Please start the fetch again."
+        }
+        "FNZ: Dokument ohne Kennung." => "FNZ: Document without an identifier.",
+        "FNZ: Wiederholte Dokumentenseite. Bitte den Abruf erneut starten." => {
+            "FNZ: Repeated document page. Please start the fetch again."
         }
         "Bitte bei FNZ anmelden und in FNZsecure freigeben." => {
             "Please sign in to FNZ and approve with FNZsecure."
@@ -573,6 +689,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Empfänger-IBAN ist ungültig." => "The recipient IBAN is invalid.",
         "Die BIC ist ungültig." => "The BIC is invalid.",
         "Der Empfängername fehlt." => "The recipient name is missing.",
+        "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich." => {
+            "Only transfers to your own current accounts are possible from a savings account."
+        }
         "Zahlung {0}: {1}" => "Payment {0}: {1}",
         "Lastschrift {0}: {1}" => "Direct debit {0}: {1}",
         "Der Name des Zahlungspflichtigen fehlt." => "The debtor's name is missing.",
@@ -793,6 +912,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Bank verlangt für {0} eine TAN-Eingabe, die während des Abrufs nicht möglich ist. Bitte ein App-Verfahren der Bank (Freigabe in der Banking-App) verwenden." => {
             "The bank requires a TAN for {0}, which can’t be entered during a sync. Please use one of the bank’s app methods (approval in the banking app)."
         }
+        "Die Bank verlangt für {0} eine TAN. Automatische Abrufe fragen nicht danach, ein selbst gestarteter Abruf schon." => {
+            "The bank requires a TAN for {0}. Automatic syncs do not ask for it; a sync you start does."
+        }
         "Umsätze der letzten 90 Tage gibt die Bank meist ohne TAN heraus. Bei einem neuen Konto lässt sich der Zeitraum beim ersten Abruf in den Einstellungen auf 90 Tage stellen." => {
             "Banks usually hand out the last 90 days of bookings without a TAN. For a new account, the period of the first fetch can be set to 90 days in Settings."
         }
@@ -803,6 +925,13 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Depotbestand (HKWPD) – {1}" => "{0}: holdings (HKWPD) – {1}",
         "{0}: Depotbestand (HKWPD) – Wert einzelner Positionen fehlt" => {
             "{0}: holdings (HKWPD) – value of some positions missing"
+        }
+        "{0}: Depotbestand (HKWPD) – von der Bank nicht angeboten" => {
+            "{0}: holdings (HKWPD) – not offered by the bank"
+        }
+        "Die Bank hat keinen Depotbestand geliefert." => "The bank did not deliver any holdings.",
+        "Die Bank hat keinen Depotbestand geliefert ({0})." => {
+            "The bank did not deliver any holdings ({0})."
         }
         "{0}: Umsätze (HKCAZ/camt.052) – {1}" => "{0}: transactions (HKCAZ/camt.052) – {1}",
         "{0}: Umsätze (HKKAZ/MT940) – {1}" => "{0}: transactions (HKKAZ/MT940) – {1}",
@@ -983,8 +1112,89 @@ fn english(de: &str) -> Option<&'static str> {
         "Ihr Telefon" => "your phone",
         "Vorgemerkt" => "Pending",
         // ------------------------------------------------------------ connectors/finpension.rs
+        "finpension Web-API (SMS-2FA)" => "finpension Web API (SMS 2FA)",
+        "Handynummer (z. B. +41… oder +49…)" => "Mobile number (e.g. +41… or +49…)",
+        "Finpension (Schweiz): Säule 3a, Freizügigkeit und 1e. Synchronisiert Portfolios, Wertschriften und Cash-Bestände via finpension.ch. SMS-Code bei der Erstanmeldung erforderlich; die Sitzung wird verschlüsselt gespeichert." => {
+            "Finpension (Switzerland): pillar 3a, vested benefits and 1e. Synchronises portfolios, securities and cash reserves via finpension.ch. SMS code required on first login; the session is stored encrypted."
+        }
+        "Konnte Ländercode nicht aus der Telefonnummer ermitteln („{0}“). Bitte im Format +41… oder +49… eingeben." => {
+            "Could not determine country code from phone number (\"{0}\"). Please enter in +41… or +49… format."
+        }
+        "finpension: Passwort erforderlich." => "finpension: password required.",
+        "SMS-Code erforderlich" => "SMS code required",
+        "Es wurde ein SMS-Code an {0} gesendet. Bitte den Code eingeben:" => {
+            "An SMS code has been sent to {0}. Please enter the code:"
+        }
+        "finpension SMS-Code" => "finpension SMS code",
+        "finpension: Unerwartete Antwort beim Anmeldeversuch." => {
+            "finpension: unexpected response during login attempt."
+        }
+        "finpension benötigt den SMS-Code." => "finpension requires the SMS code.",
+        "Kein SMS-Code eingegeben." => "No SMS code entered.",
+        "Passwort nicht mehr im Speicher. Bitte Anmeldung neu starten." => {
+            "Password no longer in memory. Please restart login."
+        }
+        "finpension: Kein Token in der 2FA-Antwort." => "finpension: no token in 2FA response.",
+        "Liquidität" => "Liquidity",
+        "Einzahlung Säule 3a" => "Pillar 3a deposit",
+        "Pauschalgebühr" => "Flat fee",
         "Datei-Import (CSV/JSON-Export)" => "File import (CSV/JSON export)",
         "Bezeichnung" => "Label",
+        "Das ist ein privater Schlüssel. Bitte nur den erweiterten öffentlichen Schlüssel (xpub, ypub oder zpub) eintragen." => {
+            "This is a private key. Please enter only the extended public key (xpub, ypub or zpub)."
+        }
+        "Dieses Schlüsselformat wird nicht unterstützt. Möglich sind xpub, ypub und zpub (Bitcoin-Mainnet, Einzelsignatur)." => {
+            "This key format is not supported. Possible are xpub, ypub and zpub (Bitcoin mainnet, single signature)."
+        }
+        "Der Schlüssel ist ungültig. Bitte den erweiterten öffentlichen Schlüssel (xpub, ypub oder zpub) vollständig eintragen." => {
+            "The key is invalid. Please enter the complete extended public key (xpub, ypub or zpub)."
+        }
+        "Die Adresse des Bitcoin-Servers ist ungültig. Erwartet wird z. B. https://mempool.space/api." => {
+            "The Bitcoin server address is invalid. Expected is e.g. https://mempool.space/api."
+        }
+        "Der Bitcoin-Server hat unerwartet geantwortet." => {
+            "The Bitcoin server sent an unexpected answer."
+        }
+        "Der Bitcoin-Server hat die Anfrage abgelehnt" => "The Bitcoin server refused the request",
+        "Der aktuelle Bitcoin-Kurs ist nicht verfügbar." => {
+            "The current Bitcoin price is not available."
+        }
+        "Für einzelne Bitcoin-Umsätze ist kein Tageskurs verfügbar; sie stehen ohne Euro-Wert in der Liste." => {
+            "No daily price is available for some Bitcoin transactions; they are listed without a euro value."
+        }
+        "Bitcoin-Wallet (nur lesen, xpub/ypub/zpub)" => {
+            "Bitcoin wallet (read-only, xpub/ypub/zpub)"
+        }
+        "Erweiterter öffentlicher Schlüssel (xpub, ypub oder zpub)" => {
+            "Extended public key (xpub, ypub or zpub)"
+        }
+        "(kein Passwort nötig)" => "(no password needed)",
+        "Nur lesen: Mit dem erweiterten öffentlichen Schlüssel des Wallet-Kontos (z. B. m/84'/0'/0') werden Empfangs- und Wechselgeld-Adressen abgeleitet; damit lässt sich nichts ausgeben. Die Umsätze kommen von mempool.space oder einem eigenen Esplora-Server (Einstellungen der Verbindung); dieser Server sieht alle Adressen des Wallets. Der Euro-Kurs kommt von mempool.space. Niemals den privaten Schlüssel (xprv) oder die Wiederherstellungswörter eingeben." => {
+            "Read-only: the extended public key of the wallet account (e.g. m/84'/0'/0') derives the receive and change addresses; it cannot spend anything. Transactions come from mempool.space or your own Esplora server (connection settings); that server sees all addresses of the wallet. The euro price comes from mempool.space. Never enter the private key (xprv) or the recovery words."
+        }
+        "Eingang" => "Incoming",
+        "Das ist kein Schlüssel eines Wallet-Kontos. Bitte den Konto-Schlüssel eintragen (z. B. m/84'/0'/0')." => {
+            "This is not the key of a wallet account. Please enter the account key (e.g. m/84'/0'/0')."
+        }
+        "Der Bitcoin-Server hat unvollständige Transaktionsdaten geliefert." => {
+            "The Bitcoin server sent incomplete transaction data."
+        }
+        "Das Wallet nutzt mehr Adressen, als ein Abruf durchsucht (5000 je Kette). Der Saldo wäre unvollständig." => {
+            "The wallet uses more addresses than one sync searches (5000 per chain). The balance would be incomplete."
+        }
+        "Keine Umsätze gefunden. Bitte prüfen, ob der Schlüssel zum richtigen Wallet-Konto gehört." => {
+            "No transactions found. Please check that the key belongs to the right wallet account."
+        }
+        "Das ist der Schlüssel einer einzelnen Adresskette. Bitte den Schlüssel des Wallet-Kontos eintragen (z. B. m/84'/0'/0'), sonst fehlen die Wechselgeld-Adressen." => {
+            "This is the key of a single address chain. Please enter the key of the wallet account (e.g. m/84'/0'/0'), otherwise the change addresses are missing."
+        }
+        "Die Wallet-Historie ist unvollständig: Es wurde mehr ausgegeben als empfangen. Bitte den Schlüssel des Wallet-Kontos (z. B. m/84'/0'/0') prüfen." => {
+            "The wallet history is incomplete: more was spent than received. Please check the key of the wallet account (e.g. m/84'/0'/0')."
+        }
+        "Keine Umsätze gefunden. Der Schlüssel ist kein Konto-Schlüssel (z. B. m/84'/0'/0'); viele Wallets nutzen nur Adressen unterhalb eines solchen." => {
+            "No transactions found. The key is not an account key (e.g. m/84'/0'/0'); most wallets only use addresses below one."
+        }
+        "Ausgang" => "Outgoing",
         "Finpension (Schweiz): Säule 3a, Freizügigkeit und 1e. Die CSV- oder JSON-Exportdatei (Positionen und Cash-Buchungen) wird über „Datei importieren“ eingelesen; es gibt keine Anmeldung und keinen Netzwerkzugriff." => {
             "Finpension (Switzerland): pillar 3a, vested benefits and 1e. The CSV or JSON export (holdings and cash transactions) is read with “Import file”; there is no login and no network access."
         }
@@ -1075,6 +1285,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Geben Sie den 4-stelligen Code ein, der in der Trade-Republic-App angezeigt wird. Keine Push-Nachricht erhalten? „Code per SMS“ wählen." => {
             "Enter the 4-digit code shown in the Trade Republic app. No push notification? Choose “Code via SMS”."
         }
+        "Kein Trade-Republic-Zugang." => "This is not a Trade Republic connection.",
         "Trade Republic benötigt den 4-stelligen Code" => "Trade Republic needs the 4-digit code",
         "SMS-Anforderung" => "SMS request",
         "Der Code wurde per SMS gesendet. Bitte die 4 Ziffern eingeben." => {
@@ -1223,6 +1434,34 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Monefit SmartSaver: Saldo und alle Umsätze des Sparkontos. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich. Eine Anmeldung mit zweitem Faktor wird noch nicht unterstützt." => {
             "Monefit SmartSaver: balance and all bookings of the savings account. Unofficial: uses the web app's interface, changes are possible. A login with a second factor is not supported yet."
+        }
+        // ------------------------------------------------------------ connectors/goandgrow.rs
+        "Go & Grow: Anmeldeseite nicht erkannt (Seite geändert?)." => {
+            "Go & Grow: Login page not recognised (page changed?)."
+        }
+        "Go & Grow: Anmeldung fehlgeschlagen. Bitte E-Mail-Adresse und Passwort prüfen." => {
+            "Go & Grow: Login failed. Please check email address and password."
+        }
+        "Go & Grow: Unerwartete Antwort der API (HTTP {0})." => {
+            "Go & Grow: Unexpected API response (HTTP {0})."
+        }
+        "Go & Grow: Weiterleitung zu einer unbekannten Adresse ({0}) abgebrochen." => {
+            "Go & Grow: Redirect to an unknown address ({0}) stopped."
+        }
+        "Go & Grow: Kein Konto in der Antwort gefunden." => {
+            "Go & Grow: No account found in the response."
+        }
+        "Go & Grow: Sitzung abgelaufen. Bitte erneut abrufen." => {
+            "Go & Grow: Session expired. Please sync again."
+        }
+        "Go & Grow: E-Mail-Adresse und Passwort erforderlich." => {
+            "Go & Grow: Email address and password required."
+        }
+        "Go & Grow: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen." => {
+            "Go & Grow: Incomplete booking in the response. No data was taken over."
+        }
+        "Go & Grow (ehemals Bondora): Saldo und Umsätze. Die Schnittstelle liefert nur die letzten zehn Buchungen (Zinsen, Ein- und Auszahlungen); ältere lassen sich nur per Import übernehmen. Darum abrufen, bevor mehr als zehn neue Buchungen anfallen – bei täglichen Zinsen ohne weitere Buchungen also spätestens alle zehn Tage. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich." => {
+            "Go & Grow (formerly Bondora): balance and bookings. The interface delivers only the latest ten bookings (interest, deposits and withdrawals); older ones can only be added by an import. Sync before more than ten new bookings accumulate – with daily interest and no other bookings, at least every ten days. Unofficial: uses the web app's interface, changes are possible."
         }
         "Web-App (Direkt-Login)" => "Web app (direct login)",
         // ------------------------------------------------------------ connectors/kontist.rs
@@ -1553,6 +1792,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Benutzername" => "User name",
         "Benutzername und Passwort erforderlich" => "User name and password required",
         "Passwort" => "Password",
+        "PIN" => "PIN",
         "easybank (ehemals Barclays Deutschland): Kreditkarten und Umsätze der letzten zwei Jahre. Beim ersten Abruf fragt easybank eine SMS-TAN ab, danach erkennt die Bank GiroCrab wieder. Interne Portal-API; Änderungen sind möglich." => {
             "easybank (formerly Barclays Germany): credit cards and transactions of the last two years. On the first sync easybank asks for an SMS TAN; afterwards it recognises GiroCrab. Internal portal API; subject to change."
         }
@@ -1723,6 +1963,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Kein gültiger Betrag: „{0}“" => "Not a valid amount: “{0}”",
         "Zu viele Nachkommastellen in „{0}“" => "Too many decimal places in “{0}”",
         "Betrag zu groß: „{0}“" => "Amount too large: “{0}”",
+        "Kein gültiger Anteil: „{0}“" => "Not a valid share: “{0}”",
         // ------------------------------------------------------------ vault.rs
         "Ungültiger Monat." => "Invalid month.",
         "Das Budget muss größer als 0 sein." => "The budget must be greater than 0.",
@@ -1731,6 +1972,9 @@ fn english(de: &str) -> Option<&'static str> {
             "A split booking needs at least two non-zero parts."
         }
         "Die Teilbeträge sind zu groß." => "The split amounts are too large.",
+        "Diese Erstattungszuordnung ist nicht möglich." => {
+            "This refund assignment is not possible."
+        }
         "Die Teilbuchung existiert nicht oder wurde mehrfach angegeben." => {
             "The split part does not exist or was specified more than once."
         }
@@ -1756,6 +2000,21 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Regel braucht eine Kategorie oder mindestens einen Tag." => {
             "The rule needs a category or at least one tag."
         }
+        // rule / tag export and import (#1057)
+        "Die Datei enthält keine Regeln oder Tags aus GiroCrab." => {
+            "The file contains no rules or tags from GiroCrab."
+        }
+        "Die Datei stammt aus einer neueren GiroCrab-Version. Bitte GiroCrab aktualisieren." => {
+            "The file is from a newer GiroCrab version. Please update GiroCrab."
+        }
+        "unbekannte Suchart" => "unknown match type",
+        "unbekanntes Feld" => "unknown field",
+        "Kategorie „{0}“ nicht gefunden" => "category “{0}” not found",
+        "Konten nicht gefunden ({0})" => "accounts not found ({0})",
+        "bereits vorhanden" => "already present",
+        "ohne die nicht gefundenen Konten ({0})" => "without the accounts not found ({0})",
+        "„{0}“ – {1}" => "“{0}” – {1}",
+        "„{0}“: {1}" => "“{0}”: {1}",
         "Das Suchmuster ist zu lang." => "The pattern is too long.",
         "Der Suchausdruck ist leer." => "The search expression is empty.",
         "Das Feld „{0}“ wird nicht unterstützt." => "The field “{0}” isn't supported.",
@@ -1825,6 +2084,11 @@ fn english(de: &str) -> Option<&'static str> {
             "Only needed if kontist.dev shows a secret for the client; otherwise leave empty."
         }
         "Kontist" => "Kontist",
+        "Bitcoin" => "Bitcoin",
+        "Eigener Bitcoin-Server (Esplora)" => "Own Bitcoin server (Esplora)",
+        "Optional: Adresse eines eigenen Esplora- oder mempool-Servers (z. B. https://node.local/api) für alle Bitcoin-Wallets. Leer = mempool.space. http ist nur im eigenen Netz erlaubt." => {
+            "Optional: address of your own Esplora or mempool server (e.g. https://node.local/api) for all Bitcoin wallets. Empty = mempool.space. http is only allowed on your own network."
+        }
         "Bitcoin Core" => "Bitcoin Core",
         "comdirect Client-Secret" => "comdirect client secret",
         "Wird beim Freischalten des API-Zugangs einmalig angezeigt." => {

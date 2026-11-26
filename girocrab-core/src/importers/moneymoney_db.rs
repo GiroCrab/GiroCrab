@@ -75,9 +75,9 @@ const MM_CLOSED: i64 = 16;
 /// Imported accounts whose archive state nobody chose (`accounts.archive_unknown`, ordered by
 /// id): the next import gives them MoneyMoney's. The #998 repair (schema step 38) reactivates
 /// accounts the import of v0.8.5 archived wrongly, and some of them are closed in MoneyMoney
-/// after all. The mark belongs to the archive state: the vault merge carries it with
-/// `archived_ms`, and every archive choice ends it ([`crate::user_groups::set_archived_inner`]).
-#[cfg(test)]
+/// after all. Until then a sync's takeover prefers the other accounts (#816). The mark belongs
+/// to the archive state: the vault merge carries it with `archived_ms`, and every archive
+/// choice ends it ([`crate::user_groups::set_archived_inner`]).
 pub(crate) fn archive_unknown(conn: &Connection) -> CoreResult<Vec<i64>> {
     Ok(conn
         .prepare("SELECT id FROM accounts WHERE archive_unknown != 0 ORDER BY id")?
@@ -900,6 +900,8 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
         Some(ConnectorKind::Bunq)
     } else if n.contains("monefit") {
         Some(ConnectorKind::Monefit)
+    } else if n.contains("go and grow") || n.contains("go & grow") || n.contains("bondora") {
+        Some(ConnectorKind::GoAndGrow)
     } else {
         None // incl. any other German bank with an 8-digit code
     }
@@ -2373,6 +2375,69 @@ fn find_existing_accounts(
     Ok(out)
 }
 
+/// Whether the vault account `id` is the MoneyMoney card `a` that a fetch took over by its
+/// number (#1691): neither has an IBAN, the account is a card under the bank's reference on
+/// a login the import links `a`'s bank to (`import_logins`), in `a`'s currency, and the
+/// number the import stored (a fetch never replaces it) names `a` and no other MoneyMoney
+/// account. `chosen`: the way this import connects `a`'s bank, if it sets one up.
+fn card_taken_over_from(
+    conn: &Connection,
+    src: &Source,
+    chosen: Option<&MoneyMoneyDbConnectionOption>,
+    a: &SrcAccount,
+    id: i64,
+) -> CoreResult<bool> {
+    let Some(b) = src.bank(a.bank_key).filter(|_| a.iban.is_empty()) else {
+        return Ok(false);
+    };
+    let card: Option<(Option<i64>, String)> = conn
+        .query_row(
+            "SELECT connection_id, IFNULL(account_number, '') FROM accounts
+             WHERE id = ?1 AND kind = ?2 AND external_ref NOT LIKE 'moneymoney-db:%'
+               AND replace(IFNULL(iban, ''), ' ', '') = ''
+               AND upper(IFNULL(currency, '')) IN ('', ?3)",
+            params![
+                id,
+                AccountKind::CreditCard.as_str(),
+                a.currency.trim().to_uppercase()
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((Some(login), number)) = card else {
+        return Ok(false);
+    };
+    if !import_logins(conn, src, b, chosen)?.contains(&login) {
+        return Ok(false);
+    }
+    let numbers = src.accounts.iter().map(|x| (x.id, x.account.as_str()));
+    Ok(card_by_number(numbers, &number) == CardMatch::One(a.id))
+}
+
+/// The existing logins the import links `b`'s accounts to (`connect_banks`): the one for
+/// each way it offers to connect the bank (its own connector, the comdirect FinTS
+/// alternative, Enable Banking) and for `chosen`, the way picked in this import.
+fn import_logins(
+    conn: &Connection,
+    src: &Source,
+    b: &SrcBank,
+    chosen: Option<&MoneyMoneyDbConnectionOption>,
+) -> CoreResult<Vec<i64>> {
+    let offered = connection_options(src, b, &psd2_catalog());
+    let mut out = Vec::new();
+    for o in offered.iter().chain(chosen) {
+        let login = match (o.via, &o.psd2_bank) {
+            (MoneyMoneyDbConnectionVia::EnableBanking, Some(bank)) => {
+                psd2_login(conn, &psd2_key(&bank.aspsp, &bank.country))?
+            }
+            (MoneyMoneyDbConnectionVia::EnableBanking, None) => None,
+            _ => find_connection(conn, o.connector, &o.key, &b.username)?,
+        };
+        out.extend(login);
+    }
+    Ok(out)
+}
+
 fn find_connection(
     conn: &Connection,
     kind: ConnectorKind,
@@ -2430,7 +2495,10 @@ pub(crate) fn adopt_account(
         // MoneyMoney stored for it – if it is the only one of its kind here.
         // includes soft-deleted rows: `store_fetch` revives or skips them;
         // archived (closed in MoneyMoney) accounts are never guessed, or an old
-        // card next to the active one would block the takeover (#816)
+        // card next to the active one would block the takeover (#816); nor are
+        // those the #998 repair reactivated while another one fits (they may
+        // be closed cards, too)
+        let unknown = archive_unknown(conn)?;
         let mut st = conn.prepare(
             "SELECT id, IFNULL(account_number, ''), replace(IFNULL(iban, ''), ' ', '') <> '',
                     upper(IFNULL(currency, ''))
@@ -2458,15 +2526,14 @@ pub(crate) fn adopt_account(
         // an IBAN of its own is otherwise never taken over without matching it
         let widen = kind == AccountKind::CreditCard
             || (kind == AccountKind::Checking && external_ref == "tr:cash");
-        let rows: Vec<_> = rows
-            .into_iter()
-            .filter(|(_, _, has_iban, _)| widen || !has_iban)
-            .collect();
+        // only accounts in the fetched currency ("" = any) are candidates, by card
+        // number or not: a card in another currency is never taken over
         let currency = currency.trim().to_uppercase();
-        // one account per currency (PayPal EUR/USD): another currency is never the same account
         let mut rows: Vec<_> = rows
             .into_iter()
-            .filter(|(_, _, _, cur)| currency.is_empty() || cur.is_empty() || *cur == currency)
+            .filter(|(_, _, has_iban, cur)| {
+                (widen || !has_iban) && (currency.is_empty() || cur.is_empty() || *cur == currency)
+            })
             .collect();
         if rows.iter().any(|r| own_ids.contains(&r.0)) {
             rows.retain(|r| own_ids.contains(&r.0));
@@ -2530,34 +2597,46 @@ pub(crate) fn adopt_account(
                 })
             });
             // a number that fits several imported cards, or a contested one: no
-            // guess at all, the fallback below would hand over an unrelated card
+            // guess at all, the fallback below would hand over an unrelated card.
+            // The known-state preference below deliberately does not apply here: two
+            // accounts with one number are duplicates of one card, and which of them is
+            // the card is not for the archive state to decide
             if contested || tie {
                 return Ok(None);
             }
             // else the only one of its kind (also a replacement card with a new
-            // number), preferring those without an IBAN; widened: the only one in
-            // that currency, with or without an IBAN. A card that another card of
-            // this fetch matches by number waits for that one, whatever the order.
+            // number), preferring those without an IBAN; widened: the only one,
+            // with or without an IBAN. In both those whose state is known first: a
+            // card the #998 repair reactivated never wins over a known one. A card
+            // that another card of this fetch matches by number waits for that one,
+            // whatever the order.
             let taken_by_number = |number: &str| {
                 card && fetched_cards
                     .iter()
                     .any(|fetched| same_card_number(number, fetched))
             };
-            let single = |widened: bool| {
-                unique(rows.iter().filter(|(_, number, has_iban, cur)| {
-                    if taken_by_number(number) {
-                        false
-                    } else if widened {
-                        currency.is_empty() || cur.is_empty() || *cur == currency
-                    } else {
-                        !has_iban
-                    }
+            let fits = |number: &str, has_iban: bool, widened: bool| {
+                !taken_by_number(number) && (widened || !has_iban)
+            };
+            let single = |widened: bool, known_only: bool| {
+                unique(rows.iter().filter(|(id, number, has_iban, _)| {
+                    fits(number, *has_iban, widened) && !(known_only && unknown.contains(id))
                 }))
                 .map(|(id, _, _, _)| *id)
             };
+            // a reactivated card is the fallback only when no known one fits at all;
+            // several known ones are ambiguous, not a reason to take it
+            let known_fits = rows.iter().any(|(id, number, has_iban, _)| {
+                fits(number, *has_iban, widen) && !unknown.contains(id)
+            });
             by_number
-                .or_else(|| single(false))
-                .or_else(|| if widen { single(true) } else { None })
+                .or_else(|| single(false, true))
+                .or_else(|| if widen { single(true, true) } else { None })
+                .or_else(|| match known_fits {
+                    true => None,
+                    false => single(false, false)
+                        .or_else(|| if widen { single(true, false) } else { None }),
+                })
         }
     } else {
         // Wallets in several currencies can share one IBAN (Finom EUR/USD):
@@ -3359,9 +3438,10 @@ impl ImportCtx<'_> {
             // active) or of one the #998 repair reactivated: MoneyMoney's applies –
             // for the latter only from the MoneyMoney account it came from (its
             // reference, or the same IBAN and currency once a fetch took it over and
-            // the reference is gone), not from another one merged into it. MoneyMoney
-            // may keep several accounts with one IBAN (a closed and an open one, #94):
-            // then the IBAN names no source and the state stays as it is.
+            // the reference is gone, for a card without IBAN its number, #1691), not
+            // from another one merged into it. MoneyMoney may keep several accounts
+            // with one IBAN (a closed and an open one, #94): then the IBAN names no
+            // source and the state stays as it is.
             let iban_source = if src.accounts.iter().filter(|x| x.iban == a.iban).count() == 1 {
                 a.iban.as_str()
             } else {
@@ -3384,6 +3464,14 @@ impl ImportCtx<'_> {
                 ],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
+            let chosen = self
+                .options
+                .bank_choices
+                .iter()
+                .filter(|_| self.options.create_connections)
+                .find(|c| Some(c.mm_bank_id) == a.bank_key)
+                .and_then(|c| c.connection.as_ref());
+            let own = own || card_taken_over_from(conn, src, chosen, a, id)?;
             let unknown = own && marked;
             if a.closed && unknown {
                 // closed in its own MoneyMoney account: archived, stamped just after the
@@ -3763,6 +3851,22 @@ impl ImportCtx<'_> {
     }
 }
 
+/// Connector key of the Enable Banking login for an ASPSP.
+fn psd2_key(aspsp: &str, country: &str) -> String {
+    ConnectorKind::enable_banking_key(&country.trim().to_uppercase(), aspsp.trim())
+}
+
+/// The Enable Banking login for a connector key, if there is one (the first).
+fn psd2_login(conn: &Connection, key: &str) -> CoreResult<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL ORDER BY id LIMIT 1",
+            [key],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// Enable Banking connection for a MoneyMoney bank without own connector:
 /// the existing one for that ASPSP, else a new one. `None` when the banking
 /// lock blocks the bank or the choice is invalid (the bank is skipped).
@@ -3773,22 +3877,14 @@ fn psd2_connection(
     country: &str,
 ) -> CoreResult<Option<(i64, bool)>> {
     let aspsp = aspsp.trim();
-    let country = country.trim().to_uppercase();
-    let key = ConnectorKind::enable_banking_key(&country, aspsp);
+    let key = psd2_key(aspsp, country);
     if aspsp.is_empty() || ConnectorKind::enable_banking_target(&key).is_none() {
         return Ok(None);
     }
     if crate::banking_gate::check_connector(&key).is_err() {
         return Ok(None);
     }
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL ORDER BY id LIMIT 1",
-            [&key],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if let Some(id) = existing {
+    if let Some(id) = psd2_login(conn, &key)? {
         return Ok(Some((id, false)));
     }
     let display = if b.name.trim().is_empty() {

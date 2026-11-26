@@ -100,17 +100,24 @@ pub fn from_latin1(b: &[u8]) -> String {
 /// unless added with `raw`.
 pub struct SegmentBuilder {
     parts: Vec<u8>,
+    non_empty_len: usize,
 }
 
 impl SegmentBuilder {
     pub fn new(id: &str, number: u32, version: u32) -> Self {
+        let parts = format!("{id}:{number}:{version}").into_bytes();
+        let non_empty_len = parts.len();
         SegmentBuilder {
-            parts: format!("{id}:{number}:{version}").into_bytes(),
+            parts,
+            non_empty_len,
         }
     }
     pub fn with_ref(id: &str, number: u32, version: u32, reference: u32) -> Self {
+        let parts = format!("{id}:{number}:{version}:{reference}").into_bytes();
+        let non_empty_len = parts.len();
         SegmentBuilder {
-            parts: format!("{id}:{number}:{version}:{reference}").into_bytes(),
+            parts,
+            non_empty_len,
         }
     }
     /// Adds a data element made of escaped components (joined with ':').
@@ -121,13 +128,21 @@ impl SegmentBuilder {
             .map(|c| escape(c))
             .collect::<Vec<_>>()
             .join(":");
-        self.parts.extend(to_latin1(&joined));
+        let encoded = to_latin1(&joined);
+        if !encoded.is_empty() {
+            self.parts.extend(encoded);
+            self.non_empty_len = self.parts.len();
+        }
         self
     }
     /// Adds a data element verbatim (already escaped / structured).
     pub fn raw(mut self, raw: &str) -> Self {
         self.parts.push(b'+');
-        self.parts.extend(to_latin1(raw));
+        let encoded = to_latin1(raw);
+        if !encoded.is_empty() {
+            self.parts.extend(encoded);
+            self.non_empty_len = self.parts.len();
+        }
         self
     }
     /// Adds a binary data element `@len@bytes`.
@@ -135,13 +150,12 @@ impl SegmentBuilder {
         self.parts.push(b'+');
         self.parts.extend(format!("@{}@", data.len()).into_bytes());
         self.parts.extend_from_slice(data);
+        self.non_empty_len = self.parts.len();
         self
     }
     pub fn build(mut self) -> Vec<u8> {
-        // Trailing empty elements must be dropped.
-        while self.parts.last() == Some(&b'+') {
-            self.parts.pop();
-        }
+        // Trailing empty elements must be dropped without touching binary data or escaped `+`.
+        self.parts.truncate(self.non_empty_len);
         self.parts.push(b'\'');
         self.parts
     }
@@ -236,16 +250,19 @@ pub fn parse_response(data: &[u8]) -> CoreResult<Vec<Segment>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn unmappable_characters_keep_the_framing() {
         // "€" is not in ISO 8859-1: it must not become a bare escape character
         assert_eq!(to_latin1("a€b"), b"a??b".to_vec());
         let seg = to_latin1(&escape("Preis 5€ + Porto"));
-        // the '+' is escaped, the '€' is a literal '?'
+        // the '+' is escaped, the '€' becomes the escaped literal '??' (one '?')
         assert_eq!(seg, b"Preis 5?? ?+ Porto".to_vec());
+        let parsed = parse(b"HKTST:2:1+Preis 5?? ?+ Porto'").unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].get(1, 0), "Preis 5? + Porto");
     }
-
-    use super::*;
 
     #[test]
     fn roundtrip_escape_and_binary() {
@@ -262,6 +279,56 @@ mod tests {
         assert_eq!(parsed[0].get(1, 1), "c:d");
         assert_eq!(parsed[0].binary(2), Some(&b"x'y"[..]));
         assert_eq!(parsed[0].get(3, 0), "z?");
+    }
+
+    #[test]
+    fn binary_and_escaped_trailing_plus_are_preserved() {
+        let bin = SegmentBuilder::new("HNVSD", 999, 1)
+            .binary(b"abc+")
+            .raw("")
+            .build();
+        assert_eq!(bin, b"HNVSD:999:1+@4@abc+'".to_vec());
+        let parsed = parse(&bin).unwrap();
+        assert_eq!(parsed[0].binary(1), Some(&b"abc+"[..]));
+
+        let esc = SegmentBuilder::new("HKTST", 2, 1)
+            .de(&["foo+"])
+            .raw("")
+            .build();
+        assert_eq!(esc, b"HKTST:2:1+foo?+'".to_vec());
+        let parsed_esc = parse(&esc).unwrap();
+        assert_eq!(parsed_esc[0].get(1, 0), "foo+");
+    }
+
+    #[test]
+    fn hnsha_keeps_pin_ending_in_plus_1726() {
+        // Same shape as dialog.rs: ctrl ref, empty custom signature, escaped PIN (+ TAN).
+        let pin = escape("test1+");
+        let seg = SegmentBuilder::new("HNSHA", 5, 2)
+            .raw("4711")
+            .raw("")
+            .raw(&pin)
+            .build();
+        assert_eq!(seg, b"HNSHA:5:2+4711++test1?+'".to_vec());
+        let parsed = parse(&seg).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].get(3, 0), "test1+");
+
+        let with_tan = SegmentBuilder::new("HNSHA", 5, 2)
+            .raw("4711")
+            .raw("")
+            .raw(&format!("{}:{}", escape("test1+"), escape("123456")))
+            .build();
+        assert_eq!(with_tan, b"HNSHA:5:2+4711++test1?+:123456'".to_vec());
+
+        // A PIN made only of '+' followed by empty trailing elements stays intact.
+        let only_plus = SegmentBuilder::new("HKTST", 2, 1)
+            .de(&["++"])
+            .raw("")
+            .raw("")
+            .build();
+        assert_eq!(only_plus, b"HKTST:2:1+?+?+'".to_vec());
+        assert_eq!(parse(&only_plus).unwrap()[0].get(1, 0), "++");
     }
 
     #[test]

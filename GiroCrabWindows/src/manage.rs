@@ -7,11 +7,14 @@
 pub enum Modal {
     Tan,
     Transfer,
+    Refunds,
     AddBank,
     Account,
+    Offline,
     Categories,
     Rules,
     Link,
+    Report,
     About,
     History,
 }
@@ -21,11 +24,14 @@ pub enum Modal {
 pub struct Modals {
     pub tan: bool,
     pub transfer: bool,
+    pub refunds: bool,
     pub add_bank: bool,
     pub account: bool,
+    pub offline: bool,
     pub categories: bool,
     pub rules: bool,
     pub link: bool,
+    pub report: bool,
     pub about: bool,
     /// Price history of a depot position (#578); it lies below every other dialog.
     pub history: bool,
@@ -37,11 +43,14 @@ impl Modals {
         [
             (self.tan, Modal::Tan),
             (self.transfer, Modal::Transfer),
+            (self.refunds, Modal::Refunds),
             (self.add_bank, Modal::AddBank),
             (self.account, Modal::Account),
+            (self.offline, Modal::Offline),
             (self.link, Modal::Link),
             (self.rules, Modal::Rules),
             (self.categories, Modal::Categories),
+            (self.report, Modal::Report),
             (self.about, Modal::About),
             (self.history, Modal::History),
         ]
@@ -328,6 +337,19 @@ mod tests {
         };
         assert_eq!(m.top(), Some(Modal::Transfer));
         assert_eq!(Modals::default().top(), None);
+    }
+
+    #[test]
+    fn refunds_close_with_escape_and_block_other_shortcuts() {
+        let mut c = ctx();
+        c.modals.refunds = true;
+        assert_eq!(
+            route("\u{1b}", false, &c),
+            Some(Command::CloseModal(Modal::Refunds))
+        );
+        assert_eq!(route("l", true, &c), None);
+        c.modals.tan = true;
+        assert_eq!(c.modals.top(), Some(Modal::Tan));
     }
 
     #[test]

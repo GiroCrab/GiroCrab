@@ -69,14 +69,17 @@ run "cargo fmt --check" cargo fmt --all -- --check
 run "FinTS product ID scan" scripts/fints-registrierung.sh scan
 run "third-party notices" scripts/check-third-party-notices.sh
 for l in scripts/lint-*.sh; do run "$(basename "$l" .sh)" "$l"; done
+if command -v lychee >/dev/null; then
+  run "relative links in Markdown" scripts/check-doc-links.sh
+else skip "relative links in Markdown" "lychee missing"; fi
 run "xcstrings sorted" python3 -I scripts/xcstrings.py check
 run "Linux UI texts have English" python3 -I GiroCrabLinux/scripts/i18n-report.py
 if touched '^(scripts|tools)/.*\.py$'; then
   run "python tests (scripts, tools)" python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py tools/test_export_ai_provenance.py
 fi
-if touched '^scripts/test-.*\.cjs$|portal'; then
+if touched '^scripts/test-.*\.cjs$|portal|AxaShareplanUI\.swift$|UnionInvestmentUI\.swift$|BerghausCieUI\.swift$'; then
   if command -v node >/dev/null; then
-    run "portal script tests" node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-sharinbox-portal.cjs scripts/test-schwaebisch-hall-portal.cjs scripts/test-advanzia-portal.cjs
+    run "portal script tests" node --test scripts/test-fnz-portal.cjs scripts/test-quirion-portal.cjs scripts/test-sharinbox-portal.cjs scripts/test-axashareplan-portal.cjs scripts/test-unioninvestment-portal.cjs scripts/test-berghauscie-portal.cjs scripts/test-schwaebisch-hall-portal.cjs scripts/test-advanzia-portal.cjs
   else skip "portal script tests" "node missing"; fi
 fi
 if [ "$linux" = true ]; then

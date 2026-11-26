@@ -223,22 +223,28 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Bank | Schnittstelle | Umsätze | Salden | Depot | Depot-Aktivitäten | Überweisung | Dauerauftrag | PDF/Postfach | Status |
 |---|---|---|---|---|---|---|---|---|---|
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| AirPlus Corporate Card | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verifiziert |
 | Amazon Bestellungen | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Test gesucht |
+| AXA Mitarbeiter Shareplan | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
 | BHW Bausparkasse | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| Edenred | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht |
 | EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Test gesucht |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| Go & Grow | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | Monefit SmartSaver | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Mit Einschränkungen |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
-| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
+| Union Investment | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Test gesucht |
+| Berghaus & Cie (Weindepot) | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Mit Einschränkungen |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verifiziert |
@@ -248,6 +254,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verifiziert |
 | Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Test gesucht |
+| Bitcoin-Wallet (xpub/ypub/zpub) | REST-API | – | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verifiziert |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verifiziert |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Test gesucht |
@@ -495,22 +502,28 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Bank | Interface | Transactions | Balances | Securities | Securities activity | Transfers | Standing orders | PDF/post box | Status |
 |---|---|---|---|---|---|---|---|---|---|
 | Advanzia Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted [#177](https://github.com/GiroCrab/GiroCrab/issues/177) |
+| AirPlus Corporate Card | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted |
 | Alte Leipziger (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | ✅ Verified |
 | Amazon orders | Web-Portal | ✓ | – | – | – | – | – | – | 🧪 Testing wanted |
+| AXA Mitarbeiter Shareplan | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
 | BHW Bausparkasse | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | easybank (ehem. Barclays) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| Edenred | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted |
 | EquatePlus | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
 | FFB (FIL Fondsbank) | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | 🧪 Testing wanted |
 | FNZ Bank | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| Go & Grow | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | Monefit SmartSaver | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Schwäbisch Hall (Bausparen) | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted [#290](https://github.com/GiroCrab/GiroCrab/issues/290) |
+| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
 | Trade Republic | Web-Portal | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ⚠️ Limited |
 | Uberspace | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
-| Sharinbox (Société Générale) | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
+| Union Investment | Web-Portal | – | ✓ | ✓ | – | – | – | ✓ | 🧪 Testing wanted |
+| Berghaus & Cie (Weindepot) | Web-Portal | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
 | Volkswagen Bank | Web-Portal | ✓ | ✓ | – | – | – | – | – | ⚠️ Limited |
 | 1822direkt | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
 | Consorsbank | FinTS 3.0 | ✓ | ✓ | ✓ | – | – | – | – | ✅ Verified |
@@ -520,6 +533,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Miles & More Kreditkarte (Deutsche Bank) | FinTS 3.0 | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Volksbank Kassel Göttingen | FinTS 3.0 | ✓ | ✓ | ✓ | – | ✓ | – | ✓ | ✅ Verified |
 | Bitcoin Core | REST-API | – | ✓ | ✓ | – | – | – | – | 🧪 Testing wanted |
+| Bitcoin-Wallet (xpub/ypub/zpub) | REST-API | – | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |
 | bunq | REST-API | ✓ | ✓ | – | – | ✓ | – | ✓ | ✅ Verified |
 | comdirect | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | ✓ | ✅ Verified |
 | Interactive Brokers (IBKR) | REST-API | ✓ | ✓ | ✓ | ✓ | – | – | – | 🧪 Testing wanted |

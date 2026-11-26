@@ -58,6 +58,33 @@ extension AppModel {
         }
     }
 
+    /// Own accounts an Umbuchung may go to, shared by the transfer and the standing order form
+    /// (#547, #1475): any account with an IBAN that is not archived and not the sender; a savings
+    /// account books to its own checking accounts only (#582).
+    func ownTransferTargets(from source: Account?) -> [Account] {
+        if let source, source.kind == .savings { return internalTransferTargets(from: source) }
+        return allAccounts.filter { !$0.iban.isEmpty && !$0.isArchived && $0.id != source?.id }
+    }
+
+    /// A savings account may only send to one of its own checking targets (#582, #1893); the core
+    /// enforces the same rule in `begin_transfer`. Other sources may send to any IBAN.
+    func mayTransfer(from source: Account?, toIBAN iban: String) -> Bool {
+        guard let source, source.kind == .savings else { return true }
+        return Self.ownAccount(withIBAN: iban, in: internalTransferTargets(from: source)) != nil
+    }
+
+    /// The recipient name an Umbuchung to `account` carries: the owner, else the account name.
+    static func ownRecipientName(_ account: Account) -> String {
+        account.owner.isEmpty ? account.name : account.owner
+    }
+
+    /// The own account behind `iban` (spaces and case ignored), among `targets`.
+    static func ownAccount(withIBAN iban: String, in targets: [Account]) -> Account? {
+        let key = iban.filter { !$0.isWhitespace }.uppercased()
+        guard !key.isEmpty else { return nil }
+        return targets.first { $0.iban.filter { !$0.isWhitespace }.uppercased() == key }
+    }
+
     /// Checking accounts GiroCrab cannot send from (e.g. C24 via Enable Banking,
     /// which is read-only): the transfer form ends with a GiroCode to scan in
     /// the bank's app instead of a TAN.

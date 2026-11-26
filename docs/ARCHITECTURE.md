@@ -46,8 +46,9 @@ and `migrate` runs the missing ones in a single transaction.
 | 39 | `transaction_splits.uuid` / `position`: stable split-part identities, deterministic UUIDv5 backfill (#714) |
 | 40 | `refund_links`: refund links between bookings or split parts (#714) |
 | 41 | `transactions.date_ms`: edit stamp of a manual booking's date, synced on its own (#714) |
-| 42 | `accounts.last_fetch_unix`: last single-account fetch, shown with the later of it and the login's sync time (#1716) |
-| 43+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 42 | `accounts.last_fetch_unix`: last single-account fetch timestamp (#1716) |
+| 43 | `planned_transfers.settled_ms`: settled scheduled orders (NULL = open), date index over `(execution_date, settled_ms)` (#1900) |
+| 44+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 
@@ -99,6 +100,7 @@ module adds its own methods to it and reaches the database through `self.db()`.
   | `vault/rules.rs` | pattern and expression rules |
   | `vault/settings.rs` | settings and `KNOWN_SETTINGS` |
   | `vault/merge.rs` | merging a peer snapshot or another vault file |
+  | `refunds.rs`, `refunds/` | UUID endpoint resolution, allocation, link API, suggestions and full-row link merge |
   | `loans.rs`, `planning.rs`, `documents.rs`, `insights.rs`, `connectors/*.rs`, `importers/*.rs`, … | their feature |
 
 - A feature module has at most one `#[uniffi::export] impl Vault` (the Swift API) and one plain
@@ -118,3 +120,31 @@ module adds its own methods to it and reaches the database through `self.db()`.
   (`kept_key`, `migrate`). Other modules use `Vault::db()` only.
 - Tests sit in the module whose code they exercise.
 - A new feature gets a new module. Don't add another section to an existing file.
+
+## Refund links
+
+Refund links are stored independently of bank bookings and user splits. Split
+parts have durable UUIDs; their display position is not an endpoint identity.
+`planning/split_ids.rs` implements migration 39; step 40 in `schema.rs` creates `refund_links`. `planning.rs` preserves kept
+UUIDs, and the split and twin merge paths retain them.
+
+`refunds.rs` resolves endpoints and allocates capacity in creation order (`created_ms`, then sync identity as tie-break);
+`refunds/store.rs` merges complete link rows after exact booking-id mapping,
+including import take-overs. Local edits and deletions keep original link keys
+and stamps. Split replacement inherits a referenced UUID only for an unambiguous
+same-amount replacement in the same edit; resolution is exact-UUID only.
+Import remaps retain moved tombstones and source-key provenance so a later user
+unlink suppresses the moved row at read time. Merge remains full-row LWW.
+`refunds/api.rs` exposes link/unlink and compare-and-set restore. Allocation is
+cached by vault data revision, not persisted as additional financial truth.
+
+Links are documentation only: no report reads them; allocated cents appear
+only as row markers, in the refund card and in the assignment dialog.
+
+See [ADR 0004](adr/0004-refund-links.md) for the rules, rejected
+alternatives and test evidence, and the [refund UI guide](ERSTATTUNGEN_UI.md)
+for platform entry points and privacy behavior.
+
+Manual bookings in offline accounts merge amount and split vector atomically
+under `splits_ms`, with a deterministic value tie-break. Bank booking amounts
+keep their existing merge semantics. The manual amount unit needs no schema step.

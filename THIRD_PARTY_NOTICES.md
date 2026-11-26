@@ -20,6 +20,7 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 | **`hex`** | `0.4.3` | `MIT OR Apache-2.0` | [https://github.com/KokaKiwi/rust-hex](https://github.com/KokaKiwi/rust-hex) |
 | **`hmac`** | `0.13.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/MACs](https://github.com/RustCrypto/MACs) |
 | **`jsonwebtoken`** | `12.0.0` | `MIT` | [https://github.com/Keats/jsonwebtoken](https://github.com/Keats/jsonwebtoken) |
+| **`k256`** (watch-only Bitcoin wallets, BIP32 public derivation) | `0.14.0` | `Apache-2.0 OR MIT` | [https://github.com/RustCrypto/elliptic-curves](https://github.com/RustCrypto/elliptic-curves/tree/master/k256) |
 | **`libc`** | `0.2.191` | `MIT OR Apache-2.0` | [https://github.com/rust-lang/libc](https://github.com/rust-lang/libc) |
 | **`miniz_oxide`** | `0.9.1` | `MIT OR Zlib OR Apache-2.0` | [https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide](https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide) |
 | **`p256`** | `0.14.0` | `Apache-2.0 OR MIT` | [https://github.com/RustCrypto/elliptic-curves](https://github.com/RustCrypto/elliptic-curves/tree/master/p256) |
@@ -30,6 +31,7 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 | **`regex`** | `1.13.1` | `MIT OR Apache-2.0` | [https://github.com/rust-lang/regex](https://github.com/rust-lang/regex) |
 | **`reqwest`** | `0.13.5` | `MIT OR Apache-2.0` | [https://github.com/seanmonstar/reqwest](https://github.com/seanmonstar/reqwest) |
 | **`rsa`** | `0.10.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/RSA](https://github.com/RustCrypto/RSA) |
+| **`ripemd`** (Bitcoin address hashing) | `0.2.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/hashes](https://github.com/RustCrypto/hashes) |
 | **`rusqlite`** | `0.42.0` | `MIT` | [https://github.com/rusqlite/rusqlite](https://github.com/rusqlite/rusqlite) |
 | **`rust_decimal`** | `1.43.0` | `MIT` | [https://github.com/paupino/rust-decimal](https://github.com/paupino/rust-decimal) |
 | **`serde`** | `1.0.229` | `MIT OR Apache-2.0` | [https://github.com/serde-rs/serde](https://github.com/serde-rs/serde) |
@@ -251,6 +253,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | `jobserver` | `0.1.35` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-lang/jobserver-rs) (Alex Crichton <alex@alexcrichton.com>) |
 | `js-sys` | `0.3.107` | `MIT OR Apache-2.0` | [Repo](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys) (The wasm-bindgen Developers) |
 | `jsonwebtoken` | `12.0.0` | `MIT` | [Repo](https://github.com/Keats/jsonwebtoken) (Vincent Prouillet <hello@vincentprouillet.com>) |
+| `k256` | `0.14.0` | `Apache-2.0 OR MIT` | [Repo](https://github.com/RustCrypto/elliptic-curves) (RustCrypto Developers) |
 | `libc` | `0.2.191` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-lang/libc) |
 | `libm` | `0.2.16` | `MIT` | [Repo](https://github.com/rust-lang/compiler-builtins) (Alex Crichton <alex@alexcrichton.com>, Amanieu d'Antras <ama) |
 | `libsqlite3-sys` | `0.40.0` | `MIT` | [Repo](https://github.com/rusqlite/rusqlite) (The rusqlite developers) |
@@ -315,6 +318,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | `reqwest` | `0.13.5` | `MIT OR Apache-2.0` | [Repo](https://github.com/seanmonstar/reqwest) (Sean McArthur <sean@seanmonstar.com>) |
 | `rfc6979` | `0.6.0` | `Apache-2.0 OR MIT` | [Repo](https://github.com/RustCrypto/signatures) (RustCrypto Developers) |
 | `ring` | `0.17.14` | `Apache-2.0 AND ISC` | [Repo](https://github.com/briansmith/ring) |
+| `ripemd` | `0.2.0` | `MIT OR Apache-2.0` | [Repo](https://github.com/RustCrypto/hashes) (RustCrypto Developers) |
 | `rsa` | `0.10.0` | `MIT OR Apache-2.0` | [Repo](https://github.com/RustCrypto/RSA) (RustCrypto Developers, dignifiedquire <dignifiedquire@gmail.) |
 | `rsqlite-vfs` | `0.2.0` | `MIT` | [Repo](https://github.com/Spxg/sqlite-wasm-rs) |
 | `rusqlite` | `0.42.0` | `MIT` | [Repo](https://github.com/rusqlite/rusqlite) (The rusqlite developers) |

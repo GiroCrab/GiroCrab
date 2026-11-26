@@ -21,6 +21,57 @@ pub(super) fn is_content_id(id: &str, prefix: char) -> bool {
     id.len() == 17 && c.next() == Some(prefix) && c.all(|c| c.is_ascii_hexdigit())
 }
 
+/// A depot position's purchase price as stored before a fetch (#1812).
+struct KeptPurchase {
+    isin: String,
+    wkn: String,
+    currency: String,
+    purchase_price_cents: i64,
+    native_purchase_price_cents: Option<i64>,
+}
+
+/// Purchase prices currently stored for a depot, including positions without
+/// one (0): they make a position ambiguous in `kept_purchase_for`.
+fn kept_purchase_prices(
+    conn: &rusqlite::Connection,
+    account_id: i64,
+) -> CoreResult<Vec<KeptPurchase>> {
+    let mut q = conn.prepare(
+        "SELECT isin, wkn, currency, purchase_price_cents, native_purchase_price_cents
+         FROM holdings WHERE account_id = ?1",
+    )?;
+    let rows = q.query_map([account_id], |r| {
+        Ok(KeptPurchase {
+            isin: r.get(0)?,
+            wkn: r.get(1)?,
+            currency: r.get(2)?,
+            purchase_price_cents: r.get(3)?,
+            native_purchase_price_cents: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The stored purchase price for `h`: every stored row of the same position
+/// (ISIN, or WKN when one side lacks the ISIN) must agree on it, otherwise
+/// none is returned. Never a row without a purchase price.
+fn kept_purchase_for<'a>(
+    old: &'a [KeptPurchase],
+    h: &crate::models::Holding,
+) -> Option<&'a KeptPurchase> {
+    let mut hits = old.iter().filter(|o| {
+        (!h.isin.is_empty() && o.isin == h.isin)
+            || ((h.isin.is_empty() || o.isin.is_empty()) && !h.wkn.is_empty() && o.wkn == h.wkn)
+    });
+    let first = hits.next()?;
+    let agree = hits.all(|o| {
+        o.purchase_price_cents == first.purchase_price_cents
+            && o.native_purchase_price_cents == first.native_purchase_price_cents
+            && o.currency == first.currency
+    });
+    (agree && first.purchase_price_cents != 0).then_some(first)
+}
+
 /// One-time migration of ids from older versions: a booking stored under a
 /// legacy content id (`h…`, `DefaultHasher` / list position) with exactly the
 /// same content gets the new id instead of being imported a second time.
@@ -206,7 +257,8 @@ pub(crate) fn store_fetch(
     {
         let db = vault.db()?;
         // Document retrieval switched off: whatever a connector still delivers is not stored.
-        if !documents_fetch_on(&db, connection_id)? {
+        let documents_enabled = documents_fetch_on(&db, connection_id)?;
+        if !documents_enabled {
             data.documents.clear();
         }
         if let Some(rules) =
@@ -643,9 +695,24 @@ pub(crate) fn store_fetch(
             previous.insert(*acc_id, held.into_iter().collect());
         }
         for (acc_id, list) in &by_account {
+            // #1812: a fetch without a purchase price (FinTS MT535) keeps the one
+            // already stored for the same position (e.g. from an import), but only
+            // when it is unambiguous and its currency does not contradict the fetch.
+            let old = kept_purchase_prices(&tx, *acc_id)?;
             tx.execute("DELETE FROM holdings WHERE account_id = ?1", [acc_id])?;
             for remote in list {
-                let h = &remote.holding;
+                let mut h = remote.holding.clone();
+                if h.purchase_price_cents == 0
+                    && h.profit_loss_purchase_cents.is_none()
+                    && let Some(o) = kept_purchase_for(&old, &h)
+                    && (o.currency.is_empty() || h.currency.is_empty() || o.currency == h.currency)
+                {
+                    h.purchase_price_cents = o.purchase_price_cents;
+                    if h.native_purchase_price_cents.is_none() && o.currency == h.currency {
+                        h.native_purchase_price_cents = o.native_purchase_price_cents;
+                    }
+                }
+                let h = &h;
                 tx.execute(
                     "INSERT INTO holdings(account_id, isin, wkn, name, quantity, current_price_cents, purchase_price_cents, value_cents,
                             prev_day_price_cents, prev_day_value_cents, profit_loss_purchase_cents, profit_loss_purchase_rel,
@@ -751,6 +818,12 @@ pub(crate) fn store_fetch(
                                 new_booking_ids.insert(tx.last_insert_rowid());
                             }
                             imported += 1;
+                            if t.checked {
+                                tx.prepare_cached(
+                                    "UPDATE transactions SET checked = 1 WHERE account_id = ?1 AND external_id = ?2",
+                                )?
+                                .execute(params![acc_id, t.external_id])?;
+                            }
                             if data.adjust_balances {
                                 tx.prepare_cached(
                                     "UPDATE accounts SET balance_cents = balance_cents + ?1, balance_date = ?2 WHERE id = ?3",
@@ -893,6 +966,8 @@ pub(crate) fn store_fetch(
         }
         let mut postbox_added = 0u32;
         let mut documents_stored = 0u32;
+        // switched off at a bank that delivers documents: the log says so
+        let documents_off = !documents_enabled && kind_delivers_documents(kind);
         let documents_incomplete = data.documents_incomplete;
         for d in &data.documents {
             if archived_ids.contains_key(&d.account_ref) || blocked_refs.contains(&d.account_ref) {
@@ -950,6 +1025,25 @@ pub(crate) fn store_fetch(
                 }
                 (booking, _) => booking,
             };
+            // A known history receipt gets its direct link once its cash booking exists, also when the
+            // document pass reaches it only in a later sync. Never against the user's own unlink, never
+            // to a deleted booking; a receipt that already has a booking keeps it. Also for a receipt
+            // downloaded again (no longer remembered as known): storing it again ignores the copy.
+            if kind == ConnectorKind::TradeRepublic
+                && !d.source_url.is_empty()
+                && let Some(booking_id) = booking_id
+            {
+                tx.execute(
+                    "UPDATE booking_documents SET booking_id = ?1
+                      WHERE source_url = ?2 AND booking_id IS NULL
+                        AND NOT EXISTS (SELECT 1 FROM settings
+                              WHERE key = 'doc.unlinked.' || booking_documents.id)
+                        AND EXISTS (SELECT 1 FROM transactions WHERE id = ?1 AND deleted_ms IS NULL)
+                        AND account_id IN (SELECT id FROM accounts WHERE connection_id = ?3
+                              AND deleted_ms IS NULL AND archived_unix IS NULL)",
+                    params![booking_id, d.source_url, connection_id],
+                )?;
+            }
             // without bytes (download failed) only a stored copy gets its account
             let added = if d.bytes.is_empty() {
                 Ok(None)
@@ -1087,10 +1181,11 @@ pub(crate) fn store_fetch(
                 [connection_id],
             )?;
         }
-        // Accounts by the name they carry here instead of their bank reference (an IBAN).
+        // Accounts by the name they carry here instead of their bank reference (an IBAN),
+        // in warnings and hints alike (e.g. "Depotbestand … nicht angeboten", #1743).
         let mut warnings = std::mem::take(&mut data.warnings);
-        let hints = std::mem::take(&mut data.hints);
-        if !warnings.is_empty() {
+        let mut hints = std::mem::take(&mut data.hints);
+        if !warnings.is_empty() || !hints.is_empty() {
             for acc in data.accounts.iter().filter(|a| !a.external_ref.is_empty()) {
                 let name: Option<String> = tx
                     .query_row(
@@ -1100,7 +1195,7 @@ pub(crate) fn store_fetch(
                     )
                     .optional()?;
                 let name = name.unwrap_or_else(|| acc.name.clone());
-                for w in &mut warnings {
+                for w in warnings.iter_mut().chain(hints.iter_mut()) {
                     *w = w.replace(&acc.external_ref, &name);
                 }
             }
@@ -1142,6 +1237,13 @@ pub(crate) fn store_fetch(
             postbox_documents,
             warnings,
             hints,
+            documents_imported: documents_stored,
+            security_transactions: data.security_transactions.len() as u32,
+            holdings: data.holdings.len() as u32,
+            history_incomplete: data.history_incomplete,
+            history_remaining: data.history_remaining,
+            history_total: data.history_total,
+            documents_off,
         })
     }
 }
@@ -1212,6 +1314,15 @@ pub(crate) fn clear_documents_settings(
         ],
     )?;
     Ok(())
+}
+
+/// Whether the bank of this connector delivers documents (`Capability::Documents` in the bank matrix).
+pub(crate) fn kind_delivers_documents(kind: ConnectorKind) -> bool {
+    super::catalog::BANK_MATRIX.iter().any(|e| {
+        e.kind == Some(kind)
+            && e.capabilities
+                .contains(&super::catalog::Capability::Documents)
+    })
 }
 
 /// Whether the connection fetches documents (default: yes).
@@ -1768,6 +1879,10 @@ impl Vault {
             )
         };
         let (since, since_by_account) = since;
+        let state = match history {
+            Some(_) => super::history::state_for_full_fetch(state)?,
+            None => state,
+        };
         let documents = match only_account {
             // see begin_account_sync
             Some(_) => Documents::Off,
@@ -1954,6 +2069,7 @@ impl Vault {
         }
         let (connection_id, iban, owner, key_str, kind, demo) =
             self.transfer_source(request.account_id, demo)?;
+        self.ensure_savings_transfer_to_own_checking(request.account_id, &request.recipient_iban)?;
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2054,6 +2170,23 @@ impl Vault {
                 "Sammelüberweisungen sind nur für FinTS-Konten möglich.",
             )));
         }
+        // A savings account only books to own checking accounts: every payment counts (#1893).
+        // The eligible IBANs are loaded once; the first foreign payment aborts with its position.
+        if let Some(own) = self.savings_own_checking_ibans(request.account_id)? {
+            for (i, p) in request.payments.iter().enumerate() {
+                if !own.contains(&normalize_iban(&p.iban)) {
+                    return Err(CoreError::invalid(trf(
+                        "Zahlung {0}: {1}",
+                        &[
+                            &(i + 1),
+                            &tr(
+                                "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich.",
+                            ),
+                        ],
+                    )));
+                }
+            }
+        }
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2141,6 +2274,8 @@ impl Vault {
                 if !validate_iban(&recipient_iban) {
                     return Err(CoreError::invalid(tr("Die Empfänger-IBAN ist ungültig.")));
                 }
+                // Create/Change only; Delete stays possible so existing orders can be cancelled (#1893).
+                self.ensure_savings_transfer_to_own_checking(request.account_id, &recipient_iban)?;
                 if request.amount_cents <= 0 {
                     return Err(CoreError::invalid(tr("Der Betrag muss größer als 0 sein.")));
                 }
@@ -2360,6 +2495,53 @@ impl Vault {
 }
 
 impl Vault {
+    /// A savings account (Tagesgeld) only books to the user's own active checking accounts (#582, #1893).
+    /// Enforced here so no front end can send it to a third party.
+    fn ensure_savings_transfer_to_own_checking(
+        &self,
+        account_id: i64,
+        recipient_iban: &str,
+    ) -> CoreResult<()> {
+        match self.savings_own_checking_ibans(account_id)? {
+            Some(own) if !own.contains(&normalize_iban(recipient_iban)) => Err(CoreError::invalid(
+                tr("Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich."),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// `None` when `account_id` is not a savings account (or unknown: `transfer_source`
+    /// reports that); otherwise the normalized IBANs of the user's own active checking accounts.
+    fn savings_own_checking_ibans(
+        &self,
+        account_id: i64,
+    ) -> CoreResult<Option<std::collections::HashSet<String>>> {
+        let rows: Vec<(i64, String, String, bool)> = {
+            let db = self.db()?;
+            let mut stmt = db.prepare(
+                "SELECT id, kind, iban, archived_unix IS NOT NULL FROM accounts WHERE deleted_ms IS NULL",
+            )?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let Some((_, kind, _, _)) = rows.iter().find(|r| r.0 == account_id) else {
+            return Ok(None);
+        };
+        if AccountKind::from_str(kind) != AccountKind::Savings {
+            return Ok(None);
+        }
+        Ok(Some(
+            rows.iter()
+                .filter(|(id, k, _, archived)| {
+                    *id != account_id
+                        && !archived
+                        && AccountKind::from_str(k) == AccountKind::Checking
+                })
+                .map(|(_, _, iban, _)| normalize_iban(iban))
+                .collect(),
+        ))
+    }
+
     /// Debit account of a transfer: connection, IBAN, owner, connector and the
     /// gate/kind checks shared by single and batch transfers.
     #[allow(clippy::type_complexity)]
