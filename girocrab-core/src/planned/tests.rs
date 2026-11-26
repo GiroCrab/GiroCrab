@@ -243,6 +243,42 @@ fn booking_of_the_day_before_the_order_does_not_settle_it() {
     assert_eq!(v.count_planned_payments().unwrap(), 0);
 }
 
+/// Planned rows of `acc` of every kind (`count_planned_payments` need not list collections).
+fn planned_rows(v: &Vault, acc: i64) -> i64 {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM planned_transfers WHERE account_id = ?1",
+            [acc],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn collection_is_settled_only_by_an_incoming_booking() {
+    let v = vault("planned-debit");
+    let a = account(&v, "Giro");
+    Vault::insert_planned_debit(
+        &v.db().unwrap(),
+        a,
+        "D1",
+        "2999-01-15",
+        "Debtor",
+        "DE89 3704 0044 0532 0130 00",
+        500,
+        "Beitrag",
+    )
+    .unwrap();
+    // an outgoing booking of the same amount and IBAN is no collection
+    book(&v, a, "out", "2999-01-10", -500, "DE89370400440532013000");
+    settle(&v, a);
+    assert_eq!(planned_rows(&v, a), 1);
+    book(&v, a, "in", "2999-01-10", 500, "DE89370400440532013000");
+    settle(&v, a);
+    assert_eq!(planned_rows(&v, a), 0);
+}
+
 #[test]
 fn exact_iban_booking_is_reserved_before_empty_iban_fallback() {
     let v = vault("planned-exact-first");
