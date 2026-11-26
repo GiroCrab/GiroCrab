@@ -178,11 +178,12 @@ pw_segments() {   # stdin = file, $1 = literal delimiter; each literal on one li
         END { if (inl) print lit; print out }'
 }
 pw_gate_gap() {   # $1 = file, $2 = literal delimiter; succeeds when a script touches a password field ungated
-    local seg segs
-    segs=$(pw_segments "$2" <<<"$1")
+    local seg
+    # pipe straight into sed: $(…) would strip an empty last line (no code after the last literal),
+    # and sed '$d' would then drop that literal instead of the outside line
     while IFS= read -r seg; do
         grep -qE "$PW_FIELD_RE" <<<"$seg" && ! grep -qE "$PW_GATE_RE" <<<"$seg" && return 0
-    done < <(sed '$d' <<<"$segs")
+    done < <(pw_segments "$2" <<<"$1" | sed '$d')
     # code outside multi-line literals (one-line scripts): every line that addresses a password field
     # carries the gate itself (a gate elsewhere in the file does not cover it)
     local out line
@@ -199,6 +200,9 @@ pw_outside() {   # stdin = file, $1 = literal delimiter; the lines outside multi
 gate_ok=$'let a = """\nif (location.hostname !== host) return false;\ndocument.querySelector(\'input[type=password]\').value = pw;\n"""'
 pw_gate_gap "$gate_ok"$'\nlet b = """\ndocument.querySelector(\'input[type=password]\').value = pw;\n"""' '"""' \
     || err "self-test: second password script without its own origin gate accepted"
+# a single ungated literal with no code after it (the last literal must not be dropped)
+pw_gate_gap $'let b = """\ndocument.querySelector(\'input[type=password]\').value = pw;\n"""' '"""' \
+    || err "self-test: ungated password script at the end of the file accepted"
 if pw_gate_gap "$gate_ok" '"""'; then
     err "self-test: origin-gated password script flagged"
 fi
