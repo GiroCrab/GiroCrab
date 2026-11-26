@@ -181,15 +181,28 @@ pw_gate_gap() {   # $1 = file, $2 = literal delimiter; succeeds when a script to
     while IFS= read -r seg; do
         grep -qE "$PW_FIELD_RE" <<<"$seg" && ! grep -qE "$PW_GATE_RE" <<<"$seg" && return 0
     done < <(sed '$d' <<<"$segs")
-    # code outside multi-line literals (one-line scripts): the gate anywhere in the file
-    grep -qE "$PW_FIELD_RE" <<<"$(tail -n 1 <<<"$segs")" && ! grep -qE "$PW_GATE_RE" <<<"$1" && return 0
+    # code outside multi-line literals (one-line scripts): every line that addresses a password field
+    # carries the gate itself (a gate elsewhere in the file does not cover it)
+    local out line
+    out=$(pw_outside "$2" <<<"$1")
+    while IFS= read -r line; do
+        grep -qE "$PW_FIELD_RE" <<<"$line" && ! grep -qE "$PW_GATE_RE" <<<"$line" && return 0
+    done <<<"$out"
     return 1
+}
+pw_outside() {   # stdin = file, $1 = literal delimiter; the lines outside multi-line literals
+    awk -v d="$1" '{ n = gsub(d, d) } !inl { print } n % 2 { inl = !inl }'
 }
 gate_ok=$'let a = """\nif (location.hostname !== host) return false;\ndocument.querySelector(\'input[type=password]\').value = pw;\n"""'
 pw_gate_gap "$gate_ok"$'\nlet b = """\ndocument.querySelector(\'input[type=password]\').value = pw;\n"""' '"""' \
     || err "self-test: second password script without its own origin gate accepted"
 if pw_gate_gap "$gate_ok" '"""'; then
     err "self-test: origin-gated password script flagged"
+fi
+pw_gate_gap $'let a = "if (location.hostname == h) {}"\nlet b = "document.querySelector(\'input[type=password]\').value = pw;"' '"""' \
+    || err "self-test: one-line password script gated only by another line accepted"
+if pw_gate_gap $'let a = "location.hostname == h && document.querySelector(\'input[type=password]\').value = pw;"' '"""'; then
+    err "self-test: gated one-line password script flagged"
 fi
 for f in $(grep -lE "$PW_FIELD_RE" "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml 2>/dev/null); do
     d='"""'; [[ "$f" == *.qml ]] && d='`'
