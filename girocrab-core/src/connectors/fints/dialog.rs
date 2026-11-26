@@ -588,7 +588,7 @@ impl FinTsConnector {
         ];
         let reply = self.send(ctx, payload, "999", None).await?;
         self.blz_rejected = blz_mismatch(&reply);
-        if let Some(e) = login_refused(&reply) {
+        if let Some(e) = self.refused_login(&reply) {
             return Err(e);
         }
         reply.check()?;
@@ -942,10 +942,12 @@ impl FinTsConnector {
         Ok(Phase::Ready)
     }
 
-    /// `login_refused` for the dialog init; a stale system ID in the same reply is
-    /// forgotten as on any other refused init.
+    /// `login_refused` for a dialog init. The dialog is dropped without HKEND (it
+    /// carries the PIN; `finish` would send it for a dialog ID still set), and a stale
+    /// system ID in the same reply is forgotten as on any other refused init.
     fn refused_login(&mut self, reply: &BankReply) -> Option<CoreError> {
         let e = login_refused(reply)?;
+        self.reset_dialog();
         if stale_system_id(reply) || reply.has("9010") {
             self.st.system_id.clear();
         }
@@ -1025,8 +1027,10 @@ impl FinTsConnector {
         if reply.errors().is_empty() && self.dialog_id != "0" {
             return Ok((reply, true));
         }
-        // HKEND carries the PIN: never after a refused login (9040)
-        if !reply.has("9800") && !reply.has("9040") {
+        // HKEND carries the PIN: a refused login (9040) drops the dialog without it
+        if reply.has("9040") {
+            self.reset_dialog();
+        } else if !reply.has("9800") {
             self.end_dialog(ctx, sec).await;
         }
         Ok((reply, false))

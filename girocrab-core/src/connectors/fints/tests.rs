@@ -273,10 +273,11 @@ async fn dialog_init_9010_with_stale_system_id_does_not_fall_back() {
     assert!(c.st.system_id.is_empty());
 }
 
-/// The bank's answer to a refused login; `extra` adds codes of the same reply.
+/// The bank's answer to a refused login; `extra` adds codes of the same reply. It
+/// carries a dialog ID: nothing may end that dialog with an HKEND (it carries the PIN).
 fn login_refused_reply(extra: &str) -> String {
     format!(
-        "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Dialoginitialisierung abgebrochen.'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.{extra}'"
+        "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+9800::Dialoginitialisierung abgebrochen.'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.{extra}'"
     )
 }
 
@@ -308,6 +309,8 @@ async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
             state_with_functions("913", &[("913", "chipTAN QR"), ("911", "chipTAN optisch")]);
         let mut c = two_step_connector(&url, state);
         assert_login_refused(c.open_dialog(&test_ctx()).await);
+        // the sync session calls `finish` after every failed login
+        c.finish(&test_ctx()).await;
         assert_eq!(seen.lock().unwrap().len(), 1, "{extra}");
     }
 }
@@ -331,6 +334,7 @@ async fn dialog_init_9040_in_a_fallback_answer_ends_the_login() {
         state["tan_medium"] = medium.into();
         let mut c = two_step_connector(&url, state);
         assert_login_refused(c.open_dialog(&test_ctx()).await);
+        c.finish(&test_ctx()).await;
         assert_eq!(seen.lock().unwrap().len(), 2, "{first}");
         assert!(!has_so_prefix(&c.st.tan_medium), "{}", c.st.tan_medium);
     }
@@ -340,10 +344,11 @@ async fn dialog_init_9040_in_a_fallback_answer_ends_the_login() {
 async fn sync_dialog_9040_explains_the_refused_login() {
     // a new login has no system ID yet: the sync dialog is the bank's first contact
     let reply: &'static str = login_refused_reply("").leak();
-    let (url, seen) = mock_bank(vec![reply]);
+    let (url, seen) = mock_bank(vec![reply, ACCEPT]);
     let state = serde_json::json!({"system_id": "", "sec_func": "", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
     let mut c = two_step_connector(&url, state);
     assert_login_refused(c.sync_dialog(&test_ctx()).await);
+    c.finish(&test_ctx()).await;
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
 
