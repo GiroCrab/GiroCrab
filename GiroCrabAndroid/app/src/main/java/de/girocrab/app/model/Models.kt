@@ -214,13 +214,13 @@ data class StandingOrder(
     fun after(date: LocalDate): LocalDate? {
         // Start at the step just before [date], like the core: an old open order must not
         // fall off the 1000-step cap.
-        val k0 = if (unit == "W") {
+        val k0: Long = if (unit == "W") {
             val monday = firstDate.minusDays(firstDate.dayOfWeek.value - 1L)
-            maxOf(0, ChronoUnit.DAYS.between(monday, date) / (7L * step) - 1)
+            maxOf(0L, ChronoUnit.DAYS.between(monday, date) / (7L * step) - 1)
         } else {
             val firstMonths = firstDate.year * 12 + firstDate.monthValue - 1
             val fromMonths = date.year * 12 + date.monthValue - 1
-            maxOf(0, (fromMonths - firstMonths) / step - 1)
+            maxOf(0L, (fromMonths - firstMonths).toLong() / step - 1)
         }
         for (k in k0..k0 + 1000) {
             val d = occurrence(k) ?: return null
@@ -238,7 +238,7 @@ data class StandingOrder(
      * [firstDate]'s week plus [execDay] - 1 (1 = Monday), not on [firstDate]'s weekday;
      * [execDay] is clamped like the core, so 0 is day 1.
      */
-    private fun occurrence(k: Int): LocalDate? {
+    private fun occurrence(k: Long): LocalDate? {
         val base = if (unit == "W") {
             val monday = firstDate.minusDays(firstDate.dayOfWeek.value - 1L)
             val exec = monday.plusDays((execDay.coerceIn(1, 7) - 1).toLong())
