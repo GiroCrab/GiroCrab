@@ -543,9 +543,11 @@ final class PortalBrowser {
           return vis(i) && /^(text|email|tel)?$/i.test(i.getAttribute('type') || ''); });
         var named = texts.find(function(i) {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
-        // a username-only page (the password comes on the next one) names its field e-mail
+        // a username-only page (the password comes on the next one) names its
+        // field e-mail — or none of it, and the field is just typed `email`
         if (!pw) { named = named || texts.find(function(i) {
-          return /email/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); }); }
+          return /email/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || ''))
+            || (i.getAttribute('type') || '').toLowerCase() === 'email'; }); }
         var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
         var set = function(el, v) {
