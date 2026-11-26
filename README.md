@@ -236,6 +236,7 @@ Kurz: `girocrab-core` (Rust, per UniFFI) enthält Tresor, Regeln, Händler-Erken
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | Go & Grow | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verifiziert |
 | Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
+| Consorsbank (Online-Archiv, inoffiziell) | Web-Portal | – | – | – | – | – | – | ✓ | ✅ Verifiziert |
 | Monefit SmartSaver | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Test gesucht |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Test gesucht |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verifiziert |
@@ -512,6 +513,7 @@ your bank directly. Optional iCloud sync exchanges an encrypted snapshot via you
 | Ford Money | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | Go & Grow | Web-Portal | ✓ | ✓ | – | – | – | – | – | ✅ Verified |
 | Hanseatic Bank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
+| Consorsbank (Online-Archiv, inoffiziell) | Web-Portal | – | – | – | – | – | – | ✓ | ✅ Verified |
 | Monefit SmartSaver | Web-Portal | ✓ | ✓ | – | – | – | – | – | 🧪 Testing wanted |
 | Opel Direktbank | Web-Portal | ✓ | ✓ | – | – | – | – | ✓ | 🧪 Testing wanted |
 | quirion | Web-Portal | ✓ | ✓ | ✓ | – | – | – | ✓ | ✅ Verified |
