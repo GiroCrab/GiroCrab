@@ -179,7 +179,12 @@ extension AppModel {
     func skipPortalInSyncBatch(_ connection: BankConnection) {
         guard syncBatchTotal > 0 else { return }
         syncBatchSkipped.append(String(localized: "\(connection.displayName) (Sicherheitssperre)"))
-        Task { @MainActor [weak self] in self?.syncNextInQueue() }
+        // only this batch goes on: "Alle abbrechen" or a new batch meanwhile own the queue
+        let generation = syncBatchGeneration
+        Task { @MainActor [weak self] in
+            guard let self, generation == self.syncBatchGeneration else { return }
+            self.syncNextInQueue()
+        }
     }
 
     /// The sheet shows the batch's progress and "Alle abbrechen" (RootView).
