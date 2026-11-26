@@ -252,7 +252,7 @@ struct RefundPickerSheet: View {
                      : String(localized: "Wählen Sie die Erstattungen, die diese Buchung zurückzahlen."))
                     .appFont(.callout).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                 Text(model.netRefundsInStats
-                     ? String(localized: "Die Erstattung wird in Auswertungen mit der Buchung verrechnet. Buchungen und Kontostände bleiben unverändert.")
+                     ? String(localized: "Die Erstattung wird in Auswertungen mit der Buchung verrechnet, wenn beide in den betrachteten Konten liegen. Buchungen und Kontostände bleiben unverändert.")
                      : String(localized: "Die Verknüpfung dient nur der Dokumentation. Buchungen, Kontostände und Auswertungen bleiben unverändert."))
                     .appFont(.caption).foregroundStyle(Theme.secondary)
                 if !parts.isEmpty {

@@ -1032,6 +1032,10 @@ fn wire_settings(win: &MainWindow) {
             "Wird gespeichert …",
             move || Ok(save_net_refunds(&v, on)),
             move |win, (stored, saved)| {
+                // the vault was locked or swapped meanwhile: its result belongs to no dialog
+                if !crate::is_current(&vault) {
+                    return;
+                }
                 win.global::<SettingsImportState>().set_net_refunds(stored);
                 match saved {
                     // every total, budget and chart reads the setting: reload like a refund link change

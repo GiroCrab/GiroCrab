@@ -215,6 +215,9 @@ extension AppModel {
     func setNetRefundsInStats(_ on: Bool) async {
         guard let vault else { return }
         netRefundsInStats = on
+        // only the newest toggle publishes: an older write finishing later never overwrites it
+        netRefundsWriteGeneration &+= 1
+        let generation = netRefundsWriteGeneration
         let previous = settingsWriteTask
         let write = Task { @MainActor () async throws -> Bool in
             await previous?.value
@@ -224,16 +227,22 @@ extension AppModel {
             }
         }
         settingsWriteTask = Task { _ = try? await write.value }
+        let stored: Bool?
+        var failure: Error?
         do {
-            let stored = try await write.value
-            guard self.vault === vault else { return }
-            netRefundsInStats = stored
+            stored = try await write.value
         } catch {
-            guard self.vault === vault else { return }
-            netRefundsInStats = !on // the write failed: the stored value is unchanged
-            errorMessage = describe(error)
+            failure = error
+            // the switch shows what is stored, read back after the failed write
+            stored = try? await Self.offMain { try vault.netRefundsInStats() }
         }
-        refundStatsChanged()
+        guard self.vault === vault, generation == netRefundsWriteGeneration else { return }
+        if let stored { netRefundsInStats = stored }
+        if let failure {
+            errorMessage = describe(failure)
+        } else {
+            refundStatsChanged()
+        }
     }
 
     /// Category totals and history, budgets, KPI tiles, cashflow card and dashboard load again.

@@ -12125,13 +12125,13 @@
         }
       }
     },
-    "Die Erstattung wird in Auswertungen mit der Buchung verrechnet. Buchungen und Kontostände bleiben unverändert." : {
+    "Die Erstattung wird in Auswertungen mit der Buchung verrechnet, wenn beide in den betrachteten Konten liegen. Buchungen und Kontostände bleiben unverändert." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Reports offset the refund against the transaction. Transactions and account balances stay unchanged."
+            "value" : "The refund is netted against the booking in reports when both are in the accounts shown. Bookings and balances stay unchanged."
           }
         }
       }
@@ -14165,13 +14165,13 @@
         }
       }
     },
-    "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Buchungen, Liste und Kontostände bleiben unverändert." : {
+    "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A linked refund no longer counts as income in totals, budgets and charts; it reduces the amount of its original booking instead, also retroactively in that booking's month. Bookings, the list and balances stay unchanged."
+            "value" : "A linked refund no longer counts as income in totals, budgets and charts; it reduces the amount of its original booking instead, also retroactively in that booking's month. This applies when the refund and the original booking are in the accounts shown. Bookings, the list and balances stay unchanged."
           }
         }
       }

@@ -180,7 +180,7 @@ struct GeneralSettings: View {
                     set: { on in Task { await model.setNetRefundsInStats(on) } }
                 ))
                 .disabled(!model.isUnlocked)
-                Text("Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Buchungen, Liste und Kontostände bleiben unverändert.")
+                Text("Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Auswertungen").appSectionHeader() }
             TransferSettingsSection()

@@ -331,7 +331,7 @@ export component SettingsImportPanel inherits VerticalLayout {
             enabled: !SettingsImportState.busy;
             toggled => { SettingsImportState.net-refunds-changed(self.checked); }
         }
-        Info { text: "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Buchungen, Liste und Kontostände bleiben unverändert."; ink: root.muted; }
+        Info { text: "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert."; ink: root.muted; }
         UpdatesSection { }
     } }
 
