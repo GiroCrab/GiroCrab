@@ -27,7 +27,6 @@ struct TransferSheetView: View {
     @State private var managingRecipients = false
     @State private var dropTargeted = false
     @State private var importNote: String?
-    @State private var ownTargetID: Int64?
     /// Measured form and sheet heights: the sheet takes what the form needs (#879).
     @State private var formFit = FormFit()
     /// Opt-in clipboard check (#663): what the banner offers.
@@ -44,6 +43,16 @@ struct TransferSheetView: View {
 
     /// Own accounts that can receive a transfer: any kind, but with an IBAN, not archived, not the sender.
     private var ownTargets: [Account] { model.ownTransferTargets(from: account) }
+
+    /// The chosen own target lives in the draft, so reopening the sheet (e.g. after a declined
+    /// instant transfer) keeps the same account (#1893).
+    private var ownTargetID: Int64? {
+        get { model.transferDraft.ownTargetID }
+        nonmutating set { model.transferDraft.ownTargetID = newValue }
+    }
+    private var ownTargetSelection: Binding<Int64?> {
+        Binding(get: { model.transferDraft.ownTargetID }, set: { model.transferDraft.ownTargetID = $0 })
+    }
 
     /// Fills name and IBAN from the chosen own account (owner, else account name).
     private func applyOwnTarget(_ id: Int64?) {
@@ -117,6 +126,7 @@ struct TransferSheetView: View {
             && !model.transferDraft.name.trimmingCharacters(in: .whitespaces).isEmpty
             && ibanValid && bicValid && cents != nil
             && model.transferDraft.purpose.count <= maxPurpose
+            && model.mayTransfer(from: account, toIBAN: model.transferDraft.iban)
     }
 
     /// The height the form needs (#879), at most what the screen offers;
@@ -321,7 +331,7 @@ struct TransferSheetView: View {
 
             Section {
                 if ownTransfer {
-                    OwnTargetFields(targets: ownTargets, selection: $ownTargetID, name: draft.wrappedValue.name,
+                    OwnTargetFields(targets: ownTargets, selection: ownTargetSelection, name: draft.wrappedValue.name,
                                     select: applyOwnTarget)
                 } else {
                     LabeledContent("Empfänger") {
