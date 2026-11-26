@@ -684,7 +684,7 @@ impl Vault {
                FROM {} e
                LEFT JOIN categories c ON c.id = e.category_id AND c.deleted_ms IS NULL
               GROUP BY c.id, e.currency",
-            crate::planning::effective_sql(
+            crate::planning::stored_effective_sql(
                 ", t.currency AS currency",
                 &format!(
                     " AND t.account_id IN ({}) AND t.booking_date BETWEEN ?1 AND ?2",
