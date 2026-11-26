@@ -111,6 +111,24 @@ fn live_rows(conn: &rusqlite::Connection) -> i64 {
     .unwrap()
 }
 
+/// The counterparty of the one live row of the test booking.
+fn live_name(conn: &rusqlite::Connection) -> String {
+    conn.query_row(
+        "SELECT counterparty FROM transactions WHERE amount_cents = -999 AND deleted_ms IS NULL",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// The fetched ultimate-party booking as the bank delivers it again after
+/// another row took it over under `external_id`.
+fn taken_over(external_id: &str) -> RemoteTransaction {
+    let mut t = fetched("Shop am Markt", "Zahlungsdienst GmbH", "");
+    t.external_id = external_id.into();
+    t
+}
+
 #[test]
 fn ibanless_redelivery_adopts_the_imported_row_by_the_original_name() {
     use crate::importers::moneymoney_import::{adopt_import, adopt_import_or_original};
@@ -158,6 +176,9 @@ fn ibanless_redelivery_adopts_the_imported_row_by_the_original_name() {
         .unwrap();
     assert_eq!(ext, "fints-1");
     assert_eq!(live_rows(&conn), 1);
+    // The adopted row now shows the ultimate party (#1721).
+    rename_taken_over(&conn, account, &taken_over("fints-1")).unwrap();
+    assert_eq!(live_name(&conn), "Shop am Markt");
 }
 
 #[test]
@@ -183,6 +204,48 @@ fn ibanless_duplicate_merges_into_the_imported_row_by_the_original_name() {
     assert_eq!(live_rows(&conn), 2);
     assert!(merge("Zahlungsdienst GmbH"));
     assert_eq!(live_rows(&conn), 1);
+    // The surviving MoneyMoney row shows the ultimate party (#1721).
+    rename_taken_over(&conn, account, &taken_over("fints-1")).unwrap();
+    assert_eq!(live_name(&conn), "Shop am Markt");
+}
+
+#[test]
+fn a_custom_name_of_a_taken_over_row_stays() {
+    let (_dir, v, account) = vault_with_imported_row();
+    let conn = v.db().unwrap();
+    conn.execute(
+        "UPDATE transactions SET counterparty = 'Mein Abo', external_id = 'fints-1'",
+        [],
+    )
+    .unwrap();
+    rename_taken_over(&conn, account, &taken_over("fints-1")).unwrap();
+    assert_eq!(live_name(&conn), "Mein Abo");
+}
+
+#[test]
+fn legacy_row_under_the_original_name_wins_over_one_under_the_displayed_name() {
+    let (_dir, v, account) = vault_with_imported_row();
+    let conn = v.db().unwrap();
+    // Inserted first, so the `id` order alone would pick it.
+    let shop = insert_row(&conn, account, "h0000000000000001", "Shop am Markt");
+    let provider = insert_row(&conn, account, "h0000000000000002", "Zahlungsdienst GmbH");
+    let mut t = fetched("Shop am Markt", "Zahlungsdienst GmbH", "");
+    t.booking_date = "2025-01-03".into();
+    t.value_date = "2025-01-03".into();
+    t.amount_cents = -999;
+    t.purpose = "Abo".into();
+    t.external_id = t.content_id(0);
+    assert!(adopt_legacy_content_id(&conn, account, &t).unwrap());
+    let id_of = |row: i64| -> String {
+        conn.query_row(
+            "SELECT external_id FROM transactions WHERE id = ?1",
+            [row],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(id_of(provider), t.external_id);
+    assert_eq!(id_of(shop), "h0000000000000001");
 }
 
 #[test]

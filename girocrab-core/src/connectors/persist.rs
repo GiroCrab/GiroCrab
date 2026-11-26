@@ -99,7 +99,8 @@ fn adopt_legacy_content_id(
                              AND purpose = ?8
                              AND (counterparty = ?7
                                   OR (?9 != '' AND counterparty = ?9))
-                           ORDER BY (counterparty = ?7) DESC, id LIMIT 1)",
+                           ORDER BY (?9 != '' AND counterparty = ?9) DESC,
+                                    (counterparty = ?7) DESC, id LIMIT 1)",
         )?
         .execute(params![
             t.external_id,
@@ -134,6 +135,33 @@ fn ultimate_rename<'a>(stored: &str, t: &'a RemoteTransaction) -> Option<&'a str
     let fresh = t.counterparty.trim();
     (!original.is_empty() && !fresh.is_empty() && original != fresh && stored.trim() == original)
         .then_some(t.counterparty.as_str())
+}
+
+/// A MoneyMoney row that just took over a fetched booking (adoption or twin
+/// merge) gets the ultimate party's name like a known row in
+/// [`refresh_existing`] (#1721), but only while it still holds exactly the
+/// ordinary name. Only the counterparty changes: category, note and the other
+/// manual fields stay.
+fn rename_taken_over(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+) -> CoreResult<()> {
+    let Some(name) = ultimate_rename(&t.original_counterparty, t) else {
+        return Ok(());
+    };
+    tx.prepare_cached(
+        "UPDATE transactions SET counterparty = ?1
+          WHERE account_id = ?2 AND external_id = ?3 AND deleted_ms IS NULL
+            AND trim(counterparty) = ?4",
+    )?
+    .execute(params![
+        name,
+        account_id,
+        t.external_id,
+        t.original_counterparty.trim()
+    ])?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -811,13 +839,15 @@ pub(crate) fn store_fetch(
                             )?
                         {
                             refresh_existing(&tx, &stored, t)?;
+                        } else {
+                            rename_taken_over(&tx, *acc_id, t)?;
                         }
                     }
                     // New: adopt the row imported from MoneyMoney (keeps category +
                     // note), else insert it.
                     None => {
-                        if hold
-                            || !crate::importers::moneymoney_import::adopt_import_or_original(
+                        let adopted = !hold
+                            && crate::importers::moneymoney_import::adopt_import_or_original(
                                 &tx,
                                 *acc_id,
                                 &t.external_id,
@@ -828,8 +858,11 @@ pub(crate) fn store_fetch(
                                 &t.original_counterparty,
                                 &t.purpose,
                                 &t.booking_text,
-                            )?
-                        {
+                            )?;
+                        if adopted {
+                            rename_taken_over(&tx, *acc_id, t)?;
+                        }
+                        if !adopted {
                             ins.execute(params![
                                 acc_id,
                                 t.external_id,
