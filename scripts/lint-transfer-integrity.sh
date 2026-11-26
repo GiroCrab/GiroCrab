@@ -50,15 +50,20 @@ OWNER_MAIL='^[^@[:space:]/]+@[^@[:space:]/]+\.[^@[:space:]]+$'
 
 # Does CODEOWNERS give the file an owner? Like GitHub, the last matching rule wins; a rule
 # without owners (or with only a comment after the pattern) is an ownerless exception.
-# Patterns: anchored, optional trailing `/` or `*`.
+# Patterns: anchored, optional trailing `/` or `*`. A trailing `/` matches directories only.
 covered() {
-  local f=$1 pat owners owned=1 slashes head toks tok
+  local f=$1 pat owners owned=1 slashes fslashes head toks tok dir_only
+  fslashes=${f//[!\/]/}
   while read -r pat owners || [[ -n "$pat" ]]; do
     [[ -z "$pat" || "$pat" == \#* ]] && continue
+    dir_only=0
+    [[ "$pat" == */ ]] && dir_only=1
     pat=${pat#/}; pat=${pat%/}
     # Compare only as many leading components of the file as the pattern has: `*` then
     # cannot swallow a `/`, and a match on a directory covers everything below it.
     slashes=${pat//[!\/]/}
+    # A directory-only rule needs the file below the matched component, never the file itself.
+    if (( dir_only && ${#fslashes} <= ${#slashes} )); then continue; fi
     head=$(cut -d/ -f1-$(( ${#slashes} + 1 )) <<<"$f")
     # shellcheck disable=SC2254
     case "$head" in $pat) ;; *) continue ;; esac

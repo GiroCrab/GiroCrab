@@ -137,6 +137,21 @@ class LintTransferIntegrityTest(unittest.TestCase):
         self.assertIn("unsupported CODEOWNERS pattern", r.stderr)
         self.assertNotIn("lint-transfer-integrity: ok", r.stdout)
 
+    def test_directory_only_rule_does_not_cover_file(self):
+        # On GitHub `/…/payment_input.rs/` matches only a directory of that name: the earlier
+        # ownerless rule for the file itself still wins.
+        self.owners(OWNERS + "/girocrab-core/src/payment_input.rs\n/girocrab-core/src/payment_input.rs/ @o\n")
+        r = self.lint()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("payment_input.rs is not covered", r.stderr)
+        self.assertNotIn("lint-transfer-integrity: ok", r.stdout)
+
+    def test_directory_rule_still_covers_files_below(self):
+        # A normal directory rule after an ownerless one owns every file below it again.
+        self.owners(OWNERS + "/girocrab-core/src/\n/girocrab-core/src/ @o\n")
+        r = self.lint()
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_double_star_pattern_fails_closed(self):
         self.owners(OWNERS + "/girocrab-core/**/payment_input.rs\n")
         r = self.lint()
