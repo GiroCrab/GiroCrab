@@ -520,10 +520,19 @@ fn berlin_today() -> Date {
 /// The message of a refused call: the endpoint and the first 200 characters
 /// of the error body on one line (the portal usually says what it did not
 /// like). Never the request: it can hold the password. The answer can echo
-/// account numbers or IBANs, so long digit runs are masked before cutting
+/// account numbers or IBANs, so IBANs (also grouped) are cut to their first
+/// and last four characters and long digit runs are masked before cutting
 /// (a cut must not leave the tail of a number behind).
 fn http_error_message(status: u16, path: &str, body: &str) -> String {
-    let detail = mask_digit_runs(body)
+    let ibans = crate::sync_log::replace_ibans(body, |compact| {
+        let n = compact.chars().count();
+        format!(
+            "{}…{}",
+            compact.chars().take(4).collect::<String>(),
+            compact.chars().skip(n - 4).collect::<String>()
+        )
+    });
+    let detail = mask_digit_runs(&ibans)
         .chars()
         .take(200)
         .collect::<String>()
@@ -956,6 +965,17 @@ mod tests {
         assert!(msg.contains("\"accountNumber\":\"…\""), "{msg}");
         assert!(msg.contains("E4711"), "{msg}");
         assert!(msg.contains("2026-10-23Z"), "{msg}");
+
+        // A grouped IBAN (every digit group is short) is cut to first/last four.
+        let msg = http_error_message(
+            400,
+            path,
+            "{\"Message\":\"IBAN DE89 3704 0044 0532 0130 00 unbekannt\"}",
+        );
+        assert!(!msg.contains("3704 0044"), "{msg}");
+        assert!(!msg.contains("0532"), "{msg}");
+        assert!(msg.contains("DE89…3000"), "{msg}");
+        assert!(msg.contains("unbekannt"), "{msg}");
 
         // A number at the 200-character cut is masked as a whole, no tail left.
         let msg = http_error_message(400, path, &format!("{}1234567890", "x".repeat(195)));
