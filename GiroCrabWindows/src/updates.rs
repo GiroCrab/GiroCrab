@@ -272,6 +272,12 @@ mod tests {
         assert!(v("0.8.8-nightly.20261122") > v("0.8.8-nightly.20261121"));
         assert!(v("0.8.10") > v("v0.8.9"));
         assert!(v("0.9.0-nightly.20260101") > v("0.8.99"));
+        // nightly.yml tags last release + 1 patch: newer than a stable or beta
+        // baseline, older than the next beta/stable of that version.
+        assert!(v("0.9.1-nightly.20261125") > v("0.9.0"));
+        assert!(v("0.9.1-nightly.20261125") > v("0.9.0-beta.2"));
+        assert!(v("0.9.1-beta.1") > v("0.9.1-nightly.20261125"));
+        assert!(v("0.9.1") > v("0.9.1-nightly.20261125"));
         for bad in [
             "nightly",
             "0.8",

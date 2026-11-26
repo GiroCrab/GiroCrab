@@ -91,7 +91,15 @@ Sheet {
     function commit() { const f = formLoader.item; f.commit(); if (!f.commitsAsync) close() }
     function back() { step = step === "setup" ? (isRah10 ? "bank" : "access") : "bank" }
 
-    onAboutToShow: { step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); loadPopular(); searchField.forceActiveFocus() }
+    /// firstFetchPeriod (#1043): the setting `sync.days_back` until chosen here, applied when the login is added.
+    readonly property string firstFetchPeriod: {
+        const e = AppModel.settingEntry("sync.days_back")
+        return AppModel.newLoginHistory !== null ? AppModel.newLoginHistory : (e && e.value ? e.value : "max")
+    }
+
+    onAboutToShow: { AppModel.newLoginHistory = null; step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); loadPopular(); searchField.forceActiveFocus() }
+    // a later login added elsewhere gets the setting again
+    onClosed: AppModel.newLoginHistory = null
 
     ColumnLayout {
         width: sheet.availableWidth
@@ -231,6 +239,28 @@ Sheet {
                             : sheet.isRah10 ? rah10Form
                             : sheet.selected.mode === "FinTs" ? finTsForm
                             : sheet.selected.connector ? kindForm : psd2Form
+                    }
+                    // "Erster Abruf" (#1043): below every form, like the Mac assistant
+                    ColumnLayout {
+                        visible: formLoader.active
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text { text: qsTr("Erster Abruf"); font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.secondary }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Text { text: qsTr("Zeitraum beim ersten Abruf"); color: Theme.text; Layout.fillWidth: true }
+                            AppComboBox {
+                                readonly property var options: AppModel.historyOptionsWith(sheet.firstFetchPeriod)
+                                Layout.preferredWidth: 200 * Theme.textScale
+                                model: options
+                                textRole: "title"; valueRole: "id"
+                                currentIndex: options.findIndex(o => o.id === sheet.firstFetchPeriod)
+                                onActivated: AppModel.newLoginHistory = currentValue
+                            }
+                        }
+                        Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                               text: qsTr("„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Später lässt sich ein Zeitraum in den Einstellungen des Zugangs erneut abrufen.") }
                     }
                 }
             }

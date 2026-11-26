@@ -38,6 +38,22 @@ struct DepotPositionsTable<RowMenu: View>: View {
         return copy
     }
 
+    /// Securities of one depot whose purchase price the user may set (#1987): a pencil menu item
+    /// and a context menu item call `edit`.
+    private var purchasePriceEdit: ((DepotPosition) -> Void)?
+
+    func purchasePrice(edit: @escaping (DepotPosition) -> Void) -> Self {
+        var copy = self
+        copy.purchasePriceEdit = edit
+        return copy
+    }
+
+    /// Only securities with an ISIN or WKN, never a Sachwert (it has its own purchase data), and only
+    /// where a gain can be computed from the price (per unit or percent of nominal).
+    private func editsPurchasePrice(_ p: DepotPosition) -> Bool {
+        purchasePriceEdit != nil && !p.isOwnItem && !p.identifier.isEmpty && p.basis != .unknown
+    }
+
     func depotLabel(_ label: @escaping (DepotPosition) -> String?) -> Self {
         var copy = self
         copy.depotLabelOf = label
@@ -367,6 +383,15 @@ struct DepotPositionsTable<RowMenu: View>: View {
                 .buttonStyle(.borderless)
                 .padding(.top, 2)
             }
+            if editsPurchasePrice(p), let purchasePriceEdit {
+                Button {
+                    purchasePriceEdit(p)
+                } label: {
+                    Label("Einstandskurs bearbeiten", systemImage: "eurosign")
+                }
+                .buttonStyle(.borderless)
+                .padding(.top, 2)
+            }
             #endif
         }
         .appFont(.callout, monospacedDigit: true)
@@ -394,7 +419,25 @@ struct DepotPositionsTable<RowMenu: View>: View {
     /// Edits asset class and instrument; only where the position has a stable classification key.
     @ViewBuilder
     private func editButton(_ p: DepotPosition) -> some View {
-        if p.asset.classification.securityKey != nil {
+        if editsPurchasePrice(p), let purchasePriceEdit {
+            Menu {
+                if p.asset.classification.securityKey != nil {
+                    Button("Klassifizierung bearbeiten", systemImage: "pencil") {
+                        onClassify(ClassificationEditRequest(name: p.holding.name, classification: p.asset.classification))
+                    }
+                }
+                Button("Einstandskurs bearbeiten …", systemImage: "eurosign") { purchasePriceEdit(p) }
+            } label: {
+                Image(systemName: "pencil").appFont(.caption).foregroundStyle(Theme.secondary).padding(4).contentShape(Rectangle())
+            }
+            #if os(macOS)
+            .menuStyle(.borderlessButton)
+            #endif
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Position bearbeiten")
+            .accessibilityLabel("Position bearbeiten")
+        } else if p.asset.classification.securityKey != nil {
             Button {
                 onClassify(ClassificationEditRequest(name: p.holding.name, classification: p.asset.classification))
             } label: {
@@ -414,6 +457,9 @@ struct DepotPositionsTable<RowMenu: View>: View {
             Button("Klassifizierung bearbeiten", systemImage: "pencil") {
                 onClassify(ClassificationEditRequest(name: p.holding.name, classification: p.asset.classification))
             }
+        }
+        if editsPurchasePrice(p), let purchasePriceEdit {
+            Button("Einstandskurs bearbeiten …", systemImage: "eurosign") { purchasePriceEdit(p) }
         }
         if let history, history.available(p) {
             Button("Wertverlauf anzeigen", systemImage: "chart.xyaxis.line") { history.open(p) }

@@ -172,7 +172,7 @@ jobs:
       - name: Linux UI texts have English (Localizable.xcstrings or i18n/en-linux.json)
         run: python3 -I GiroCrabLinux/scripts/i18n-report.py
       - name: Test String-Catalog-Merge-Driver
-        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py scripts/test_coderabbit_flow.py
+        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py scripts/test_coderabbit_flow.py scripts/test_lint_transfer_integrity.py
       - name: Test AI provenance classifier
         run: python3 -m unittest tools/test_export_ai_provenance.py tools/test_check_security_checklist.py
       - name: Test FNZ portal browser scripts
@@ -183,6 +183,8 @@ jobs:
         run: scripts/lint-ffi-exports.sh
       - name: Every schema step is described in schema.rs and docs/ARCHITECTURE.md
         run: scripts/lint-schema-docs.sh
+      # Payment-path integrity (CODEOWNERS, bypass patterns, PR checklist) runs in
+      # pr-checklist.yml: it must rerun when the PR description is edited.
       - name: Install lychee (offline Markdown link checker)
         run: |
           ver=0.24.2

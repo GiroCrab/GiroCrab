@@ -919,6 +919,11 @@ public final class AppModel {
     var refundHistoryTask: Task<Void, Never>?
     var refundHistoryPending = 0
     var refundRevision = 0
+    /// Einstellungen › Allgemein › Auswertungen „Erstattungen mit der Ursprungsbuchung verrechnen“ (#714):
+    /// linked refunds are netted against their originals in every statistic; bookings stay as they are.
+    var netRefundsInStats = false
+    /// Bumped by every toggle of `netRefundsInStats`: only the newest write publishes its result.
+    var netRefundsWriteGeneration = 0
     var transferBusy = false
     var syncQueue: [BankConnection] = []
     /// "Alle abrufen": number of logins in the running batch (0 = single sync).
