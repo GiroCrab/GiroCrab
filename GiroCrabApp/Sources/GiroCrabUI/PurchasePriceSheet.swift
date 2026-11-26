@@ -26,6 +26,8 @@ struct PurchasePriceSheet: View {
     @State private var text = ""
     @State private var busy = false
     @State private var error: String?
+    /// The vault the sheet was opened for: a save never reaches another one.
+    @State private var pin: VaultPin?
 
     private var label: String {
         request.basis == .percentOfNominal
@@ -61,25 +63,30 @@ struct PurchasePriceSheet: View {
                 Spacer()
                 if busy { ProgressView().controlSize(.small) }
                 Button("Speichern", action: save).buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction).disabled(busy || cents == nil)
+                    .keyboardShortcut(.defaultAction).disabled(busy || cents == nil || pin == nil)
             }
         }
         .padding(20).macFrame(width: 460)
         .interactiveDismissDisabled(busy)
-        .onAppear { text = request.currentCents > 0 ? Money.plain(request.currentCents) : "" }
+        .onAppear {
+            text = request.currentCents > 0 ? Money.plain(request.currentCents) : ""
+            pin = model.pinVault()
+        }
     }
 
     private func save() {
-        guard let cents, !busy else { return }
+        guard let cents, let pin, !busy else { return }
+        guard model.isCurrent(pin) else { dismiss(); return }
         let r = request
         busy = true
         Task {
             do {
-                let done: Void? = try await model.vaultOffMain {
+                try await pin.run {
                     try $0.setHoldingPurchasePrice(accountId: r.accountId, isin: r.isin, wkn: r.wkn, purchasePriceCents: cents)
                 }
                 busy = false
-                if done != nil { onSaved(); dismiss() }
+                if model.isCurrent(pin) { onSaved() }
+                dismiss()
             } catch {
                 busy = false
                 self.error = describe(error)
