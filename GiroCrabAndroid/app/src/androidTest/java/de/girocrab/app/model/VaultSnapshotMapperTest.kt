@@ -4,6 +4,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.girocrab.app.security.NativeVaultOpener
 import de.girocrab.app.security.OwnVault
+import de.girocrab.app.ui.screens.SequenceType
+import de.girocrab.app.ui.screens.buildPain008
+import de.girocrab.app.ui.screens.collectableFrom
 import java.io.File
 import java.time.LocalDate
 import uniffi.girocrab_core.AssetInterpolation
@@ -548,5 +551,54 @@ class VaultSnapshotMapperTest {
         val miss = booking().copy(counterpartyIban = "DE02120300000000202052")
         assertTrue("whitespace in the stored IBAN must not matter", rule.matches(hit))
         assertFalse(rule.matches(miss))
+    }
+
+    private fun appMandate(id: String = "7", scheme: MandateScheme = MandateScheme.Core) = DirectDebitMandate(
+        id = id,
+        accountId = "3",
+        debtorName = "Testschuldner",
+        debtorIban = "DE02 1203 0000 0000 2020 51",
+        reference = "REF-$id",
+        signedDate = LocalDate.of(2024, 3, 1),
+        scheme = scheme,
+        oneOff = false,
+        defaultAmountCents = 0,
+        defaultPurpose = "",
+        note = "",
+        active = true,
+        lastCollected = null,
+        nextSequence = "RCUR",
+    )
+
+    /** The core collects a mandate only from its own account, and only when it is still collectable. */
+    @Test
+    fun mandateIsCollectableOnlyFromItsOwnAccount() {
+        val m = appMandate()
+        assertTrue(m.collectableFrom("3"))
+        assertFalse("another account must not collect it", m.collectableFrom("4"))
+        assertFalse("no account chosen", m.collectableFrom(null))
+        assertFalse("inactive", m.copy(active = false).collectableFrom("3"))
+        assertFalse("used one-off", m.copy(oneOff = true, lastCollected = LocalDate.of(2026, 1, 5)).collectableFrom("3"))
+        assertTrue("unused one-off stays selectable", m.copy(oneOff = true).collectableFrom("3"))
+    }
+
+    /** CORE and B2B never share a payment block; every transaction names the debtor's account. */
+    @Test
+    fun pain008CarriesSchemeAndDebtorAccount() {
+        val xml = buildPain008(
+            "Verein", "DE89 3704 0044 0532 0130 00", "DE98ZZZ09999999999",
+            listOf(
+                Triple(appMandate(), 1_000L, SequenceType.RCUR),
+                Triple(appMandate(id = "8", scheme = MandateScheme.B2b), 2_000L, SequenceType.RCUR),
+            ),
+            LocalDate.of(2026, 12, 1),
+        )
+        assertTrue(xml.contains("<LclInstrm><Cd>CORE</Cd></LclInstrm><SeqTp>RCUR</SeqTp>"))
+        assertTrue(xml.contains("<LclInstrm><Cd>B2B</Cd></LclInstrm><SeqTp>RCUR</SeqTp>"))
+        assertEquals("one payment block per scheme and sequence", 2, Regex("<PmtInf>").findAll(xml).count())
+        assertTrue(
+            "debtor IBAN without whitespace",
+            xml.contains("<DbtrAcct><Id><IBAN>DE02120300000000202051</IBAN></Id></DbtrAcct>"),
+        )
     }
 }

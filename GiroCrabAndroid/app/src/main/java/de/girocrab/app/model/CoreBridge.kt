@@ -216,9 +216,9 @@ object DemoData {
                 StandingOrder("so3", "a_cbk", "Allianz Versicherung", "DE23100400000123456789", -12_450, "Versicherung", "M", 3, 1, today.minusYears(3).withDayOfMonth(1), null),
             ),
             mandates = listOf(
-                DirectDebitMandate("m1", "a_spk", "Vattenfall Europe Sales", "DE12ZZZ00000012345", "VAT-2024-0042", today.minusYears(2), MandateScheme.Core, false, 8_900, "Abschlag Strom", "", true, today.withDayOfMonth(5), "RCUR"),
-                DirectDebitMandate("m2", "a_cbk", "Telekom Deutschland GmbH", "DE98ZZZ00000054321", "TEL-7781234", today.minusYears(3), MandateScheme.Core, false, 4_499, "MagentaZuhause", "", true, today.withDayOfMonth(6), "RCUR"),
-                DirectDebitMandate("m3", "a_dkb", "Netflix International B.V.", "NL08ZZZ0000001234", "NFX-5599", today.minusYears(1), MandateScheme.Cor1, true, 1_299, "Standard mit Werbung", "", true, today.withDayOfMonth(7), "OOFF"),
+                DirectDebitMandate("m1", "a_spk", "Vattenfall Europe Sales", "DE89370400440532013000", "VAT-2024-0042", today.minusYears(2), MandateScheme.Core, false, 8_900, "Abschlag Strom", "", true, today.withDayOfMonth(5), "RCUR"),
+                DirectDebitMandate("m2", "a_cbk", "Telekom Deutschland GmbH", "DE02120300000000202051", "TEL-7781234", today.minusYears(3), MandateScheme.Core, false, 4_499, "MagentaZuhause", "", true, today.withDayOfMonth(6), "RCUR"),
+                DirectDebitMandate("m3", "a_dkb", "Netflix International B.V.", "NL91ABNA0417164300", "NFX-5599", today.minusYears(1), MandateScheme.Cor1, true, 1_299, "Standard mit Werbung", "", true, today.withDayOfMonth(7), "OOFF"),
             ),
             holdings = holdings,
             loans = listOf(ManualLoan("l1", "Autokredit", 1_800_000, 1_120_000, 3.9, 38_500, today.minusYears(2))),
