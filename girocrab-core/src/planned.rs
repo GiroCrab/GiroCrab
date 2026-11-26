@@ -333,7 +333,8 @@ impl Vault {
 /// first, so an order already past its date cannot take the booking of a listed one.
 /// Three passes: a booking carrying the order's end-to-end id first, then one with the exact
 /// IBAN, then one without an IBAN on either side. A booking with another end-to-end id than
-/// the order is another payment (same amount to the same payee) and never settles it; an id
+/// an order with a recipient IBAN is another payment (same amount to the same payee) and never
+/// settles it (batch sum rows have no IBAN and carry a local id the bank never sees); an id
 /// missing on either side (or SEPA's `NOTPROVIDED`) leaves the IBAN match to decide.
 /// A booking settles one order only: only the bookings this fetch inserted or adopted
 /// (`fetched`, their ids) count, so a later fetch cannot use the same booking for a second
@@ -412,8 +413,8 @@ pub(crate) fn drop_booked(
                     return false;
                 }
                 let theirs = ref_id(te2e);
-                if !mine.is_empty() && !theirs.is_empty() {
-                    // both carry an id: it alone decides
+                if !mine.is_empty() && !theirs.is_empty() && !order.iban.is_empty() {
+                    // both carry an id and the order names a payee: the id alone decides
                     return pass == 0 && mine == theirs;
                 }
                 match pass {

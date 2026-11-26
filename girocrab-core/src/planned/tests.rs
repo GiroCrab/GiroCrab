@@ -198,6 +198,27 @@ fn end_to_end_id_picks_the_order_among_equal_ones() {
 }
 
 #[test]
+fn batch_sum_order_is_settled_by_a_booking_with_a_payment_id() {
+    let v = vault("planned-batch-sum");
+    let a = account(&v, "Giro");
+    Vault::insert_planned_debit(
+        &v.db().unwrap(),
+        a,
+        "D1-SUM",
+        "2999-01-15",
+        "Lastschrift-Einzug",
+        "",
+        500,
+        "",
+    )
+    .unwrap();
+    // the sum booking carries one collection's id, never the local sum id
+    book_e2e(&v, a, "x1", 500, "D2");
+    settle(&v, a);
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}
+
+#[test]
 fn booked_order_leaves_the_list_once_per_booking() {
     let v = vault("planned-booked");
     let a = account(&v, "Giro");
