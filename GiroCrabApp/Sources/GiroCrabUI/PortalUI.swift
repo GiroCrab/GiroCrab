@@ -547,8 +547,9 @@ final class PortalBrowser {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
         // a username-only page (the password comes on the next one) names its
         // field e-mail — or none of it, and the field is just typed `email`.
-        // A newsletter box earlier in the page must not win: candidates only
-        // from a form with a submit button, there the last editable e-mail
+        // A newsletter box elsewhere on the page must not win: candidates from
+        // a form with a submit button (there the last editable e-mail); outside
+        // such a form only when it is the page's single editable e-mail field
         if (!pw) {
           var mailish = function(i) {
             return /email/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || ''))
@@ -557,7 +558,8 @@ final class PortalBrowser {
             var f = i.closest && i.closest('form');
             return !!f && !!f.querySelector('button[type=submit], input[type=submit], button:not([type])'); };
           var mails = texts.filter(function(i) { return mailish(i) && inLoginForm(i); });
-          named = named || mails[mails.length - 1] || texts.find(mailish);
+          var anyMails = texts.filter(mailish);
+          named = named || mails[mails.length - 1] || (anyMails.length === 1 ? anyMails[0] : null);
         }
         var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
@@ -1177,10 +1179,7 @@ struct PortalWebSheet: View {
     static func storedLoginStep(autofillDisabled: Bool, vaultAnswered: Bool,
                                 storedUser: String, password: String,
                                 connectionLogin: String, connectionIsAmazonVisa: Bool,
-                                tryCount: Int = 0, privacyRedacted: Bool = false) -> StoredLoginStep {
-        // privacy mode: the app is shown to someone — the stored credentials
-        // must not appear in the form (no retry either: mode is a decision)
-        if privacyRedacted { return .done }
+                                tryCount: Int = 0) -> StoredLoginStep {
         if autofillDisabled { return .done }
         // an unanswered vault is retried (a restart catches it while opening) —
         // but a vault that stays closed (e.g. a real read error) ends the poll,
@@ -1197,26 +1196,27 @@ struct PortalWebSheet: View {
     }
 
     /// Fills the stored user name and password into the portal's login form. True once
-    /// done, or when nothing is stored; false while the form is not there yet.
+    /// done, or when nothing is stored; false while the form is not there yet, the vault
+    /// has not answered, or privacy mode / a bug-report capture hides personal data.
     private func fillStoredLogin() async -> Bool {
+        // privacy mode or a running bug-report capture: nothing is read or typed now;
+        // the poll goes on and fills once the redaction ends (a transient state must
+        // not end the autofill for the session)
+        guard redaction.isEmpty else { return false }
         let id = connection.id
         var answered = true
         var storedUser = "", password = ""
-        // privacy mode (the app is shown to someone): nothing is read and
-        // nothing is typed — the poll ends, filling stays with the user
-        if redaction.isEmpty {
-            do {
-                let stored: (String, String)? = try await model.vaultOffMain {
-                    (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
-                }
-                if let stored {
-                    (storedUser, password) = stored
-                } else {
-                    answered = false
-                }
-            } catch {
+        do {
+            let stored: (String, String)? = try await model.vaultOffMain {
+                (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+            }
+            if let stored {
+                (storedUser, password) = stored
+            } else {
                 answered = false
             }
+        } catch {
+            answered = false
         }
         // the limit counts consecutive unanswered reads: an answered vault
         // starts fresh, recoveries must not be spent on the earlier gap
@@ -1225,9 +1225,10 @@ struct PortalWebSheet: View {
             autofillDisabled: AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)),
             vaultAnswered: answered, storedUser: storedUser, password: password,
             connectionLogin: connection.loginName, connectionIsAmazonVisa: connection.connector == .amazonVisa,
-            tryCount: missingTries, privacyRedacted: !redaction.isEmpty)
+            tryCount: missingTries)
         switch step {
         case .done:
+            AppModel.debugLog("portal: stored login autofill ended – \(answered ? "nothing stored or autofill off" : "vault did not answer (\(missingTries) tries)")")
             return true
         case .retry:
             missingTries += 1

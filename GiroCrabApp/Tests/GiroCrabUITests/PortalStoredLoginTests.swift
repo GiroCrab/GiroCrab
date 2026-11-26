@@ -9,11 +9,11 @@ final class PortalStoredLoginTests: XCTestCase {
     private func step(autofillDisabled: Bool = false, vaultAnswered: Bool = true,
                       storedLogin: String = "", password: String = "",
                       connectionLogin: String = "", amazonVisa: Bool = false,
-                      tryCount: Int = 0, privacyRedacted: Bool = false) -> PortalWebSheet.StoredLoginStep {
+                      tryCount: Int = 0) -> PortalWebSheet.StoredLoginStep {
         PortalWebSheet.storedLoginStep(autofillDisabled: autofillDisabled, vaultAnswered: vaultAnswered,
                                        storedUser: storedLogin, password: password,
                                        connectionLogin: connectionLogin, connectionIsAmazonVisa: amazonVisa,
-                                       tryCount: tryCount, privacyRedacted: privacyRedacted)
+                                       tryCount: tryCount)
     }
 
     func testVaultThatHasNotAnsweredYetIsRetried() {
@@ -64,16 +64,12 @@ final class PortalStoredLoginTests: XCTestCase {
         } else { XCTFail("auch der gespeicherte Name wird eingetragen") }
     }
 
-    func testPrivacyModeFillsNothing() {
-        // privacy mode: nothing stored is typed, not even the user name
-        if case .done = step(storedLogin: "max@example.com", password: "x", privacyRedacted: true) { }
-        else { XCTFail("im Privacy-Modus bleibt das Formular leer") }
-    }
-
-    func testPrivacyModeBeatsTheVaultRetry() {
-        // privacy beats the retry: the mode is a decision, not a missed read —
-        // the poll ends even though the vault has not answered at all yet
-        if case .done = step(vaultAnswered: false, tryCount: 19, privacyRedacted: true) { }
-        else { XCTFail("der Privacy-Modus beendet das Polling sofort") }
+    func testAnAnsweredVaultAfterRetriesStillFills() {
+        // a recovered vault fills even after earlier unanswered polls (the caller
+        // resets the counter once the vault answers)
+        if case let .fill(user, pw) = step(storedLogin: "max@example.com", password: "x", tryCount: 19) {
+            XCTAssertEqual(user, "max@example.com")
+            XCTAssertEqual(pw, "x")
+        } else { XCTFail("ein beantworteter Tresor füllt trotz früherer Versuche") }
     }
 }
