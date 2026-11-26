@@ -134,4 +134,43 @@ final class ConnectionAutoSyncTests: XCTestCase {
         XCTAssertEqual(model.quietSyncConnectionID, ids.last)
         XCTAssertEqual(model.autoSyncStatus.lastRun, now)
     }
+
+    /// A sync asked for in the closing Einstellungen sheet (#1831) is the user's, like an open
+    /// PIN prompt: no scheduled fetch of another login starts before it.
+    func testNoScheduledFetchWhileASyncWaitsForSettingsToClose() throws {
+        let model = AppModel(options: LaunchOptions(arguments: [], environment: [:]))
+        model.bankingPolicy = BankingPolicy(publicKeys: [], store: MemoryBankingPolicyStore(),
+                                            fetcher: nil, bundled: nil, distribution: .developerID,
+                                            bundleVersion: "1")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let vault = try Vault.open(path: folder.appendingPathComponent("test.girocrab").path,
+                                   key: Data(repeating: 0x54, count: 32))
+        let asked = try vault.addBankConnection(connector: .fordMoney, displayName: "", loginName: "demo")
+        let scheduled = try vault.addBankConnection(connector: .hanseaticBank, displayName: "", loginName: "demo")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let key = AutoSync.attemptKey(scheduled)
+        let oldAttempt = AppDefaults.store.object(forKey: key)
+        defer {
+            model.releaseVaultState()
+            AppDefaults.store.set(oldAttempt, forKey: key)
+        }
+        model.useVault(vault, demo: true)
+        model.demoActive = false
+        for id in [asked, scheduled] { XCTAssertTrue(model.setConnectionPin(id, "12345")) }
+        XCTAssertTrue(model.setSyncSchedule(asked, AutoSync.never))
+        XCTAssertTrue(model.setSyncSchedule(scheduled, 2))
+        AppDefaults.store.set(now.timeIntervalSince1970 - 3 * 3600, forKey: key)
+
+        model.showSettings = true
+        model.requestSync(try XCTUnwrap(model.connections.first { $0.id == asked }))
+        model.autoSyncTick(now: now)
+        XCTAssertNil(model.syncingConnectionID)
+        XCTAssertNil(model.quietSyncConnectionID)
+
+        model.settingsDismissed()
+        XCTAssertEqual(model.syncingConnectionID, asked)
+        XCTAssertNil(model.quietSyncConnectionID)
+    }
 }
