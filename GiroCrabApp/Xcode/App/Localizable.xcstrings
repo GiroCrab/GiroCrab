@@ -6208,6 +6208,17 @@
         }
       }
     },
+    "Aus: keine neuen Dokumente, bereits gespeicherte bleiben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off: no new documents, stored ones stay."
+          }
+        }
+      }
+    },
     "Ausbildung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27975,6 +27986,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "PayPal secret"
+          }
+        }
+      }
+    },
+    "Per FinTS kommen nur PDF-Kontoauszüge, und nur wenn die Bank sie per FinTS anbietet: beim Sync für Konten, bei denen unter „Dokumente“ „Kontoauszüge automatisch beim Sync abrufen“ eingeschaltet ist, sonst über „Kontoauszüge abrufen“ an gleicher Stelle. Postbox-Dokumente wie Wertpapier- oder Ertragsabrechnungen ruft GiroCrab per FinTS nicht ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Over FinTS, only PDF statements are fetched, and only if the bank offers them over FinTS: during sync for accounts that have “Fetch statements automatically when syncing” switched on under “Documents”, otherwise with “Fetch statements” in the same place. GiroCrab does not fetch Postbox documents such as securities or income statements over FinTS."
           }
         }
       }
