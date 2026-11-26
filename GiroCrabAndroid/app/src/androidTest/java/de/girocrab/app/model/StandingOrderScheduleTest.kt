@@ -112,6 +112,6 @@ class StandingOrderScheduleTest {
         val o = order(unit = "W", every = 1, execDay = 5, first = "2026-01-05")
         val next = o.nextRun(LocalDate.of(2026, 11, 25))
         assertEquals(LocalDate.of(2026, 11, 27), next)
-        assertEquals(java.time.DayOfWeek.FRI, next?.dayOfWeek)
+        assertEquals(LocalDate.of(2026, 11, 27).dayOfWeek, next?.dayOfWeek)
     }
 }
