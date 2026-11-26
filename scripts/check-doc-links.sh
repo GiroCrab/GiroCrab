@@ -28,6 +28,10 @@ while IFS= read -r -d '' f; do
     cashcrab-core/*|CashCrabApp/*|0000-template.md|*/0000-template.md) continue ;;
   esac
   [ -e "$f" ] || continue
+  # Escape glob metacharacters so lychee treats tracked filenames literally.
+  case "$f" in
+    *[][*?]* ) f="$(printf '%s\n' "$f" | sed 's/[][*?]/[&]/g')" ;;
+  esac
   files+=("$f")
 done < <(git ls-files -z ':(icase)*.md')
 
