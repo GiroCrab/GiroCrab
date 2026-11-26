@@ -178,22 +178,23 @@ Auf dem iPhone schreibt `--screenshot` kein Bild. Es blendet den Demo-Hinweis au
 aufnehmen kann. `--pick` öffnet auf dem iPhone das Buchungs-Sheet. Das Beispiel in Bash läuft aus
 `GiroCrabApp/Xcode/`, sobald das xcframework für iOS vorliegt. `simctl list devices booted` zeigt die IDs der
 laufenden Geräte. Die separate Bundle-ID isoliert die Demo-App. Die Simulator-Einstellungen werden beim
-Verlassen des Skripts wiederhergestellt.
+Verlassen des Skripts wiederhergestellt. Der temporäre Xcode-Buildordner wird auch bei einem Fehler entfernt.
 
 ```bash
 (
 set -e
 UDID='<ID des iPhone-Simulators>'
 APP_ID=de.girocrab.app.uiaudit
-DD=$(mktemp -d /tmp/girocrab-ui-audit.XXXXXX)
 OLD_APPEARANCE=$(xcrun simctl ui "$UDID" appearance)
 OLD_SIZE=$(xcrun simctl ui "$UDID" content_size)
-restore_simulator() {
+cleanup() {
   xcrun simctl terminate "$UDID" "$APP_ID" >/dev/null 2>&1 || true
-  xcrun simctl ui "$UDID" appearance "$OLD_APPEARANCE"
-  xcrun simctl ui "$UDID" content_size "$OLD_SIZE"
+  xcrun simctl ui "$UDID" appearance "$OLD_APPEARANCE" || true
+  xcrun simctl ui "$UDID" content_size "$OLD_SIZE" || true
+  rm -rf -- "$DD"
 }
-trap restore_simulator EXIT
+DD=$(mktemp -d /tmp/girocrab-ui-audit.XXXXXX)
+trap cleanup EXIT
 xcodebuild -quiet -project GiroCrab.xcodeproj -scheme GiroCrab -destination "id=$UDID" \
   -derivedDataPath "$DD" PRODUCT_BUNDLE_IDENTIFIER="$APP_ID" CODE_SIGNING_ALLOWED=NO build
 xcrun simctl install "$UDID" "$DD/Build/Products/Debug-iphonesimulator/GiroCrab.app"
