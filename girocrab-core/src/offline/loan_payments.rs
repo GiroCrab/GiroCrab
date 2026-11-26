@@ -78,13 +78,21 @@ pub(crate) fn migrate(conn: &Connection) -> CoreResult<()> {
 /// A real deletion has a positive stamp and applies to all copies of the payment.
 const SHADOW: i64 = -1;
 
+const SOURCE_ALIASES: &str = "WITH RECURSIVE aliases(id) AS (
+    VALUES (?1)
+    UNION SELECT m.old_id FROM offline_loan_source_moves m JOIN aliases a ON a.id = m.new_id
+)";
+
 pub(super) fn already_mirrored(conn: &Connection, source: i64, loan: i64) -> CoreResult<bool> {
-    Ok(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM offline_loan_payments p JOIN transactions t ON t.id = p.payment_id
-                        WHERE p.source_id = ?1 AND t.account_id = ?2)",
-        params![resolve_source(conn, source)?, loan],
-        |r| r.get(0),
-    )?)
+    // A destination can become a tombstone before the next reconciliation.
+    // Check the entire alias group, including links to its former representative.
+    Ok(conn
+        .prepare_cached(&format!(
+            "{SOURCE_ALIASES}
+             SELECT EXISTS(SELECT 1 FROM aliases a JOIN offline_loan_payments p ON p.source_id = a.id
+                JOIN transactions t ON t.id = p.payment_id WHERE t.account_id = ?2)"
+        ))?
+        .query_row(params![source_root(conn, source)?, loan], |r| r.get(0))?)
 }
 
 pub(super) fn is_mirrored(conn: &Connection, booking: i64) -> CoreResult<bool> {
@@ -136,7 +144,7 @@ pub(crate) fn merge_attached(conn: &Connection, bookings: &HashMap<i64, i64>) ->
     reconcile(conn)
 }
 
-fn resolve_source(conn: &Connection, source: i64) -> CoreResult<i64> {
+fn source_root(conn: &Connection, source: i64) -> CoreResult<i64> {
     Ok(conn
         .prepare_cached(
             "WITH RECURSIVE chain(id) AS (
@@ -150,23 +158,96 @@ fn resolve_source(conn: &Connection, source: i64) -> CoreResult<i64> {
         .unwrap_or(source))
 }
 
+fn source_is_live(conn: &Connection, id: i64) -> CoreResult<bool> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT t.deleted_ms IS NULL AND a.deleted_ms IS NULL
+               FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE t.id = ?1",
+        )?
+        .query_row([id], |r| r.get(0))?)
+}
+
+fn resolve_source(conn: &Connection, source: i64) -> CoreResult<i64> {
+    let root = source_root(conn, source)?;
+    if source_is_live(conn, root)? {
+        return Ok(root);
+    }
+
+    // A canonical destination may later be deleted. The incoming aliases
+    // still provide the exact equivalent bookings, without matching by amount.
+    let mut query = conn.prepare_cached(&format!(
+        "{SOURCE_ALIASES}
+         SELECT t.id FROM aliases x
+           JOIN transactions t ON t.id = x.id JOIN accounts a ON a.id = t.account_id
+          WHERE t.deleted_ms IS NULL AND a.deleted_ms IS NULL"
+    ))?;
+    let live = query
+        .query_map([root], |r| r.get(0))?
+        .map(|id| {
+            let id = id?;
+            Ok((crate::sync_merge::booking_key(conn, id)?, id))
+        })
+        .collect::<CoreResult<Vec<_>>>()?;
+    Ok(live.into_iter().min().map_or(root, |(_, id)| id))
+}
+
 pub(crate) fn move_source(conn: &Connection, old: i64, new: i64) -> CoreResult<()> {
     if old == new {
         return Ok(());
     }
-    let new = resolve_source(conn, new)?;
-    if old != new
-        && conn
-            .prepare_cached(
-                "INSERT OR IGNORE INTO offline_loan_source_moves(old_id, new_id) VALUES (?1, ?2)",
-            )?
-            .execute(params![old, new])?
-            != 0
-    {
-        conn.prepare_cached(
-            "UPDATE offline_loan_payments SET source_id = ?2 WHERE source_id = ?1",
+    let previous = source_root(conn, old)?;
+    let proposed = source_root(conn, new)?;
+    if previous == proposed {
+        return Ok(());
+    }
+
+    // A direct replacement follows the destination chosen by account/booking
+    // matching. If the source was already moved, join both destinations:
+    // prefer a live one, then compare stable booking keys, never local IDs.
+    let prefer_previous = if previous == old {
+        false
+    } else {
+        let previous_live = resolve_source(conn, previous)?;
+        let proposed_live = resolve_source(conn, proposed)?;
+        let rank = |id| -> CoreResult<_> {
+            Ok((
+                !source_is_live(conn, id)?,
+                crate::sync_merge::booking_key(conn, id)?,
+            ))
+        };
+        rank(previous_live)? <= rank(proposed_live)?
+    };
+    let (from, to) = if prefer_previous {
+        (proposed, previous)
+    } else {
+        (previous, proposed)
+    };
+
+    conn.prepare_cached("INSERT INTO offline_loan_source_moves(old_id, new_id) VALUES (?1, ?2)")?
+        .execute(params![from, to])?;
+    // Preserve links if a caller physically removes the original booking.
+    conn.prepare_cached("UPDATE offline_loan_payments SET source_id = ?2 WHERE source_id = ?1")?
+        .execute(params![from, resolve_source(conn, to)?])?;
+    Ok(())
+}
+
+/// Persist the same live representative for every linked copy in a cohort.
+fn normalize_sources(conn: &Connection) -> CoreResult<()> {
+    let sources = conn
+        .prepare_cached(
+            "SELECT DISTINCT source_id FROM offline_loan_payments
+              WHERE source_id IN (SELECT old_id FROM offline_loan_source_moves)
+                 OR source_id IN (SELECT new_id FROM offline_loan_source_moves)",
         )?
-        .execute(params![old, new])?;
+        .query_map([], |r| r.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut update = conn
+        .prepare_cached("UPDATE offline_loan_payments SET source_id = ?2 WHERE source_id = ?1")?;
+    for source in sources {
+        let canonical = resolve_source(conn, source)?;
+        if source != canonical {
+            update.execute(params![source, canonical])?;
+        }
     }
     Ok(())
 }
@@ -183,6 +264,7 @@ pub(crate) fn remap_folded(conn: &Connection, bookings: &HashMap<i64, i64>) -> C
 /// A user deletion from either copy wins. Shadows can be unhidden if a later
 /// merge corrects a source mapping, so they never act as user deletions.
 pub(crate) fn reconcile(conn: &Connection) -> CoreResult<()> {
+    normalize_sources(conn)?;
     let mut update = conn.prepare_cached(
         "WITH ranked AS (
             SELECT t.id, a.deleted_ms AS account_deleted,
