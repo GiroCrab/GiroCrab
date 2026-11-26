@@ -311,7 +311,7 @@ const FINTS_ALIASES: &[(&str, &str)] = &[
     ("76030080", "dab bnp paribas"),
     ("50070439", "lufthansa mastercard"),
     // custodian of these brokers; their customers log in with the Baader Stammnummer
-    ("70033100", "traders place finanzen zero"),
+    ("70033100", "traders place finanzen net zero"),
 ];
 
 fn fints_result(b: FinTsBankInfo) -> BankSearchResult {
@@ -828,7 +828,13 @@ mod tests {
 
     #[test]
     fn baader_bank_is_found_by_its_brokers() {
-        for q in ["baader", "traders place", "finanzen zero", "70033100"] {
+        for q in [
+            "baader",
+            "traders place",
+            "finanzen zero",
+            "finanzen.net zero",
+            "70033100",
+        ] {
             let r = search(q, vec![], 12);
             let b = r.iter().find(|b| b.blz == "70033100");
             assert!(
