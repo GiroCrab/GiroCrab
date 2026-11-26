@@ -283,14 +283,13 @@ struct SchwaebischHallWebSheet: View {
     /// done, or when nothing is stored; false while the form is not there yet.
     private func fillStoredLogin() async -> Bool {
         let id = connection.id
+        // A failed password save keeps the old secret but turns autofill off (#1947).
+        guard !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)) else { return true }
         let stored = try? await model.vaultOffMain {
             (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
         }
-        guard let (storedUser, password) = stored, !password.isEmpty else { return true }
-        // Without a stored user name, the connection's login number is the fallback.
-        let user = storedUser.isEmpty ? connection.loginName : storedUser
-        guard !user.isEmpty else { return true }
-        let filled = await browser.fillLogin(user: user, password: password)
+        guard let (storedUser, password) = stored, !storedUser.isEmpty, !password.isEmpty else { return true }
+        let filled = await browser.fillLogin(user: storedUser, password: password)
         if filled { AppModel.debugLog("schwaebisch hall: stored login filled in") }
         return filled
     }
