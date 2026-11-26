@@ -59,7 +59,7 @@ for ok in 'if (request.isMainFrame && !u.toLowerCase().startsWith("https:")) req
           'if (a.protocol !== "https:") request.reject()'; do
     grep -qE "$QML_SCHEME_RE" <<<"$ok" || err "self-test: https scheme check not recognised: $ok"
 done
-QML_VIEW_RE='^[[:space:]]*(sourceComponent: )?WebEngineView[[:space:]]*\{|^WebEngineView[[:space:]]*\{'
+QML_VIEW_RE='^[[:space:]]*(sourceComponent:[[:space:]]*)?WebEngineView[[:space:]]*\{|^WebEngineView[[:space:]]*\{'
 # every WebEngineView needs its own handler, and that handler must check the scheme itself or call a
 # function of the file that does (`browser.navigation(…)` in ConsentBrowser.qml)
 qml_views() {   # stdin = QML; each WebEngineView block on one line
@@ -93,6 +93,10 @@ qml_guard_gap $'WebEngineView {\n  onNavigationRequested: r => { if (!r.url.toSt
 if qml_guard_gap $'Item {\n  WebEngineView {\n    onNavigationRequested: request => nav(request)\n  }\n  WebEngineView {\n    onNavigationRequested: request => nav(request)\n  }\n  function nav(request) {\n    if (request.isMainFrame && !request.url.toString().startsWith("https:")) request.reject()\n  }\n}'; then
     err "self-test: WebEngineViews sharing a guard function flagged"
 fi
+grep -qE "$QML_VIEW_RE" <<<'    sourceComponent:  WebEngineView {' \
+    || err "self-test: WebEngineView after sourceComponent with extra whitespace not discovered"
+qml_guard_gap $'Item {\n  sourceComponent:  WebEngineView {\n  }\n}' \
+    || err "self-test: sourceComponent WebEngineView with extra whitespace and no handler accepted"
 for f in $(grep -lE "$QML_VIEW_RE" "$QML_DIR"/*.qml); do
     is_local "$f" && continue
     ! qml_guard_gap "$(cat "$f")" \

@@ -549,6 +549,7 @@ final class PortalBrowser {
           el.dispatchEvent(new Event('input', {bubbles: true}));
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
+        if (u && u.value && u.value !== user) return false;
         if (u && !u.value) set(u, user);
         set(pw, password);
         return true;
