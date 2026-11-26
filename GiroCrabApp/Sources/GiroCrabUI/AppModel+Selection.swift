@@ -359,6 +359,8 @@ extension AppModel {
                 self.categories = loaded.categories
                 self.uncategorizedFilteredCount = loaded.uncategorized
                 self.categoryTree = Self.buildTree(loaded.categories)
+                // a sync or merge may have filled a category of the booking filter
+                self.loadScopeCategories()
                 self.history = Self.trimmedHistory(loaded.history, from: from, to: to)
                 self.categoryHistory = loaded.categoryHistory
                 self.categoryOtherCurrencies = loaded.otherCurrencies

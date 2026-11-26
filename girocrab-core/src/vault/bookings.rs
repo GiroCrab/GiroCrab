@@ -948,34 +948,40 @@ impl Vault {
         self.list_page(filter, true)
     }
 
-    /// Ids of the categories (also those of split parts) that hold bookings of the booking
-    /// `scope`: the sidebar shows them while the filter is on, so no category is picked blind
-    /// and ends in "Keine Buchungen". Reads every booking once: call it off the main thread
-    /// and only when the scope changes.
+    /// Ids of the categories that hold bookings of the booking `scope`, matched like
+    /// `category_match_sql`: an unsplit booking by its own category, a split booking only by
+    /// the categories of its parts (its own category then holds none of it). The sidebar shows
+    /// them while the filter is on, so no category is picked blind and ends in "Keine Buchungen".
+    /// Reads every booking once: call it off the main thread, on scope changes and category reloads.
     pub fn categories_in_scope(&self, scope: BookingScope) -> Result<Vec<i64>, CoreError> {
         let page = self.list_transactions(BookingFilter {
             scope,
             ..Default::default()
         })?;
+        let booking_ids: Vec<i64> = page.transactions.iter().map(|t| t.id).collect();
         let mut ids: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
-        let mut split: Vec<String> = vec![];
-        for t in &page.transactions {
-            match t.category_id {
-                Some(c) => {
+        let mut split: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let db = self.db()?;
+        for chunk in booking_ids.chunks(500) {
+            let mut st = db.prepare(&format!(
+                "SELECT sp.transaction_id, sp.category_id FROM transaction_splits sp
+                  WHERE sp.transaction_id IN ({})",
+                vec!["?"; chunk.len()].join(",")
+            ))?;
+            let rows = st.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+            })?;
+            for row in rows {
+                let (booking, category) = row?;
+                split.insert(booking);
+                if let Some(c) = category {
                     ids.insert(c);
                 }
-                None => split.push(t.id.to_string()),
             }
         }
-        let db = self.db()?;
-        for chunk in split.chunks(500) {
-            let mut st = db.prepare(&format!(
-                "SELECT DISTINCT sp.category_id FROM transaction_splits sp
-                  WHERE sp.category_id IS NOT NULL AND sp.transaction_id IN ({})",
-                chunk.join(",")
-            ))?;
-            for id in st.query_map([], |r| r.get::<_, i64>(0))? {
-                ids.insert(id?);
+        for t in &page.transactions {
+            if let Some(c) = t.category_id.filter(|_| !split.contains(&t.id)) {
+                ids.insert(c);
             }
         }
         Ok(ids.into_iter().collect())

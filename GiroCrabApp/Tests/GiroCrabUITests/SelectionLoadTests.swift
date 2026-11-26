@@ -370,11 +370,73 @@ final class SelectionLoadTests: XCTestCase {
         for _ in 0..<1500 where model.scopeCategoryIDs == nil { try await Task.sleep(for: .milliseconds(2)) }
         let ids = try XCTUnwrap(model.scopeCategoryIDs)
         XCTAssertFalse(ids.isEmpty)
-        let shown = model.categoryTree.limited(to: ids)
-        XCTAssertLessThan(shown.count, model.categoryTree.count)
-        for id in ids { XCTAssertNotNil(shown.node(id), "category \(id) of the filter is listed") }
         model.selectScope(.all)
         XCTAssertNil(model.scopeCategoryIDs)
+    }
+
+    /// `limited(to:)` keeps exactly the matching leaf and its parent: not its sibling, not another root.
+    func testLimitedTreeKeepsExactlyTheMatchesAndTheirParents() throws {
+        let leaf = try XCTUnwrap(model.categories.first { c in
+            guard let p = c.parentId else { return false }
+            return model.categories.contains { $0.id == p && $0.parentId == nil }
+                && model.categories.contains { $0.parentId == p && $0.id != c.id }
+        })
+        let parent = try XCTUnwrap(model.categories.first { $0.id == leaf.parentId })
+        let sibling = try XCTUnwrap(model.categories.first { $0.parentId == parent.id && $0.id != leaf.id })
+        let otherRoot = try XCTUnwrap(model.categories.first { $0.parentId == nil && $0.id != parent.id })
+        let tree = AppModel.buildTree([parent, leaf, sibling, otherRoot])
+
+        func ids(_ nodes: [CategoryNode]) -> Set<Int64> {
+            nodes.reduce(into: Set<Int64>()) { out, n in
+                out.insert(n.category.id)
+                out.formUnion(ids(n.children ?? []))
+            }
+        }
+        XCTAssertEqual(ids(tree.limited(to: [leaf.id])), [parent.id, leaf.id])
+    }
+
+    /// The core lists a category for a scope exactly when the filter finds bookings of the scope in
+    /// it (split bookings by their parts only, like the list), so no listed category shows "Keine Buchungen".
+    func testScopeCategoriesAreExactlyThoseWithBookingsOfTheScope() throws {
+        let vault = try XCTUnwrap(model.vault)
+        for scope in [BookingScope.investments, .everyday] {
+            let listed = Set(try vault.categoriesInScope(scope: scope))
+            var f = model.currentFilter
+            f.scope = scope
+            f.dateFrom = nil
+            f.dateTo = nil
+            f.accountIds = []
+            f.includeSubcategories = false
+            f.respectInTotal = false
+            f.limit = 1
+            for c in model.categories {
+                f.categoryId = c.id
+                let count = try vault.countTransactions(filter: f)
+                XCTAssertEqual(listed.contains(c.id), count > 0, "\(scope): category \(c.id)")
+            }
+        }
+    }
+
+    /// A background reload (sync, iCloud merge) refreshes the filter's categories too.
+    func testBackgroundReloadRefreshesScopeCategories() async throws {
+        model.selectScope(.investments)
+        for _ in 0..<1500 where model.scopeCategoryIDs == nil { try await Task.sleep(for: .milliseconds(2)) }
+        let expected = try XCTUnwrap(model.scopeCategoryIDs)
+        XCTAssertFalse(expected.isEmpty)
+        // a stale set, as before a merge filled further categories
+        model.scopeCategoryIDs = []
+        model.reloadAllInBackground()
+        for _ in 0..<1500 where model.scopeCategoryIDs != expected { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertEqual(model.scopeCategoryIDs, expected)
+    }
+
+    /// ⌘1–3 change the scope like the pickers: a chosen category ends.
+    func testScopeShortcutEndsTheCategorySelection() throws {
+        let category = try XCTUnwrap(model.categoryTree.first)
+        model.interactiveSidebarSelection = .category(category.id)
+        model.applyScopeShortcut(index: 1, scope: .investments)
+        XCTAssertEqual(model.sidebarSelection, .allAccounts)
+        XCTAssertEqual(model.scope, .investments)
     }
 
     /// An account or group stays selected: only categories are reset.

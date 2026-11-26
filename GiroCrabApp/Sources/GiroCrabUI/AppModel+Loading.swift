@@ -93,7 +93,8 @@ extension AppModel {
             let sums = categorySumFilter
             categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
             categoryTree = Self.buildTree(categories)
-            if scope != .all { loadScopeCategories() }
+            // also clears a set left from another scope or vault
+            loadScopeCategories()
             uncategorizedFilteredCount = Int(try vault.countTransactions(filter: uncategorizedCountFilter(sums)))
         }
     }
@@ -146,15 +147,21 @@ extension AppModel {
     }
 
     /// The categories of the booking filter for the sidebar (`scopeCategoryIDs`); the core reads
-    /// every booking for it, so it runs off the main thread.
+    /// every booking for it, so it runs off the main thread. Every rebuild of `categoryTree`
+    /// (synchronous, background selection load, edit refresh) calls it: a category assigned
+    /// meanwhile must not stay hidden.
     func loadScopeCategories() {
         scopeCategoryTask?.cancel()
         let scope = scope
-        guard scope != .all, let vault else { scopeCategoryIDs = nil; return }
+        guard scope != .all, let vault else {
+            if scopeCategoryIDs != nil { scopeCategoryIDs = nil }
+            return
+        }
         scopeCategoryTask = Task { [weak self] in
             let ids = try? await Self.offMain { try vault.categoriesInScope(scope: scope) }
             guard !Task.isCancelled, let self, self.vault === vault, self.scope == scope else { return }
-            self.scopeCategoryIDs = ids.map(Set.init)
+            let next = ids.map(Set.init)
+            if self.scopeCategoryIDs != next { self.scopeCategoryIDs = next }
         }
     }
 

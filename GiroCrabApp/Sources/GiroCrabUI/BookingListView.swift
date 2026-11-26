@@ -254,7 +254,8 @@ struct BookingStreamView: View {
                         DemoBanner()
                     }
                     #if os(iOS)
-                    Picker("Ansicht", selection: scope) {
+                    // writes through `selectScope` like the macOS toolbar picker: a chosen category ends
+                    Picker("Ansicht", selection: Binding(get: { scope.wrappedValue }, set: { model.selectScope($0) })) {
                         ForEach(BookingScope.ordered, id: \.self) { Text($0.shortTitle).tag($0) }
                     }
                     .pickerStyle(.segmented)
