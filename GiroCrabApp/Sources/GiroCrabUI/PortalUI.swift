@@ -687,14 +687,11 @@ final class PortalBrowser {
         return (card, number, out, items.count, failed)
     }
 
-    /// The statements tab of the Open-Bank portal (Amazon Visa); it mirrors the
-    /// booking page's route. The portal opens as `…/amazon/transactions`, so the
-    /// relative form stays right even for other card sections. The route stays
-    /// unverified against the live portal: when it differs, the poll runs dry
-    /// and the fallback reads the visible links of whatever page is up — at
-    /// worst a bounded wait and a counted failure, recoverable the next run.
+    /// The statements tab of the Open-Bank portal (Amazon Visa), live-checked at
+    /// the real portal: the statements list sits under
+    /// `…/amazon/card-settings/card-statements` (logged-in browsing).
     static let visaStatementsPageJS =
-        "location.href = location.origin + '/amazon/statements'; return true;"
+        "location.href = location.origin + '/amazon/card-settings/card-statements'; return true;"
 
     /// PDF links of the visible page with a closing date from their row (`href`
     /// resolved against the document, the date out of the link's or its list
