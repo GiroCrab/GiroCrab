@@ -175,8 +175,8 @@ impl FinTsConnector {
             }
         }
         let mut accounts = merge_upd_with_sepa(&self.upd, sepa, &self.blz);
-        // Postbank also serves accounts of other banks of the group (BIC DEUT…) behind
-        // the one login, so the login's server decides, not the account's BIC.
+        // Postbank (which also serves accounts of other banks of the group, BIC DEUT…, behind
+        // the one login) and norisbank: the login's server decides, not the account's BIC.
         if needs_full_kti(&self.url) {
             for (acc, _) in &mut accounts {
                 acc.full_kti = true;
@@ -357,9 +357,9 @@ impl FinTsConnector {
             return Self::kti_full(acc, &acc.account_number);
         }
         // Postbank and norisbank answer HKCAZ/HKCDB with 9210 "nationale Kontoverbindung
-        // erforderlich" for IBAN:BIC alone (#1702) and Postbank "Keine gültige Kontoverbindung" for the 10-digit
-        // number from the IBAN combined with its 3-digit sub-account. It accepts the
-        // account exactly as its HIUPD lists it (as HKKAZ already does through KTV).
+        // erforderlich" for IBAN:BIC alone (#1702); Postbank also rejects ("Keine gültige
+        // Kontoverbindung") the 10-digit number from the IBAN with its 3-digit sub-account.
+        // Both get the account exactly as HIUPD lists it (as HKKAZ already does through KTV).
         if acc.full_kti && !acc.iban.is_empty() && !acc.account_number.is_empty() {
             return Self::kti_full(acc, &acc.account_number);
         }
@@ -429,6 +429,27 @@ mod postbank_kti_tests {
         assert_eq!(
             FinTsConnector::kti(&acc),
             "DE89100100100123456789:PBNKDEFFXXX:123456789:000:280:10010010"
+        );
+    }
+
+    #[test]
+    fn norisbank_kti_carries_the_national_account_only_with_the_flag() {
+        let mut acc = SepaAccount {
+            iban: "DE02100777770123456700".into(),
+            bic: "NORSDE51XXX".into(),
+            account_number: "1234567".into(),
+            sub_account: "00".into(),
+            blz: "10077777".into(),
+            full_kti: needs_full_kti("https://fints.norisbank.de/"),
+        };
+        assert_eq!(
+            FinTsConnector::kti(&acc),
+            "DE02100777770123456700:NORSDE51XXX:1234567:00:280:10077777"
+        );
+        acc.full_kti = false;
+        assert_eq!(
+            FinTsConnector::kti(&acc),
+            "DE02100777770123456700:NORSDE51XXX"
         );
     }
 }
