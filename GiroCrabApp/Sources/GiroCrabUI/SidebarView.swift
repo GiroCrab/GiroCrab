@@ -657,6 +657,9 @@ private struct AccountRowHeight: ViewModifier {
 /// so they stay as they are and only the selection highlight moves.
 private struct SidebarSelectionList<Content: View>: View {
     @Environment(AppModel.self) private var model
+    #if os(macOS)
+    @FocusState private var focused: Bool
+    #endif
     @Environment(\.textScale) private var textScale
     let density: SidebarDensity
     let content: Content
@@ -678,6 +681,10 @@ private struct SidebarSelectionList<Content: View>: View {
             content.listRowSeparator(.hidden)
         }
         .contentMargins(.top, 14, for: .scrollContent)
+        .focused($focused)
+        .onChange(of: focused) { _, focused in model.sidebarHasKeyboardFocus = focused }
+        // locked: the state goes with the view, without a change
+        .onDisappear { model.sidebarHasKeyboardFocus = false }
         if density.usesTighterAccountSpacing {
             // The macOS sidebar style has its own minimum height.
             list.listStyle(.inset)
