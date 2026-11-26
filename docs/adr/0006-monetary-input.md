@@ -2,7 +2,7 @@
 
 **Status** · Proposed\
 **Date** · 2026-11-25\
-**Discussion** · [#1937](https://github.com/GiroCrab/GiroCrab/issues/1937), [#1761](https://github.com/GiroCrab/GiroCrab/pull/1761)
+**Discussion** · [#1965](https://github.com/GiroCrab/GiroCrab/issues/1965); examples [#1937](https://github.com/GiroCrab/GiroCrab/issues/1937), [#1761](https://github.com/GiroCrab/GiroCrab/pull/1761)
 
 ## Context
 
