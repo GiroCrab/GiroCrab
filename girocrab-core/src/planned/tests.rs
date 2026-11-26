@@ -642,3 +642,62 @@ fn merge_settles_an_arriving_order_a_stored_booking_names() {
     assert_eq!(settled_count(&with_booking), 1);
     assert_eq!(with_booking.count_planned_payments().unwrap(), 0);
 }
+
+fn only_account(v: &Vault) -> i64 {
+    v.db()
+        .unwrap()
+        .query_row("SELECT id FROM accounts", [], |r| r.get(0))
+        .unwrap()
+}
+
+fn reference_of(v: &Vault, ext: &str) -> String {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT end_to_end_id FROM transactions WHERE external_id = ?1",
+            [ext],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn usable_reference_is_neither_blank_nor_the_placeholder() {
+    assert!(super::names_order(" E1 "));
+    assert!(!super::names_order("  "));
+    assert!(!super::names_order(" notprovided "));
+}
+
+/// The booking both vaults have names `E1` only on the other side (here the placeholder): the
+/// merge matches it (no second row), takes the reference over and settles the order.
+#[test]
+fn merge_takes_the_peer_reference_of_a_matched_booking() {
+    let (a, b) = merge_pair("planned-merge-peer-ref");
+    book_ref(&a, only_account(&a), "x1", -900, "NOTPROVIDED");
+    book_ref(&b, only_account(&b), "x1", -900, "E1");
+    b.checkpoint().unwrap();
+    a.merge_peer_snapshot(b.file_path()).unwrap();
+    let rows: i64 = a
+        .db()
+        .unwrap()
+        .query_row("SELECT count(*) FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 1);
+    assert_eq!(reference_of(&a, "x1"), "E1");
+    assert_eq!(settled_count(&a), 1);
+    assert_eq!(a.count_planned_payments().unwrap(), 0);
+}
+
+/// A usable reference of our own stays: the order only the other side's reference names
+/// remains open.
+#[test]
+fn merge_keeps_the_own_reference_of_a_matched_booking() {
+    let (a, b) = merge_pair("planned-merge-own-ref");
+    book_ref(&a, only_account(&a), "x1", -900, "E7");
+    book_ref(&b, only_account(&b), "x1", -900, "E1");
+    b.checkpoint().unwrap();
+    a.merge_peer_snapshot(b.file_path()).unwrap();
+    assert_eq!(reference_of(&a, "x1"), "E7");
+    assert_eq!(settled_count(&a), 0);
+    assert_eq!(a.count_planned_payments().unwrap(), 1);
+}

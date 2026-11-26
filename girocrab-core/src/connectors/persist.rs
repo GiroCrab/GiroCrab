@@ -165,10 +165,13 @@ fn refresh_existing(
     s: &Stored,
     t: &RemoteTransaction,
 ) -> CoreResult<()> {
-    // A group is filled only while all of it is empty, so a row never mixes
-    // codes or references of two deliveries.
+    // A group is filled only while all of it is missing, so a row never mixes
+    // codes or references of two deliveries. The SEPA placeholder `NOTPROVIDED` counts as
+    // missing, so a later delivery's real reference replaces it (#1900), and a placeholder
+    // delivered again writes nothing.
     fn fill<'a, const N: usize>(stored: [&str; N], fresh: [&'a String; N]) -> [Option<&'a str>; N] {
-        let take = stored.iter().all(|s| s.is_empty()) && fresh.iter().any(|f| !f.is_empty());
+        let missing = |s: &str| !crate::planned::names_order(s);
+        let take = stored.iter().all(|s| missing(s)) && fresh.iter().any(|f| !missing(f));
         fresh.map(|f| take.then_some(f.as_str()))
     }
     fn heal<'a>(stored: &str, fresh: &'a str) -> Option<&'a str> {

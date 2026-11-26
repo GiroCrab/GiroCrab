@@ -355,6 +355,43 @@ pub(crate) fn settle_referenced(db: &Connection, account_id: Option<i64>) -> Cor
     Ok(())
 }
 
+/// A usable SEPA end-to-end reference: neither blank nor the placeholder `NOTPROVIDED`.
+/// Only such a reference names an order (#1900).
+pub(crate) fn names_order(s: &str) -> bool {
+    let s = s.trim();
+    !s.is_empty() && !s.eq_ignore_ascii_case("NOTPROVIDED")
+}
+
+/// Vault merge (#1900): a booking both vaults have keeps a usable reference of its own, but
+/// takes the other side's when its own is blank or `NOTPROVIDED`, so [`settle_referenced`]
+/// finds the order it names. `booking_map`: the other vault's booking id → ours. Writes only
+/// rows that change, so a merge that brings nothing new changes no row.
+pub(crate) fn adopt_peer_references<'a>(
+    conn: &Connection,
+    booking_map: impl IntoIterator<Item = (&'a i64, &'a i64)>,
+) -> CoreResult<()> {
+    let refs: std::collections::HashMap<i64, String> = conn
+        .prepare(
+            "SELECT id, trim(end_to_end_id) FROM other.transactions
+             WHERE upper(trim(coalesce(end_to_end_id, ''))) NOT IN ('', 'NOTPROVIDED')",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    if refs.is_empty() {
+        return Ok(());
+    }
+    let mut set = conn.prepare(
+        "UPDATE main.transactions SET end_to_end_id = ?2
+         WHERE id = ?1 AND upper(trim(coalesce(end_to_end_id, ''))) IN ('', 'NOTPROVIDED')",
+    )?;
+    for (other, mine) in booking_map {
+        if let Some(e2e) = refs.get(other) {
+            set.execute(params![*mine, e2e])?;
+        }
+    }
+    Ok(())
+}
+
 /// Marks the planned payments of `account_id` the bank has booked by now as settled (#1881,
 /// #1900; `settled_ms`, the row stays so a vault merge cannot bring the order back). A booking
 /// with the order's end-to-end reference settles it first ([`settle_referenced`]). A booking
@@ -364,9 +401,9 @@ pub(crate) fn settle_referenced(db: &Connection, account_id: Option<i64>) -> Cor
 /// call within the same second, cannot use it for a second order. A booking with a reference
 /// never settles another order by amount. Pending/held rows are no bookings. Orders the bank
 /// executes early or on another day (weekend, holiday) would otherwise stay until their date
-/// has passed. Orders are tried by date, creation time and reference, never by the local row
-/// id, so every replica of the vault settles the same order for the same booking (the merge
-/// keeps either side's mark).
+/// has passed. Orders are tried by date, creation time and reference, bookings by date and bank
+/// id, never by the local row id, so every replica of the vault settles the same order for the
+/// same booking (the merge keeps either side's mark).
 pub(crate) fn drop_booked(
     db: &Connection,
     account_id: i64,
@@ -394,17 +431,12 @@ pub(crate) fn drop_booked(
     let now_ms = crate::dates::now_ms();
     let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
     let mut used: std::collections::HashSet<i64> = Default::default();
-    // "" or the SEPA placeholder: the booking names no order.
-    let named = |s: &str| {
-        let s = s.trim();
-        !s.is_empty() && !s.eq_ignore_ascii_case("NOTPROVIDED")
-    };
     let mut find = db.prepare(
         "SELECT id, counterparty_iban, end_to_end_id FROM transactions
          WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
            AND booking_date >= ?3
            AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
-         ORDER BY booking_date, id",
+         ORDER BY booking_date, external_id, id",
     )?;
     // Two passes: an exact IBAN match first, so an order without a better booking cannot take
     // the booking of another order; then bookings without an IBAN on either side.
@@ -423,7 +455,7 @@ pub(crate) fn drop_booked(
                 !used.contains(tid)
                     && fetched.contains(tid)
                     // the booking belongs to the order its reference names
-                    && !named(te2e)
+                    && !names_order(te2e)
                     && if exact {
                         !iban.is_empty() && norm(iban) == norm(tiban)
                     } else {

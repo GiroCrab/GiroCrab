@@ -68,6 +68,8 @@ impl Vault {
         crate::security_transactions::merge_attached(&tx, &acc_map)?;
         crate::depot_values::merge_attached(&tx, &acc_map)?;
         crate::planned::merge_attached(&tx, &acc_map)?;
+        // a matched booking without a usable reference takes the other side's (#1900)
+        crate::planned::adopt_peer_references(&tx, &booking_map)?;
         // an order that arrived open may name a booking this vault has (#1900)
         crate::planned::settle_referenced(&tx, None)?;
         crate::asset_classification::store::merge_attached(&tx)?;
