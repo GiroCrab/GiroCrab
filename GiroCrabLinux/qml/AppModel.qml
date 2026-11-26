@@ -1876,29 +1876,23 @@ QtObject {
     }
     function addFinTsConnectionChecked(name, blz, url, login, tanMedium, history) {
         if (demoActive && hasOwnVault) useVault(false)
-        const id = run(() => {
-            const id = core("add_fints_connection", { blz: blz, url: url, display_name: name, login_name: login, tan_medium: tanMedium || "" })
-            requestNewLoginHistory(history, id)
-            return id
-        })
-        afterAdd(id)
+        const id = run(() => core("add_fints_connection", { blz: blz, url: url, display_name: name, login_name: login, tan_medium: tanMedium || "" }))
+        afterAddWithHistory(id, history)
     }
     function addConnectionChecked(kind, login, history) {
         if (demoActive && hasOwnVault) useVault(false)
-        const id = run(() => {
-            const id = core("add_bank_connection", { connector: kind, display_name: "", login_name: login })
-            requestNewLoginHistory(history, id)
-            return id
-        })
-        afterAdd(id)
+        const id = run(() => core("add_bank_connection", { connector: kind, display_name: "", login_name: login }))
+        afterAddWithHistory(id, history)
     }
     function addEnableBankingConnectionChecked(aspsp, country, name, label, history) {
         if (demoActive && hasOwnVault) useVault(false)
-        const id = run(() => {
-            const id = core("add_enable_banking_connection", { aspsp: aspsp, country: country, display_name: name, login_name: label })
-            requestNewLoginHistory(history, id)
-            return id
-        })
+        const id = run(() => core("add_enable_banking_connection", { aspsp: aspsp, country: country, display_name: name, login_name: label }))
+        afterAddWithHistory(id, history)
+    }
+    /// The login `id` exists once added: a period that could not be stored shows its error
+    /// (the core's default mark stays), the add still finishes so it is not added twice.
+    function afterAddWithHistory(id, history) {
+        if (id !== null && id !== undefined) run(() => { requestNewLoginHistory(history, id); return true })
         afterAdd(id)
     }
     /// AppModelTypes.swift › HistoryRange(setting:) / .setting: `max` or days, as the core's JSON.

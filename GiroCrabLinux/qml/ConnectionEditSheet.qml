@@ -181,7 +181,10 @@ Sheet {
     function current() { return AppModel.connections.find(c => c.id === connection.id) || connection }
     /// The other save-and-go actions (log in, Postbox, reconnect, import): like `saveAll`, the
     /// action starts only once the account selection is stored, never with the old one.
-    function saveThen(action) {
+    /// `fetches`: the action starts a fetch, so the shown period is stored even when unchanged
+    /// (like `saveAll(true)`); the statement import fetches nothing and passes false.
+    function saveThen(action, fetches) {
+        if (fetches && !saveFullHistoryIfChanged(true)) return
         if (!save()) return
         const id = connection.id
         const fallback = current()
@@ -254,7 +257,7 @@ Sheet {
         title: qsTr("CSV- oder PDF-Kontoauszug importieren …")
         nameFilters: [qsTr("Kontoauszüge (*.csv *.txt *.pdf)"), qsTr("Alle Dateien (*)")]
         currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
-        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importStatement(c, file)) }
+        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importStatement(c, file), false) }
     }
 
     ColumnLayout {
@@ -324,7 +327,7 @@ Sheet {
                     Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                            text: qsTr("Melden Sie sich im Browser-Fenster mit Ihrem normalen Benutzernamen, Passwort und 2FA an. GiroCrab liest die Umsätze direkt aus dem Portal – es sind keine API-Schlüssel nötig. Die Sitzung bleibt für spätere Abrufe erhalten.") }
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true) }
                     IconButton { symbol: "doc.badge.plus"; text: qsTr("CSV- oder PDF-Kontoauszug importieren …"); tint: Theme.accent
                                  onClicked: statementDialog.open() }
                     Button { text: qsTr("Web-Sitzung (Cookies) löschen …"); palette.buttonText: Theme.negative
@@ -335,7 +338,7 @@ Sheet {
                     visible: sheet.kind === "SchwaebischHall"
                     title: qsTr("Direkt-Login (Web-Session)")
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true) }
                     Button { text: qsTr("Web-Sitzung (Cookies) löschen …"); palette.buttonText: Theme.negative
                              onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
                 }
@@ -346,7 +349,7 @@ Sheet {
                     title: qsTr("Advanzia-Anmeldung")
                     footer: qsTr("Melden Sie sich im Browser-Fenster bei Advanzia an und bestätigen Sie die Freigabe per SMS-Code oder in der Advanzia-App. GiroCrab speichert kein Passwort und trägt nichts ein; danach werden die Umsätze automatisch übernommen.")
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true) }
                     Button { text: qsTr("Web-Sitzung löschen …"); palette.buttonText: Theme.negative
                              onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
                 }
@@ -391,7 +394,7 @@ Sheet {
                         visible: sheet.postbox
                         text: qsTr("Postbox jetzt abrufen")
                         enabled: AppModel.syncingConnectionID === null
-                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
+                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c), true)
                     }
                 }
                 // ConnectionsUI.swift › Section "Umsätze" (#1043)
@@ -448,7 +451,7 @@ Sheet {
                         visible: sheet.kind === "EnableBanking" && sheet.status !== null
                         symbol: "arrow.triangle.2.circlepath"; text: qsTr("Neu verbinden …"); tint: Theme.accent
                         ToolTip.text: qsTr("Neue Zustimmung bei der Bank erteilen (z. B. vor Ablauf oder um Konten hinzuzufügen oder zu entfernen).")
-                        onClicked: sheet.saveThen(c => AppModel.reconnect(c))
+                        onClicked: sheet.saveThen(c => AppModel.reconnect(c), true)
                     }
                     Text { visible: sheet.kind === "EnableBanking" && sheet.status !== null; Layout.fillWidth: true; wrapMode: Text.WordWrap
                            font.pixelSize: Theme.caption; color: Theme.secondary
@@ -469,7 +472,7 @@ Sheet {
                     IconButton {
                         visible: sheet.isTR
                         symbol: "safari"; text: qsTr("Im Browser-Fenster anmelden …"); tint: Theme.accent
-                        onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c })
+                        onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true)
                     }
                 }
             }
