@@ -4,6 +4,9 @@ name: Nightly
 # signing and notarization stay on the maintainer's Mac (scripts/notarize.sh
 # --nightly), deliberately without Apple certificates in GitHub Secrets.
 # The zip is kept as a workflow artifact, never attached to a release.
+# Windows (#1778) is the exception: updates.rs reads the GitHub releases API, so each night gets a VERSIONED
+# pre-release vX.Y.Z-nightly.YYYYMMDD with the installer attached, never a rolling tag. X.Y.Z = last stable/beta
+# tag + 1 patch: newer than that baseline for the updater, older than the next beta/stable of X.Y.Z.
 
 on:
   workflow_dispatch:
@@ -47,6 +50,75 @@ jobs:
           name: GiroCrab-macOS-arm64-nightly
           path: dist/GiroCrab-macOS-arm64.zip
           retention-days: 14
+
+  windows:
+    # One pre-release per UTC day; a re-run on the same day replaces its assets.
+    runs-on: windows-latest
+    timeout-minutes: 60
+    # Same-day runs share a tag: publish one after the other so all assets come from one build.
+    concurrency:
+      group: nightly-windows-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Nightly version from the last release tag
+        id: ver
+        shell: bash
+        run: |
+          LAST="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-nightly.*' HEAD)" \
+            || { echo "error: no previous v* tag" >&2; exit 1; }
+          [[ "${LAST#v}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] \
+            || { echo "error: unexpected tag $LAST" >&2; exit 1; }
+          # Next patch: updates.rs ranks X.Y.Z-nightly below X.Y.Z and X.Y.Z-beta.N.
+          NEXT="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+          echo "tag=v${NEXT}-nightly.$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - run: scripts/set-windows-version.sh "${{ steps.ver.outputs.tag }}"
+        shell: bash
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: GiroCrabWindows
+      - run: cargo build --release --locked --manifest-path GiroCrabWindows/Cargo.toml
+      - name: Package installer
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ steps.ver.outputs.tag }}
+        run: ./scripts/package-windows.ps1 -Version "$env:TAG_NAME"
+      - name: Publish versioned nightly pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.ver.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          FILES=(dist/girocrab-windows-x86_64.zip dist/girocrab-windows-x86_64-setup.exe dist/SHA256SUMS.txt)
+          # Same-day re-run after main moved on: the tag still points at the earlier commit. Never attach
+          # these packages to it, whether or not its release still exists (gh release create reuses an
+          # existing tag and ignores --target). No tag yet, or a draft without one, gives an empty result.
+          TAGGED="$(gh api "repos/$REPO/commits/$TAG_NAME" --jq .sha 2>/dev/null || true)"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ -n "$TAGGED" ] && [ "$TAGGED" != "$HEAD_SHA" ]; then
+            echo "::warning::$TAG_NAME zeigt auf ${TAGGED:0:12}, HEAD ist ${HEAD_SHA:0:12}: Assets bleiben unverändert, der nächste Lauf veröffentlicht neu."
+            exit 0
+          fi
+          if gh release view "$TAG_NAME" --repo "$REPO" >/dev/null 2>&1; then
+            # --clobber deletes each asset before uploading its replacement: keep the release unpublished
+            # meanwhile, so a failed upload cannot leave a published release without its installer.
+            # A hand-pushed tag left a draft (release.yml): publish it only after all uploads succeeded.
+            gh release edit "$TAG_NAME" --draft=true --repo "$REPO"
+            gh release upload "$TAG_NAME" "${FILES[@]}" --clobber --repo "$REPO"
+            gh release edit "$TAG_NAME" --draft=false --prerelease --latest=false --repo "$REPO"
+          else
+            gh release create "$TAG_NAME" "${FILES[@]}" --target "$(git rev-parse HEAD)" --prerelease --latest=false \
+              --title "Nightly ${TAG_NAME#*-nightly.} (Windows)" \
+              --notes "Windows-Nightly aus main (Alpha, nicht signiert). Prüfsummen: SHA256SUMS.txt." --repo "$REPO"
+          fi
 
   sync-docs-website:
     # Idempotent: no diff => nothing happens. Manual runs can opt out via the input.
