@@ -41,8 +41,10 @@ fn adopt_legacy_content_id(
               WHERE id = (SELECT id FROM transactions
                            WHERE account_id = ?2 AND external_id GLOB ?3
                              AND booking_date = ?4 AND value_date = ?5 AND amount_cents = ?6
-                             AND counterparty = ?7 AND purpose = ?8
-                           ORDER BY id LIMIT 1)",
+                             AND purpose = ?8
+                             AND (counterparty = ?7
+                                  OR (?9 != '' AND counterparty_iban = ?9))
+                           ORDER BY (counterparty = ?7) DESC, id LIMIT 1)",
         )?
         .execute(params![
             t.external_id,
@@ -52,7 +54,8 @@ fn adopt_legacy_content_id(
             t.value_date,
             t.amount_cents,
             t.counterparty,
-            t.purpose
+            t.purpose,
+            t.counterparty_iban
         ])?;
     Ok(n > 0)
 }
