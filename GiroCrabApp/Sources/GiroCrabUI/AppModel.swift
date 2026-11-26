@@ -736,8 +736,15 @@ public final class AppModel {
                 webLoginConnection = nil
                 showError(gate.title, gate.detail)
             }
+            // a portal login of "Alle Konten abrufen" closed: on with the next login
+            if webLoginConnection == nil, let id = portalBatchConnectionID, oldValue?.id == id {
+                portalBatchConnectionID = nil
+                Task { @MainActor in self.continueSyncBatchAfterPortal() }
+            }
         }
     }
+    /// The portal login "Alle Konten abrufen" opened and waits for (`webLoginConnection`).
+    var portalBatchConnectionID: Int64?
     /// Connector key per login (`fints:<BLZ>`, …) for the banking policy.
     var connectionKeys: [Int64: String] = [:]
     /// Showing the throw-away demo vault (also when the own vault is still empty).

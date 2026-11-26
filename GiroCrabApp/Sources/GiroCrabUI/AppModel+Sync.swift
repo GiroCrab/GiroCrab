@@ -52,6 +52,8 @@ extension AppModel {
         }
         // Amex / Amazon Visa: embedded web-portal login (no API keys needed).
         if usesPortal(connection) {
+            // in "Alle Konten abrufen" closing the window goes on with the next login
+            if syncBatchTotal > 0 { portalBatchConnectionID = connection.id }
             webLoginConnection = connection
             return
         }
@@ -112,11 +114,29 @@ extension AppModel {
     }
 
     func requestSyncAll() {
-        requestSyncBatch { [self] in
-            connections.filter {
-                !$0.allAccountsArchived && supportsSyncSchedule($0) && syncSchedule($0.id) != AutoSync.never
-            }
-        }
+        requestSyncBatch { [self] in syncAllConnections() }
+    }
+
+    /// Per device, off by default: "Alle Konten abrufen" also opens the browser login of
+    /// logins without a stored session (card portals and other web logins), one after
+    /// another at the end, after every login that syncs on its own.
+    static let syncAllPortalsKey = "sync.allIncludesPortals"
+
+    /// The logins of "Alle Konten abrufen" in order: those that sync unattended first, then
+    /// (when chosen in Einstellungen › Bankzugänge) the ones with a browser login.
+    func syncAllConnections() -> [BankConnection] {
+        let live = connections.filter { !$0.allAccountsArchived }
+        let unattended = live.filter { supportsSyncSchedule($0) && syncSchedule($0.id) != AutoSync.never }
+        guard AppDefaults.store.bool(forKey: Self.syncAllPortalsKey) else { return unattended }
+        // Advanzia runs its own workflow, which does not report back to the batch
+        return unattended + live.filter { usesPortal($0) && !usesFileImport($0) && $0.connector != .advanzia }
+    }
+
+    /// A browser login opened by "Alle Konten abrufen" was closed (imported or closed
+    /// without import): on with the next login, unless a sync runs meanwhile.
+    func continueSyncBatchAfterPortal() {
+        guard syncingConnectionID == nil, syncBatchTotal > 0 else { return }
+        syncNextInQueue()
     }
 
     /// "Konten abrufen" in a group's menu: the logins behind the group's
@@ -271,7 +291,8 @@ extension AppModel {
     func cancelAllSync() {
         advanziaWorkflow?.cancel()
         setupRequest = nil
-        webLoginConnection = nil   // in a batch only the Trade Republic login
+        portalBatchConnectionID = nil  // closing the window below must not go on with the batch
+        webLoginConnection = nil   // in a batch the Trade Republic login or a portal login
         cancelSync()
     }
 
@@ -292,6 +313,8 @@ extension AppModel {
     /// "Abbrechen" / "Überspringen" in the Trade Republic browser login.
     func cancelWebLogin() {
         let c = webLoginConnection
+        // the skip below goes on with the batch, not the closed window
+        if c?.id == portalBatchConnectionID { portalBatchConnectionID = nil }
         webLoginConnection = nil
         skipPrompt(for: c)
     }
@@ -312,6 +335,7 @@ extension AppModel {
         syncQueue = []
         syncBatchTotal = 0
         syncBatchSkipped = []
+        portalBatchConnectionID = nil
     }
 
     /// Errors answered with a prompt (setup form, browser login, FinTS registration)
