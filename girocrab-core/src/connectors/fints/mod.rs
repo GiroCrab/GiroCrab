@@ -860,6 +860,8 @@ impl BankConnector for FinTsConnector {
             if kind == AccountKind::Checking && self.bank_supports("HKCDB") && allowed("HKCDB") {
                 match self.standing_orders(ctx, acc, label).await {
                     Ok((orders, unreadable)) => {
+                        // read: the warning below must not fail the sync (#1902)
+                        ok_any = true;
                         // a list without them would look complete (#1902)
                         if unreadable > 0 {
                             let of = unreadable + orders.len();

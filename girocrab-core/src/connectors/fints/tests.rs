@@ -1880,7 +1880,8 @@ async fn a_balance_the_bank_did_not_send_is_unknown_not_zero() {
 #[tokio::test]
 async fn unreadable_standing_orders_are_reported_not_left_out_silently() {
     // #1902: one HICDB with a schedule the client cannot read. The readable order is
-    // kept, the other one is missing from the list and the sync says so.
+    // kept, the other one is missing from the list and the sync says so – also when
+    // the bank offers no balance or bookings (the warning must not fail the sync).
     let pain = r#"<Document><CstmrCdtTrfInitn><PmtInf><CdtTrfTxInf><Amt><InstdAmt Ccy="EUR">850.00</InstdAmt></Amt><Cdtr><Nm>Hausverwaltung</Nm></Cdtr><CdtrAcct><Id><IBAN>DE75512108001245126199</IBAN></Id></CdtrAcct></CdtTrfTxInf></PmtInf></CstmrCdtTrfInitn></Document>"#;
     let hicdb = |n: u32, details: &str| {
         format!(
@@ -1890,15 +1891,16 @@ async fn unreadable_standing_orders_are_reported_not_left_out_silently() {
     };
     let reply: &'static str = Box::leak(
         format!(
-            "{BALANCE}{}{}",
+            "{ACCEPT}{}{}",
             hicdb(4, "20260101:M:1:1"),
             hicdb(5, "20260101:Q:1:1")
         )
         .into_boxed_str(),
     );
     let (url, seen) = mock_bank(vec![reply]);
-    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKSAL": [7], "HKCDB": [1]}, "tan_required": {}});
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKCDB": [1]}, "tan_required": {}});
     let mut c = two_step_connector(&url, state);
+    // HKSAL lists the account (`merge_upd_with_sepa`), but the BPD offers only HKCDB
     c.upd = vec![upd_acc(
         "0532013000",
         "",
