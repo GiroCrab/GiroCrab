@@ -94,7 +94,7 @@ struct BatchTransferSheet: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 16) {
                 labeled("Von Konto") {
-                    SourceAccountPicker(selection: $draft.accountID, accounts: model.batchAccounts)
+                    SourceAccountPicker(selection: $draft.accountID, accounts: model.batchAccounts, inForm: false)
                 }
                 labeled("Buchung auf dem Kontoauszug") {
                     Picker("Buchung", selection: $draft.singleBookings) {
