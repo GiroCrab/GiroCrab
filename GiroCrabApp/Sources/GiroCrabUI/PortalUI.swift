@@ -537,17 +537,28 @@ final class PortalBrowser {
         });
         if (location.protocol !== 'https:' || !allowed) return false;
         var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-        var pw = Array.prototype.filter.call(document.querySelectorAll('input[type=password]'), vis)[0] || null;
+        var editable = function(i) { return !i.disabled && !i.readOnly; };
+        var pw = Array.prototype.filter.call(document.querySelectorAll('input[type=password]'),
+          function(i) { return vis(i) && editable(i); })[0] || null;
         if (password && !pw) return false;
         var texts = Array.prototype.filter.call(document.querySelectorAll('input'), function(i) {
-          return vis(i) && /^(text|email|tel)?$/i.test(i.getAttribute('type') || ''); });
+          return vis(i) && editable(i) && /^(text|email|tel)?$/i.test(i.getAttribute('type') || ''); });
         var named = texts.find(function(i) {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
         // a username-only page (the password comes on the next one) names its
-        // field e-mail — or none of it, and the field is just typed `email`
-        if (!pw) { named = named || texts.find(function(i) {
-          return /email/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || ''))
-            || (i.getAttribute('type') || '').toLowerCase() === 'email'; }); }
+        // field e-mail — or none of it, and the field is just typed `email`.
+        // A newsletter box earlier in the page must not win: candidates only
+        // from a form with a submit button, there the last editable e-mail
+        if (!pw) {
+          var mailish = function(i) {
+            return /email/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || ''))
+              || (i.getAttribute('type') || '').toLowerCase() === 'email'; };
+          var inLoginForm = function(i) {
+            var f = i.closest && i.closest('form');
+            return !!f && !!f.querySelector('button[type=submit], input[type=submit], button:not([type])'); };
+          var mails = texts.filter(function(i) { return mailish(i) && inLoginForm(i); });
+          named = named || mails[mails.length - 1] || texts.find(mailish);
+        }
         var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
         var set = function(el, v) {
@@ -1200,6 +1211,9 @@ struct PortalWebSheet: View {
         } catch {
             answered = false
         }
+        // the limit counts consecutive unanswered reads: an answered vault
+        // starts fresh, recoveries must not be spent on the earlier gap
+        if answered { missingTries = 0 }
         let step = Self.storedLoginStep(
             autofillDisabled: AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)),
             vaultAnswered: answered, storedUser: storedUser, password: password,
