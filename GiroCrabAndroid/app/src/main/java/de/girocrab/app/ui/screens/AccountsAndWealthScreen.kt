@@ -177,7 +177,7 @@ fun wealthBreakdown(s: AppUiState): WealthBreakdown {
         tangibles = d.assets
             .filter { it.accountId.isBlank() || it.accountId in countedIds }
             .sumOf { it.valueCents },
-        loans = d.loans.sumOf { it.remainingCents } + abs(loanAccounts),
+        loans = d.loans.filter { it.accountId !in countedIds }.sumOf { it.remainingCents } + abs(loanAccounts),
         creditCards = if (cards < 0) -cards else 0L,
         currency = currency,
         foreignCurrencies = visible.map { it.currency.ifBlank { "EUR" } }.toSet() - currency,

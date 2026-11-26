@@ -236,11 +236,13 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         d.copy(rules = if (exists) d.rules.map { if (it.id == rule.id) rule else it } else d.rules + rule)
     }
 
+    /** Demo only: a real loan is written through the core (Stufe 2, #1430). */
     fun upsertLoan(loan: ManualLoan) = editData { d ->
-        d.copy(loans = if (d.loans.any { it.id == loan.id }) d.loans.map { if (it.id == loan.id) loan else it } else d.loans + loan)
+        val others = d.loans.filterNot { it.accountId == loan.accountId }
+        d.copy(loans = others + loan)
     }
 
-    fun deleteLoan(id: String) = editData { d -> d.copy(loans = d.loans.filterNot { it.id == id }) }
+    fun deleteLoan(accountId: String) = editData { d -> d.copy(loans = d.loans.filterNot { it.accountId == accountId }) }
 
     fun upsertAsset(asset: TangibleAsset) = editData { d ->
         d.copy(assets = if (d.assets.any { it.id == asset.id }) d.assets.map { if (it.id == asset.id) asset else it } else d.assets + asset)
@@ -310,8 +312,11 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         // without any account at all are added on top (#1429).
         val allIds = d.accounts.map { it.id }.toSet()
         val looseAssets = d.assets.filter { it.accountId.isBlank() || it.accountId !in allIds }
+        // A manual loan is an account whose balance already is the outstanding debt. Its record is
+        // the progress behind that figure, so only a loan whose account is missing counts again.
+        val looseLoans = d.loans.filter { it.accountId !in allIds }
         return counted.sumOf { it.balanceCents } + looseAssets.sumOf { it.valueCents } -
-            d.loans.sumOf { it.remainingCents }
+            looseLoans.sumOf { it.remainingCents }
     }
 
     companion object {

@@ -17,6 +17,7 @@ import uniffi.girocrab_core.FlowKind as CoreFlowKind
 import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Mandate as CoreMandate
 import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
+import uniffi.girocrab_core.ManualLoan as CoreManualLoan
 import uniffi.girocrab_core.MatchKind as CoreMatchKind
 import uniffi.girocrab_core.Rule as CoreRule
 import uniffi.girocrab_core.RuleField as CoreRuleField
@@ -79,6 +80,7 @@ object VaultSnapshotMapper {
         rules: List<CoreRule>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
+        loans: List<CoreManualLoan> = emptyList(),
     ): VaultSnapshot = map(
         groups = groups,
         accounts = accounts,
@@ -89,6 +91,7 @@ object VaultSnapshotMapper {
         rules = rules,
         holdingsByAccount = holdingsByAccount,
         assets = assets,
+        loans = loans,
     )
 
     fun map(
@@ -103,6 +106,7 @@ object VaultSnapshotMapper {
         assets: List<CoreAssetItem>,
         mandates: List<CoreMandate> = emptyList(),
         standingOrders: List<CoreStandingOrder> = emptyList(),
+        loans: List<CoreManualLoan> = emptyList(),
     ): VaultSnapshot {
         // Holdings come back in the currency of their account; that is the label for their prices.
         val quoteCurrencies = accounts.associate { it.id to it.currency.ifBlank { "EUR" } }
@@ -121,6 +125,7 @@ object VaultSnapshotMapper {
                 rows.map { holding(accountId, it, quote) }
             },
             assets = assets.map(::asset),
+            loans = loans.map(::manualLoan),
         )
     }
 
@@ -297,6 +302,35 @@ object VaultSnapshotMapper {
         acquiredDate = date(row.setup.purchaseDate),
         note = row.setup.note,
     )
+
+    /**
+     * A manual loan is an account plus a Stand; every figure here is the core's own answer. Counts
+     * arrive as `u32` (hence `toInt`), the Stand date is required and therefore parsed strictly,
+     * and the dates of the computed state stay lenient so a loan without any payment still maps.
+     */
+    private fun manualLoan(row: CoreManualLoan): ManualLoan {
+        val setup = row.setup
+        val status = row.status
+        return ManualLoan(
+            accountId = row.accountId.toString(),
+            name = setup.name,
+            originalCents = setup.originalCents,
+            anchorDate = date(setup.anchorDate),
+            anchorBalanceCents = setup.anchorBalanceCents,
+            interestRatePpm = setup.interestRatePpm,
+            matchExpr = setup.matchExpr,
+            remainingCents = status.remainingCents,
+            asOfDate = parseOderNull(status.asOfDate),
+            paymentCount = status.paymentCount.toInt(),
+            paidCents = status.paidCents,
+            principalCents = status.principalCents,
+            interestCents = status.interestCents,
+            beforeAnchorCount = status.beforeAnchorCount.toInt(),
+            lastPaymentCents = status.lastPaymentCents,
+            lastPaymentDate = parseOderNull(status.lastPaymentDate),
+            monthsLeft = status.monthsLeft?.toInt(),
+        )
+    }
 
     private fun date(raw: String): LocalDate = LocalDate.parse(raw)
 

@@ -151,6 +151,7 @@ object DemoData {
             Account("a_cbk", "g_cbk", "Commerzbank", "Girokonto", "DE75512108001245126199", AccountKind.Giro, 91_877),
             Account("a_cdi", "g_cdi", "comdirect", "Verrechnungskonto", "DE68210501700012345678", AccountKind.Giro, 342_050),
             Account("a_tr", "g_tr", "Trade Republic", "Depot", null, AccountKind.Depot, 0),
+            Account("a_kredit", "g_dkb", "DKB", "Autokredit", null, AccountKind.Loan, -1_120_000),
             Account("a_pp", "g_pp", "PayPal", "PayPal-Konto", null, AccountKind.Wallet, 12_340),
         )
 
@@ -221,7 +222,29 @@ object DemoData {
                 DirectDebitMandate("m3", "a_dkb", "Netflix International B.V.", "NL91ABNA0417164300", "NFX-5599", today.minusYears(1), MandateScheme.Cor1, true, 1_299, "Standard mit Werbung", "", true, today.withDayOfMonth(7), "OOFF"),
             ),
             holdings = holdings,
-            loans = listOf(ManualLoan("l1", "Autokredit", 1_800_000, 1_120_000, 3.9, 38_500, today.minusYears(2))),
+            // A loan is an account plus a Stand: the balance above is the debt, the record below the
+            // core's own status for it — never a second figure for the same money.
+            loans = listOf(
+                ManualLoan(
+                    accountId = "a_kredit",
+                    name = "Autokredit",
+                    originalCents = 1_800_000,
+                    anchorDate = today.minusMonths(6).withDayOfMonth(1),
+                    anchorBalanceCents = 1_174_000,
+                    interestRatePpm = 39_000,
+                    matchExpr = "",
+                    remainingCents = 1_120_000,
+                    asOfDate = today.withDayOfMonth(1),
+                    paymentCount = 6,
+                    paidCents = 231_000,
+                    principalCents = 212_000,
+                    interestCents = 19_000,
+                    beforeAnchorCount = 0,
+                    lastPaymentCents = 38_500,
+                    lastPaymentDate = today.withDayOfMonth(1),
+                    monthsLeft = 30,
+                ),
+            ),
             assets = listOf(
                 TangibleAsset("ta1", "Fahrrad (E-Bike)", 180_000, today.minusYears(1), "Kaufbeleg im Ordner"),
                 TangibleAsset("ta2", "Pkw", 1_450_000, today.minusYears(3)),

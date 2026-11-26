@@ -15,6 +15,9 @@ import uniffi.girocrab_core.AssetItemSetup as CoreAssetSetup
 import uniffi.girocrab_core.BookingPage as CoreBookingPage
 import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Mandate as CoreMandate
+import uniffi.girocrab_core.LoanSetup as CoreLoanSetup
+import uniffi.girocrab_core.LoanStatus as CoreLoanStatus
+import uniffi.girocrab_core.ManualLoan as CoreManualLoan
 import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
 import uniffi.girocrab_core.MatchKind as CoreMatchKind
 import uniffi.girocrab_core.Rule as CoreRule
@@ -600,5 +603,99 @@ class VaultSnapshotMapperTest {
             "debtor IBAN without whitespace",
             xml.contains("<DbtrAcct><Id><IBAN>DE02120300000000202051</IBAN></Id></DbtrAcct>"),
         )
+    }
+
+    /**
+     * #1429 (3.2b): a manual loan is an account plus a Stand. The mapper copies the core's status —
+     * the counts arrive as `u32` there — so nothing about the debt is recomputed on this side.
+     */
+    @Test
+    fun manualLoanCarriesTheCoreStandAndStatus() {
+        val row = CoreManualLoan(
+            accountId = 9L,
+            setup = CoreLoanSetup(
+                name = "Autokredit",
+                originalCents = 1_800_000L,
+                anchorDate = "2025-03-31",
+                anchorBalanceCents = 1_500_000L,
+                interestRatePpm = 49_900L,
+                matchExpr = "Empfänger = Autobank",
+            ),
+            status = CoreLoanStatus(
+                remainingCents = 1_120_000L,
+                asOfDate = "2026-11-01",
+                paymentCount = 10u,
+                paidCents = 380_000L,
+                principalCents = 350_000L,
+                interestCents = 30_000L,
+                beforeAnchorCount = 2u,
+                lastPaymentCents = 38_000L,
+                lastPaymentDate = "2026-11-01",
+                monthsLeft = 29u,
+            ),
+        )
+
+        val loan = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            rules = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            loans = listOf(row),
+        ).loans.single()
+
+        assertEquals("9", loan.accountId)
+        assertEquals("Autokredit", loan.name)
+        assertEquals(1_800_000L, loan.originalCents)
+        assertEquals(LocalDate.of(2025, 3, 31), loan.anchorDate)
+        assertEquals(1_500_000L, loan.anchorBalanceCents)
+        assertEquals(49_900L, loan.interestRatePpm)
+        assertEquals("Empfänger = Autobank", loan.matchExpr)
+        assertEquals(1_120_000L, loan.remainingCents)
+        assertEquals(LocalDate.of(2026, 11, 1), loan.asOfDate)
+        assertEquals("u32 becomes Int", 10, loan.paymentCount)
+        assertEquals(380_000L, loan.paidCents)
+        assertEquals(350_000L, loan.principalCents)
+        assertEquals(30_000L, loan.interestCents)
+        assertEquals(2, loan.beforeAnchorCount)
+        assertEquals(38_000L, loan.lastPaymentCents)
+        assertEquals(LocalDate.of(2026, 11, 1), loan.lastPaymentDate)
+        assertEquals(29, loan.monthsLeft)
+        assertEquals(
+            "progress is one minus the repaid share of the original amount",
+            1.0 - 1_120_000.0 / 1_800_000.0,
+            loan.repaid!!,
+            1e-9,
+        )
+    }
+
+    /** Without an original amount there is no honest progress — the card must not invent one. */
+    @Test
+    fun loanWithoutOriginalAmountHasNoProgress() {
+        val loan = ManualLoan(
+            accountId = "9",
+            name = "Autokredit",
+            originalCents = null,
+            anchorDate = LocalDate.of(2025, 3, 31),
+            anchorBalanceCents = 1_500_000L,
+            interestRatePpm = null,
+            matchExpr = "",
+            remainingCents = 1_500_000L,
+            asOfDate = null,
+            paymentCount = 0,
+            paidCents = 0,
+            principalCents = 0,
+            interestCents = 0,
+            beforeAnchorCount = 0,
+            lastPaymentCents = null,
+            lastPaymentDate = null,
+            monthsLeft = null,
+        )
+
+        assertNull("no original amount, no progress", loan.repaid)
     }
 }

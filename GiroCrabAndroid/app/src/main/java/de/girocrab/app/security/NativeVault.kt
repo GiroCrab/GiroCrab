@@ -9,6 +9,7 @@ import java.lang.reflect.Method
 import uniffi.girocrab_core.Account as CoreAccount
 import uniffi.girocrab_core.AssetItem as CoreAssetItem
 import uniffi.girocrab_core.Mandate as CoreMandate
+import uniffi.girocrab_core.ManualLoan as CoreManualLoan
 import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
 import uniffi.girocrab_core.Booking as CoreBooking
 import uniffi.girocrab_core.AccountGroup as CoreGroup
@@ -195,6 +196,9 @@ class NativeVaultOpener {
             // Empty list = every account, as the core's `list_standing_orders(account_ids)` does.
             val standingOrders = callWith("listStandingOrders", emptyList<Long>()) as? List<CoreStandingOrder>
                 ?: throw IllegalStateException("listStandingOrders did not return a list")
+            // Manual loans: an account plus a Stand and the core's own status; no argument needed.
+            val loans = callNoArgs("listManualLoans") as? List<CoreManualLoan>
+                ?: throw IllegalStateException("listManualLoans did not return a list")
             return VaultSnapshotMapper.map(
                 groups = groups,
                 accounts = accounts,
@@ -207,6 +211,7 @@ class NativeVaultOpener {
                 assets = assets,
                 mandates = mandates,
                 standingOrders = standingOrders,
+                loans = loans,
             )
         }
 
