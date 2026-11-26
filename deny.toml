@@ -21,10 +21,10 @@ ignore = [
     # safe upgrade exists. Ignored by advisory ID, so it applies to every chrono version (no
     # version pin); remove once Slint drops chrono.
     { id = "RUSTSEC-2026-0543", reason = "transitive via Slint (Windows front end), no fixed version available" },
-    # Windows front end only: pin-utils (unmaintained) comes in via spin_on (Slint renderer, build
-    # and macros), no safe upgrade exists. Pinned to 0.1.1 so a newer pin-utils is checked again;
-    # remove once Slint drops spin_on/pin-utils.
-    { crate = "pin-utils@0.1.1", reason = "transitive via Slint (Windows front end), no fixed version available" },
+    # Windows front end only: pin-utils 0.1.1 (unmaintained) comes in via spin_on (Slint renderer,
+    # build and macros), no safe upgrade exists. Ignored by advisory ID (a `crate = …` entry here
+    # only covers yanked crates); remove once Slint drops spin_on/pin-utils.
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1, transitive via Slint (Windows front end), no fixed version available" },
 ]
 
 [licenses]
