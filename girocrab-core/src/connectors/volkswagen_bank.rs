@@ -120,12 +120,12 @@ struct HttpPortal {
 
 impl HttpPortal {
     /// The booking list of account `number` from `from` (YYYY-MM-DD) to `today`.
+    /// The days go out the way the browser capture shows them: `YYYY-MM-DDZ`.
     async fn cash_flow(&mut self, number: &str, from: &str, today: Date) -> CoreResult<Value> {
-        let from_day: Date = from.parse().map_err(|_| bad_response())?;
         let body = json!({
             "accountNumber": number,
-            "dateFrom": berlin_midnight_utc(from_day).ok_or_else(bad_response)?,
-            "dateTo": berlin_midnight_utc(today).ok_or_else(bad_response)?,
+            "dateFrom": format!("{from}Z"),
+            "dateTo": format!("{today}Z"),
         });
         let (flow, _) = self
             .call(true, "CashFlowService/cashflow/list/get", Some(body), None)
@@ -512,21 +512,6 @@ fn portal_date(s: &str) -> Option<Date> {
     Some(berlin.ok()?.date())
 }
 
-/// Midnight of the Berlin calendar day `day`, written the way the portal writes
-/// days (`2026-10-22T22:00:00.0000000Z` is 23 October). Inverse of [`portal_date`].
-fn berlin_midnight_utc(day: Date) -> Option<String> {
-    let local = day.at(0, 0, 0, 0);
-    // Berlin midnight is never inside a DST switch (those happen at 02:00/03:00),
-    // so exactly one of the two offsets is consistent.
-    for offset in [2i64, 1] {
-        let utc = local.checked_sub(jiff::Span::new().hours(offset)).ok()?;
-        if berlin_offset_hours(utc) == offset {
-            return Some(format!("{utc}.0000000Z"));
-        }
-    }
-    None
-}
-
 fn berlin_today() -> Date {
     let now = crate::dates::now_utc();
     (now + jiff::Span::new().hours(berlin_offset_hours(now))).date()
@@ -907,42 +892,6 @@ mod tests {
         assert_eq!(day("2026-10-25T23:30:00Z").as_deref(), Some("2026-10-26"));
         assert_eq!(day("x"), None);
         assert_eq!(day(""), None);
-    }
-
-    #[test]
-    fn berlin_midnight_is_written_the_way_the_portal_writes_days() {
-        let day = jiff::civil::date;
-        let ts = |y, m, d| berlin_midnight_utc(day(y, m, d));
-        // Summer time: Berlin midnight is 22:00 UTC the evening before.
-        assert_eq!(
-            ts(2026, 10, 23).as_deref(),
-            Some("2026-10-22T22:00:00.0000000Z")
-        );
-        // Winter time: 23:00 UTC.
-        assert_eq!(
-            ts(2026, 2, 11).as_deref(),
-            Some("2026-02-10T23:00:00.0000000Z")
-        );
-        // On the switch days midnight still has the old offset.
-        assert_eq!(
-            ts(2026, 3, 29).as_deref(),
-            Some("2026-03-28T23:00:00.0000000Z")
-        );
-        assert_eq!(
-            ts(2026, 10, 25).as_deref(),
-            Some("2026-10-24T22:00:00.0000000Z")
-        );
-        // Round trip through the parser the connector already uses.
-        for (y, m, d) in [
-            (2026, 1, 1),
-            (2026, 3, 29),
-            (2026, 7, 4),
-            (2026, 10, 25),
-            (2026, 12, 31),
-        ] {
-            let s = ts(y, m, d).unwrap();
-            assert_eq!(portal_date(&s), Some(day(y, m, d)), "{s}");
-        }
     }
 
     #[test]
