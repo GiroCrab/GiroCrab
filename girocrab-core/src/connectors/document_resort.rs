@@ -27,6 +27,9 @@ pub(crate) fn resort(db: &Connection, connection_id: i64, key: &str) -> CoreResu
     };
     // Deleting an old login doesn't establish the origin of its accountless PDFs.
     let claim_orphans = comdirect && sole_comdirect_login(db, connection_id)?;
+    // These portals identify the login in the source even when no account is filed.
+    let portal_source = matches!(kind, ConnectorKind::Fnz | ConnectorKind::Quirion)
+        .then(|| format!("{key}:{connection_id}:"));
     let mut documents = db.prepare(
         "SELECT d.id, d.title, d.doc_type, d.account_id, d.booking_id, d.source_url
            FROM booking_documents d
@@ -35,20 +38,24 @@ pub(crate) fn resort(db: &Connection, connection_id: i64, key: &str) -> CoreResu
            LEFT JOIN accounts b ON b.id = t.account_id
           WHERE (a.connection_id = ?1 AND a.deleted_ms IS NULL AND a.archived_unix IS NULL
                  OR (d.account_id IS NULL AND
-                     (b.connection_id = ?1 OR (?2 AND d.booking_id IS NULL))))
+                     (b.connection_id = ?1 OR (d.booking_id IS NULL AND
+                       (?2 OR substr(d.source_url, 1, length(?3)) = ?3)))))
             AND (d.booking_id IS NULL OR b.connection_id = ?1)",
     )?;
     let docs = documents
-        .query_map(params![connection_id, claim_orphans], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-                row.get::<_, Option<i64>>(4)?,
-                row.get::<_, String>(5)?,
-            ))
-        })?
+        .query_map(
+            params![connection_id, claim_orphans, portal_source],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            },
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     let accounts = accounts(db, connection_id)?;
     let account_refs: Vec<_> = accounts.iter().map(|(_, account, _)| account).collect();
