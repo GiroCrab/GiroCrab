@@ -2331,8 +2331,9 @@ fn find_existing_accounts(
             out.insert(a.id, found);
         }
     }
-    // a card already synced through the bank login the import would use (set
-    // up by hand before): MoneyMoney has no IBAN for it, the number decides
+    // a card already synced through a login the import links the bank to (`import_logins`,
+    // set up by hand before): MoneyMoney has no IBAN for it, the number decides among the
+    // cards of all those logins, so a number that fits cards on two of them is not guessed
     for b in &src.banks {
         let cards: Vec<&SrcAccount> = accounts
             .iter()
@@ -2342,23 +2343,21 @@ fn find_existing_accounts(
         if cards.is_empty() {
             continue;
         }
-        let Some((kind, key)) = src.connector_key(b) else {
-            continue;
-        };
-        let Some(connection_id) = find_connection(conn, kind, &key, &b.username)? else {
-            continue;
-        };
+        let mut logins = import_logins(conn, src, b, None)?;
+        logins.sort_unstable();
+        logins.dedup();
         let mut st = conn.prepare(
             "SELECT id, name, IFNULL(account_number, '') FROM accounts
              WHERE connection_id = ?1 AND kind = ?2 AND deleted_ms IS NULL
                AND external_ref NOT LIKE 'moneymoney-db:%'",
         )?;
-        let synced: Vec<(i64, String, String)> = st
-            .query_map(
-                params![connection_id, AccountKind::CreditCard.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )?
-            .collect::<Result<_, _>>()?;
+        let mut synced: Vec<(i64, String, String)> = Vec::new();
+        for login in logins {
+            let rows = st.query_map(params![login, AccountKind::CreditCard.as_str()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
+            synced.extend(rows.collect::<Result<Vec<_>, _>>()?);
+        }
         for a in cards {
             let free = synced
                 .iter()
