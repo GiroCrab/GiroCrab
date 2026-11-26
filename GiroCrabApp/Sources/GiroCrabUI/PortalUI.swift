@@ -1206,9 +1206,14 @@ struct PortalWebSheet: View {
         // from its defaults switch, before the vault read and after it (the read
         // can outlast the switch).
         func redactedNow() -> Bool {
+            // the capture redaction live (`ReportRedactionState` mirrors it —
+            // the environment value in this running task is a snapshot of the
+            // first render), privacy mode fresh from its defaults switch, the
+            // launch options are static
             let scope = (UserDefaults.standard.string(forKey: PrivacyMode.scopeKey))
                 .flatMap(PrivacyMode.Scope.init(rawValue:)) ?? PrivacyMode.defaultScope
-            return !redaction.isEmpty
+            return !ReportRedactionState.shared.current.isEmpty
+                || !LaunchOptions.current.redaction.isEmpty
                 || PrivacyMode.redaction(
                     enabled: UserDefaults.standard.bool(forKey: PrivacyMode.enabledKey),
                     scope: scope) != []
