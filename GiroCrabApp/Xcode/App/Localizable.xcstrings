@@ -20680,6 +20680,17 @@
         }
       }
     },
+    "Kein passender Umsatz gefunden – beim Konto „%@“ abgelegt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching transaction found – filed under the account “%@”"
+          }
+        }
+      }
+    },
     "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt" : {
       "extractionState" : "manual",
       "localizations" : {
