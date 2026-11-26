@@ -37,9 +37,23 @@ for ok in 'if (request.isMainFrame && !u.toLowerCase().startsWith("https:")) req
           'if (a.protocol !== "https:") request.reject()'; do
     grep -qE "$QML_SCHEME_RE" <<<"$ok" || err "self-test: https scheme check not recognised: $ok"
 done
-for f in $(grep -lE '^[[:space:]]*(sourceComponent: )?WebEngineView[[:space:]]*\{|^WebEngineView[[:space:]]*\{' "$QML_DIR"/*.qml); do
+QML_VIEW_RE='^[[:space:]]*(sourceComponent: )?WebEngineView[[:space:]]*\{|^WebEngineView[[:space:]]*\{'
+# every WebEngineView needs its own handler: as many `onNavigationRequested` as views in the file
+qml_guard_gap() {
+    local v h
+    v=$(grep -cE "$QML_VIEW_RE" <<<"$1" || true)
+    h=$(grep -c 'onNavigationRequested' <<<"$1" || true)
+    (( h < v ))
+}
+qml_guard_gap $'WebEngineView {\n  onNavigationRequested: r => { if (!r.url.toString().startsWith("https:")) r.reject() }\n}\nWebEngineView {\n}' \
+    || err "self-test: second WebEngineView without handler accepted"
+if qml_guard_gap $'WebEngineView {\n  onNavigationRequested: r => { }\n}\nWebEngineView {\n  onNavigationRequested: r => { }\n}'; then
+    err "self-test: one handler per WebEngineView flagged"
+fi
+for f in $(grep -lE "$QML_VIEW_RE" "$QML_DIR"/*.qml); do
     is_local "$f" && continue
     grep -q 'onNavigationRequested' "$f" || err "$f: WebEngineView without onNavigationRequested guard"
+    ! qml_guard_gap "$(cat "$f")" || err "$f: WebEngineView without its own onNavigationRequested guard"
     grep -qE "$QML_SCHEME_RE" "$f" || err "$f: WebEngineView navigation guard does not restrict the scheme to https"
 done
 hits=$(grep -nE 'navigationGuard: *false' "$QML_DIR"/*.qml || true)
@@ -48,11 +62,13 @@ hits=$(grep -nE 'navigationGuard: *false' "$QML_DIR"/*.qml || true)
 # 3. Scripts that look at a password field: origin/host gate in the same file, and no read of its value
 #    (neither through a variable `pw`/`password…` nor straight from the selector,
 #    `querySelector('input[type=password]').value`). Writes stay allowed.
-PW_READ_RE='\b(pw|pwd|pass(word)?[A-Za-z]*)\.value\b|type=[^]]*password[^)]*\)\.value\b'
+PW_READ_RE='\b(pw|pwd|pass(word)?[A-Za-z]*)\.value\b|type[[:space:]]*=[^]]*password[^)]*\)\.value\b'
 # every `.value` access is classified on its own: one followed by an assignment (or `).set`) is a
 # permitted write, any other one a read – so `old = pw.value; pw.value = next;` is still flagged.
-PW_OP_RE="($PW_READ_RE)( *=[^=]|\)\.set)?"
-PW_WRITE_END='( *=[^=]|\)\.set)$'
+# The assignment is matched as `=` / `==` without consuming the next character, so the start of a
+# chained read (`pw.value=pwd.value`) stays visible; `==` is a comparison and therefore a read.
+PW_OP_RE="($PW_READ_RE)( *==?|\)\.set)?"
+PW_WRITE_END='value( *=|\)\.set)$'
 pw_reads() {
     local line
     while IFS= read -r line; do
@@ -66,10 +82,14 @@ PW_FIELD_RE='type[[:space:]]*={1,3}[[:space:]]*(\\)?.?password'
 for bad in "var v = pw.value;" \
            "var v = document.querySelector('input[type=password]').value;" \
            "var v = document.querySelector('input[type=\"password\"]').value;" \
-           "const old = pw.value; pw.value = next;"; do
+           "var v = document.querySelector('input[type = password]').value;" \
+           "const old = pw.value; pw.value = next;" \
+           "pw.value=pwd.value;" \
+           "if (pw.value==x) { go(); }"; do
     [[ -n "$(pw_reads <<<"$bad")" ]] || err "self-test: password read not detected: $bad"
 done
 for ok in "pw.value = v;" \
+          "pw.value=v;" \
           "document.querySelector('input[type=password]').value = v;" \
           "document.querySelector(\"input[type='password']\").value = v;"; do
     [[ -z "$(pw_reads <<<"$ok")" ]] || err "self-test: password write flagged: $ok"
