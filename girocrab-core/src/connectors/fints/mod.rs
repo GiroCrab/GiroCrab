@@ -859,7 +859,16 @@ impl BankConnector for FinTsConnector {
             // approval just given. A decoupled (push) approval is handled by `request`.
             if kind == AccountKind::Checking && self.bank_supports("HKCDB") && allowed("HKCDB") {
                 match self.standing_orders(ctx, acc, label).await {
-                    Ok(orders) => {
+                    Ok((orders, unreadable)) => {
+                        // a list without them would look complete (#1902)
+                        if unreadable > 0 {
+                            let of = unreadable + orders.len();
+                            let what = trf(
+                                "{0} von {1} Aufträgen der Bank konnten nicht gelesen werden.",
+                                &[&unreadable, &of],
+                            );
+                            errors.push(trf("{0}: Daueraufträge – {1}", &[&label, &what]));
+                        }
                         result.standing_orders.extend(orders);
                         result.standing_orders_fetched.push(label.clone());
                     }
