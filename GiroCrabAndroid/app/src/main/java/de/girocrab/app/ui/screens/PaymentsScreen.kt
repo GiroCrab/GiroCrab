@@ -524,9 +524,10 @@ private fun StandingOrdersTab(state: AppUiState, today: LocalDate, masked: Boole
                     Text(if (masked) "••••" else formatIban(o.iban), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (o.purpose.isNotBlank() && !masked) Text(o.purpose, style = MaterialTheme.typography.bodySmall)
                     val next = o.nextDate
+                    val note = o.noNextRunNote(today)
                     Text(
                         "${o.rhythm} · seit ${o.firstDate.format(dateFmt)} · " +
-                            "nächste Ausführung ${next?.format(dateFmt) ?: "keine (beendet)"}" +
+                            "nächste Ausführung ${next?.format(dateFmt) ?: note}" +
                             // The account name is data like the recipient: hidden while the app is masked.
                             acc?.takeUnless { masked }?.let { " · ${it.name}" }.orEmpty(),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
