@@ -206,7 +206,14 @@ struct SidebarView: View {
                         .tag(SidebarItem.uncategorized)
                         .listRowInsets(Self.rowInsets)
                     }
-                    categoryRows(model.scopeCategoryIDs.map { model.categoryTree.limited(to: $0) } ?? model.categoryTree, depth: 0)
+                    // Only `.all` shows the full tree. With a filter on, a missing set (still loading or
+                    // the load failed) must not fall back to every category, so the list stays empty.
+                    categoryRows(
+                        model.scope == .all
+                            ? model.categoryTree
+                            : (model.scopeCategoryIDs.map { model.categoryTree.limited(to: $0) } ?? []),
+                        depth: 0
+                    )
                 }
             }
         }
