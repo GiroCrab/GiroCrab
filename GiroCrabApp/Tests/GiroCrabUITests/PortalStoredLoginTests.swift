@@ -9,11 +9,11 @@ final class PortalStoredLoginTests: XCTestCase {
     private func step(autofillDisabled: Bool = false, vaultAnswered: Bool = true,
                       storedLogin: String = "", password: String = "",
                       connectionLogin: String = "", amazonVisa: Bool = false,
-                      tryCount: Int = 0) -> PortalWebSheet.StoredLoginStep {
+                      tryCount: Int = 0, privacyRedacted: Bool = false) -> PortalWebSheet.StoredLoginStep {
         PortalWebSheet.storedLoginStep(autofillDisabled: autofillDisabled, vaultAnswered: vaultAnswered,
                                        storedUser: storedLogin, password: password,
                                        connectionLogin: connectionLogin, connectionIsAmazonVisa: amazonVisa,
-                                       tryCount: tryCount)
+                                       tryCount: tryCount, privacyRedacted: privacyRedacted)
     }
 
     func testVaultThatHasNotAnsweredYetIsRetried() {
@@ -62,5 +62,18 @@ final class PortalStoredLoginTests: XCTestCase {
             XCTAssertEqual(user, "max@example.com")
             XCTAssertEqual(pw, "")
         } else { XCTFail("auch der gespeicherte Name wird eingetragen") }
+    }
+
+    func testPrivacyModeFillsNothing() {
+        // privacy mode: nothing stored is typed, not even the user name
+        if case .done = step(storedLogin: "max@example.com", password: "x", privacyRedacted: true) { }
+        else { XCTFail("im Privacy-Modus bleibt das Formular leer") }
+    }
+
+    func testPrivacyModeBeatsTheVaultRetry() {
+        // privacy beats the retry: the mode is a decision, not a missed read —
+        // the poll ends even though the vault has not answered at all yet
+        if case .done = step(vaultAnswered: false, tryCount: 19, privacyRedacted: true) { }
+        else { XCTFail("der Privacy-Modus beendet das Polling sofort") }
     }
 }

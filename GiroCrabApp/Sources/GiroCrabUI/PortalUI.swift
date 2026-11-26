@@ -1177,7 +1177,10 @@ struct PortalWebSheet: View {
     static func storedLoginStep(autofillDisabled: Bool, vaultAnswered: Bool,
                                 storedUser: String, password: String,
                                 connectionLogin: String, connectionIsAmazonVisa: Bool,
-                                tryCount: Int = 0) -> StoredLoginStep {
+                                tryCount: Int = 0, privacyRedacted: Bool = false) -> StoredLoginStep {
+        // privacy mode: the app is shown to someone — the stored credentials
+        // must not appear in the form (no retry either: mode is a decision)
+        if privacyRedacted { return .done }
         if autofillDisabled { return .done }
         // an unanswered vault is retried (a restart catches it while opening) —
         // but a vault that stays closed (e.g. a real read error) ends the poll,
@@ -1199,17 +1202,21 @@ struct PortalWebSheet: View {
         let id = connection.id
         var answered = true
         var storedUser = "", password = ""
-        do {
-            let stored: (String, String)? = try await model.vaultOffMain {
-                (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
-            }
-            if let stored {
-                (storedUser, password) = stored
-            } else {
+        // privacy mode (the app is shown to someone): nothing is read and
+        // nothing is typed — the poll ends, filling stays with the user
+        if redaction.isEmpty {
+            do {
+                let stored: (String, String)? = try await model.vaultOffMain {
+                    (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+                }
+                if let stored {
+                    (storedUser, password) = stored
+                } else {
+                    answered = false
+                }
+            } catch {
                 answered = false
             }
-        } catch {
-            answered = false
         }
         // the limit counts consecutive unanswered reads: an answered vault
         // starts fresh, recoveries must not be spent on the earlier gap
@@ -1218,7 +1225,7 @@ struct PortalWebSheet: View {
             autofillDisabled: AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)),
             vaultAnswered: answered, storedUser: storedUser, password: password,
             connectionLogin: connection.loginName, connectionIsAmazonVisa: connection.connector == .amazonVisa,
-            tryCount: missingTries)
+            tryCount: missingTries, privacyRedacted: !redaction.isEmpty)
         switch step {
         case .done:
             return true
