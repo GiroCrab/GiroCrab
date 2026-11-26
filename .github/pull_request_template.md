@@ -19,5 +19,5 @@
 - **Human-Steering:**
 - **AI-Agency:**
 - **Review-Focus:**
-- **Security-Check:**
+- [ ] **Security-Check:** <!-- Pflicht bei Änderungen an Vault/Secrets/SEPA/Konnektoren/Local-API/Workflows/scripts: abhaken ([x]) und begründen. Required for security-critical paths: tick and explain. -->
 - **Perf-Check:**
