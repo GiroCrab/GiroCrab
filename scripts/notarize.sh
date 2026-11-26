@@ -580,6 +580,12 @@ ${NOTES}"
       upload_feed_to_latest_stable
     fi
   fi
+  # Betas: CI creates the release as a draft; publish it now that the DMG is attached.
+  # Stable stays a draft until the maintainer releases it.
+  if [ "$CHANNEL" = "beta" ]; then
+    echo "==> Publishing beta release $UPLOAD_TAG"
+    gh release edit "$UPLOAD_TAG" --draft=false --prerelease --latest=false
+  fi
   if [ -n "$ROTATE_TO" ]; then
     scripts/sparkle-key.sh finish-rotation "$SPARKLE_ROTATION_NEW" "$SPARKLE_ROTATION_OLD"
   elif [ -n "$LOST_TO" ]; then
