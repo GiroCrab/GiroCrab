@@ -1964,6 +1964,8 @@ public final class AppModel {
         payeeCheck = nil
         pendingLogin = nil
         setupRequest = nil
+        // the sheet may go without its onDismiss: a stale wait would block scheduled syncs (#1831)
+        afterSettingsDismiss = nil
         webLoginConnection = nil
         syncingConnectionID = nil
         historyIncomplete = [:]

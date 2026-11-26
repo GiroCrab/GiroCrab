@@ -14,10 +14,21 @@ extension AppModel {
         if showSettings {
             let id = connection.id
             let current = vault
+            // What this request asked for besides the bookings (statements, Postbox, one
+            // account): another login's sync while the sheet closes would clear it.
+            let statements = statementsAccountID
+            let statementsBefore = statementsCountBefore
+            let postbox = postboxConnectionID
+            let accountOnly = syncAccountID
             afterSettingsDismiss = { [weak self] in
                 // locked or another vault meanwhile: the id may name another login there
                 guard let self, let current, self.vault === current,
                       let c = self.connections.first(where: { $0.id == id }) else { return }
+                // startSync still drops a target that is not of exactly this login
+                self.statementsAccountID = statements
+                self.statementsCountBefore = statementsBefore
+                self.postboxConnectionID = postbox
+                self.syncAccountID = accountOnly
                 self.requestSync(c)
             }
             showSettings = false

@@ -68,9 +68,23 @@ final class SettingsSyncTests: XCTestCase {
         model.showSettings = true
         model.requestFullSync(c)
         model.releaseVaultState()   // what locking does
+        XCTAssertNil(model.afterSettingsDismiss, "a stale wait would block scheduled syncs after unlocking")
         model.settingsDismissed()
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertNil(model.syncingConnectionID)
         XCTAssertNil(model.activeChallenge)
+    }
+
+    func testDeferredStatementsRequestKeepsItsTarget() async throws {
+        let c = try login()
+        guard let account = model.accountsByID.values.first(where: { $0.connectionId == c.id && !$0.isArchived }) else {
+            throw XCTSkip("demo login needs an account")
+        }
+        model.showSettings = true
+        model.fetchStatements(for: account)
+        XCTAssertFalse(model.showSettings)
+        model.clearSyncTargets()   // what another login's sync does while the sheet closes
+        model.settingsDismissed()
+        XCTAssertEqual(model.statementsAccountID, account.id, "the deferred request still fetches the statements")
     }
 }
