@@ -46,6 +46,7 @@ for report in "$@"; do
     BEGIN {
       split("Ansicht|Dateien|Werkzeug|Nachweis", metadata, "[|]")
       split("Befunde|Impeccable-Bewertung|Prüfnachweis", sections, "[|]")
+      detail_field_count = split("Ort|Beobachtung|Vorschlag|Prüfung", detail_fields, "[|]")
       header[1] = findings
       header[2] = ratings
       separator[1] = "|---|---|---|---|---|---|---|"
@@ -83,7 +84,9 @@ for report in "$@"; do
         id = trim(cell[2])
         if (id !~ /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/ || seen[id]++) fail("Ungültige oder doppelte Befund-ID: " id)
         if (trim(cell[3]) !~ /^(P[0-3]|–)$/) fail(id ": Priorität muss P0–P3 oder – sein")
-        if (trim(cell[8]) !~ /^`(open|fixed|decision|dismissed)`$/) fail(id ": Status muss open, fixed, decision oder dismissed sein")
+        status = trim(cell[8])
+        if (status !~ /^`(open|fixed|decision|dismissed)`$/) fail(id ": Status muss open, fixed, decision oder dismissed sein")
+        if (status ~ /^`(open|decision)`$/) needs_details[id] = 1
         entries++
       } else {
         view = trim(cell[2])
@@ -99,11 +102,26 @@ for report in "$@"; do
     }
     section == 3 && /^### / {
       view = trim(substr($0, 5))
+      detail = ""
       if (view == "" || view in evidence) fail("Fehlender oder doppelter Name im Prüfnachweis: " view)
       evidence[view] = 0
     }
     section == 3 && view in evidence && /^- \*\*Demo-Einstieg:\*\* [^[:space:]]/ {
       evidence[view] = 1
+    }
+    section == 3 && /^#### / {
+      detail = ""
+      if (!(view in evidence) || $0 !~ /^#### [A-Z][A-Z0-9]*-[1-9][0-9]* · [^[:space:]]/) {
+        fail("Befundüberschrift erwartet: #### ID · Titel")
+        next
+      }
+      detail = $2
+      if (!(detail in seen) || detail in detail_count) fail("Unbekannter oder doppelter Befund: " detail)
+      detail_count[detail] = 0
+    }
+    detail != "" && /^- \*\*(Ort|Beobachtung|Vorschlag|Prüfung):\*\*/ {
+      prefix = "- **" detail_fields[++detail_count[detail]] ":** "
+      if (index($0, prefix) != 1 || trim(substr($0, length(prefix) + 1)) == "") fail(detail ": Detailfeld erwartet: " prefix)
     }
     END {
       if (field != 4) fail("Vier Metadatenfelder erwartet")
@@ -111,6 +129,9 @@ for report in "$@"; do
       if (tables[1] != 1 || tables[2] != 1 || expect_separator) fail("Je eine Befund- und Bewertungstabelle erwartet")
       if (!entries && !empty) fail("Befunde oder den Hinweis Keine Befunde. ergänzen")
       if (entries && empty) fail("Keine Befunde. passt nicht zu einer ausgefüllten Tabelle")
+      for (id in needs_details) {
+        if (detail_count[id] != detail_field_count) fail(id ": Ort, Beobachtung, Vorschlag und Prüfung ergänzen")
+      }
       for (view in scored) {
         score_count++
         if (!(view in evidence)) fail("Prüfnachweis fehlt: " view)

@@ -23,7 +23,19 @@
 ### Seitenleiste
 
 - **Demo-Einstieg:** `--demo-seed`, Konten nach Gruppen. Auf dem iPhone von „Alle Konten“ mit dem Zurück-Pfeil zur Seitenleiste wechseln. Standard und „Accessibility XL“ vergleichen.
-- **SEI-1:** `AccountRow` und `AllAccountsRow` halten die Salden vollständig und begrenzen Namen auf eine Zeile. Auf dem schmalen Mac werden die Tagesgeldkonten ähnlich gekürzt, auf dem iPhone sind auch die ersten Konten schwer unterscheidbar (`mac-sidebar-gross.png`, `iphone-sidebar-gross.png`). Bei großer Schrift müssen Name und Saldo zusammen identifizierbar sein. [Bildbelege (ZIP)][bildbelege]
-- **SEI-2:** In `SidebarView` haben die Navigationssymbole eine feste Spaltenbreite von 20 pt. Im selben iPhone-Bild müssen Symbol und Text sichtbar getrennt bleiben. Das Öffnen des Girokontos über die Seitenleiste wurde bei Standardgröße geprüft. [Bildbelege (ZIP)][bildbelege]
+
+#### SEI-1 · Kontonamen werden auf einzelne Zeichen gekürzt
+
+- **Ort:** `SidebarView.swift` (`AccountRow`) und `AllAccountsRoot.swift` (`AllAccountsRow`).
+- **Beobachtung:** Auf dem schmalen Mac werden Tagesgeldnamen gekürzt. Am iPhone bleibt bei „Accessibility XL“ vom Girokonto „M“ und bei der Kreditkarte nur das Kürzungszeichen.
+- **Vorschlag:** Bei Platzmangel Namen und Saldo untereinander anordnen oder dem Namen eine zweite Zeile geben.
+- **Prüfung:** Auf Mac und iPhone die ersten Konten bei großer Schrift vergleichen und das Girokonto auswählen. Namen und Salden bleiben zuordenbar. [Bildbelege (ZIP)][bildbelege] · `mac-sidebar-gross.png`, `iphone-sidebar-gross.png`.
+
+#### SEI-2 · Seitensymbole ragen in den Text
+
+- **Ort:** `SidebarView.swift`, Navigationszeilen mit 20-pt-Symbolspalte.
+- **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ ragen die Symbole in „Neue Umsätze“ und „Vermögen“ in die Beschriftung.
+- **Vorschlag:** Die reservierte Symbolspalte mit der Schrift skalieren und einen festen sichtbaren Abstand zum Text vorsehen.
+- **Prüfung:** Dieselben Navigationspunkte bei Standard und „Accessibility XL“ vergleichen. Beide Symbole bleiben vom Text getrennt. [Bildbelege (ZIP)][bildbelege] · `iphone-sidebar-gross.png`.
 
 [bildbelege]: https://github.com/user-attachments/files/35449133/PR-Bildbelege.zip

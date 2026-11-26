@@ -34,8 +34,12 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
    [Vorlage](#vorlage-für-den-bericht) verwenden. Jede Ansicht erhält eine eigene Zeile in der Bewertung
    und einen gleichnamigen Abschnitt im Prüfnachweis. Jeder bestätigte Befund bekommt eine bleibende ID
    aus Ansichtskürzel und Nummer, z. B. `INS-1`. Neue Befunde bekommen die nächste freie Nummer.
-   Die Tabelle fasst jeden Befund in einer Zeile zusammen. Unter „Prüfnachweis“ reichen die Schritte,
-   die speziell für diese Ansicht gelten. Die allgemeine Prüfmatrix steht hier in der Anleitung.
+   Die Tabelle fasst jeden Befund in einer Zeile zusammen. Beim Anlegen erhält jeder offene Befund und jede
+   offene Entscheidung sofort einen eigenen Detailabschnitt unter der Ansicht im „Prüfnachweis“. Dort stehen
+   **Ort** (Datei und Symbol), **Beobachtung** (Zustand, Schritte und sichtbares Ergebnis), **Vorschlag**
+   (Lösungsansatz oder die noch zu klärende Frage) und **Prüfung** (Abnahmekriterium und Beleg, falls vorhanden).
+   Gemeinsame Startargumente können einmal bei der Ansicht stehen. Sobald ein Befund nachgeprüft `fixed` ist,
+   kann der Detailabschnitt entfallen. Befund-ID, Status, Fix-Link und kurze Nachprüfung bleiben im Bericht.
 6. **Sortieren.** Jeder Befund bekommt genau einen Weg:
    - **Fix:** klein und unstrittig → direkt im Audit-PR beheben.
    - **Issue:** klar, aber eigene Arbeit → höchstens fünf Issues pro Audit, Titel
@@ -258,7 +262,20 @@ herstellen und die genaue Folge im Bericht notieren.
 - **Umgebung:** <Plattformen, Versionen, Geräte, Sprache, geprüfte Varianten und Abweichungen von der Prüfmatrix>
 - **Build:** <fester Patch-Commit oder Diff und abweichender Core-Stand, falls verwendet>
 - **Demo-Einstieg:** <Startargumente, Auswahl und Bedienfolge>
-- **XYZ-2:** <Code-Stelle, Ergebnis, erwartetes Verhalten, Beleg und ggf. Issue oder PR>
+
+#### XYZ-2 · <Kurztitel>
+
+- **Ort:** <Datei und Symbol>
+- **Beobachtung:** <Zustand, Schritte und sichtbares Ergebnis>
+- **Vorschlag:** <Lösungsansatz oder offene Frage>
+- **Prüfung:** <Abnahmekriterium und ggf. Beleglink>
+
+#### XYZ-3 · <Kurztitel der offenen Entscheidung>
+
+- **Ort:** <betroffene Dateien und Symbole>
+- **Beobachtung:** <Zustand, Schritte und sichtbares Ergebnis>
+- **Vorschlag:** <zu klärende Frage und mögliche Varianten>
+- **Prüfung:** <Kriterium für den Vergleich der Varianten>
 ```
 
 Wenn die Prüfung keine Befunde ergibt, bleibt die Tabelle leer und darunter steht „Keine Befunde.“ In älteren
