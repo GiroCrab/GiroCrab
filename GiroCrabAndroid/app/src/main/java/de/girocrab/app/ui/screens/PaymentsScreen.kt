@@ -67,6 +67,7 @@ import de.girocrab.app.model.CorePaymentDetails
 import de.girocrab.app.model.CorePaymentParser
 import de.girocrab.app.model.DirectDebitMandate
 import de.girocrab.app.model.StandingOrder
+import de.girocrab.app.model.noNextRunNote
 import de.girocrab.app.model.StandingOrderRun
 import java.time.Instant
 import java.time.LocalDate
