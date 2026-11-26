@@ -282,15 +282,18 @@ pub(crate) fn merge_bookings(
             let acc: i64 = r.get(1)?;
             let ext: String = r.get(2)?;
             by_key.insert((acc, ext.clone()), id);
-            let fp = match_fingerprint(
-                r.get(3)?,
-                &r.get::<_, String>(16)?,
-                r.get(17)?,
-                &r.get::<_, String>(18)?,
-                &r.get::<_, String>(11)?,
-                &r.get::<_, String>(12)?,
-            );
-            fp_rows.push(((acc, fp, is_hold_id(&ext)), (ext, id)));
+            // Mirrored loan payments match by source links, not by similar payment text.
+            if !crate::offline::loan_payments::is_payment_key(&ext) {
+                let fp = match_fingerprint(
+                    r.get(3)?,
+                    &r.get::<_, String>(16)?,
+                    r.get(17)?,
+                    &r.get::<_, String>(18)?,
+                    &r.get::<_, String>(11)?,
+                    &r.get::<_, String>(12)?,
+                );
+                fp_rows.push(((acc, fp, is_hold_id(&ext)), (ext, id)));
+            }
             let source: String = r.get(5)?;
             let manual = if source == "manual" { r.get(4)? } else { None };
             local.insert(
@@ -431,6 +434,7 @@ pub(crate) fn merge_bookings(
         o.fields.tags = other_tags.remove(&o.id).unwrap_or_default();
         let existing = match by_key.get(&(acc, o.external_id.clone())) {
             Some(&id) => Some((id, false)),
+            None if crate::offline::loan_payments::is_payment_key(&o.external_id) => None,
             None => match by_fp.get_mut(&(acc, o.match_fp.clone(), is_hold_id(&o.external_id))) {
                 Some(bucket) if !bucket.is_empty() => {
                     let (ext, id) = bucket.remove(0);

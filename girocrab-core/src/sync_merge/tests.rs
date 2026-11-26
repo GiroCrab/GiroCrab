@@ -5110,6 +5110,60 @@ fn booking(v: &Vault, account: i64, ext: &str, fp: &str) {
         .unwrap();
 }
 
+#[test]
+fn offline_loan_source_links_follow_a_folded_moneymoney_account() {
+    let dir = temp_dir("loan-payment-folded-twin");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let twin = wallet(&a, None, "moneymoney-db:25:ba5a6b58", FINOM_IBAN, "EUR");
+    booking(&a, twin, "mm-rate-1", "rate-1");
+    let loan = a
+        .create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+        .unwrap();
+    let source = n(
+        &a,
+        "SELECT id FROM transactions WHERE external_id = 'mm-rate-1'",
+    );
+    a.mirror_offline_loan_payment(source, loan, 80).unwrap();
+    merge(&b, &a);
+
+    let c = comdirect(&a);
+    let bank = wallet(&a, Some(c), FINOM_IBAN, FINOM_IBAN, "EUR");
+    booking(&a, bank, "bank-rate-1", "rate-1");
+    let new_source = n(
+        &a,
+        "SELECT id FROM transactions WHERE external_id = 'bank-rate-1'",
+    );
+    a.mirror_offline_loan_payment(new_source, loan, 80).unwrap();
+    assert_eq!(super::twins::fold_twins(&a.db().unwrap()).unwrap(), 1);
+    assert!(a.mirror_offline_loan_payment(new_source, loan, 80).is_err());
+
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        let loan = n(v, "SELECT id FROM accounts WHERE kind = 'loan'");
+        assert_eq!(
+            n(
+                v,
+                &format!("SELECT balance_cents FROM accounts WHERE id = {loan}")
+            ),
+            -420
+        );
+        assert_eq!(
+            n(
+                v,
+                &format!(
+                    "SELECT count(*) FROM transactions WHERE account_id = {loan} AND deleted_ms IS NULL"
+                )
+            ),
+            1
+        );
+        let source = n(
+            v,
+            "SELECT id FROM transactions WHERE external_id = 'bank-rate-1' AND deleted_ms IS NULL",
+        );
+        assert!(v.mirror_offline_loan_payment(source, loan, 80).is_err());
+    }
+}
+
 /// A login set up after the MoneyMoney import (Enable Banking) took over an
 /// unlinked MoneyMoney account; another device brought the unlinked copy
 /// back. It is a twin by IBAN and bookings: the fetch renamed most of them

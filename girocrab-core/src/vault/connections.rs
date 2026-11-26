@@ -210,6 +210,7 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
             )?;
         }
         crate::refunds::fold_booking(conn, o, k, same_amount, source_had_splits)?;
+        crate::offline::loan_payments::move_source(conn, o, k)?;
         // a loan link of `keep` wins (transaction_id is the key)
         conn.execute(
             "UPDATE OR IGNORE loan_links SET transaction_id = ?1 WHERE transaction_id = ?2",
@@ -287,7 +288,7 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
     )?;
     // standing orders are replaced on every fetch
     conn.execute("DELETE FROM standing_orders WHERE account_id = ?1", [dup])?;
-    Ok(())
+    crate::offline::loan_payments::reconcile(conn)
 }
 
 fn deduplicate_inner(conn: &Connection) -> CoreResult<u32> {

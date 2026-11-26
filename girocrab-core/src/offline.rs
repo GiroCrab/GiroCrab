@@ -14,6 +14,8 @@
 //! balance for the outstanding debt. Loans with terms in `loans.rs`, depots
 //! and accounts of a bank connection use their own flows.
 
+pub(crate) mod loan_payments;
+
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::connectors::group_for;
@@ -488,6 +490,9 @@ impl Vault {
             "UPDATE transactions SET deleted_ms = ?1 WHERE id = ?2",
             params![now_ms(), booking_id],
         )?;
+        if loan_payments::is_mirrored(&tx, booking_id)? {
+            loan_payments::reconcile(&tx)?;
+        }
         crate::opening_balance::refresh(&tx, account_id)?;
         tx.commit()?;
         Ok(())
@@ -620,16 +625,14 @@ impl Vault {
                 // Both devices derive the same booking key from the source's sync
                 // identity. The database scopes the key to the target account.
                 let source_key = crate::sync_merge::account_key(&tx, source_account)?;
-                let identity = format!("{}:{source_key}{source_external_id}", source_key.len());
-                let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, identity.as_bytes());
-                let external_id = format!("{BOOKING_ID_PREFIX}loan-payment-{id}");
+                let external_id = loan_payments::payment_key(&source_key, &source_external_id);
                 let exists: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2)",
                     params![account_id, external_id],
                     |r| r.get(0),
                 )?;
                 // A deleted copy still blocks a replay, including after syncing.
-                if exists {
+                if exists || loan_payments::already_mirrored(&tx, booking_id, account_id)? {
                     return Err(CoreError::invalid(tr(
                         "Für diese Rate wurde bereits eine Tilgung auf dieses Darlehenskonto übernommen.",
                     )));
@@ -653,6 +656,9 @@ impl Vault {
             note: String::new(),
         };
         let id = insert_booking(&tx, account_id, &setup, external_id.as_deref())?;
+        if principal_cents.is_some() {
+            loan_payments::record(&tx, id, booking_id)?;
+        }
         // no `finish`: the copy stays without a category, the rules are not run
         crate::opening_balance::refresh(&tx, account_id)?;
         tx.commit()?;

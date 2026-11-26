@@ -71,6 +71,8 @@
 //!   index over `(execution_date, settled_ms)`.
 //! - 44: compatibility fence for offline loans (#1970). Earlier builds cannot
 //!   merge manual loan booking edits or recompute their opening balances.
+//! - 45: the source links of mirrored offline-loan payments (#1970), mapped through
+//!   booking merges and MoneyMoney twin folding.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -131,6 +133,7 @@ const STEPS: &[Step] = &[
     Step::Hook(account_last_fetch),                            // 42 (#1716)
     Step::Hook(crate::planned::planned_settled),               // 43 (#1900)
     Step::Sql(""), // 44: offline-loan compatibility fence
+    Step::Hook(crate::offline::loan_payments::migrate), // 45: mirrored payments retain their source
 ];
 
 /// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
@@ -1246,7 +1249,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 44);
+        assert_eq!(SCHEMA_VERSION, 45);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for
