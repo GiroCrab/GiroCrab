@@ -48,10 +48,9 @@ JSON-Schnittstelle, mit der das Online-Banking unter `https://sparen.ayvensbank.
   werden nur innerhalb dieses Hosts verfolgt.
 * Ein Konto ohne Saldo verwirft den ganzen Abruf. Eine Umsatzliste, die keine Liste ist oder eine Buchung
   ohne lesbares Datum oder ohne lesbaren Betrag enthält, verwirft die Umsätze dieses Kontos: Saldo und
-  andere Konten bleiben, eine Warnung nennt das Konto, und der nächste Abruf holt die Umsätze ab der
-  neuesten gespeicherten Buchung nach. Nach dem vollständigen Abruf gilt das nicht: der zählt auch mit
-  Warnungen als erledigt, und spätere Abrufe reichen nicht so weit zurück. Die Warnung verweist dann auf
-  „Umsätze“ › „Beim nächsten Abruf“ in den Einstellungen des Zugangs.
+  andere Konten bleiben, eine Warnung nennt das Konto. Ein späterer Abruf holt die fehlenden Umsätze nicht in
+  jedem Fall nach: nach dem vollständigen Abruf und bei einem Konto ohne gespeicherte Umsätze beginnt er
+  später. Die Warnung verspricht das deshalb nicht.
 * Bei mehreren Konten meldet eine leere Liste je Konto eine Warnung, statt das Konto still ohne Umsätze
   zu führen.
 * Jeder Abruf fragt den SMS-Code ab: zwischen zwei Abrufen bleibt keine Sitzung gespeichert.
