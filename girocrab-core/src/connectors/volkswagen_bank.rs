@@ -522,7 +522,9 @@ fn berlin_today() -> Date {
 /// like). Never the request: it can hold the password. The answer can echo
 /// account numbers or IBANs, so IBANs (also grouped) are cut to their first
 /// and last four characters and long digit runs are masked before cutting
-/// (a cut must not leave the tail of a number behind).
+/// (a cut must not leave the tail of a number behind). This is no full
+/// masking of the body: names and free text stay as the portal wrote them.
+/// Public reports go through `sanitize_report_text` separately.
 fn http_error_message(status: u16, path: &str, body: &str) -> String {
     let ibans = crate::sync_log::replace_ibans(body, |compact| {
         let n = compact.chars().count();
