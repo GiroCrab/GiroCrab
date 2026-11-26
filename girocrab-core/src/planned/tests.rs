@@ -343,10 +343,13 @@ fn collection_is_settled_only_by_an_incoming_booking() {
     // an outgoing booking of the same amount and IBAN is no collection
     book(&v, a, "out", "2999-01-10", -500, "DE89370400440532013000");
     settle(&v, a);
+    // a settled order stays as a row (#1900); only `settled_ms` tells it apart
     assert_eq!(planned_rows(&v, a), 1);
+    assert_eq!(settled_count(&v), 0);
     book(&v, a, "in", "2999-01-10", 500, "DE89370400440532013000");
     settle(&v, a);
-    assert_eq!(planned_rows(&v, a), 0);
+    assert_eq!(planned_rows(&v, a), 1);
+    assert_eq!(settled_count(&v), 1);
 }
 
 #[test]
@@ -806,4 +809,20 @@ fn merge_keeps_the_own_reference_of_a_matched_booking() {
     assert_eq!(reference_of(&a, "x1"), "E7");
     assert_eq!(settled_count(&a), 0);
     assert_eq!(a.count_planned_payments().unwrap(), 1);
+}
+
+/// A booking that names a stored order settles that order only: an order without a payee IBAN
+/// (batch sum) does not take it as well.
+#[test]
+fn order_without_iban_does_not_take_a_booking_another_order_names() {
+    let v = vault("planned-no-iban-named");
+    let a = account(&v, "Giro");
+    let mut sum = job("SUM", Some("2999-01-15"), 400);
+    sum.recipient_iban = String::new();
+    v.record_planned_transfer(a, &sum).unwrap();
+    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 400))
+        .unwrap();
+    book_ref(&v, a, "x1", -400, "E2");
+    settle(&v, a);
+    assert_eq!(open_orders(&v), ["2999-01-15"]);
 }

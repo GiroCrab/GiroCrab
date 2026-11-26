@@ -524,3 +524,77 @@ fn adopted_booking_replaces_the_notprovided_placeholder() {
         .unwrap();
     assert_eq!(e2e, "E2");
 }
+
+/// A booking first delivered with `NOTPROVIDED` and mandate `stored_mandate` is delivered again
+/// with reference `E1` and `delivered_mandate` (`refresh_existing`, no new booking). Returns the
+/// stored reference and whether the order `E1` is settled.
+fn late_reference(stored_mandate: &str, delivered_mandate: &str) -> (String, bool) {
+    let (v, conn) = setup();
+    let delivery = |e2e: &str, mandate: &str| {
+        let mut t = tx("2999-01-10", -90_000, "Vermieter");
+        t.external_id = "t1".into();
+        t.end_to_end_id = e2e.into();
+        t.mandate_id = mandate.into();
+        t
+    };
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(vec![delivery("NOTPROVIDED", stored_mandate)]),
+    )
+    .unwrap();
+    let acc: i64 = v
+        .db()
+        .unwrap()
+        .query_row("SELECT account_id FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    let order = crate::connectors::TransferJob {
+        source_iban: "DE02120300000000202051".into(),
+        source_owner: "Max".into(),
+        recipient_name: "Vermieter".into(),
+        recipient_iban: "DE89370400440532013000".into(),
+        recipient_bic: None,
+        amount_cents: 90_000,
+        purpose: "Miete".into(),
+        instant: false,
+        execution_date: Some("2999-01-15".into()),
+        end_to_end_id: "E1".into(),
+    };
+    v.record_planned_transfer(acc, &order).unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(vec![delivery("E1", delivered_mandate)]),
+    )
+    .unwrap();
+    let db = v.db().unwrap();
+    let e2e: String = db
+        .query_row("SELECT end_to_end_id FROM transactions", [], |r| r.get(0))
+        .unwrap();
+    let open: i64 = db
+        .query_row(
+            "SELECT count(*) FROM planned_transfers WHERE settled_ms IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    (e2e, open == 0)
+}
+
+/// The bank's later reference replaces the placeholder next to the same mandate and settles
+/// the order it names (#1900).
+#[test]
+fn refetched_booking_replaces_the_placeholder_next_to_a_mandate() {
+    assert_eq!(late_reference("M1", "M1"), ("E1".to_string(), true));
+}
+
+/// A later delivery with another mandate does not mix its reference into the stored row.
+#[test]
+fn refetched_reference_with_another_mandate_keeps_the_placeholder() {
+    assert_eq!(
+        late_reference("M1", "M2"),
+        ("NOTPROVIDED".to_string(), false)
+    );
+}

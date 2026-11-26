@@ -48,9 +48,9 @@ pub(crate) fn planned_kind(conn: &Connection) -> CoreResult<()> {
 }
 
 /// Step 43 (#1900): `settled_ms` marks a scheduled order the bank's booking has
-/// settled (NULL = still open), so a vault merge cannot bring it back. The date
-/// index already covers it for the `settled_ms IS NULL` filter that lists and
-/// counts get in part 2; no query reads it yet. Idempotent.
+/// settled (NULL = still open), so a vault merge cannot bring it back. List, count and
+/// totals filter `settled_ms IS NULL`; the index over `(execution_date, settled_ms)`
+/// replaces the plain date index for that filter. Idempotent.
 pub(crate) fn planned_settled(conn: &Connection) -> CoreResult<()> {
     if !has_column(conn, "main", "planned_transfers", "settled_ms")? {
         conn.execute_batch("ALTER TABLE planned_transfers ADD COLUMN settled_ms INTEGER;")?;
@@ -399,7 +399,9 @@ pub(crate) fn adopt_peer_references<'a>(
 /// on or after the day the order was placed; such a booking settles one order only: only the
 /// bookings this fetch inserted or adopted (`fetched`, their ids) count, so a later fetch, or a second
 /// call within the same second, cannot use it for a second order. A booking with a reference
-/// never settles another order by amount. Pending/held rows are no bookings. Orders the bank
+/// settles another order by amount only when that order has no payee IBAN (a batch sum, whose
+/// local id the bank never shows, #1898) and no stored order carries the reference, so it never
+/// settles a second order next to the one it names. Pending/held rows are no bookings. Orders the bank
 /// executes early or on another day (weekend, holiday) would otherwise stay until their date
 /// has passed. Orders are tried by date, creation time and reference, bookings by date and bank
 /// id, never by the local row id, so every replica of the vault settles the same order for the
@@ -431,12 +433,16 @@ pub(crate) fn drop_booked(
     let now_ms = crate::dates::now_ms();
     let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
     let mut used: std::collections::HashSet<i64> = Default::default();
+    // `named`: a stored order (open or settled) carries the booking's reference
     let mut find = db.prepare(
-        "SELECT id, COALESCE(counterparty_iban, ''), COALESCE(end_to_end_id, '') FROM transactions
-         WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
-           AND booking_date >= ?3
-           AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
-         ORDER BY booking_date, external_id, id",
+        "SELECT t.id, COALESCE(t.counterparty_iban, ''), COALESCE(t.end_to_end_id, ''),
+                EXISTS (SELECT 1 FROM planned_transfers p
+                        WHERE p.end_to_end_id = trim(t.end_to_end_id))
+         FROM transactions t
+         WHERE t.account_id = ?1 AND t.deleted_ms IS NULL AND t.amount_cents = ?2
+           AND t.booking_date >= ?3
+           AND t.external_id NOT LIKE 'pending-%' AND t.external_id NOT LIKE 'advanzia-hold-%'
+         ORDER BY t.booking_date, t.external_id, t.id",
     )?;
     // References were settled above. First pass: exact IBAN, so an order without a better
     // booking cannot take the booking of another order; second: no IBAN on either side.
@@ -446,23 +452,24 @@ pub(crate) fn drop_booked(
         for order in open {
             let (id, iban, cents, kind, since) = &order;
             let signed = if kind == "debit" { *cents } else { -*cents };
-            let cands: Vec<(i64, String, String)> = find
+            let cands: Vec<(i64, String, String, bool)> = find
                 .query_map(params![account_id, signed, since], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
                 })?
                 .collect::<Result<_, _>>()?;
-            let hit = cands.iter().find(|(tid, tiban, te2e)| {
+            let hit = cands.iter().find(|(tid, tiban, te2e, named)| {
                 !used.contains(tid)
                     && fetched.contains(tid)
-                    // the booking belongs to the order its reference names
-                    && !names_order(te2e)
+                    // the booking belongs to the order its reference names; only an order
+                    // without a payee IBAN (batch sum) takes one whose reference no order has
+                    && (!names_order(te2e) || (iban.is_empty() && !named))
                     && if exact {
                         !iban.is_empty() && norm(iban) == norm(tiban)
                     } else {
                         iban.is_empty() || tiban.is_empty() || norm(iban) == norm(tiban)
                     }
             });
-            if let Some((tid, _, _)) = hit {
+            if let Some((tid, _, _, _)) = hit {
                 used.insert(*tid);
                 db.execute(
                     "UPDATE planned_transfers SET settled_ms = ?2 WHERE id = ?1",
