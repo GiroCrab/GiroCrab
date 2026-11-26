@@ -2375,6 +2375,69 @@ fn find_existing_accounts(
     Ok(out)
 }
 
+/// Whether the vault account `id` is the MoneyMoney card `a` that a fetch took over by its
+/// number (#1691): neither has an IBAN, the account is a card under the bank's reference on
+/// a login the import links `a`'s bank to (`import_logins`), in `a`'s currency, and the
+/// number the import stored (a fetch never replaces it) names `a` and no other MoneyMoney
+/// account. `chosen`: the way this import connects `a`'s bank, if it sets one up.
+fn card_taken_over_from(
+    conn: &Connection,
+    src: &Source,
+    chosen: Option<&MoneyMoneyDbConnectionOption>,
+    a: &SrcAccount,
+    id: i64,
+) -> CoreResult<bool> {
+    let Some(b) = src.bank(a.bank_key).filter(|_| a.iban.is_empty()) else {
+        return Ok(false);
+    };
+    let card: Option<(Option<i64>, String)> = conn
+        .query_row(
+            "SELECT connection_id, IFNULL(account_number, '') FROM accounts
+             WHERE id = ?1 AND kind = ?2 AND external_ref NOT LIKE 'moneymoney-db:%'
+               AND replace(IFNULL(iban, ''), ' ', '') = ''
+               AND upper(IFNULL(currency, '')) IN ('', ?3)",
+            params![
+                id,
+                AccountKind::CreditCard.as_str(),
+                a.currency.trim().to_uppercase()
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((Some(login), number)) = card else {
+        return Ok(false);
+    };
+    if !import_logins(conn, src, b, chosen)?.contains(&login) {
+        return Ok(false);
+    }
+    let numbers = src.accounts.iter().map(|x| (x.id, x.account.as_str()));
+    Ok(card_by_number(numbers, &number) == CardMatch::One(a.id))
+}
+
+/// The existing logins the import links `b`'s accounts to (`connect_banks`): the one for
+/// each way it offers to connect the bank (its own connector, the comdirect FinTS
+/// alternative, Enable Banking) and for `chosen`, the way picked in this import.
+fn import_logins(
+    conn: &Connection,
+    src: &Source,
+    b: &SrcBank,
+    chosen: Option<&MoneyMoneyDbConnectionOption>,
+) -> CoreResult<Vec<i64>> {
+    let offered = connection_options(src, b, &psd2_catalog());
+    let mut out = Vec::new();
+    for o in offered.iter().chain(chosen) {
+        let login = match (o.via, &o.psd2_bank) {
+            (MoneyMoneyDbConnectionVia::EnableBanking, Some(bank)) => {
+                psd2_login(conn, &psd2_key(&bank.aspsp, &bank.country))?
+            }
+            (MoneyMoneyDbConnectionVia::EnableBanking, None) => None,
+            _ => find_connection(conn, o.connector, &o.key, &b.username)?,
+        };
+        out.extend(login);
+    }
+    Ok(out)
+}
+
 fn find_connection(
     conn: &Connection,
     kind: ConnectorKind,
@@ -3375,9 +3438,10 @@ impl ImportCtx<'_> {
             // active) or of one the #998 repair reactivated: MoneyMoney's applies –
             // for the latter only from the MoneyMoney account it came from (its
             // reference, or the same IBAN and currency once a fetch took it over and
-            // the reference is gone), not from another one merged into it. MoneyMoney
-            // may keep several accounts with one IBAN (a closed and an open one, #94):
-            // then the IBAN names no source and the state stays as it is.
+            // the reference is gone, for a card without IBAN its number, #1691), not
+            // from another one merged into it. MoneyMoney may keep several accounts
+            // with one IBAN (a closed and an open one, #94): then the IBAN names no
+            // source and the state stays as it is.
             let iban_source = if src.accounts.iter().filter(|x| x.iban == a.iban).count() == 1 {
                 a.iban.as_str()
             } else {
@@ -3400,6 +3464,14 @@ impl ImportCtx<'_> {
                 ],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
+            let chosen = self
+                .options
+                .bank_choices
+                .iter()
+                .filter(|_| self.options.create_connections)
+                .find(|c| Some(c.mm_bank_id) == a.bank_key)
+                .and_then(|c| c.connection.as_ref());
+            let own = own || card_taken_over_from(conn, src, chosen, a, id)?;
             let unknown = own && marked;
             if a.closed && unknown {
                 // closed in its own MoneyMoney account: archived, stamped just after the
@@ -3779,6 +3851,22 @@ impl ImportCtx<'_> {
     }
 }
 
+/// Connector key of the Enable Banking login for an ASPSP.
+fn psd2_key(aspsp: &str, country: &str) -> String {
+    ConnectorKind::enable_banking_key(&country.trim().to_uppercase(), aspsp.trim())
+}
+
+/// The Enable Banking login for a connector key, if there is one (the first).
+fn psd2_login(conn: &Connection, key: &str) -> CoreResult<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL ORDER BY id LIMIT 1",
+            [key],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 /// Enable Banking connection for a MoneyMoney bank without own connector:
 /// the existing one for that ASPSP, else a new one. `None` when the banking
 /// lock blocks the bank or the choice is invalid (the bank is skipped).
@@ -3789,22 +3877,14 @@ fn psd2_connection(
     country: &str,
 ) -> CoreResult<Option<(i64, bool)>> {
     let aspsp = aspsp.trim();
-    let country = country.trim().to_uppercase();
-    let key = ConnectorKind::enable_banking_key(&country, aspsp);
+    let key = psd2_key(aspsp, country);
     if aspsp.is_empty() || ConnectorKind::enable_banking_target(&key).is_none() {
         return Ok(None);
     }
     if crate::banking_gate::check_connector(&key).is_err() {
         return Ok(None);
     }
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL ORDER BY id LIMIT 1",
-            [&key],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if let Some(id) = existing {
+    if let Some(id) = psd2_login(conn, &key)? {
         return Ok(Some((id, false)));
     }
     let display = if b.name.trim().is_empty() {
