@@ -9076,6 +9076,17 @@
         }
       }
     },
+    "Bitte einen Betrag von 0 oder mehr eingeben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please enter an amount of 0 or more."
+          }
+        }
+      }
+    },
     "Bitte einen Namen angeben." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14456,6 +14467,50 @@
         }
       }
     },
+    "Einstandskurs bearbeiten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit purchase price"
+          }
+        }
+      }
+    },
+    "Einstandskurs bearbeiten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit purchase price …"
+          }
+        }
+      }
+    },
+    "Einstandskurs in Prozent des Nennwerts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purchase price in percent of nominal value"
+          }
+        }
+      }
+    },
+    "Einstandskurs pro Stück (%@)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purchase price per unit (%@)"
+          }
+        }
+      }
+    },
     "Einstandswert" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17180,6 +17235,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Applies to this bank login only. A different application needs a new consent at the bank on the next fetch."
+          }
+        }
+      }
+    },
+    "Gilt, solange die Bank keinen eigenen Einstandskurs liefert. Ein leeres Feld entfernt den Wert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Applies as long as the bank does not report its own purchase price. An empty field removes the value."
           }
         }
       }
@@ -28206,6 +28272,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Position %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Position bearbeiten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit position"
           }
         }
       }
