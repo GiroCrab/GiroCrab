@@ -18,7 +18,6 @@ CRITICAL_PREFIXES = (
     "girocrab-core/src/vault",
     "girocrab-core/src/secret",
     "girocrab-core/src/lib.rs",  # generate_master_key(): the SQLCipher master key
-    "girocrab-core/src/sepa.rs",
     "girocrab-core/src/payment_input.rs",
     "girocrab-core/src/connectors/",
     "girocrab-core/src/local_api",

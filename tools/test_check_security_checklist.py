@@ -9,8 +9,8 @@ chk = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(chk)
 
 CRITICAL = [
-    "girocrab-core/src/vault.rs", "girocrab-core/src/vault/bookings.rs", "girocrab-core/src/secret_store.rs",
-    "girocrab-core/src/lib.rs", "girocrab-core/src/sepa.rs", "girocrab-core/src/payment_input.rs",
+    "girocrab-core/src/vault.rs", "girocrab-core/src/vault/bookings.rs", "girocrab-core/src/secret.rs",
+    "girocrab-core/src/lib.rs", "girocrab-core/src/connectors/fints/sepa.rs", "girocrab-core/src/payment_input.rs",
     "girocrab-core/src/connectors/fints/mod.rs", "girocrab-core/src/local_api.rs",
     "GiroCrabApp/Sources/GiroCrabUI/VaultKeyManager.swift", "GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift",
     "GiroCrabApp/Sources/GiroCrabUI/AppModel+LocalApi.swift", "GiroCrabLinux/src/local_api.rs",
