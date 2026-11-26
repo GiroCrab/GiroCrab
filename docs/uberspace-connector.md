@@ -1,8 +1,8 @@
 # Uberspace-Anbindung
 
 <!-- sync:connector-note:start -->
-> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur Uberspace. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
-> This connector is an independent community project and is not affiliated with Uberspace. Interface: unofficial. Using unofficial interfaces may violate the bank's terms of service.
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Uberspace. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Uberspace. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
 
 Status: **verifiziert mit echtem Konto** – `ConnectorKind::Uberspace`
