@@ -250,16 +250,19 @@ pub fn parse_response(data: &[u8]) -> CoreResult<Vec<Segment>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn unmappable_characters_keep_the_framing() {
         // "€" is not in ISO 8859-1: it must not become a bare escape character
         assert_eq!(to_latin1("a€b"), b"a??b".to_vec());
         let seg = to_latin1(&escape("Preis 5€ + Porto"));
-        // the '+' is escaped, the '€' is a literal '?'
+        // the '+' is escaped, the '€' becomes the escaped literal '??' (one '?')
         assert_eq!(seg, b"Preis 5?? ?+ Porto".to_vec());
+        let parsed = parse(b"HKTST:2:1+Preis 5?? ?+ Porto'").unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].get(1, 0), "Preis 5? + Porto");
     }
-
-    use super::*;
 
     #[test]
     fn roundtrip_escape_and_binary() {
