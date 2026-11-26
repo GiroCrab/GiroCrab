@@ -705,6 +705,11 @@ public final class AppModel {
     /// The balance chart has keyboard focus (Return there jumps to its day,
     /// instead of editing the selected booking's note).
     @ObservationIgnored var chartHasKeyboardFocus = false
+    /// The sidebar has keyboard focus (macOS): a list that appears because of a sidebar
+    /// selection then leaves it there, so ↑/↓ go on through the sidebar (#1779).
+    @ObservationIgnored var sidebarHasKeyboardFocus = false
+    /// A list in the main column may take the keyboard focus when it appears.
+    var listMayTakeFocusOnAppear: Bool { options.screenshotPath == nil && !sidebarHasKeyboardFocus }
     /// Run after the command palette sheet has been dismissed (opens the next sheet).
     @ObservationIgnored var afterPaletteDismiss: (@MainActor () -> Void)?
     var showCategorizer = false
