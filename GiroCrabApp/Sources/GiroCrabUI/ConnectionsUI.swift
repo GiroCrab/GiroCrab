@@ -301,8 +301,8 @@ struct ConnectionEditSheet: View {
     /// Logins whose stored secret is a password, not a PIN.
     private var usesPassword: Bool { [.easybank, .alteLeipziger, .uberspace, .fordMoney, .opelDirektbank, .hanseaticBank, .kontist, .monefit, .finpension, .goAndGrow].contains(connection.connector) }
     private var isTR: Bool { connection.connector == .tradeRepublic }
-    /// Amex and Amazon Visa: portal credentials are kept as vault secrets and
-    /// filled into the login form of the portal window.
+    /// Amex, Amazon Visa and Schwäbisch Hall: portal credentials are kept as vault
+    /// secrets and filled into the login form of the portal window.
     private var savesPortalLogin: Bool { AppModel.supportsStoredPortalLogin(connection.connector) }
     @State private var storePortalLogin = false
     @State private var portalUser = ""
@@ -358,7 +358,15 @@ struct ConnectionEditSheet: View {
                     }
                     if documentsSupported {
                         Toggle("Dokumente abrufen", isOn: $documentsFetch)
-                            .help("Belege, Kontoauszüge und Postbox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach.")
+                            .help(isFinTs
+                                ? Text("Aus: keine neuen Dokumente, bereits gespeicherte bleiben.")
+                                : Text("Belege, Kontoauszüge und Postbox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach."))
+                        // FinTS brings PDF statements only, per account (#1465)
+                        if isFinTs {
+                            Text("Per FinTS kommen nur PDF-Kontoauszüge, und nur wenn die Bank sie per FinTS anbietet: beim Sync für Konten, bei denen unter „Dokumente“ „Kontoauszüge automatisch beim Sync abrufen“ eingeschaltet ist, sonst über „Kontoauszüge abrufen“ an gleicher Stelle. Postbox-Dokumente wie Wertpapier- oder Ertragsabrechnungen ruft GiroCrab per FinTS nicht ab.")
+                                .appFont(.caption).foregroundStyle(Theme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     if connection.connector == .sharinbox {
                         Toggle("Nicht zugeteilte Aktienrechte abrufen", isOn: $rightsFetch)
@@ -455,6 +463,19 @@ struct ConnectionEditSheet: View {
                             model.webLoginConnection = model.connections.first { $0.id == connection.id } ?? connection
                         } label: { Label("Anmelden & Abrufen", systemImage: "safari") }
                             .buttonStyle(.borderedProminent)
+                        if connection.connector == .schwaebischHall && savesPortalLogin {
+                            Toggle("Anmeldedaten im Tresor speichern", isOn: $storePortalLogin)
+                            if storePortalLogin {
+                                TextField("Benutzername", text: $portalUser)
+                                    .autocorrectionDisabled()
+                                    .textContentType(.username)
+                                SecureField(status?.hasPin == true ? "Gespeichertes Passwort (leer = unverändert)" : "Passwort", text: $pin)
+                                    .textContentType(.password)
+                                Text("GiroCrab trägt beide verschlüsselt gespeichert ins Anmeldeformular ein. „Anmelden“ und den Bestätigungscode bestätigen Sie selbst.")
+                                    .appFont(.caption).foregroundStyle(Theme.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                         Button("Web-Sitzung (Cookies) löschen …", role: .destructive) { confirmClear = .portal }
                     } header: { Text("Direkt-Login (Web-Session)").appSectionHeader() }
                 }

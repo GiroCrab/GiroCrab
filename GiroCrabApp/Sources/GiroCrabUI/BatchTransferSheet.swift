@@ -11,6 +11,15 @@ struct BatchTransferSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.textScale) private var textScale
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// Options and summary below each other: side by side they fit neither the iPhone nor the iPad's sheet.
+    private var stacked: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
+        #endif
+    }
     @State private var selection = Set<BatchRow.ID>()
     @State private var reviewing = false
     @State private var showImporter = false
@@ -70,16 +79,29 @@ struct BatchTransferSheet: View {
 
     // MARK: header
 
+    /// Title left, the import right; below the title where it does not fit beside it (iPhone, large text).
     private var header: some View {
-        HStack(spacing: 12) {
-            Text(reviewing ? "Sammelüberweisung prüfen" : "Neue Überweisung").appFont(.title2, weight: .semibold)
-            Spacer()
-            if !reviewing {
-                Button { showImporter = true } label: { Label("CSV importieren …", systemImage: "square.and.arrow.down") }
-                    .help("Spalten: Name, IBAN, Betrag, Verwendungszweck (Trennzeichen ; , oder Tab). Datei hierher ziehen.")
+        let title = Text(reviewing ? "Sammelüberweisung prüfen" : "Neue Überweisung").appFont(.title2, weight: .semibold)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                title
+                Spacer()
+                importButton
             }
+            VStack(alignment: .leading, spacing: 8) {
+                title.fixedSize(horizontal: false, vertical: true)
+                importButton
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
+    }
+
+    @ViewBuilder private var importButton: some View {
+        if !reviewing {
+            Button { showImporter = true } label: { Label("CSV importieren …", systemImage: "square.and.arrow.down") }
+                .help("Spalten: Name, IBAN, Betrag, Verwendungszweck (Trennzeichen ; , oder Tab). Datei hierher ziehen.")
+        }
     }
 
     // MARK: editor
@@ -88,28 +110,30 @@ struct BatchTransferSheet: View {
         draft.singleBookings ? String(localized: "Einzelbuchungen pro Zahlung") : String(localized: "Eine Sammelbuchung")
     }
 
-    /// The choices side by side (label above) instead of a tall form.
+    /// The choices side by side (label above) instead of a tall form; on iOS below each other.
     private var options: some View {
         @Bindable var draft = model.batchDraft
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 16) {
-                labeled("Von Konto") {
+            layout {
+                labeled("Von Konto", value: accountText, hiding: .personal) {
                     SourceAccountPicker(selection: $draft.accountID, accounts: model.batchAccounts, inForm: false)
                 }
-                labeled("Buchung auf dem Kontoauszug") {
+                labeled("Buchung auf dem Kontoauszug", value: bookingText) {
                     Picker("Buchung", selection: $draft.singleBookings) {
                         Text("Eine Sammelbuchung").tag(false)
                         Text("Einzelbuchungen pro Zahlung").tag(true)
                     }
                 }
-                .frame(width: 200 * textScale)
-                labeled("Ausführung") {
+                .frame(width: stacked ? nil : 200 * textScale)
+                labeled("Ausführung", value: draft.scheduled ? String(localized: "Terminüberweisung") : String(localized: "Normale Überweisung")) {
                     Picker("Ausführung", selection: $draft.scheduled) {
                         Text("Normale Überweisung").tag(false)
                         Text("Terminüberweisung").tag(true)
                     }
                 }
-                .frame(width: 150 * textScale)
+                .frame(width: stacked ? nil : 150 * textScale)
                 // Always there (disabled unless scheduled): the layout does not jump.
                 labeled("Ausführungsdatum") {
                     DatePicker("Ausführungsdatum", selection: $draft.executionDate,
@@ -117,28 +141,48 @@ struct BatchTransferSheet: View {
                                displayedComponents: .date)
                         .disabled(!draft.scheduled)
                 }
-                .fixedSize()
+                .fixedSize(horizontal: !stacked, vertical: true)
             }
             if let note = draft.importNote {
                 Label(note, systemImage: "doc.text").appFont(.callout).foregroundStyle(Theme.secondary)
             }
         }
+        #if os(macOS)
         .padding(.horizontal, 20).padding(.vertical, 12)
+        #endif
     }
 
-    private func labeled<C: View>(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> C) -> some View {
+    private var accountText: String { account.map { "\($0.name) · \(formatIBAN($0.iban))" } ?? "–" }
+
+    /// `value`: the choice as text. On iOS it is the label of a menu, which grows with it;
+    /// a menu-style picker overlaps its neighbours when its text needs several lines.
+    private func labeled<C: View>(_ title: LocalizedStringKey, value: String? = nil, hiding: ReportRedaction = [],
+                                  @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).appFont(.caption).foregroundStyle(Theme.secondary)
-            content().labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+            if stacked, let value {
+                Menu { content().pickerStyle(.inline) } label: {
+                    HStack(spacing: 6) {
+                        Text(value).appFont(.body).multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Image(systemName: "chevron.up.chevron.down").appFont(.footnote).accessibilityHidden(true)
+                    }
+                }
+                .accessibilityLabel(Text(title)).accessibilityValue(value)
+                // On the whole menu: hidden, it neither opens nor reads out the accounts.
+                .sensitive(hiding)
+            } else {
+                content().labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
     private var editor: some View {
         @Bindable var draft = model.batchDraft
         return VStack(spacing: 0) {
+            #if os(macOS)
             options
             Divider()
-            #if os(macOS)
             Table($draft.rows, selection: $selection) {
                 TableColumn("Name") { $r in
                     TextField("Name", text: $r.name, prompt: Text("Name")).labelsHidden()
@@ -178,8 +222,10 @@ struct BatchTransferSheet: View {
             .frame(maxHeight: .infinity)
             .onDeleteCommand { removeSelected() }
             #else
-            // iPhone: a Table collapses to its first column, so a list of cards
+            // iPhone: a Table collapses to its first column, so a list of cards. The options
+            // scroll with it: above it, they left no room for the cards.
             List {
+                options
                 ForEach($draft.rows) { $r in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
@@ -211,43 +257,57 @@ struct BatchTransferSheet: View {
                     .accessibilityLabel("Ausgewählte Zeilen entfernen")
                 #endif
                 Spacer()
-                if invalid > 0 {
-                    Label("\(invalid) fehlerhaft", systemImage: "exclamationmark.triangle.fill")
-                        .appFont(.callout).foregroundStyle(Theme.negative)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { totals }
+                    VStack(alignment: .trailing, spacing: 2) { totals }.multilineTextAlignment(.trailing)
                 }
-                Text("\(rows.count) Zahlungen · \(String(localized: "Summe"))").appFont(.callout).foregroundStyle(Theme.secondary)
-                Text(Money.format(totalCents)).appFont(.title3, weight: .semibold, monospacedDigit: true).fixedSize().sensitive(.amounts)
             }
             .padding(.horizontal, 20).padding(.vertical, 10)
         }
+    }
+
+    @ViewBuilder private var totals: some View {
+        if invalid > 0 {
+            Label("\(invalid) fehlerhaft", systemImage: "exclamationmark.triangle.fill")
+                .appFont(.callout).foregroundStyle(Theme.negative)
+        }
+        Text("\(rows.count) Zahlungen · \(String(localized: "Summe"))").appFont(.callout).foregroundStyle(Theme.secondary)
+        // At the largest sizes a six-figure total can be wider than the screen: it may wrap there.
+        Text(Money.format(totalCents)).appFont(.title3, weight: .semibold, monospacedDigit: true)
+            .fixedSize(horizontal: !typeSize.isAccessibilitySize, vertical: true).sensitive(.amounts)
     }
 
     // MARK: review
 
     /// One compact band: the total, then what and from where.
     private var summary: some View {
-        HStack(alignment: .center, spacing: 20) {
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 20))
+        return layout {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Summe").appFont(.caption).foregroundStyle(Theme.secondary)
-                Text(Money.format(totalCents)).appFont(.title, weight: .semibold, monospacedDigit: true).fixedSize().sensitive(.amounts)
+                Text(Money.format(totalCents)).appFont(.title, weight: .semibold, monospacedDigit: true)
+                    .fixedSize(horizontal: !typeSize.isAccessibilitySize, vertical: true).sensitive(.amounts)
             }
-            Divider().frame(height: 40)
+            if !stacked { Divider().frame(height: 40) }
             VStack(alignment: .leading, spacing: 3) {
-                (Text("\(rows.count) Zahlungen") + Text(" · ") + Text(account.map { "\(redaction.masking($0.name)) · \(redaction.masking(formatIBAN($0.iban)))" } ?? "")).lineLimit(1)
+                (Text("\(rows.count) Zahlungen") + Text(" · ") + Text(account.map { "\(redaction.masking($0.name)) · \(redaction.masking(formatIBAN($0.iban)))" } ?? "")).lineLimit(stacked ? nil : 1)
                 Text("\(bookingText) · \(draft.scheduled ? String(localized: "Terminüberweisung") : String(localized: "Heute (SEPA-Überweisung)"))")
-                    .foregroundStyle(Theme.secondary).lineLimit(1)
+                    .foregroundStyle(Theme.secondary).lineLimit(stacked ? nil : 1)
             }
             .appFont(.callout)
-            Spacer(minLength: 0)
+            if !stacked { Spacer(minLength: 0) }
         }
+        #if os(macOS)
         .padding(.horizontal, 20).padding(.vertical, 12)
+        #endif
     }
 
     private var review: some View {
         VStack(spacing: 0) {
+            #if os(macOS)
             summary
             Divider()
-            #if os(macOS)
             Table(rows) {
                 TableColumn("Name") { r in Text(r.name).sensitive() }.width(min: 120, ideal: 170)
                 TableColumn("IBAN") { r in Text(r.iban).appFont(.body, design: .monospaced).sensitive() }
@@ -261,27 +321,42 @@ struct BatchTransferSheet: View {
             }
             .frame(maxHeight: .infinity)
             #else
-            List(rows) { r in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(r.name)
-                        Spacer()
-                        Text(Money.format(r.cents ?? 0)).monospacedDigit()
+            List {
+                summary
+                if typeSize.isAccessibilitySize { warning }
+                ForEach(rows) { r in
+                    VStack(alignment: .leading, spacing: 2) {
+                        let amount = Text(Money.format(r.cents ?? 0)).monospacedDigit()
+                        if typeSize.isAccessibilitySize {
+                            // On its own line: at the largest sizes an amount can be wider than the row.
+                            Text(r.name)
+                            amount
+                        } else {
+                            HStack {
+                                Text(r.name)
+                                Spacer()
+                                amount.fixedSize()
+                            }
+                        }
+                        Text(r.iban).appFont(.caption, design: .monospaced).foregroundStyle(Theme.secondary)
+                        Text(r.purpose).appFont(.caption).foregroundStyle(Theme.secondary)
                     }
-                    Text(r.iban).appFont(.caption, design: .monospaced).foregroundStyle(Theme.secondary)
-                    Text(r.purpose).appFont(.caption).foregroundStyle(Theme.secondary)
+                    .sensitive([.personal, .amounts])
                 }
-                .sensitive([.personal, .amounts])
             }
             .listStyle(.plain)
             #endif
             Divider()
             pinArea
-            Label("Bitte Empfänger und IBAN genau prüfen. Eine freigegebene Überweisung lässt sich meist nicht mehr zurückholen.", systemImage: "exclamationmark.shield")
-                .appFont(.callout).foregroundStyle(Theme.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20).padding(.vertical, 10)
+            // With the largest text it fills half the screen: there it scrolls with the list (above the payments).
+            if !typeSize.isAccessibilitySize { warning.padding(.horizontal, 20).padding(.vertical, 10) }
         }
+    }
+
+    private var warning: some View {
+        Label("Bitte Empfänger und IBAN genau prüfen. Eine freigegebene Überweisung lässt sich meist nicht mehr zurückholen.", systemImage: "exclamationmark.shield")
+            .appFont(.callout).foregroundStyle(Theme.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private var pinArea: some View {
@@ -299,18 +374,27 @@ struct BatchTransferSheet: View {
         selection = []
     }
 
-    private var buttons: some View {
-        HStack {
-            Button("Abbrechen", role: .cancel) { model.cancelBatchSheet(); dismiss() }.keyboardShortcut(.cancelAction)
-            Spacer()
-            if reviewing {
-                Button("Zurück") { reviewing = false; model.transferError = nil }
-                Button("Jetzt mit TAN freigeben") { model.startBatch() }
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-            } else {
-                Button("Weiter") { model.transferError = nil; reviewing = true }
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!canReview)
+    @ViewBuilder private var buttons: some View {
+        if typeSize.isAccessibilitySize {
+            ViewThatFits(in: .horizontal) {
+                HStack { buttonItems }
+                VStack(spacing: 10) { buttonItems }.fixedSize(horizontal: false, vertical: true)
             }
+        } else {
+            HStack { buttonItems }
+        }
+    }
+
+    @ViewBuilder private var buttonItems: some View {
+        Button("Abbrechen", role: .cancel) { model.cancelBatchSheet(); dismiss() }.keyboardShortcut(.cancelAction)
+        Spacer()
+        if reviewing {
+            Button("Zurück") { reviewing = false; model.transferError = nil }
+            Button("Jetzt mit TAN freigeben") { model.startBatch() }
+                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+        } else {
+            Button("Weiter") { model.transferError = nil; reviewing = true }
+                .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!canReview)
         }
     }
 }
@@ -328,20 +412,72 @@ struct TransferKindPicker: View {
         // takes part of the width) squeezes the segments instead of widening the whole sheet.
         ViewThatFits(in: .horizontal) {
             picker.fixedSize()
+            #if os(iOS)
+            segments.padding(.horizontal, 20)
+            #else
             picker.padding(.horizontal, 20)
+            #endif
         }
         .frame(maxWidth: .infinity)
     }
 
+    private var selection: Binding<TransferKind> {
+        Binding(get: { batch ? .batch : (model.transferDraft.ownTransfer ? .own : .single) },
+                set: { model.switchTransferKind(to: $0, fromBatch: batch) })
+    }
+
     private var picker: some View {
-        Picker("Art", selection: Binding(
-            get: { batch ? TransferKind.batch : (model.transferDraft.ownTransfer ? .own : .single) },
-            set: { model.switchTransferKind(to: $0, fromBatch: batch) })
-        ) {
+        Picker("Art", selection: selection) {
             Text("Überweisung").tag(TransferKind.single)
             if offersOwn { Text("Umbuchung").tag(TransferKind.own) }
             if model.canBatchTransfer { Text("Sammelüberweisung").tag(TransferKind.batch) }
         }
         .pickerStyle(.segmented).labelsHidden()
     }
+
+    #if os(iOS)
+    private var segments: some View {
+        var kinds: [(TransferKind, String)] = [(.single, String(localized: "Überweisung"))]
+        if offersOwn { kinds.append((.own, String(localized: "Umbuchung"))) }
+        if model.canBatchTransfer { kinds.append((.batch, String(localized: "Sammelüberweisung"))) }
+        return ContentSizedSegments(titles: kinds.map(\.1), selection: Binding(
+            get: { kinds.firstIndex { $0.0 == selection.wrappedValue } ?? 0 },
+            set: { selection.wrappedValue = kinds[$0].0 }))
+            .accessibilityLabel(Text("Art"))
+    }
+    #endif
 }
+
+#if os(iOS)
+/// The segmented picker with segments as wide as their titles need: in segments of equal
+/// width the iPhone cut off "Sammelüberweisung".
+private struct ContentSizedSegments: UIViewRepresentable {
+    let titles: [String]
+    @Binding var selection: Int
+
+    func makeUIView(context: Context) -> UISegmentedControl {
+        let control = UISegmentedControl()
+        control.apportionsSegmentWidthsByContent = true
+        control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        control.addTarget(context.coordinator, action: #selector(Coordinator.changed), for: .valueChanged)
+        return control
+    }
+
+    func updateUIView(_ control: UISegmentedControl, context: Context) {
+        context.coordinator.selection = $selection
+        if (0..<control.numberOfSegments).map({ control.titleForSegment(at: $0) ?? "" }) != titles {
+            control.removeAllSegments()
+            for (i, title) in titles.enumerated() { control.insertSegment(withTitle: title, at: i, animated: false) }
+        }
+        control.selectedSegmentIndex = selection
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator($selection) }
+
+    @MainActor final class Coordinator: NSObject {
+        var selection: Binding<Int>
+        init(_ selection: Binding<Int>) { self.selection = selection }
+        @objc func changed(_ control: UISegmentedControl) { selection.wrappedValue = control.selectedSegmentIndex }
+    }
+}
+#endif
