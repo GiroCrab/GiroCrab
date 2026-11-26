@@ -174,6 +174,23 @@ ScrollView {
                    text: AppModel.autoReviewDelay === "account"
                          ? qsTr("Angeklickte Umsätze werden sofort als gelesen markiert. Beim Wechsel auf ein anderes Konto werden alle übrigen ungelesenen Umsätze des vorherigen Kontos als gelesen markiert, unabhängig von Zeitraum und Filtern.")
                          : qsTr("Eine ausgewählte Buchung gilt nach dieser Zeit als geprüft – wie eine gelesene E-Mail. Bei Mehrfachauswahl nie.") }
+            // SettingsView.swift › firstFetchPeriod: core setting `sync.days_back`, `max` (as far as
+            // the bank delivers, #1043) or days; stored in the vault
+            SettingsFormRow {
+                enabled: AppModel.isUnlocked
+                label: qsTr("Zeitraum beim ersten Abruf")
+                AppComboBox {
+                    readonly property string current: { const e = AppModel.settingEntry("sync.days_back"); return e && e.value ? e.value : "max" }
+                    readonly property var options: AppModel.historyOptionsWith(current)
+                    Layout.preferredWidth: 200 * Theme.textScale
+                    model: options
+                    textRole: "title"; valueRole: "id"
+                    currentIndex: options.findIndex(o => o.id === current)
+                    onActivated: AppModel.saveSetting("sync.days_back", currentValue)
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.") }
         }
         // SettingsView.swift › TransferSettingsSection: opt-in clipboard check (#663), per device
         SettingsFormSection {
