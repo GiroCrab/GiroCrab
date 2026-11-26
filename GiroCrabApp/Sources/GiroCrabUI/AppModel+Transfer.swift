@@ -66,6 +66,13 @@ extension AppModel {
         return allAccounts.filter { !$0.iban.isEmpty && !$0.isArchived && $0.id != source?.id }
     }
 
+    /// A savings account may only send to one of its own checking targets (#582, #1893); the core
+    /// enforces the same rule in `begin_transfer`. Other sources may send to any IBAN.
+    func mayTransfer(from source: Account?, toIBAN iban: String) -> Bool {
+        guard let source, source.kind == .savings else { return true }
+        return Self.ownAccount(withIBAN: iban, in: internalTransferTargets(from: source)) != nil
+    }
+
     /// The recipient name an Umbuchung to `account` carries: the owner, else the account name.
     static func ownRecipientName(_ account: Account) -> String {
         account.owner.isEmpty ? account.name : account.owner

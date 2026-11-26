@@ -2069,6 +2069,7 @@ impl Vault {
         }
         let (connection_id, iban, owner, key_str, kind, demo) =
             self.transfer_source(request.account_id, demo)?;
+        self.ensure_savings_transfer_to_own_checking(request.account_id, &request.recipient_iban)?;
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2169,6 +2170,23 @@ impl Vault {
                 "Sammelüberweisungen sind nur für FinTS-Konten möglich.",
             )));
         }
+        // A savings account only books to own checking accounts: every payment counts (#1893).
+        // The eligible IBANs are loaded once; the first foreign payment aborts with its position.
+        if let Some(own) = self.savings_own_checking_ibans(request.account_id)? {
+            for (i, p) in request.payments.iter().enumerate() {
+                if !own.contains(&normalize_iban(&p.iban)) {
+                    return Err(CoreError::invalid(trf(
+                        "Zahlung {0}: {1}",
+                        &[
+                            &(i + 1),
+                            &tr(
+                                "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich.",
+                            ),
+                        ],
+                    )));
+                }
+            }
+        }
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2256,6 +2274,8 @@ impl Vault {
                 if !validate_iban(&recipient_iban) {
                     return Err(CoreError::invalid(tr("Die Empfänger-IBAN ist ungültig.")));
                 }
+                // Create/Change only; Delete stays possible so existing orders can be cancelled (#1893).
+                self.ensure_savings_transfer_to_own_checking(request.account_id, &recipient_iban)?;
                 if request.amount_cents <= 0 {
                     return Err(CoreError::invalid(tr("Der Betrag muss größer als 0 sein.")));
                 }
@@ -2475,6 +2495,53 @@ impl Vault {
 }
 
 impl Vault {
+    /// A savings account (Tagesgeld) only books to the user's own active checking accounts (#582, #1893).
+    /// Enforced here so no front end can send it to a third party.
+    fn ensure_savings_transfer_to_own_checking(
+        &self,
+        account_id: i64,
+        recipient_iban: &str,
+    ) -> CoreResult<()> {
+        match self.savings_own_checking_ibans(account_id)? {
+            Some(own) if !own.contains(&normalize_iban(recipient_iban)) => Err(CoreError::invalid(
+                tr("Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich."),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// `None` when `account_id` is not a savings account (or unknown: `transfer_source`
+    /// reports that); otherwise the normalized IBANs of the user's own active checking accounts.
+    fn savings_own_checking_ibans(
+        &self,
+        account_id: i64,
+    ) -> CoreResult<Option<std::collections::HashSet<String>>> {
+        let rows: Vec<(i64, String, String, bool)> = {
+            let db = self.db()?;
+            let mut stmt = db.prepare(
+                "SELECT id, kind, iban, archived_unix IS NOT NULL FROM accounts WHERE deleted_ms IS NULL",
+            )?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let Some((_, kind, _, _)) = rows.iter().find(|r| r.0 == account_id) else {
+            return Ok(None);
+        };
+        if AccountKind::from_str(kind) != AccountKind::Savings {
+            return Ok(None);
+        }
+        Ok(Some(
+            rows.iter()
+                .filter(|(id, k, _, archived)| {
+                    *id != account_id
+                        && !archived
+                        && AccountKind::from_str(k) == AccountKind::Checking
+                })
+                .map(|(_, _, iban, _)| normalize_iban(iban))
+                .collect(),
+        ))
+    }
+
     /// Debit account of a transfer: connection, IBAN, owner, connector and the
     /// gate/kind checks shared by single and batch transfers.
     #[allow(clippy::type_complexity)]
