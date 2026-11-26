@@ -82,6 +82,38 @@ static COMDIRECT: [Bank; 8] = [
     (COMDIRECT_BLZ[7], "comdirect", COMDIRECT_FINTS_URL),
 ];
 
+/// Commerzbank's FinTS 3.0 PIN/TAN endpoint, the same for all its bank codes
+/// (the bank's own page, `fints::bank_keys::KEY_SOURCE`).
+pub(crate) const COMMERZBANK_FINTS_URL: &str = "https://fints.commerzbank.de/fints";
+
+/// Name of every Commerzbank entry: the Bundesbank names its bank codes after
+/// branches and departments ("Commerzbank vormals Dresdner Bank ITGK").
+pub(crate) const COMMERZBANK_NAME: &str = "Commerzbank";
+
+/// One of Commerzbank's bank codes, those of the former Dresdner Bank
+/// included, read from the Bundesbank list instead of a table of its own
+/// (several hundred codes). comdirect's codes carry the same name there and
+/// have their own endpoint (`COMDIRECT`). Resolved by bank code only, like
+/// comdirect: the bank picker lists Commerzbank once
+/// (`bank_directory::search`) and the form asks for BLZ or IBAN.
+pub(crate) fn is_commerzbank_blz(blz: &str) -> bool {
+    let bics = bics();
+    !COMDIRECT_BLZ.contains(&blz)
+        && bics.binary_search_by(|e| e.0.cmp(blz)).is_ok_and(|i| {
+            let (_, bic, name) = bics[i];
+            name.starts_with(COMMERZBANK_NAME)
+                && (bic.starts_with("COBADE") || bic.starts_with("DRESDE"))
+        })
+}
+
+fn commerzbank(blz: &str) -> Option<FinTsBankInfo> {
+    is_commerzbank_blz(blz).then(|| FinTsBankInfo {
+        blz: blz.to_string(),
+        name: COMMERZBANK_NAME.to_string(),
+        url: COMMERZBANK_FINTS_URL.to_string(),
+    })
+}
+
 fn find(blz: &str) -> Option<&'static Bank> {
     let banks = banks();
     banks
@@ -102,12 +134,14 @@ pub fn lookup(blz: &str) -> Option<FinTsBankInfo> {
     if blz.len() != 8 || !blz.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    find(blz).map(info)
+    find(blz).map(info).or_else(|| commerzbank(blz))
 }
 
 /// FinTS URL for a BLZ (used as fallback when a connection has no stored URL).
 pub fn url_for_blz(blz: &str) -> Option<&'static str> {
-    find(blz).map(|e| e.2)
+    find(blz)
+        .map(|e| e.2)
+        .or_else(|| is_commerzbank_blz(blz).then_some(COMMERZBANK_FINTS_URL))
 }
 
 /// Endpoints earlier directory versions handed out that the bank no longer serves
@@ -424,6 +458,43 @@ mod tests {
         assert!(search("comdirect", 10).is_empty());
         assert!(search("2004111", 10).is_empty());
         assert!(banks().iter().all(|e| !COMDIRECT_BLZ.contains(&e.0)));
+    }
+
+    #[test]
+    fn commerzbank_resolves_by_bank_code_but_not_by_name() {
+        // 37040044: Commerzbank; 10080000: former Dresdner Bank (DRESDEFF)
+        for blz in ["37040044", "10040000", "10080000"] {
+            assert!(is_commerzbank_blz(blz), "{blz}");
+            let b = lookup(blz).unwrap_or_else(|| panic!("{blz} missing"));
+            assert_eq!(
+                (b.blz.as_str(), b.name.as_str(), b.url.as_str()),
+                (blz, COMMERZBANK_NAME, COMMERZBANK_FINTS_URL)
+            );
+            assert_eq!(url_for_blz(blz), Some(COMMERZBANK_FINTS_URL));
+        }
+        assert_eq!(
+            lookup_fints_bank_by_input("DE89 3704 0044 0532 0130 00".into())
+                .unwrap()
+                .url,
+            COMMERZBANK_FINTS_URL
+        );
+        // comdirect carries the Commerzbank name in the Bundesbank list and keeps its own endpoint
+        for blz in COMDIRECT_BLZ {
+            assert!(!is_commerzbank_blz(blz), "{blz}");
+            assert_eq!(url_for_blz(blz), Some(COMDIRECT_FINTS_URL));
+        }
+        // other banks, unknown codes and malformed input are not Commerzbank
+        for blz in ["50010517", "10010010", "99999999", "3704004", ""] {
+            assert!(!is_commerzbank_blz(blz), "{blz}");
+        }
+        assert_ne!(lookup("50010517").unwrap().url, COMMERZBANK_FINTS_URL);
+        // not part of the generated table: one row in the picker, not one per code
+        assert!(search("commerzbank", 10).is_empty());
+        assert!(search("3704004", 10).is_empty());
+        assert!(banks().iter().all(|e| !is_commerzbank_blz(e.0)));
+        // every Commerzbank code: several hundred, none of them comdirect's
+        let n = bics().iter().filter(|e| is_commerzbank_blz(e.0)).count();
+        assert!(n > 250, "{n}");
     }
 
     #[test]

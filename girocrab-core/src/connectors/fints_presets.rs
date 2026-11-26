@@ -84,6 +84,13 @@ pub fn fints_presets() -> Vec<FinTsPreset> {
             super::fints_directory::COMDIRECT_FINTS_URL,
             "BLZ aus Ihrer IBAN eintragen (Stellen 5–12, z. B. 20041155) oder die IBAN einfügen. Anmeldename: Ihre Zugangsnummer.",
         ),
+        p(
+            "commerzbank",
+            super::fints_directory::COMMERZBANK_NAME,
+            "",
+            super::fints_directory::COMMERZBANK_FINTS_URL,
+            "BLZ aus Ihrer IBAN eintragen (Stellen 5–12, z. B. 37040044) oder die IBAN einfügen. Anmeldename: Ihre Teilnehmernummer.",
+        ),
         p("gls", "GLS Gemeinschaftsbank", "43060967", ATRUVIA, ""),
         p(
             "consorsbank",
@@ -262,6 +269,17 @@ mod tests {
             .find(|p| p.id == "comdirect")
             .unwrap();
         assert!(comdirect.blz.is_empty() && is_valid_fints_url(&comdirect.url));
+        // Commerzbank: one preset for all its bank codes, like comdirect
+        assert!(known_fints_blz("37040044"));
+        let commerzbank = fints_presets()
+            .into_iter()
+            .find(|p| p.id == "commerzbank")
+            .unwrap();
+        assert!(commerzbank.blz.is_empty());
+        assert_eq!(
+            commerzbank.url,
+            crate::connectors::fints_directory::COMMERZBANK_FINTS_URL
+        );
         assert!(!known_fints_blz("12345678"));
     }
 

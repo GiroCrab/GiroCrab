@@ -285,20 +285,39 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
     ]
 }
 
-/// comdirect via FinTS for a name search: the bank code depends on the
-/// account, so the row has none and the form asks for BLZ or IBAN.
-fn comdirect_fints_result() -> BankSearchResult {
+/// A FinTS bank found by name that has many bank codes behind one address:
+/// the bank code depends on the account, so the row has none and the form
+/// asks for BLZ or IBAN.
+fn fints_result_without_blz(id: &str, name: &str, url: &str) -> BankSearchResult {
     BankSearchResult {
-        id: "fints:comdirect".into(),
-        name: "comdirect".into(),
+        id: format!("fints:{id}"),
+        name: name.into(),
         mode: BankAccessMode::FinTs,
         country: "DE".into(),
         blz: String::new(),
-        url: fints_directory::COMDIRECT_FINTS_URL.into(),
+        url: url.into(),
         connector: None,
         aspsp: String::new(),
         tested: String::new(),
     }
+}
+
+/// comdirect via FinTS for a name search.
+fn comdirect_fints_result() -> BankSearchResult {
+    fints_result_without_blz(
+        "comdirect",
+        "comdirect",
+        fints_directory::COMDIRECT_FINTS_URL,
+    )
+}
+
+/// Commerzbank via FinTS (PIN/TAN) for a name search, next to its PSD2 entry.
+fn commerzbank_fints_result() -> BankSearchResult {
+    fints_result_without_blz(
+        "commerzbank",
+        fints_directory::COMMERZBANK_NAME,
+        fints_directory::COMMERZBANK_FINTS_URL,
+    )
 }
 
 fn matches_all(haystack: &str, words: &[&str]) -> bool {
@@ -461,6 +480,11 @@ pub fn search(
     // search above leaves it out, see `fints_directory::COMDIRECT_BLZ`)
     if matches_all("comdirect", &words) {
         out.push(comdirect_fints_result());
+    }
+    // Commerzbank by name: one FinTS row for its several hundred bank codes
+    // (see `fints_directory::is_commerzbank_blz`)
+    if matches_all("commerzbank", &words) {
+        out.push(commerzbank_fints_result());
     }
     for (kind, name, extra) in own_api() {
         if matches_all(&format!("{} {}", fold(name), extra), &words) {
@@ -778,7 +802,7 @@ mod tests {
         let r = search("DE41 5001 0517 0123 4567 89", vec![], 10);
         assert_eq!(ids(&r), vec!["fints:50010517"]);
         // valid IBAN of a bank that is not in the directory: nothing to offer
-        assert!(search("DE89 3704 0044 0532 0130 00", vec![], 10).is_empty());
+        assert!(search("DE91 1000 0000 0123 4567 89", vec![], 10).is_empty());
     }
 
     #[test]
@@ -866,6 +890,51 @@ mod tests {
                 .iter()
                 .all(|b| b.id != "fints:comdirect")
         );
+    }
+
+    #[test]
+    fn commerzbank_by_name_offers_fints_once_next_to_psd2() {
+        let r = search("Commerzbank", vec![], 10);
+        assert_eq!(ids(&r)[0], "fints:commerzbank");
+        assert_eq!(
+            r.iter().filter(|b| b.mode == BankAccessMode::FinTs).count(),
+            1
+        );
+        // the bank code depends on the account: the form asks for BLZ or IBAN
+        assert!(r[0].blz.is_empty());
+        assert_eq!(r[0].url, fints_directory::COMMERZBANK_FINTS_URL);
+        // the PSD2 way stays
+        assert!(
+            r.iter()
+                .any(|b| b.mode == BankAccessMode::Psd2 && b.name == "Commerzbank")
+        );
+        // unrelated searches are unaffected
+        for q in ["comdirect", "paypal", "sparkasse"] {
+            assert!(
+                search(q, vec![], 10)
+                    .iter()
+                    .all(|b| b.id != "fints:commerzbank"),
+                "{q}"
+            );
+        }
+    }
+
+    #[test]
+    fn commerzbank_blz_and_iban_offer_fints() {
+        for (q, blz) in [
+            ("37040044", "37040044"),
+            ("DE89 3704 0044 0532 0130 00", "37040044"),
+            ("10080000", "10080000"), // former Dresdner Bank
+        ] {
+            let r = search(q, vec![], 10);
+            assert_eq!(ids(&r), vec![format!("fints:{blz}")], "{q}");
+            assert_eq!(r[0].mode, BankAccessMode::FinTs);
+            assert_eq!(
+                (r[0].name.as_str(), r[0].blz.as_str()),
+                ("Commerzbank", blz)
+            );
+            assert_eq!(r[0].url, fints_directory::COMMERZBANK_FINTS_URL);
+        }
     }
 
     #[test]
