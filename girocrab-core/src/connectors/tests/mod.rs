@@ -2243,10 +2243,10 @@ fn savings_batch_transfer_only_goes_to_own_active_checking_accounts() {
         send(&["DE02120300000000202051"]),
         Err(CoreError::InvalidInput { .. })
     ));
-    assert!(matches!(
-        send(&[own.iban.as_str(), "DE02120300000000202051"]),
-        Err(CoreError::InvalidInput { .. })
-    ));
+    let err = send(&[own.iban.as_str(), "DE02120300000000202051"]).err();
+    assert!(matches!(err, Some(CoreError::InvalidInput { .. })));
+    // The error names the rejected payment (one-based position).
+    assert!(err.unwrap().to_string().contains("Zahlung 2:"));
     // Only own active checking accounts pass.
     assert!(send(&[own.iban.as_str()]).is_ok());
     let _ = std::fs::remove_file(path);

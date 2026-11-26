@@ -2105,8 +2105,21 @@ impl Vault {
             )));
         }
         // A savings account only books to own checking accounts: every payment counts (#1893).
-        for p in &request.payments {
-            self.ensure_savings_transfer_to_own_checking(request.account_id, &p.iban)?;
+        // The eligible IBANs are loaded once; the first foreign payment aborts with its position.
+        if let Some(own) = self.savings_own_checking_ibans(request.account_id)? {
+            for (i, p) in request.payments.iter().enumerate() {
+                if !own.contains(&normalize_iban(&p.iban)) {
+                    return Err(CoreError::invalid(trf(
+                        "Zahlung {0}: {1}",
+                        &[
+                            &(i + 1),
+                            &tr(
+                                "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich.",
+                            ),
+                        ],
+                    )));
+                }
+            }
         }
         let exec_date = request
             .execution_date
@@ -2423,6 +2436,20 @@ impl Vault {
         account_id: i64,
         recipient_iban: &str,
     ) -> CoreResult<()> {
+        match self.savings_own_checking_ibans(account_id)? {
+            Some(own) if !own.contains(&normalize_iban(recipient_iban)) => Err(CoreError::invalid(
+                tr("Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich."),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// `None` when `account_id` is not a savings account (or unknown: `transfer_source`
+    /// reports that); otherwise the normalized IBANs of the user's own active checking accounts.
+    fn savings_own_checking_ibans(
+        &self,
+        account_id: i64,
+    ) -> CoreResult<Option<std::collections::HashSet<String>>> {
         let rows: Vec<(i64, String, String, bool)> = {
             let db = self.db()?;
             let mut stmt = db.prepare(
@@ -2432,25 +2459,21 @@ impl Vault {
                 .collect::<Result<_, _>>()?
         };
         let Some((_, kind, _, _)) = rows.iter().find(|r| r.0 == account_id) else {
-            return Ok(()); // unknown source: `transfer_source` reports it
+            return Ok(None);
         };
         if AccountKind::from_str(kind) != AccountKind::Savings {
-            return Ok(());
+            return Ok(None);
         }
-        let target = normalize_iban(recipient_iban);
-        let own = rows.iter().any(|(id, k, iban, archived)| {
-            *id != account_id
-                && !archived
-                && AccountKind::from_str(k) == AccountKind::Checking
-                && normalize_iban(iban) == target
-        });
-        if own {
-            Ok(())
-        } else {
-            Err(CoreError::invalid(tr(
-                "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich.",
-            )))
-        }
+        Ok(Some(
+            rows.iter()
+                .filter(|(id, k, _, archived)| {
+                    *id != account_id
+                        && !archived
+                        && AccountKind::from_str(k) == AccountKind::Checking
+                })
+                .map(|(_, _, iban, _)| normalize_iban(iban))
+                .collect(),
+        ))
     }
 
     /// Debit account of a transfer: connection, IBAN, owner, connector and the
