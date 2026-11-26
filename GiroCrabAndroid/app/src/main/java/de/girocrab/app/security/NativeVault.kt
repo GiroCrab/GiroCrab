@@ -6,10 +6,12 @@ import de.girocrab.app.model.VaultSnapshotMapper
 import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
+import java.time.LocalDate
 import uniffi.girocrab_core.Account as CoreAccount
 import uniffi.girocrab_core.AssetItem as CoreAssetItem
 import uniffi.girocrab_core.Mandate as CoreMandate
 import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
+import uniffi.girocrab_core.PlannedPayment as CorePlannedPayment
 import uniffi.girocrab_core.Booking as CoreBooking
 import uniffi.girocrab_core.AccountGroup as CoreGroup
 import uniffi.girocrab_core.BookingPage as CorePage
@@ -195,6 +197,15 @@ class NativeVaultOpener {
             // Empty list = every account, as the core's `list_standing_orders(account_ids)` does.
             val standingOrders = callWith("listStandingOrders", emptyList<Long>()) as? List<CoreStandingOrder>
                 ?: throw IllegalStateException("listStandingOrders did not return a list")
+            // The core computes the schedule; the window covers the app's longest horizon (365 days).
+            val today = LocalDate.now()
+            val planned = callWith(
+                "listPlannedPayments",
+                today.toString(),
+                today.plusDays(PLANNED_WINDOW_DAYS).toString(),
+                emptyList<Long>(),
+            ) as? List<CorePlannedPayment>
+                ?: throw IllegalStateException("listPlannedPayments did not return a list")
             return VaultSnapshotMapper.map(
                 groups = groups,
                 accounts = accounts,
@@ -207,6 +218,7 @@ class NativeVaultOpener {
                 assets = assets,
                 mandates = mandates,
                 standingOrders = standingOrders,
+                planned = planned,
             )
         }
 
@@ -244,6 +256,9 @@ class NativeVaultOpener {
         const val MASTER_KEY_BYTES = 32
         private const val VAULT_CLASS = "uniffi.girocrab_core.Vault"
         private const val ACCOUNT_KIND_CLASS = "uniffi.girocrab_core.AccountKind"
+
+        /** Planned-payment window a snapshot carries: the app's longest horizon plus a month. */
+        const val PLANNED_WINDOW_DAYS = 400L
 
         private fun invoke(method: Method, receiver: Any?, vararg args: Any?): Any? =
             try {

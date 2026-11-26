@@ -215,6 +215,12 @@ object DemoData {
                 StandingOrder("so2", "a_cdi", "Trade Republic", "DE86100123456789012345", -50_000, "Sparplan", "M", 1, 15, today.minusYears(1).withDayOfMonth(15), null),
                 StandingOrder("so3", "a_cbk", "Allianz Versicherung", "DE23100400000123456789", -12_450, "Versicherung", "M", 3, 1, today.minusYears(3).withDayOfMonth(1), null),
             ),
+            // Demo runs: a real vault gets these from the core; demo data has no core behind it.
+            standingOrderRuns = listOf(
+                StandingOrderRun("so1", today.plusMonths(1).withDayOfMonth(1)),
+                StandingOrderRun("so2", today.plusMonths(1).withDayOfMonth(15)),
+                StandingOrderRun("so3", today.plusMonths(3).withDayOfMonth(1)),
+            ),
             mandates = listOf(
                 DirectDebitMandate("m1", "a_spk", "Vattenfall Europe Sales", "DE89370400440532013000", "VAT-2024-0042", today.minusYears(2), MandateScheme.Core, false, 8_900, "Abschlag Strom", "", true, today.withDayOfMonth(5), "RCUR"),
                 DirectDebitMandate("m2", "a_cbk", "Telekom Deutschland GmbH", "DE02120300000000202051", "TEL-7781234", today.minusYears(3), MandateScheme.Core, false, 4_499, "MagentaZuhause", "", true, today.withDayOfMonth(6), "RCUR"),
