@@ -300,7 +300,7 @@ async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
     for extra in [
         "",
         "+9010::Fehler.",
-        "+9110::Falsche Segmentzusammenstellung",
+        "+9110::Falsche Segmentzusammenstellung (HKTAN)",
     ] {
         let reply: &'static str = login_refused_reply(extra).leak();
         let (url, seen) = mock_bank(vec![reply, ACCEPT]);
@@ -309,6 +309,30 @@ async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
         let mut c = two_step_connector(&url, state);
         assert_login_refused(c.open_dialog(&test_ctx()).await);
         assert_eq!(seen.lock().unwrap().len(), 1, "{extra}");
+    }
+}
+
+#[tokio::test]
+async fn dialog_init_9040_in_a_fallback_answer_ends_the_login() {
+    // the bank refuses the login only in the answer to a fallback: no further
+    // request (no HKEND either, it carries the PIN)
+    const REFUSED_IN_DIALOG: &str =
+        "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.'";
+    let refused: &'static str = login_refused_reply("").leak();
+    let medium_refused = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9050::Fehler.'HIRMS:3:2:3+9210::TAN-Medium unbekannt.'";
+    let functions = [("913", "chipTAN QR"), ("911", "chipTAN optisch")];
+    for (first, then, medium) in [
+        (REJECT_9010, refused, ""),              // one-step retry
+        (REJECT_9110, REFUSED_IN_DIALOG, ""),    // another TAN function
+        (medium_refused, refused, "Mein Gerät"), // TAN medium as "SO:<name>"
+    ] {
+        let (url, seen) = mock_bank(vec![first, then, ACCEPT, ACCEPT]);
+        let mut state = state_with_functions("913", &functions);
+        state["tan_medium"] = medium.into();
+        let mut c = two_step_connector(&url, state);
+        assert_login_refused(c.open_dialog(&test_ctx()).await);
+        assert_eq!(seen.lock().unwrap().len(), 2, "{first}");
+        assert!(!has_so_prefix(&c.st.tan_medium), "{}", c.st.tan_medium);
     }
 }
 

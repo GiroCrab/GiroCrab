@@ -872,6 +872,9 @@ impl FinTsConnector {
         if sec != "999" && init_rejected_as_malformed(&reply) {
             self.reset_dialog();
             let retry = self.send_dialog_init(ctx, "999").await?;
+            if let Some(e) = self.refused_login(&retry) {
+                return Err(e);
+            }
             if retry.check().is_ok() {
                 self.st.single_step = true;
                 reply = retry;
@@ -908,6 +911,10 @@ impl FinTsConnector {
             self.st.tan_medium = format!("SO:{plain}");
             self.end_dialog(ctx, &sec).await;
             let retry = self.send_dialog_init(ctx, &sec).await?;
+            if let Some(e) = self.refused_login(&retry) {
+                self.st.tan_medium = plain;
+                return Err(e);
+            }
             self.learn_bpd(&retry);
             if retry.has("9210") {
                 self.st.tan_medium = plain;
@@ -1018,7 +1025,8 @@ impl FinTsConnector {
         if reply.errors().is_empty() && self.dialog_id != "0" {
             return Ok((reply, true));
         }
-        if !reply.has("9800") {
+        // HKEND carries the PIN: never after a refused login (9040)
+        if !reply.has("9800") && !reply.has("9040") {
             self.end_dialog(ctx, sec).await;
         }
         Ok((reply, false))
