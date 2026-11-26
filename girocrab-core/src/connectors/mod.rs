@@ -20,6 +20,7 @@ pub mod advanzia;
 pub mod airplus;
 pub mod amazon_documents;
 pub mod axashareplan;
+pub mod ayvens;
 pub mod bank_directory;
 pub mod berghauscie;
 pub mod bhw;

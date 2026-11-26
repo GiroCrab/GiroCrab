@@ -108,6 +108,7 @@ CONNECTOR_DOCS = {
     "airplus": ("AirPlus Corporate Card", "AirPlus"),
     "alte-leipziger": ("Alte Leipziger (Bausparen)", "Alte Leipziger"),
     "axashareplan": ("AXA Mitarbeiter Shareplan", "AXA"),
+    "ayvens-bank": ("Ayvens Bank", "Ayvens Bank"),
     "berghauscie": ("Berghaus & Cie (Weindepot)", "Berghaus & Cie"),
     "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),
     "consorsbank": ("Consorsbank", "Consorsbank"),

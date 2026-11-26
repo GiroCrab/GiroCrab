@@ -91,6 +91,7 @@ fn max_days(kind: ConnectorKind) -> i64 {
         ConnectorKind::TradeRepublic
         | ConnectorKind::Bunq
         | ConnectorKind::Monefit
+        | ConnectorKind::AyvensBank
         | ConnectorKind::HanseaticBank
         | ConnectorKind::Bhw
         | ConnectorKind::Uberspace

@@ -1433,6 +1433,36 @@ fn english(de: &str) -> Option<&'static str> {
             "Volkswagen Bank: unexpected answer to the TAN request."
         }
         // ------------------------------------------------------------ connectors/monefit.rs
+        "Ayvens Bank (ehemals LeasePlan Bank): Salden und alle Umsätze der Tagesgeldkonten; Anmeldung mit Benutzername, Passwort und SMS-Code. Festgeld wird noch nicht abgerufen. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich." => {
+            "Ayvens Bank (formerly LeasePlan Bank): balances and all bookings of the savings accounts; login with user name, password and SMS code. Term deposits are not fetched yet. Unofficial: uses the web app's interface, changes are possible."
+        }
+        "Ayvens Bank: Unerwartete Antwort der Schnittstelle (HTTP {0})." => {
+            "Ayvens Bank: Unexpected response from the interface (HTTP {0})."
+        }
+        "Ayvens Bank: Sitzung abgelaufen. Bitte erneut abrufen." => {
+            "Ayvens Bank: Session expired. Please sync again."
+        }
+        "Ayvens Bank: Anmeldung fehlgeschlagen. Bitte Benutzername und Passwort prüfen." => {
+            "Ayvens Bank: Login failed. Please check user name and password."
+        }
+        "Bitte den SMS-Code eingeben, den die Ayvens Bank an die hinterlegte Mobilnummer gesendet hat." => {
+            "Please enter the SMS code Ayvens Bank sent to your registered mobile number."
+        }
+        "Ayvens Bank: Der Anmeldedienst antwortet nicht (HTTP {0}). Bitte später erneut versuchen." => {
+            "Ayvens Bank: The login service is not responding (HTTP {0}). Please try again later."
+        }
+        "Ayvens Bank: Benutzername und Passwort erforderlich." => {
+            "Ayvens Bank: User name and password required."
+        }
+        "Ayvens Bank: Der SMS-Code konnte nicht angefordert werden (HTTP {0})." => {
+            "Ayvens Bank: The SMS code could not be requested (HTTP {0})."
+        }
+        "Ayvens Bank: Der SMS-Code wurde abgelehnt. Bitte den Abruf erneut starten." => {
+            "Ayvens Bank: The SMS code was refused. Please start the sync again."
+        }
+        "Ayvens Bank: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen." => {
+            "Ayvens Bank: Incomplete booking in the response. No data was taken over."
+        }
         "Monefit: Unerwartete Antwort der API (HTTP {0})." => {
             "Monefit: Unexpected API response (HTTP {0})."
         }

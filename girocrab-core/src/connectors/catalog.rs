@@ -246,6 +246,17 @@ pub fn descriptor(kind: ConnectorKind) -> BankDescriptor {
             required_settings: vec![],
             note: tr("Monefit SmartSaver: Saldo und alle Umsätze des Sparkontos. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich. Eine Anmeldung mit zweitem Faktor wird noch nicht unterstützt.").into(),
         },
+        ConnectorKind::AyvensBank => BankDescriptor {
+            kind,
+            name: "Ayvens Bank".into(),
+            protocol: tr("Web-App (Direkt-Login)").into(),
+            bank_code: String::new(),
+            sf_symbol: "banknote".into(),
+            login_label: tr("Benutzername").into(),
+            secret_label: tr("Passwort").into(),
+            required_settings: vec![],
+            note: tr("Ayvens Bank (ehemals LeasePlan Bank): Salden und alle Umsätze der Tagesgeldkonten; Anmeldung mit Benutzername, Passwort und SMS-Code. Festgeld wird noch nicht abgerufen. Inoffiziell: nutzt die Schnittstelle der Web-App, Änderungen sind möglich.").into(),
+        },
         ConnectorKind::GoAndGrow => BankDescriptor {
             kind,
             name: "Go & Grow".into(),
@@ -816,6 +827,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Ayvens Bank",
+        kind: Some(ConnectorKind::AyvensBank),
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[Capability::Transactions, Capability::Balances],
+        status: Status::TestingWanted,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "Go & Grow",
         kind: Some(ConnectorKind::GoAndGrow),
         interface: Interface::WebPortal,
@@ -1110,6 +1130,7 @@ pub fn make_connector_for(kind: ConnectorKind, key: &str, demo: bool) -> Box<dyn
         ConnectorKind::Kontist => Box::new(kontist::KontistConnector::new()),
         ConnectorKind::Monefit => Box::new(monefit::MonefitConnector::new()),
         ConnectorKind::GoAndGrow => Box::new(goandgrow::GoAndGrowConnector::new()),
+        ConnectorKind::AyvensBank => Box::new(ayvens::AyvensConnector::new()),
         ConnectorKind::ScalableCapital => Box::new(scalable::ScalableConnector::new()),
         ConnectorKind::EnableBanking => {
             let (country, aspsp) = ConnectorKind::enable_banking_target(key).unwrap_or(("DE", ""));
