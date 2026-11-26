@@ -569,32 +569,45 @@ ${NOTES}"
     gh release upload "$UPLOAD_TAG" "$ARTIFACT" --clobber
     gh release edit "$UPLOAD_TAG" --notes "$NOTES" ${RELEASE_FLAGS[@]+"${RELEASE_FLAGS[@]}"}
   else
-    echo "==> Creating GitHub release $UPLOAD_TAG"
-    gh release create "$UPLOAD_TAG" "$ARTIFACT" \
+    # The tag was pushed just above, so release.yml's draft may not exist yet. Create a draft too:
+    # stable stays one until the maintainer publishes it, a beta is published below.
+    echo "==> Creating GitHub release $UPLOAD_TAG (draft)"
+    gh release create "$UPLOAD_TAG" "$ARTIFACT" --draft \
       --title "GiroCrab $UPLOAD_TAG" \
       --notes "$NOTES" ${RELEASE_FLAGS[@]+"${RELEASE_FLAGS[@]}"}
   fi
-  if [ "$HAVE_FEED" -eq 1 ]; then
-    if [ "$CHANNEL" = "stable" ]; then
-      gh release upload "$UPLOAD_TAG" dist/appcast.xml --clobber
-    else
-      upload_feed_to_latest_stable
-    fi
+  # Stable: the feed lives on the (draft) release itself and goes live when the maintainer publishes it.
+  if [ "$HAVE_FEED" -eq 1 ] && [ "$CHANNEL" = "stable" ]; then
+    gh release upload "$UPLOAD_TAG" dist/appcast.xml --clobber
   fi
-  # Betas: CI creates the release as a draft; publish it now that the DMG is attached.
-  # Stable stays a draft until the maintainer releases it.
+  # Betas: publish the draft only once the Windows installer is attached (job windows-package of
+  # release.yml, started by the tag push), and only then point the feed at it: assets of a draft
+  # release cannot be downloaded, so an earlier feed would offer an update that fails to load.
   if [ "$CHANNEL" = "beta" ]; then
-    # The Windows installer is attached by the separate windows-package job of release.yml.
-    # Do not publish a beta the Windows updater cannot use; re-run once that job is done.
     WIN_ASSET="girocrab-windows-x86_64-setup.exe"
-    RELEASE_ASSETS="$(gh release view "$UPLOAD_TAG" --json assets -q '.assets[].name')"
-    if ! printf '%s\n' "$RELEASE_ASSETS" | grep -qxF "$WIN_ASSET"; then
-      echo "error: $UPLOAD_TAG has no $WIN_ASSET yet (release.yml job windows-package)." >&2
-      echo "       The beta stays a draft. Re-run this script after that job has finished." >&2
-      exit 1
+    WAIT_MIN="${WINDOWS_ASSET_WAIT_MIN:-45}"
+    has_win_asset() {
+      gh release view "$UPLOAD_TAG" --json assets -q '.assets[].name' | grep -qxF "$WIN_ASSET"
+    }
+    waited=0
+    until has_win_asset || [ "$waited" -ge "$WAIT_MIN" ]; do
+      echo "warning: $UPLOAD_TAG has no $WIN_ASSET yet (release.yml job windows-package)," \
+        "waiting (${waited}/${WAIT_MIN} min)" >&2
+      sleep 60
+      waited=$((waited + 1))
+    done
+    if has_win_asset; then
+      echo "==> Publishing beta release $UPLOAD_TAG"
+      gh release edit "$UPLOAD_TAG" --draft=false --prerelease --latest=false
+      if [ "$HAVE_FEED" -eq 1 ]; then upload_feed_to_latest_stable; fi
+    else
+      echo "warning: $UPLOAD_TAG still has no $WIN_ASSET after ${WAIT_MIN} min." >&2
+      echo "         The beta stays a draft and appcast.xml was NOT uploaded (no feed points at it)." >&2
+      echo "         Once windows-package has finished (before the next build overwrites dist/):" >&2
+      echo "           gh release edit $UPLOAD_TAG --draft=false --prerelease --latest=false" >&2
+      [ "$HAVE_FEED" -eq 0 ] \
+        || echo "           gh release upload \"\$(gh release view --json tagName -q .tagName)\" dist/appcast.xml --clobber" >&2
     fi
-    echo "==> Publishing beta release $UPLOAD_TAG"
-    gh release edit "$UPLOAD_TAG" --draft=false --prerelease --latest=false
   fi
   if [ -n "$ROTATE_TO" ]; then
     scripts/sparkle-key.sh finish-rotation "$SPARKLE_ROTATION_NEW" "$SPARKLE_ROTATION_OLD"

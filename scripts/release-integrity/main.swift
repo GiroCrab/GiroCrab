@@ -207,11 +207,15 @@ if sparkleKeys.isEmpty {
 // "latest/download" is resolved per request: a release published in between would mix manifest and assets
 // of two releases. Resolve the tag once and use its fixed download base (--base keeps its own meaning).
 var windowsBase = latestBase
-if base == nil, case .ok(let json) = fetch("https://api.github.com/repos/\(repo)/releases/latest"),
-   let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-   let tag = object["tag_name"] as? String,
-   tag.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil {
-    windowsBase = assetPrefix + tag
+if base == nil {
+    if case .ok(let json) = fetch("https://api.github.com/repos/\(repo)/releases/latest"),
+       let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+       let tag = object["tag_name"] as? String,
+       tag.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil {
+        windowsBase = assetPrefix + tag
+    } else {
+        note("latest release tag could not be resolved – Windows check uses latest/download (manifest and assets may come from two releases if one was published meanwhile)")
+    }
 }
 switch fetch(windowsBase + "/SHA256SUMS.txt") {
 case .notFound:

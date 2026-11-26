@@ -8,7 +8,13 @@ TAG="${1:?usage: $0 <tag>}"
 VER="${TAG#v}"
 [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+|-nightly\.[0-9]{8})?$ ]] \
   || { echo "error: '$TAG' is not vX.Y.Z[-beta.N|-nightly.YYYYMMDD]" >&2; exit 2; }
-python3 -I - "$VER" <<'PY'
+# Git Bash on Windows often has only `python` (and `python3` may be the Store stub): take the first that runs.
+PYTHON=""
+for cand in python3 python; do
+  if "$cand" -c 'import sys; sys.exit(sys.version_info < (3, 6))' >/dev/null 2>&1; then PYTHON="$cand"; break; fi
+done
+[ -n "$PYTHON" ] || { echo "error: no Python 3 found (python3 or python)" >&2; exit 1; }
+"$PYTHON" -I - "$VER" <<'PY'
 import re, sys
 ver = sys.argv[1]
 def patch(path, pattern):
