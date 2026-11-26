@@ -199,24 +199,9 @@ impl HttpPortal {
             });
         }
         if !status.is_success() {
-            // Keep the endpoint and the start of the error body (the portal
-            // usually says what it did not like). Never the request: it can
-            // hold the password.
-            let detail: String = super::read_text_limited(resp)
-                .await
-                .unwrap_or_default()
-                .chars()
-                .take(200)
-                .collect::<String>()
-                .replace(['\n', '\r'], " ");
+            let body = super::read_text_limited(resp).await.unwrap_or_default();
             return Err(CoreError::Protocol {
-                message: format!(
-                    "{} [{path}] {detail}",
-                    trf(
-                        "Volkswagen Bank: Unerwartete Antwort (HTTP {0}).",
-                        &[&status.as_u16()],
-                    )
-                ),
+                message: http_error_message(status.as_u16(), path, &body),
             });
         }
         let raw = super::read_text_limited(resp).await?;
@@ -545,6 +530,27 @@ fn berlin_midnight_utc(day: Date) -> Option<String> {
 fn berlin_today() -> Date {
     let now = crate::dates::now_utc();
     (now + jiff::Span::new().hours(berlin_offset_hours(now))).date()
+}
+
+/// The message of a refused call: the endpoint and the first 200 characters
+/// of the error body on one line (the portal usually says what it did not
+/// like). Never the request: it can hold the password.
+fn http_error_message(status: u16, path: &str, body: &str) -> String {
+    let detail = body
+        .chars()
+        .take(200)
+        .collect::<String>()
+        .replace(['\n', '\r'], " ");
+    format!(
+        "{} [{path}] {}",
+        trf(
+            "Volkswagen Bank: Unerwartete Antwort (HTTP {0}).",
+            &[&status],
+        ),
+        detail.trim_end()
+    )
+    .trim_end()
+    .to_string()
 }
 
 fn photo_tan_challenge(image: Vec<u8>) -> Challenge {
@@ -937,6 +943,30 @@ mod tests {
             let s = ts(y, m, d).unwrap();
             assert_eq!(portal_date(&s), Some(day(y, m, d)), "{s}");
         }
+    }
+
+    #[test]
+    fn refused_calls_name_the_endpoint_and_the_start_of_the_answer() {
+        let path = "CashFlowService/cashflow/list/get";
+        let msg = http_error_message(400, path, "{\"Message\":\n\"dateFrom invalid\"}\r\n");
+        assert!(msg.contains("HTTP 400"), "{msg}");
+        assert!(msg.contains("[CashFlowService/cashflow/list/get]"), "{msg}");
+        assert!(msg.contains("dateFrom invalid"), "{msg}");
+        assert!(!msg.contains(['\n', '\r']), "{msg}");
+        assert!(!msg.ends_with(' '), "{msg:?}");
+
+        // Cut after 200 characters (not bytes: no panic on umlauts), nothing after it.
+        let long = format!("{}TAIL", "ä".repeat(300));
+        let msg = http_error_message(500, path, &long);
+        assert_eq!(msg.matches('ä').count(), 200, "{msg}");
+        assert!(!msg.contains("TAIL"), "{msg}");
+
+        // An empty body leaves just status and endpoint.
+        let msg = http_error_message(502, path, "");
+        assert!(
+            msg.ends_with("[CashFlowService/cashflow/list/get]"),
+            "{msg:?}"
+        );
     }
 
     #[test]
