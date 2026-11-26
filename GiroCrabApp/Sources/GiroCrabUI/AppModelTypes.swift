@@ -21,6 +21,8 @@ enum SidebarItem: Hashable {
     case planned
     /// „Lastschriften“ (GitHub #143): mandates and collections.
     case directDebits
+    /// „Abos“ (GitHub #1787): marked recurring expenses with a monthly total.
+    case subscriptions
     /// "Vermögen": cash and assets (depots) minus liabilities
     case wealth
 
@@ -31,7 +33,7 @@ enum SidebarItem: Hashable {
     var usesTotalsContext: Bool {
         switch self {
         case .allAccounts, .group, .bank, .userGroup: true
-        case .account, .category, .uncategorized, .documents, .newBookings, .planned, .directDebits, .wealth:
+        case .account, .category, .uncategorized, .documents, .newBookings, .planned, .directDebits, .subscriptions, .wealth:
             false
         }
     }
@@ -41,7 +43,7 @@ enum SidebarItem: Hashable {
 /// (`AppModel.mainColumn`). Accounts, groups and categories all show bookings
 /// (or a depot / Sachwerte view, decided by `AccountColumn`).
 enum MainColumn: Equatable {
-    case bookings, documents, planned, directDebits, wealth
+    case bookings, documents, planned, directDebits, subscriptions, wealth
 
     /// The right column: Belege & Postbox has its own preview, Vermögen no booking list.
     var hasInspector: Bool { self != .documents && self != .wealth }
@@ -51,6 +53,7 @@ enum MainColumn: Equatable {
         case .documents?: self = .documents
         case .planned?: self = .planned
         case .directDebits?: self = .directDebits
+        case .subscriptions?: self = .subscriptions
         case .wealth?: self = .wealth
         default: self = .bookings
         }
@@ -349,6 +352,9 @@ struct MerchantFocusReturn {
     let direction: BookingDirection
     let search: String
     let tags: BookingTagFilter
+    /// Set when the list was switched to all periods for the merchant list (a subscription's bookings).
+    var period: Period?
+    var amount: AmountFilter?
 }
 
 /// Tag filter of the booking list (#228): bookings carrying every tag in `tagIDs`,
@@ -441,6 +447,9 @@ enum StreamItem: Identifiable {
 enum StreamSlot: Hashable {
     case header(Int)
     case row(Int)
+    /// A row of „Neue Umsätze“. A type of its own: a bare booking id could be the id of an
+    /// account's card there.
+    case newBooking(Booking.ID)
 }
 
 /// Where a day's header and each booking sit in the stream: `ScrollViewProxy` targets.
@@ -474,7 +483,18 @@ struct SetupRequest: Identifiable {
     let keys: [String]
 }
 
-/// Form state of "Neue Überweisung" (kept while the TAN sheet is shown).
+/// How far a sync that reads a long history got (the rest comes with the next syncs).
+struct HistoryProgress: Equatable {
+    var remaining: Int
+    var total: Int
+    /// 0…1 of the timeline already read; 0 when the total is unknown.
+    var fraction: Double { total > 0 ? min(1, max(0, Double(total - remaining) / Double(total))) : 0 }
+    /// "noch ca. 600 von 2.900 Trades" – empty when the total is unknown.
+    var text: String {
+        total > 0 ? String(localized: "noch ca. \(remaining.formatted()) von \(total.formatted()) Trades") : ""
+    }
+}
+
 /// CSV handed to `.fileExporter`.
 struct CSVFileDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.commaSeparatedText] }
@@ -492,6 +512,8 @@ struct TransferDraft {
     var accountID: Int64?
     /// Umbuchung: name and IBAN come from an own account.
     var ownTransfer = false
+    /// The own account chosen as target of an Umbuchung; kept so a new attempt takes the same one (#1893).
+    var ownTargetID: Int64?
     var name = ""
     var iban = ""
     var bic = ""
@@ -791,6 +813,25 @@ struct RunningLocalApi {
     weak var servedVault: Vault?
 }
 
+/// Told by the socket server (on its thread) that a client changed categories or
+/// tags; the model reloads on the main actor if it still shows that vault.
+final class LocalApiChangeListener: LocalApiListener, @unchecked Sendable {
+    private weak var model: AppModel?
+    private weak var servedVault: Vault?
+
+    init(model: AppModel, servedVault: Vault) {
+        self.model = model
+        self.servedVault = servedVault
+    }
+
+    func bookingsChanged() {
+        Task { @MainActor [weak model, weak servedVault] in
+            guard let model, let servedVault else { return }
+            model.localApiChangedBookings(in: servedVault)
+        }
+    }
+}
+
 /// What Return in a tag field does with the typed text (#228).
 enum TagEntryIntent: Equatable {
     case none
@@ -875,4 +916,23 @@ enum TagRenameIntent: Equatable {
 struct SelectionTotal: Equatable {
     let currency: String
     let cents: Int64
+}
+
+/// Period of a full fetch (#1043) as the setting `sync.days_back` stores it: `max` or days.
+extension HistoryRange {
+    init(setting: String) {
+        self = setting == "max" ? .maximum : .days(days: UInt32(setting) ?? 90)
+    }
+
+    var setting: String {
+        switch self {
+        case .maximum: return "max"
+        case .days(let days): return String(days)
+        }
+    }
+
+    /// The periods the pickers offer, shortest first.
+    static var pickerOptions: [(setting: String, title: LocalizedStringKey)] {
+        [("90", "90 Tage"), ("365", "1 Jahr"), ("730", "2 Jahre"), ("max", "Maximum")]
+    }
 }

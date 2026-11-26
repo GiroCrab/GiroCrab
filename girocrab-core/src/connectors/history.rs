@@ -14,9 +14,12 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use serde_json::Value;
+
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::trf;
 use crate::models::ConnectorKind;
+use crate::secret::SecretJson;
 use crate::vault::Vault;
 
 /// Vault setting: how far the first fetch of a new login reaches back.
@@ -65,13 +68,17 @@ impl HistoryRange {
     }
 }
 
+/// Further back than any of these banks keeps bookings: a connector stops
+/// where the bank's history ends.
+const LONGEST_DAYS: i64 = 3650;
+
 /// How far back "Maximum" reaches for a connector.
 fn max_days(kind: ConnectorKind) -> i64 {
     match kind {
         // the bank's storage period from its parameters cuts it further (`fints::statements`)
         ConnectorKind::FinTsGeneric
         | ConnectorKind::VolksbankKasselGoettingen
-        | ConnectorKind::Direkt1822 => 3650,
+        | ConnectorKind::Direkt1822 => LONGEST_DAYS,
         // An account's first sync already asks for the longest history the
         // consent allows (`strategy=longest`). PSD2 banks show more than 90
         // days only right after a strong authentication (the consent), so a
@@ -79,10 +86,89 @@ fn max_days(kind: ConnectorKind) -> i64 {
         ConnectorKind::EnableBanking
         | ConnectorKind::AmericanExpress
         | ConnectorKind::AmazonVisa => QUIET_MAX_DAYS,
-        // the longest period that could be chosen before, until each interface
-        // is checked for older start dates
-        _ => 730,
+        // The start date never reaches the bank: these read everything, or page
+        // back from the newest booking and stop there.
+        ConnectorKind::TradeRepublic
+        | ConnectorKind::Bunq
+        | ConnectorKind::Monefit
+        | ConnectorKind::HanseaticBank
+        | ConnectorKind::Bhw
+        | ConnectorKind::Uberspace
+        | ConnectorKind::Ibkr
+        | ConnectorKind::ScalableCapital => LONGEST_DAYS,
+        // The start date goes to the bank; a refusal in the full fetch is tried
+        // again with 90 days ([`retry_since`]).
+        ConnectorKind::Comdirect | ConnectorKind::Kontist | ConnectorKind::VolkswagenBank => {
+            LONGEST_DAYS
+        }
+        // the transaction search reaches three years back
+        ConnectorKind::PayPal => 1090,
+        // The portal keeps two years and the connector stops there itself.
+        // Opel and Ford Money: dates in a web form, where a refused start date
+        // need not show as an error; the longest period that could be chosen before.
+        // FFB sends the start date (`datumVon`) and has no retry yet.
+        ConnectorKind::Easybank
+        | ConnectorKind::OpelDirektbank
+        | ConnectorKind::FordMoney
+        | ConnectorKind::Ffb => 730,
+        // the start date is not used: the whole history or what the portal shows
+        ConnectorKind::AlteLeipziger
+        | ConnectorKind::Advanzia
+        | ConnectorKind::Fnz
+        | ConnectorKind::Quirion
+        | ConnectorKind::Sharinbox
+        | ConnectorKind::EquatePlus
+        | ConnectorKind::Finpension
+        | ConnectorKind::SchwaebischHall
+        | ConnectorKind::AmazonOrders
+        | ConnectorKind::BitcoinCore
+        | ConnectorKind::AxaShareplan
+        | ConnectorKind::UnionInvestment
+        | ConnectorKind::BerghausCie
+        | ConnectorKind::Edenred
+        | ConnectorKind::Bitcoin
+        | ConnectorKind::GoAndGrow
+        | ConnectorKind::AirPlus => LONGEST_DAYS,
     }
+}
+
+/// Start date of a second try after the bank answered a request from `since`
+/// with `err`: 90 days back, when `since` reached further and the bank refused
+/// the request (its answer, not a failed login, a rate limit, a failure on its
+/// side or an incomplete list). Otherwise `err` again. A bare 200 says nothing
+/// about the failure (a GraphQL error without a status of its own). Only for
+/// the login's full fetch (`full_fetch`): the first fetch must not fail on its
+/// period, while an ordinary sync that fetched only the last 90 days would
+/// skip the bookings between its newest one and them for good.
+pub(crate) fn retry_since(since: &str, full_fetch: bool, err: CoreError) -> CoreResult<String> {
+    let shorter = crate::dates::iso(crate::dates::today() - crate::dates::days(QUIET_MAX_DAYS));
+    let refused = match &err {
+        // a client error status, or the bank's own non-numeric code (VW `Status`)
+        CoreError::Bank { code, .. } => code.parse::<u16>().map_or(true, |c| {
+            (400..500).contains(&c) && !matches!(c, 401 | 403 | 429)
+        }),
+        _ => false,
+    };
+    if full_fetch && refused && since < shorter.as_str() {
+        Ok(shorter)
+    } else {
+        Err(err)
+    }
+}
+
+/// Warning of a sync whose start date for `account_ref` the bank refused
+/// ([`retry_since`]): says from when on bookings were fetched, as older ones
+/// are missing (also a stretch between an account's newest stored booking and
+/// that date, which later syncs do not fetch).
+pub(crate) fn refused_warning(account_ref: &str, fetched_since: &str) -> String {
+    let date = match crate::dates::parse_iso(fetched_since) {
+        Some(d) => format!("{:02}.{:02}.{}", d.day(), d.month(), d.year()),
+        None => fetched_since.to_string(),
+    };
+    trf(
+        "{0}: Die Bank hat den angeforderten Zeitraum abgelehnt. Abgerufen wurden nur die Umsätze ab dem {1}, ältere fehlen.",
+        &[&account_ref, &date],
+    )
 }
 
 /// Vault setting key: the period (`max` or days) of the login's pending full fetch.
@@ -132,6 +218,28 @@ pub(crate) fn finish(db: &Connection, connection_id: i64, value: &str) -> CoreRe
     Ok(())
 }
 
+/// The connector state a full fetch starts from: a connector that remembers
+/// an account's whole history as fetched (Enable Banking: `history_done`, the
+/// first sync asks for the longest history the consent allows) asks again.
+/// Only this sync's copy changes; other states stay as they are.
+pub(crate) fn state_for_full_fetch(state: SecretJson) -> CoreResult<SecretJson> {
+    let reset = state.with_value(|v| {
+        let accounts = v.get_mut("accounts").and_then(Value::as_array_mut)?;
+        let mut changed = false;
+        for a in accounts.iter_mut().filter_map(Value::as_object_mut) {
+            if a.get("history_done") == Some(&Value::Bool(true)) {
+                a.insert("history_done".into(), Value::Bool(false));
+                changed = true;
+            }
+        }
+        changed.then(|| SecretJson::encode(v))
+    });
+    match reset {
+        Some(encoded) => Ok(encoded?),
+        None => Ok(state),
+    }
+}
+
 /// Forgets the pending full fetch of a deleted login.
 pub(crate) fn clear(db: &Connection, connection_id: i64) -> CoreResult<()> {
     db.execute("DELETE FROM settings WHERE key = ?1", [key(connection_id)])?;
@@ -163,6 +271,13 @@ impl Vault {
             });
         }
         Vault::set_setting_inner(&db, &key(connection_id), &range.setting_value())
+    }
+
+    /// No full fetch for this login: its next sync goes on from each
+    /// account's newest booking.
+    pub fn cancel_full_history(&self, connection_id: i64) -> Result<(), CoreError> {
+        let db = self.db()?;
+        clear(&db, connection_id)
     }
 
     /// The period the next full sync of this login reaches back, while that

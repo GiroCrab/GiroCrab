@@ -67,6 +67,8 @@
 //!   edit syncs on its own (neither with the text nor with amount and splits).
 //! - 42: last single-account fetch (#1716): `accounts.last_fetch_unix` (NULL =
 //!   none; the login's `last_sync_unix` still counts for every account).
+//! - 43: settled scheduled orders (#1900): `planned_transfers.settled_ms` (NULL = open), date
+//!   index over `(execution_date, settled_ms)`.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -125,6 +127,7 @@ const STEPS: &[Step] = &[
     Step::Sql(REFUND_LINKS),                                   // 40 (#714)
     Step::Hook(manual_date_stamp),                             // 41 (#714)
     Step::Hook(account_last_fetch),                            // 42 (#1716)
+    Step::Hook(crate::planned::planned_settled),               // 43 (#1900)
 ];
 
 /// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
@@ -1008,7 +1011,7 @@ fn account_bank_label(conn: &Connection) -> CoreResult<()> {
     Ok(())
 }
 
-/// Step 42 (#1716): when an account was last fetched on its own ("<Konto>
+/// Step 39 (#1716): when an account was last fetched on its own ("<Konto>
 /// abrufen"). The login's `last_sync_unix` stays as it is then, so the other
 /// accounts do not count as fresh; the account shows the later of the two.
 fn account_last_fetch(conn: &Connection) -> CoreResult<()> {
@@ -1240,24 +1243,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 42);
-    }
-
-    /// #1716: a vault at version 41 gets the fetch time of step 42.
-    #[test]
-    fn vault_at_41_gets_last_fetch() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        migrate(&mut conn).unwrap();
-        conn.execute_batch(
-            "ALTER TABLE accounts DROP COLUMN last_fetch_unix; PRAGMA user_version = 41;",
-        )
-        .unwrap();
-        migrate(&mut conn).unwrap();
-        assert!(has_column(&conn, "main", "accounts", "last_fetch_unix").unwrap());
-        let v: i64 = conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(v, 42);
+        assert_eq!(SCHEMA_VERSION, 43);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for

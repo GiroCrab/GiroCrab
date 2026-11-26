@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use super::*;
+use crate::secret::SecretJson;
 use crate::vault::Vault;
 
 /// What the scripted connector saw.
@@ -298,4 +299,81 @@ async fn a_cancel_while_the_tan_is_on_its_way_stores_nothing() {
     })
     .await
     .expect("the cancel must not wait for the running step");
+}
+
+/// Logs in, then fails the fetch; `keep` is the state it hands back for a failed fetch.
+struct FailingFetch {
+    keep: Option<&'static str>,
+}
+
+#[async_trait]
+impl BankConnector for FailingFetch {
+    async fn begin(&mut self, _ctx: &ConnectContext) -> CoreResult<Phase> {
+        Ok(Phase::Ready)
+    }
+    async fn respond(&mut self, _: &ConnectContext, _: ChallengeResponse) -> CoreResult<Phase> {
+        Err(CoreError::protocol("no login challenge"))
+    }
+    async fn fetch(&mut self, _ctx: &ConnectContext) -> CoreResult<FetchResult> {
+        Err(CoreError::Bank {
+            code: "FinTS".into(),
+            message: "nothing was read".into(),
+        })
+    }
+    fn state_after_failed_fetch(&self) -> Option<SecretJson> {
+        self.keep.map(|s| SecretJson::from_text(s.into()))
+    }
+}
+
+fn failing_session(keep: Option<&'static str>) -> (SyncSession, Arc<Vault>, i64) {
+    let (vault, connection_id) = test_vault();
+    let ctx = ConnectContext {
+        connection_id,
+        since: "2026-01-01".into(),
+        ..Default::default()
+    };
+    let s = SyncSession::new(
+        vault.clone(),
+        ConnectorKind::FinTsGeneric,
+        Box::new(FailingFetch { keep }),
+        ctx,
+        None,
+    );
+    (s, vault, connection_id)
+}
+
+fn stored_state(vault: &Vault, connection_id: i64) -> String {
+    vault
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT state_json FROM bank_connections WHERE id = ?1",
+            [connection_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_failed_fetch_keeps_the_state_its_connector_hands_back() {
+    // #1828: a bank that wants a TAN for every job fails the sync; what the connector learned
+    // (the jobs to leave out next time) must not be lost with the error
+    let (s, vault, connection_id) = failing_session(Some(r#"{"sca_seen":["HKSAL"]}"#));
+    s.set_quiet();
+    let e = s.start().await.unwrap_err();
+    assert!(e.to_string().contains("nothing was read"), "{e}");
+    assert_eq!(
+        stored_state(&vault, connection_id),
+        r#"{"sca_seen":["HKSAL"]}"#
+    );
+    // no sync was done: the login does not count as freshly synced
+    assert_eq!(stored_accounts(&vault), 0);
+}
+
+#[tokio::test]
+async fn a_failed_fetch_without_news_leaves_the_stored_state_alone() {
+    let (s, vault, connection_id) = failing_session(None);
+    s.set_quiet();
+    assert!(s.start().await.is_err());
+    assert_eq!(stored_state(&vault, connection_id), "{}");
 }

@@ -4,7 +4,7 @@
 //! `mandates_view.rs`. Every vault call, file dialog and file access runs on a worker thread;
 //! results come back through `upgrade_in_event_loop`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -37,6 +37,17 @@ struct Ui {
 thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
     static SLOT: RefCell<Option<VaultSlot>> = const { RefCell::new(None) };
+    /// Counts vault locks. Lives outside `Ui` (which `on_lock` resets) and is never reset, so a
+    /// worker result that started before a lock is recognised even after a later unlock.
+    static LOCK_EPOCH: Cell<u64> = const { Cell::new(0) };
+}
+
+fn lock_epoch() -> u64 {
+    LOCK_EPOCH.with(Cell::get)
+}
+
+fn bump_lock_epoch() {
+    LOCK_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
 }
 
 fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
@@ -46,6 +57,8 @@ fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
 fn vault_now() -> Option<Arc<Vault>> {
     SLOT.with(|s| s.borrow().as_ref().and_then(|s| s.lock().unwrap().clone()))
 }
+
+mod batch_review;
 
 fn eur(c: i64) -> String {
     money(c, "EUR")
@@ -77,6 +90,11 @@ fn names(items: Vec<String>) -> ModelRc<SharedString> {
 
 /// Closes the dialog and forgets its state when the vault locks.
 pub fn on_lock(win: &MainWindow) {
+    bump_lock_epoch();
+    batch_review::clear();
+    let gs = win.global::<MandatesState>();
+    gs.set_batch_summary(SharedString::new());
+    gs.set_batch_rows(model(Vec::new()));
     win.global::<MandatesState>().set_open(false);
     with_ui(|u| *u = Ui::default());
 }
@@ -939,6 +957,10 @@ fn wire_returns(win: &MainWindow) {
     });
 }
 
+/// Statustext, wenn Import oder Zeilenauswahl der Sammelüberweisung im Privatmodus gesperrt sind.
+const BATCH_PRIVACY_BLOCKED: &str =
+    "Im Privatmodus gesperrt – Privatmodus beenden, um die Sammelüberweisung zu prüfen.";
+
 fn wire_batch(win: &MainWindow) {
     let weak = win.as_weak();
     win.global::<MandatesState>().on_batch_import(move || {
@@ -946,6 +968,10 @@ fn wire_batch(win: &MainWindow) {
         if blocked(&win) {
             return;
         }
+        if privacy_on(&win) {
+            return set_status(&win, BATCH_PRIVACY_BLOCKED);
+        }
+        let epoch = lock_epoch();
         spawn(
             &win,
             "Datei wird gelesen …",
@@ -954,14 +980,89 @@ fn wire_batch(win: &MainWindow) {
                     .ok_or("Keine Datei gewählt.")?;
                 Ok(parse_batch_csv(read_text(&path)?))
             },
-            |win, imp| {
-                let gs = win.global::<MandatesState>();
-                gs.set_batch_summary(view::batch_summary(&imp, &eur).into());
-                gs.set_batch_rows(model(
-                    imp.rows.iter().map(|r| view::batch_line(r, &eur)).collect(),
-                ));
-                gs.set_status(SharedString::new());
+            move |win, imp| {
+                // The vault was locked while the file was read: drop the result.
+                if epoch != lock_epoch() {
+                    return;
+                }
+                batch_review::start(imp);
+                render_batch(win);
+                win.global::<MandatesState>()
+                    .set_status(SharedString::new());
             },
         );
     });
+    let weak = win.as_weak();
+    win.global::<MandatesState>().on_batch_toggle(move |i| {
+        let Some(win) = weak.upgrade() else { return };
+        if privacy_on(&win) {
+            set_status(&win, BATCH_PRIVACY_BLOCKED);
+        } else if !blocked(&win)
+            && let Ok(i) = usize::try_from(i)
+        {
+            batch_review::toggle(i);
+        }
+        // Immer neu zeichnen, auch wenn der Klick gesperrt war: das CheckBox-Element
+        // hat sich beim Klick selbst umgeschaltet und muss auf das Modell zurück.
+        render_batch(&win);
+    });
+}
+
+/// Zeigt Zusammenfassung und Zeilen; im Privatmodus verdeckt. Ohne geladene Prüfung wirkungslos.
+pub(crate) fn render_batch(win: &MainWindow) {
+    let private = privacy_on(win);
+    let shown = batch_review::with(|r| {
+        (
+            batch_review::summary(r, private, &money),
+            batch_review::lines(r, private, &money),
+        )
+    });
+    if let Some((summary, rows)) = shown {
+        let gs = win.global::<MandatesState>();
+        gs.set_batch_summary(summary.into());
+        gs.set_batch_rows(model(rows));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_invalidates_captured_epoch() {
+        let captured = lock_epoch();
+        assert_eq!(captured, lock_epoch());
+        bump_lock_epoch();
+        assert_ne!(captured, lock_epoch());
+    }
+
+    #[test]
+    fn lock_then_unlock_does_not_restore_epoch() {
+        let captured = lock_epoch();
+        bump_lock_epoch();
+        bump_lock_epoch();
+        assert_ne!(captured, lock_epoch());
+    }
+
+    #[test]
+    fn epoch_survives_ui_reset() {
+        let captured = lock_epoch();
+        bump_lock_epoch();
+        with_ui(|u| *u = Ui::default());
+        assert_ne!(captured, lock_epoch());
+    }
+
+    #[test]
+    fn duplicates_count_only_repeats() {
+        let k = |s: &str| s.to_string();
+        assert_eq!(batch_review::repeats([k("a"), k("b")]), 0);
+        assert_eq!(batch_review::repeats([k("a"), k("a")]), 1);
+        assert_eq!(batch_review::repeats([k("a"), k("b"), k("a"), k("a")]), 2);
+        assert_eq!(batch_review::repeats([k("a"), k("b"), k("b"), k("a")]), 2);
+    }
+
+    #[test]
+    fn duplicates_empty_input() {
+        assert_eq!(batch_review::repeats(Vec::<String>::new()), 0);
+    }
 }

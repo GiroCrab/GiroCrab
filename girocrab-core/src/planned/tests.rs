@@ -119,3 +119,100 @@ fn planned_payments_are_counted_without_past_ones() {
         .unwrap();
     assert_eq!(v.count_planned_payments().unwrap(), 2);
 }
+
+#[test]
+fn settled_step_adds_null_column_and_is_idempotent() {
+    let v = vault("planned-settled-step");
+    let acc = account(&v, "A");
+    let db = v.db().unwrap();
+    db.execute(
+        "INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
+         VALUES (?1, 'E2E', '2030-01-01', 100)",
+        [acc],
+    )
+    .unwrap();
+    assert!(super::has_column(&db, "main", "planned_transfers", "settled_ms").unwrap());
+    let settled: Option<i64> = db
+        .query_row("SELECT settled_ms FROM planned_transfers", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(settled, None);
+    super::planned_settled(&db).unwrap();
+    super::planned_settled(&db).unwrap();
+    let idx: Vec<String> = db
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='planned_transfers'",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(idx.contains(&"planned_transfers_date_settled".to_string()));
+    assert!(!idx.contains(&"planned_transfers_date".to_string()));
+}
+
+/// The upgrade path of an existing vault: a table from before step 43 with the
+/// old date index and a stored order keeps the order (open, `settled_ms` NULL),
+/// and a replay of the step keeps a settlement set in between.
+#[test]
+fn settled_step_upgrades_old_table_and_keeps_rows() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE TABLE planned_transfers(
+            id INTEGER PRIMARY KEY,
+            account_id INTEGER NOT NULL,
+            end_to_end_id TEXT NOT NULL,
+            execution_date TEXT NOT NULL,
+            amount_cents INTEGER NOT NULL);
+         CREATE INDEX planned_transfers_date ON planned_transfers(execution_date);
+         INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
+            VALUES (1, 'E2E', '2030-01-01', 100);",
+    )
+    .unwrap();
+    assert!(!super::has_column(&db, "main", "planned_transfers", "settled_ms").unwrap());
+
+    fn row(db: &rusqlite::Connection) -> (i64, String, String, i64, Option<i64>) {
+        db.query_row(
+            "SELECT account_id, end_to_end_id, execution_date, amount_cents, settled_ms
+             FROM planned_transfers",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap()
+    }
+    fn indexes(db: &rusqlite::Connection) -> Vec<String> {
+        db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='planned_transfers'",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    }
+
+    super::planned_settled(&db).unwrap();
+    assert!(super::has_column(&db, "main", "planned_transfers", "settled_ms").unwrap());
+    assert_eq!(row(&db), (1, "E2E".into(), "2030-01-01".into(), 100, None));
+    let idx = indexes(&db);
+    assert!(idx.contains(&"planned_transfers_date_settled".to_string()));
+    assert!(!idx.contains(&"planned_transfers_date".to_string()));
+
+    db.execute(
+        "UPDATE planned_transfers SET settled_ms = 1700000000000",
+        [],
+    )
+    .unwrap();
+    super::planned_settled(&db).unwrap();
+    assert_eq!(
+        row(&db),
+        (
+            1,
+            "E2E".into(),
+            "2030-01-01".into(),
+            100,
+            Some(1_700_000_000_000)
+        )
+    );
+    assert_eq!(indexes(&db), idx);
+}

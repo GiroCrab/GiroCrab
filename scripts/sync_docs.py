@@ -3,6 +3,7 @@
 
   sync_docs.py readme  <repo-root> --version vX.Y.Z   # README.md + docs/assets/download-macos.svg
   sync_docs.py site    <repo-root> <site-dir> --version vX.Y.Z
+  sync_docs.py notes   <repo-root>                   # only the notices in docs/*-connector.md
 
 Only machine-derivable facts are rewritten; all prose stays untouched:
   * version strings (download button alt text / SVG, "Version vX", "Aktuelle Version", meta description)
@@ -10,6 +11,8 @@ Only machine-derivable facts are rewritten; all prose stays untouched:
     (README DE/EN, website FAQ): the bank & capability matrix derived from `BANK_MATRIX` in
     girocrab-core/src/connectors/catalog.rs (interface, capabilities, test status) plus the
     institute count of girocrab-core/data/fints_directory.tsv.
+  * the notice between `<!-- sync:connector-note:start -->` and `<!-- sync:connector-note:end -->`
+    at the top of each docs/<key>-connector.md in CONNECTOR_DOCS (from the matrix field `official`).
 Idempotent: a second run changes nothing.
 """
 import argparse
@@ -98,23 +101,31 @@ def parse_matrix(text):
 
 
 NOTE_START, NOTE_END = "<!-- sync:connector-note:start -->", "<!-- sync:connector-note:end -->"
-# docs/<key>-connector.md -> (BANK_MATRIX name, name shown in the notice)
+# docs/<key>-connector.md -> (BANK_MATRIX name, name shown in the notice).
+# Sorted by key; test_sync_docs.py checks this and the real docs/ and catalog.rs.
 CONNECTOR_DOCS = {
+    "advanzia": ("Advanzia Bank", "Advanzia Bank"),
+    "airplus": ("AirPlus Corporate Card", "AirPlus"),
     "alte-leipziger": ("Alte Leipziger (Bausparen)", "Alte Leipziger"),
+    "axashareplan": ("AXA Mitarbeiter Shareplan", "AXA"),
+    "berghauscie": ("Berghaus & Cie (Weindepot)", "Berghaus & Cie"),
+    "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),
     "consorsbank": ("Consorsbank", "Consorsbank"),
     "easybank": ("easybank (ehem. Barclays)", "easybank"),
+    "equateplus": ("EquatePlus", "EquatePlus"),
     "fnz": ("FNZ Bank", "FNZ Bank"),
+    "goandgrow": ("Go & Grow", "Go & Grow"),
+    "kontist": ("Kontist", "Kontist"),
     "miles-and-more": ("Miles & More Kreditkarte (Deutsche Bank)", "Deutsche Bank / Miles & More"),
+    "monefit": ("Monefit SmartSaver", "Monefit"),
     "quirion": ("quirion", "quirion"),
     "scalable-capital": ("Scalable Capital", "Scalable Capital"),
-    "trade-republic": ("Trade Republic", "Trade Republic"),
-    "volkswagen-bank": ("Volkswagen Bank", "Volkswagen Bank"),
-    "sharinbox": ("Sharinbox (Société Générale)", "Sharinbox (Société Générale)"),
-    "uberspace": ("Uberspace", "Uberspace"),
-    "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),
-    "kontist": ("Kontist", "Kontist"),
-    "monefit": ("Monefit SmartSaver", "Monefit"),
     "schwaebisch-hall": ("Schwäbisch Hall (Bausparen)", "Schwäbisch Hall"),
+    "sharinbox": ("Sharinbox (Société Générale)", "Société Générale"),
+    "trade-republic": ("Trade Republic", "Trade Republic"),
+    "uberspace": ("Uberspace", "Uberspace"),
+    "unioninvestment": ("Union Investment", "Union Investment"),
+    "volkswagen-bank": ("Volkswagen Bank", "Volkswagen Bank"),
 }
 
 
@@ -125,10 +136,10 @@ def connector_note(bank, official):
     return (
         f"{NOTE_START}\n"
         f"> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner "
-        f"Verbindung zur {bank}. Schnittstelle: {de}. Bei inoffiziellen Schnittstellen kann die Nutzung gegen "
-        f"die Nutzungsbedingungen der Bank verstoßen.\n"
+        f"Verbindung zum Anbieter {bank}. Schnittstelle: {de}. Bei inoffiziellen Schnittstellen kann die Nutzung gegen "
+        f"die Nutzungsbedingungen des Anbieters verstoßen.\n"
         f"> This connector is an independent community project and is not affiliated with {bank}. "
-        f"Interface: {en}. Using unofficial interfaces may violate the bank's terms of service.\n"
+        f"Interface: {en}. Using unofficial interfaces may violate the provider's terms of service.\n"
         f"{NOTE_END}"
     )
 
@@ -202,18 +213,18 @@ def replace_version(text, version):
 
 
 def read_facts(root):
-    matrix = parse_matrix((root / "girocrab-core/src/connectors/catalog.rs").read_text())
+    matrix = parse_matrix((root / "girocrab-core/src/connectors/catalog.rs").read_text(encoding="utf-8"))
     if not matrix:
         sys.exit("error: no BANK_MATRIX entries parsed from catalog.rs (format changed?)")
-    n = fints_count((root / "girocrab-core/data/fints_directory.tsv").read_text())
+    n = fints_count((root / "girocrab-core/data/fints_directory.tsv").read_text(encoding="utf-8"))
     return matrix, n
 
 
 def edit(path, fn):
-    old = path.read_text()
+    old = path.read_text(encoding="utf-8")
     new = fn(old)
     if new != old:
-        path.write_text(new)
+        path.write_text(new, encoding="utf-8")
         print(f"updated {path}")
     return new != old
 
@@ -232,6 +243,10 @@ def run_readme(root, version):
 
     edit(root / "README.md", fix)
     edit(root / "docs/assets/download-macos.svg", lambda t: replace_version(t, version))
+    run_notes(root, matrix)
+
+
+def run_notes(root, matrix):
     by_name = {e["name"]: e for e in matrix}
     for key, (entry, shown) in CONNECTOR_DOCS.items():
         if not (root / f"docs/{key}-connector.md").exists():
@@ -259,14 +274,16 @@ def run_site(root, site, version):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["readme", "site"])
+    ap.add_argument("mode", choices=["readme", "site", "notes"])
     ap.add_argument("root", type=Path)
     ap.add_argument("site", type=Path, nargs="?")
-    ap.add_argument("--version", required=True)
+    ap.add_argument("--version")
     a = ap.parse_args()
-    if not VERSION_RE.match(a.version):
+    if a.mode == "notes":
+        run_notes(a.root, read_facts(a.root)[0])
+    elif not VERSION_RE.match(a.version or ""):
         sys.exit(f"error: version must look like v1.2.3, got {a.version!r}")
-    if a.mode == "readme":
+    elif a.mode == "readme":
         run_readme(a.root, a.version)
     else:
         if not a.site:

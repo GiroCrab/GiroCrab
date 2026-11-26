@@ -376,3 +376,91 @@ fn security_transactions_are_stored_once_across_syncs() {
     assert_eq!(list[0].quantity, 1.0);
     assert_eq!(list[0].direction, SecurityDirection::Buy);
 }
+
+/// Per-account error isolation: a detail row the connector could not fetch
+/// ("notFetched") is accepted – the account keeps its overview balance and its
+/// stored data, nothing here counts as completely fetched this round.
+#[test]
+fn accepts_a_not_fetched_account_and_fetches_nothing_for_it() {
+    let mut f = fixture();
+    f["details"][0]["kind"] = json!("notFetched");
+    let r = snapshot(&f.to_string()).unwrap();
+    assert!(r.holdings.iter().all(|h| h.account_ref != "D1"));
+    assert!(!r.holdings_fetched.contains(&"D1".to_string()));
+    assert!(r.transactions.iter().all(|t| t.account_ref != "D1"));
+    // The untouched accounts are still complete: one depot (D2) with its
+    // holdings and every cash transaction.
+    assert_eq!(r.holdings.len(), 1);
+    assert_eq!(r.holdings_fetched, vec!["D2"]);
+    assert!(
+        r.transactions
+            .iter()
+            .any(|t| t.account_ref == "C1" || t.account_ref == "C2")
+    );
+}
+
+/// `hold_prefix` (removes stored order rows missing from the fetch) applies
+/// only when every cash account was read: a notFetched cash account keeps the
+/// stored orders of the login until it is fetched completely again.
+#[test]
+fn a_not_fetched_cash_account_keeps_stored_orders() {
+    // One pending order on cash account C1; the other cash account C2 comes
+    // complete, so the snapshot is otherwise fully fetched.
+    let order = json!({
+        "cashAccountId": {"depotId":{"id":"I1"},"subDepotNumber":"1"},
+        "orderOrTransactionId": {"orderId": {"orderDate":"2025-01-05","orderNumber":"O-1"},
+            "transactionId": null},
+        "bookingDate": "2025-01-05", "valutaDate": "2025-01-05",
+        "amount": {"value":"-99.00","currencyId":{"id":"EUR"},"estimatedValueFlag":false},
+        "transactionType": "Kauf (vorgemerkt)"
+    });
+    let mut f = fixture();
+    let mut cash = f["details"][1].clone(); // C1's cash detail
+    let mut txs = cash["transactions"].as_array().unwrap().clone();
+    txs.push(order.clone());
+    cash["transactions"] = Value::Array(txs);
+    f["details"][1] = cash;
+
+    let dir = crate::test_support::TempDir::new("girocrab-fnz-orders");
+    let v = Vault::open(
+        dir.join("v.db").to_string_lossy().to_string(),
+        vec![3u8; 32],
+    )
+    .unwrap();
+    let conn = v
+        .add_bank_connection(
+            crate::models::ConnectorKind::Fnz,
+            "FNZ Orders".into(),
+            "test".into(),
+        )
+        .unwrap();
+    let orders = |v: &Vault| {
+        let db = v.db().unwrap();
+        let mut q = db
+            .prepare("SELECT external_id FROM transactions WHERE external_id LIKE 'fnz:order:%' AND deleted_ms IS NULL")
+            .unwrap();
+        q.query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    // First sync: the order is stored.
+    v.clone().import_fnz_snapshot(conn, f.to_string()).unwrap();
+    assert_eq!(orders(&v).len(), 1);
+    // The account's detail failed (notFetched): the stored order stays,
+    // although the fetch no longer lists it.
+    let mut g = fixture();
+    g["details"][1]["kind"] = json!("notFetched");
+    v.clone().import_fnz_snapshot(conn, g.to_string()).unwrap();
+    assert_eq!(
+        orders(&v).len(),
+        1,
+        "notFetched cash account keeps its orders"
+    );
+    // Complete fetch without the order: it was executed and is removed.
+    v.clone()
+        .import_fnz_snapshot(conn, fixture().to_string())
+        .unwrap();
+    assert_eq!(orders(&v).len(), 0);
+    std::fs::remove_file(dir.join("v.db")).ok();
+}

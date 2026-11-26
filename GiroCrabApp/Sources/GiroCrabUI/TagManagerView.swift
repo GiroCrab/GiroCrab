@@ -19,6 +19,9 @@ struct TagManagerView: View {
     @State private var merging = false
     @State private var confirmDelete = false
     @State private var confirmUnused = false
+    /// Tags file being written / chosen (#1057).
+    @State private var exchange: RuleTagExport?
+    @State private var importing = false
     private enum Focus: Hashable { case list, search }
     @FocusState private var focus: Focus?
     /// ⌘N while the sheet is up (see `watchKeys`).
@@ -147,6 +150,7 @@ struct TagManagerView: View {
         }
         // locking the vault closes the sheet
         .onChange(of: model.isUnlocked) { _, open in if !open { dismiss() } }
+        .ruleTagExchange(export: $exchange, importing: $importing)
     }
 
     private var titleBar: some View {
@@ -201,6 +205,7 @@ struct TagManagerView: View {
                 Button("Zusammenführen …") { selection = ids; merging = true }
             }
             if !ids.isEmpty {
+                Button("Exportieren …") { exportTags(Array(ids)) }
                 Divider()
                 Button(ids.count > 1 ? "\(ids.count) Tags löschen …" : "Löschen …", role: .destructive) {
                     selection = ids
@@ -257,8 +262,34 @@ struct TagManagerView: View {
             Button("Ungenutzte entfernen …") { confirmUnused = true }
                 .fixedSize()
                 .disabled(model.unusedTags.isEmpty)
+            // tags to and from a file (#1057); one menu, the bar has no room for more buttons
+            Menu {
+                Button("Tags importieren …") {
+                    model.applyTagDraft()
+                    importing = true
+                }
+                Divider()
+                Button("Alle Tags exportieren …") { exportTags([]) }
+                    .disabled(model.tags.isEmpty)
+                Button(selection.count > 1 ? "Ausgewählte Tags exportieren …" : "Ausgewählten Tag exportieren …") {
+                    exportTags(Array(selection))
+                }
+                .disabled(selection.isEmpty)
+            } label: {
+                Image(systemName: "square.and.arrow.up.on.square")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(Text("Tags importieren oder exportieren"))
+            .accessibilityLabel(Text("Tags importieren oder exportieren"))
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    /// Pending names, colours and order first, so the file holds what the sheet shows.
+    private func exportTags(_ ids: [Int64]) {
+        model.applyTagDraft()
+        exchange = .tags(ids)
     }
 
     /// ⌘N (new tag). A sheet's buttons never see it: the main menu takes it first

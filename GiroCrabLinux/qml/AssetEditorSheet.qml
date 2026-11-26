@@ -288,6 +288,7 @@ Sheet {
                         label: qsTr("Feingold je Stück")
                         value: { const w = sheet.weight; if (!w) return ""; const fine = w.grams * w.purity / 1000
                                  return NumberText.format(fine, 3) + " g · " + NumberText.format(fine / NumberText.troyOunceGrams, 4) + " oz" }
+                        amounts: true   // how much gold the user owns
                     }
                 }
 

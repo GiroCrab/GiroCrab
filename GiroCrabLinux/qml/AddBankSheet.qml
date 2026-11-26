@@ -346,7 +346,6 @@ Sheet {
                     : ff.blzValid && ff.found === null ? qsTr("Diese Bankleitzahl steht nicht im Verzeichnis. Tragen Sie die FinTS-Adresse Ihrer Bank selbst ein.") : ""
             }
             Text { text: qsTr("Anmeldung"); font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.secondary; Layout.topMargin: 6 }
-            DemoHintBanner { visible: AppModel.demoActive || ff.blz === "99999999"; Layout.fillWidth: true; onFill: login.text = "demo" }
             GridLayout {
                 columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
                 Text { text: qsTr("Anmeldename"); color: Theme.text }
@@ -354,6 +353,8 @@ Sheet {
                 Text { text: qsTr("TAN-Medium"); color: Theme.text }
                 TextField { id: tanMedium; Layout.fillWidth: true; placeholderText: qsTr("Optional") }
             }
+            // in the footer, not above the fields: no box in a box (HIG, #881)
+            DemoHintBanner { visible: AppModel.demoActive || ff.blz === "99999999"; Layout.fillWidth: true; onFill: login.text = "demo" }
             AddFormFooter {
                 lines: [ff.isPostbank ? qsTr("Postbank: Als Anmeldename die Postbank ID verwenden, nicht die Kontonummer.") : "",
                         ff.needsMediumHint ? qsTr("Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein, z. B. SO:Gerätename.")
@@ -376,7 +377,6 @@ Sheet {
                 AppModel.addConnection(kind, kind === "TradeRepublic" ? AppModel.core("normalize_phone_number", { input: login.text }) : login.text)
             }
             Text { text: qsTr("Zugang"); font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.secondary }
-            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: login.text = "demo" }
             GridLayout {
                 columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
                 Text { text: kf.d ? kf.d.login_label : ""; color: Theme.text }
@@ -386,6 +386,8 @@ Sheet {
                 Text { visible: kf.d && kf.d.bank_code !== ""; text: qsTr("Bankleitzahl"); color: Theme.text }
                 Text { visible: kf.d && kf.d.bank_code !== ""; text: kf.d ? kf.d.bank_code : ""; color: Theme.secondary }
             }
+            // in the footer, not above the fields: no box in a box (HIG, #881)
+            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: login.text = "demo" }
             AddFormFooter { lines: [kf.d ? kf.d.note : ""] }
         }
     }
@@ -405,12 +407,13 @@ Sheet {
                 Text { text: qsTr("Verfahren"); color: Theme.text }
                 Text { text: qsTr("PSD2 über Enable Banking"); color: Theme.secondary }
             }
-            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: label.text = "demo" }
             GridLayout {
                 columns: 2; columnSpacing: 12; Layout.fillWidth: true
                 Text { text: qsTr("Bezeichnung"); color: Theme.text }
                 TextField { id: label; Layout.fillWidth: true; placeholderText: qsTr("Optional") }
             }
+            // in the footer, not above the fields: no box in a box (HIG, #881)
+            DemoHintBanner { visible: AppModel.demoActive; Layout.fillWidth: true; onFill: label.text = "demo" }
             AddFormFooter { lines: [sheet.selected.tested, qsTr("Sie melden sich in einem GiroCrab-Fenster direkt bei Ihrer Bank an. Dafür brauchen Sie eine kostenlose eigene Anwendung auf enablebanking.com – die Einrichtung führt Sie Schritt für Schritt hindurch.")] }
         }
     }
