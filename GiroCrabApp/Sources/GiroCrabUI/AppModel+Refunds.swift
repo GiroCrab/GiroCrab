@@ -194,9 +194,10 @@ extension AppModel {
     }
 
     private func refundLinksChanged() async {
-        // Links are documentation only (#714): totals, charts and the dashboard stay as they are;
-        // only the markers of the list rows and the refund card change.
+        // Links are documentation only (#714) unless refunds are netted in the statistics: then totals,
+        // charts and the dashboard follow too; otherwise only the list markers and the refund card change.
         refundRevision &+= 1
+        if netRefundsInStats { invalidateTotals(); reloadDashboard() }
         if let id = stickyBooking?.id, let pin = pinVault() {
             let generation = listGeneration
             let fresh = try? await pin.run { try Self.refundBookings(in: $0, ids: [id])[id] }
@@ -205,6 +206,47 @@ extension AppModel {
                 if let index = bookings.firstIndex(where: { $0.id == id }) { bookings[index] = fresh }
             }
         }
+        startSelectionLoad(keepingShown: true)
+    }
+
+    /// Einstellungen › Allgemein › Auswertungen „Erstattungen mit der Ursprungsbuchung verrechnen“ (#714). Queued behind
+    /// earlier writes of the Settings window (`settingsWriteTask`) and run off the main thread;
+    /// every statistic loads again, the shown data stays until then.
+    func setNetRefundsInStats(_ on: Bool) async {
+        guard let vault else { return }
+        netRefundsInStats = on
+        // only the newest toggle publishes: an older write finishing later never overwrites it
+        netRefundsWriteGeneration &+= 1
+        let generation = netRefundsWriteGeneration
+        let previous = settingsWriteTask
+        let write = Task { @MainActor () async throws -> Bool in
+            await previous?.value
+            return try await Self.offMain {
+                try vault.setNetRefundsInStats(on: on)
+                return try vault.netRefundsInStats()
+            }
+        }
+        settingsWriteTask = Task { _ = try? await write.value }
+        let stored: Bool?
+        var failure: Error?
+        do {
+            stored = try await write.value
+        } catch {
+            failure = error
+            // the switch shows what is stored, read back after the failed write
+            stored = try? await Self.offMain { try vault.netRefundsInStats() }
+        }
+        guard self.vault === vault, generation == netRefundsWriteGeneration else { return }
+        if let stored { netRefundsInStats = stored }
+        if let failure { errorMessage = describe(failure) }
+        // also after a failure: the write may have committed before the read-back failed
+        refundStatsChanged()
+    }
+
+    /// Category totals and history, budgets, KPI tiles, cashflow card and dashboard load again.
+    private func refundStatsChanged() {
+        invalidateTotals()
+        reloadDashboard()
         startSelectionLoad(keepingShown: true)
     }
 

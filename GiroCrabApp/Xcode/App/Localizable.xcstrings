@@ -6208,6 +6208,17 @@
         }
       }
     },
+    "Aus: keine neuen Dokumente, bereits gespeicherte bleiben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off: no new documents, stored ones stay."
+          }
+        }
+      }
+    },
     "Ausbildung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6612,6 +6623,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Save selection"
+          }
+        }
+      }
+    },
+    "Auswertungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statistics"
           }
         }
       }
@@ -12114,6 +12136,17 @@
         }
       }
     },
+    "Die Erstattung wird in Auswertungen mit der Buchung verrechnet, wenn beide in den betrachteten Konten liegen. Buchungen und Kontostände bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The refund is netted against the booking in reports when both are in the accounts shown. Bookings and balances stay unchanged."
+          }
+        }
+      }
+    },
     "Die Gruppe ist leer." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14143,6 +14176,17 @@
         }
       }
     },
+    "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A linked refund no longer counts as income in totals, budgets and charts; it reduces the amount of its original booking instead, also retroactively in that booking's month. This applies when the refund and the original booking are in the accounts shown. Bookings, the list and balances stay unchanged."
+          }
+        }
+      }
+    },
     "Einfügen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15182,6 +15226,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Refunds"
+          }
+        }
+      }
+    },
+    "Erstattungen mit der Ursprungsbuchung verrechnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Net refunds against their original booking"
           }
         }
       }
@@ -27964,6 +28019,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "PayPal secret"
+          }
+        }
+      }
+    },
+    "Per FinTS kommen nur PDF-Kontoauszüge, und nur wenn die Bank sie per FinTS anbietet: beim Sync für Konten, bei denen unter „Dokumente“ „Kontoauszüge automatisch beim Sync abrufen“ eingeschaltet ist, sonst über „Kontoauszüge abrufen“ an gleicher Stelle. Postbox-Dokumente wie Wertpapier- oder Ertragsabrechnungen ruft GiroCrab per FinTS nicht ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Over FinTS, only PDF statements are fetched, and only if the bank offers them over FinTS: during sync for accounts that have “Fetch statements automatically when syncing” switched on under “Documents”, otherwise with “Fetch statements” in the same place. GiroCrab does not fetch Postbox documents such as securities or income statements over FinTS."
           }
         }
       }

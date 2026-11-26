@@ -5,6 +5,9 @@
 > This connector is an independent community project and is not affiliated with Consorsbank. Interface: official. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
 
+> **PDF-Dokumente / Documents:** „Offiziell“ gilt nur für FinTS (Umsätze, Salden, Depot). Die PDF-Dokumente kommen aus dem Online-Archiv über eine **inoffizielle** Portal-Schnittstelle und brauchen eine eigene Freigabe in der Consorsbank-App.
+> "Official" covers FinTS only (transactions, balances, securities). PDF documents come from the Online-Archiv via an **unofficial** portal interface and need a separate approval in the Consorsbank app.
+
 Living document. Update the **Status** table and the **Change log** whenever work
 on this connector advances.
 

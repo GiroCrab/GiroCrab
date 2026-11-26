@@ -205,6 +205,10 @@ struct SchwaebischHallWebSheet: View {
     @State private var ready = false
     @State private var running = false
     @State private var includeDocuments = true
+    /// Stored login was filled in (or none is stored): filled in like the card portals.
+    @State private var loginFilled = false
+    /// The fetch after a successful login runs once per window; afterwards the user steers.
+    @State private var autoFetched = false
     /// "Dokumente abrufen" of the connection (bank connection dialog): off = no list, no PDFs.
     private var documentsOn: Bool { !model.documentsOffConnectionIDs.contains(connection.id) }
     @State private var progress = ""
@@ -251,9 +255,21 @@ struct SchwaebischHallWebSheet: View {
             browser.webView.uiDelegate = uiDelegate
             while !Task.isCancelled {
                 if !running {
+                    // Like the card portals: fill in the stored login while the form is
+                    // there; the user submits themselves (2FA if required).
+                    if AppModel.supportsStoredPortalLogin(connection.connector), !loginFilled, !ready,
+                       browser.onLoginPage, browser.onPortal, !browser.loading {
+                        loginFilled = await fillStoredLogin()
+                    }
                     let onPortal = browser.currentURL?.host?.lowercased() == "www.schwaebisch-hall.de" && !browser.loading
                     let ok = onPortal ? ((try? await run(SchwaebischHallScripts.probe)) == "true") : false
                     if ready != ok { ready = ok }
+                    // Signed in: fetch right away; the window closes itself on a fully
+                    // successful run (like the card portals' automatic import).
+                    if ok, !autoFetched {
+                        autoFetched = true
+                        start()
+                    }
                 }
                 // Signed in: check rarely; the next fetch reports an expired session anyway.
                 try? await Task.sleep(nanoseconds: ready ? 10_000_000_000 : 2_000_000_000)
@@ -261,6 +277,21 @@ struct SchwaebischHallWebSheet: View {
         }
         .onDisappear { task?.cancel(); browser.teardown() }
         .interactiveDismissDisabled(running)
+    }
+
+    /// Fills the stored user name and password into the portal's login form. True once
+    /// done, or when nothing is stored; false while the form is not there yet.
+    private func fillStoredLogin() async -> Bool {
+        let id = connection.id
+        // A failed password save keeps the old secret but turns autofill off (#1947).
+        guard !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)) else { return true }
+        let stored = try? await model.vaultOffMain {
+            (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+        }
+        guard let (storedUser, password) = stored, !storedUser.isEmpty, !password.isEmpty else { return true }
+        let filled = await browser.fillLogin(user: storedUser, password: password)
+        if filled { AppModel.debugLog("schwaebisch hall: stored login filled in") }
+        return filled
     }
 
     private func run(_ script: String, arguments: [String: Any] = [:]) async throws -> String {
