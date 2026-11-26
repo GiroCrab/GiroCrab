@@ -5048,8 +5048,8 @@ fn a_card_number_names_the_source_only_on_its_login_and_in_its_currency() {
 fn a_card_on_a_login_the_import_set_up_another_way_takes_its_sources_state() {
     // the import connected the card's bank through the comdirect FinTS alternative or Enable
     // Banking, and that login's fetch took the marked card over by its number: still a login
-    // the import links the bank to, so the closed card is archived. The user picks it as
-    // target (the preview proposes cards on the bank's own login only)
+    // the import links the bank to, so the preview proposes the card (#1935) and the closed
+    // card is archived
     let c24 = "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
                  VALUES (30, 'DE', '50024024', 'c24-login', '', 'GEHEIM-30', 'C24 Bank', 'SYS', 'LS');
                INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
@@ -5098,17 +5098,146 @@ fn a_card_on_a_login_the_import_set_up_another_way_takes_its_sources_state() {
             assert_eq!(adopted.unwrap(), Some(card.id), "{name}");
         }
         let closed = format!("{c24} UPDATE accounts SET refresh = 19 WHERE rowid = {mm_card};");
-        import_with(&v, &fake_db_with(false, &closed), |o| {
-            for c in o.accounts.iter_mut().filter(|c| c.mm_id == mm_card) {
-                c.target_account_id = Some(card.id);
-            }
-        });
+        let p = v
+            .preview_moneymoney_database(fake_db_with(false, &closed), PW.into(), None)
+            .unwrap();
+        let proposed = p.accounts.iter().find(|a| a.mm_id == mm_card).unwrap();
+        assert_eq!(proposed.existing_account_id, Some(card.id), "{name}");
+        import_with(&v, &fake_db_with(false, &closed), |_| {});
         assert_eq!(
             archive_state(&v, card.id),
             (Some(1_790_001_000), 1_790_001_000_125, false),
             "{name}"
         );
     }
+}
+
+#[test]
+fn preview_never_guesses_a_card_number_synced_on_two_linked_logins() {
+    // Hanseatic Bank's FinTS login and its Enable Banking login both sync a card with the number
+    // MoneyMoney shows: the import links the bank to both, so neither is proposed (#1935)
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
+           VALUES (40, 'DE', '12030000', 'hb-login', '', 'GEHEIM-40', 'Hanseatic Bank', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (41, 40, '5232 XXXX XXXX 4242', '12030000', 0, '', 'EUR', 'Hanseatic Kreditkarte', 'Max Mustermann', 0, 3, 41, 0, 0, 'GEHEIM');",
+    );
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let ways = &p
+        .banks
+        .iter()
+        .find(|b| b.mm_id == 40)
+        .unwrap()
+        .connection_options;
+    let way = |via| ways.iter().find(|o| o.via == via).unwrap().clone();
+    let own = way(MoneyMoneyDbConnectionVia::FinTs);
+    let psd2 = way(MoneyMoneyDbConnectionVia::EnableBanking);
+    let proposed = || {
+        let p = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        p.accounts
+            .iter()
+            .find(|a| a.mm_id == 41)
+            .unwrap()
+            .existing_account_id
+    };
+    let mut cards = Vec::new();
+    for (o, external_ref) in [(&psd2, "psd2-card"), (&own, "own-card")] {
+        let db = v.db().unwrap();
+        let (login, _) = Vault::add_bank_connection_keyed(
+            &db,
+            o.connector,
+            &o.key,
+            Some("12030000"),
+            "Hanseatic Bank".into(),
+            "hb-login".into(),
+        )
+        .unwrap();
+        let gid = Vault::ensure_group(&db, "Karten", "creditcard", 1).unwrap();
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, kind)
+             VALUES (?1, ?2, ?3, ?3, '5232000000004242', 'EUR', 'credit_card')",
+            params![login, gid, external_ref],
+        )
+        .unwrap();
+        cards.push(db.last_insert_rowid());
+        drop(db);
+        if cards.len() == 1 {
+            // one login: its card is proposed
+            assert_eq!(proposed(), Some(cards[0]));
+        }
+    }
+    assert_eq!(proposed(), None);
+}
+
+#[test]
+fn preview_proposes_a_card_only_without_iban_and_in_its_currency() {
+    // #1976: like `card_taken_over_from`, a card in another currency or with an IBAN is not the
+    // MoneyMoney card, not even for a tie, on a linked login (Enable Banking) as on the own one
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
+           VALUES (40, 'DE', '12030000', 'hb-login', '', 'GEHEIM-40', 'Hanseatic Bank', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (41, 40, '5232 XXXX XXXX 4242', '12030000', 0, '', 'EUR', 'Hanseatic Kreditkarte', 'Max Mustermann', 0, 3, 41, 0, 0, 'GEHEIM');",
+    );
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let psd2 = p.banks.iter().find(|b| b.mm_id == 40).unwrap();
+    let psd2 = psd2
+        .connection_options
+        .iter()
+        .find(|o| o.via == MoneyMoneyDbConnectionVia::EnableBanking)
+        .unwrap();
+    let (login, gid) = {
+        let db = v.db().unwrap();
+        let (login, _) = Vault::add_bank_connection_keyed(
+            &db,
+            psd2.connector,
+            &psd2.key,
+            Some("12030000"),
+            "Hanseatic Bank".into(),
+            "hb-login".into(),
+        )
+        .unwrap();
+        (
+            login,
+            Vault::ensure_group(&db, "Karten", "creditcard", 1).unwrap(),
+        )
+    };
+    let card = |name: &str, currency: &str, iban: &str| -> i64 {
+        let db = v.db().unwrap();
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, iban, kind)
+             VALUES (?1, ?2, ?3, ?3, '5232000000004242', ?4, ?5, 'credit_card')",
+            params![login, gid, name, currency, iban],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    card("usd-card", "usd", "");
+    card("iban-card", "EUR", "DE02 1203 0000 0000 4242 42");
+    let proposed = || {
+        let p = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        p.accounts
+            .iter()
+            .find(|a| a.mm_id == 41)
+            .unwrap()
+            .existing_account_id
+    };
+    assert_eq!(proposed(), None);
+    let eur = card("eur-card", "EUR", "");
+    // neither other card ties with it
+    assert_eq!(proposed(), Some(eur));
 }
 
 /// Device A imported the fixture and step 38 marked its Girokonto; device B has it from A by

@@ -76,6 +76,8 @@ export global SettingsImportState {
     in-out property <int> mode: 0;
     in property <string> mode-source;
     callback mode-changed(int);
+    in-out property <bool> net-refunds: false;
+    callback net-refunds-changed(bool);
     // ---- Abrufprotokoll
     in property <[SiRow]> log;
     in property <string> log-summary;
@@ -322,6 +324,14 @@ export component SettingsImportPanel inherits VerticalLayout {
                 Button { text: "Speichern"; primary: true; enabled: !SettingsImportState.busy; clicked => { SettingsImportState.setting-save(); } }
             }
         }
+        Text { text: "Auswertungen"; color: root.ink; font-size: 13px; font-weight: 600; }
+        CheckBox {
+            text: "Erstattungen mit der Ursprungsbuchung verrechnen";
+            checked <=> SettingsImportState.net-refunds;
+            enabled: !SettingsImportState.busy;
+            toggled => { SettingsImportState.net-refunds-changed(self.checked); }
+        }
+        Info { text: "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert."; ink: root.muted; }
         UpdatesSection { }
     } }
 
