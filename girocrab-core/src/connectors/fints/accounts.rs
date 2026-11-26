@@ -177,7 +177,7 @@ impl FinTsConnector {
         let mut accounts = merge_upd_with_sepa(&self.upd, sepa, &self.blz);
         // Postbank also serves accounts of other banks of the group (BIC DEUT…) behind
         // the one login, so the login's server decides, not the account's BIC.
-        if is_postbank_server(&self.url) {
+        if needs_full_kti(&self.url) {
             for (acc, _) in &mut accounts {
                 acc.full_kti = true;
             }
@@ -356,8 +356,8 @@ impl FinTsConnector {
         if acc.blz == CONSORSBANK_BLZ && !acc.iban.is_empty() && !acc.account_number.is_empty() {
             return Self::kti_full(acc, &acc.account_number);
         }
-        // Postbank answers HKCAZ/HKCDB with 9210 "nationale Kontoverbindung erforderlich"
-        // for IBAN:BIC alone (#1702) and "Keine gültige Kontoverbindung" for the 10-digit
+        // Postbank and norisbank answer HKCAZ/HKCDB with 9210 "nationale Kontoverbindung
+        // erforderlich" for IBAN:BIC alone (#1702) and Postbank "Keine gültige Kontoverbindung" for the 10-digit
         // number from the IBAN combined with its 3-digit sub-account. It accepts the
         // account exactly as its HIUPD lists it (as HKKAZ already does through KTV).
         if acc.full_kti && !acc.iban.is_empty() && !acc.account_number.is_empty() {
@@ -397,13 +397,24 @@ impl FinTsConnector {
     }
 }
 
-fn is_postbank_server(url: &str) -> bool {
-    url.to_ascii_lowercase().contains("hbci.postbank.de")
+/// Servers that identify an account for HKCAZ/HKCDB only with the national account (KTI
+/// with Konto:Unterkonto:280:BLZ): Postbank (#1702) and norisbank, which answers IBAN:BIC
+/// alone with the same 9210 "Angaben zur nationalen Kontoverbindung … erforderlich".
+fn needs_full_kti(url: &str) -> bool {
+    let url = url.to_ascii_lowercase();
+    url.contains("hbci.postbank.de") || url.contains("fints.norisbank.de")
 }
 
 #[cfg(test)]
 mod postbank_kti_tests {
     use super::*;
+
+    #[test]
+    fn postbank_and_norisbank_servers_need_the_national_account() {
+        assert!(needs_full_kti("https://hbci.postbank.de/banking/hbci.do"));
+        assert!(needs_full_kti("https://fints.norisbank.de/"));
+        assert!(!needs_full_kti("https://fints.dkb.de/fints"));
+    }
 
     #[test]
     fn postbank_kti_carries_the_upd_account_with_sub_account() {
