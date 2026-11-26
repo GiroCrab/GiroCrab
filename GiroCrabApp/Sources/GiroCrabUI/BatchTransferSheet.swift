@@ -272,7 +272,9 @@ struct BatchTransferSheet: View {
                 .appFont(.callout).foregroundStyle(Theme.negative)
         }
         Text("\(rows.count) Zahlungen · \(String(localized: "Summe"))").appFont(.callout).foregroundStyle(Theme.secondary)
-        Text(Money.format(totalCents)).appFont(.title3, weight: .semibold, monospacedDigit: true).fixedSize().sensitive(.amounts)
+        // At the largest sizes a six-figure total can be wider than the screen: it may wrap there.
+        Text(Money.format(totalCents)).appFont(.title3, weight: .semibold, monospacedDigit: true)
+            .fixedSize(horizontal: !typeSize.isAccessibilitySize, vertical: true).sensitive(.amounts)
     }
 
     // MARK: review
@@ -284,7 +286,8 @@ struct BatchTransferSheet: View {
         return layout {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Summe").appFont(.caption).foregroundStyle(Theme.secondary)
-                Text(Money.format(totalCents)).appFont(.title, weight: .semibold, monospacedDigit: true).fixedSize().sensitive(.amounts)
+                Text(Money.format(totalCents)).appFont(.title, weight: .semibold, monospacedDigit: true)
+                    .fixedSize(horizontal: !typeSize.isAccessibilitySize, vertical: true).sensitive(.amounts)
             }
             if !stacked { Divider().frame(height: 40) }
             VStack(alignment: .leading, spacing: 3) {
