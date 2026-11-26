@@ -428,7 +428,7 @@ fn parse_accounts(html: &str) -> CoreResult<(Vec<Account>, Vec<String>)> {
             .unwrap_or_default();
         let Some(balance_cents) = RIGHT_SUM.captures(part).and_then(|c| parse_amount(&c[1])) else {
             trace(&format!(
-                "account #{}: balance unreadable (sum={})",
+                "part #{}: balance unreadable (sum={}), left out",
                 i + 1,
                 RIGHT_SUM.is_match(part)
             ));
@@ -451,7 +451,8 @@ fn parse_accounts(html: &str) -> CoreResult<(Vec<Account>, Vec<String>)> {
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| "Tagesgeld".into());
         trace(&format!(
-            "account #{}: festgeld={} iban_labels={} own_iban={} bookings_link={}",
+            "account #{} (part #{}): festgeld={} iban_labels={} own_iban={} bookings_link={}",
+            out.len() + 1,
             i + 1,
             product.to_lowercase().contains("festgeld"),
             ibans.len(),
