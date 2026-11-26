@@ -26,6 +26,36 @@ Wurde eine Datei **noch nie** veröffentlicht (kein Release mit In-App-Updates,
 Policy noch nicht aktiviert), ist ein 404 nur ein Hinweis. Sobald ein Lauf sie
 einmal gesehen hat (gemerkt im Actions-Cache), ist ein späteres 404 ein Fund.
 
+## Schutzstatus von `main` und Release-Tags (Stand 2026-11-25, #1804)
+
+Abgefragt über die GitHub-API (`gh api repos/GiroCrab/GiroCrab/branches/main/protection`
+und `…/rulesets`). Der Stand kann sich ändern; maßgeblich sind die GitHub-Einstellungen.
+
+| Ziel | Schutz | Status |
+|---|---|---|
+| `main` | Branch-Protection: kein Force-Push, kein Löschen | aktiv |
+| `main` | Erforderliche Status-Checks: `rust`, `swift`, `audit` (aus `ci.yml`: Format, Lints, Clippy, Tests, `cargo audit`) | aktiv, nicht `strict` (Branch muss nicht aktuell sein) |
+| `main` | Gilt auch für Administratoren (`enforce_admins`) | **nein**, Admins können den Schutz umgehen (z. B. `gh pr merge --admin`) |
+| `main` | Signierte Commits erforderlich | nein |
+| Release-Tags `v*` | Tag-Ruleset (kein Löschen, kein Überschreiben, kein Force-Push) | **noch nicht eingerichtet**: es gibt keine Rulesets im Repository |
+
+Offen (Einstellung durch Repo-Admins, keine Code-Änderung): ein Tag-Ruleset für
+`refs/tags/v*` mit den Regeln *Deletion*, *Update* und *Non-fast-forward*;
+für `main` zusätzlich `enforce_admins`, sobald der Maintainer-Workflow es zulässt.
+
+### Signatur und Notarisierung der Releases
+
+Release-Pakete für macOS werden **lokal** auf dem Rechner des Maintainers mit
+Developer ID signiert, notarisiert und geheftet (`scripts/notarize.sh --upload vX.Y.Z`);
+`release.yml` baut sie bewusst nicht in der Cloud. Updates prüft die App zusätzlich über die
+Sparkle-Signatur des Appcasts (`docs/auto-updates.md`). Die Windows- und Android-Pakete sind
+Alpha-Builds: Das Windows-Paket ist nicht signiert, das Android-APK ist ein Debug-Build
+(`assembleDebug`) und nur mit dem Debug-Schlüssel signiert; notarisiert ist keines von beiden.
+
+Ob das Veröffentlichte noch dazu passt, prüft `scripts/verify-release-integrity.sh`
+(Abschnitt „Lokal ausführen“); der geplante Workflow ruft es alle 6 Stunden auf.
+Das ersetzt keinen Tag-Schutz: Es erkennt Abweichungen erst nach dem Veröffentlichen.
+
 ## Meldungen
 
 Abweichungen landen in **einem** offenen Issue mit dem Label `release-integrity`

@@ -1,8 +1,8 @@
 # Volkswagen-Bank-Anbindung
 
 <!-- sync:connector-note:start -->
-> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur Volkswagen Bank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
-> This connector is an independent community project and is not affiliated with Volkswagen Bank. Interface: unofficial. Using unofficial interfaces may violate the bank's terms of service.
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Volkswagen Bank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Volkswagen Bank. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
 
 Status: **pushTAN umgesetzt, noch nicht live getestet** – `ConnectorKind::VolkswagenBank` (Schlüssel
