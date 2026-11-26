@@ -799,13 +799,14 @@ pub(crate) fn store_fetch(
                     // it, anything else is refreshed.
                     Some(stored) => {
                         if hold
-                            || !crate::importers::moneymoney_import::merge_synced_twin(
+                            || !crate::importers::moneymoney_import::merge_synced_twin_or_original(
                                 &tx,
                                 stored.id,
                                 &t.booking_date,
                                 t.amount_cents,
                                 &t.counterparty_iban,
                                 &t.counterparty,
+                                &t.original_counterparty,
                                 &t.purpose,
                             )?
                         {
@@ -816,7 +817,7 @@ pub(crate) fn store_fetch(
                     // note), else insert it.
                     None => {
                         if hold
-                            || !crate::importers::moneymoney_import::adopt_import(
+                            || !crate::importers::moneymoney_import::adopt_import_or_original(
                                 &tx,
                                 *acc_id,
                                 &t.external_id,
@@ -824,6 +825,7 @@ pub(crate) fn store_fetch(
                                 t.amount_cents,
                                 &t.counterparty_iban,
                                 &t.counterparty,
+                                &t.original_counterparty,
                                 &t.purpose,
                                 &t.booking_text,
                             )?

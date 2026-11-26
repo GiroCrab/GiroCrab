@@ -72,6 +72,119 @@ fn another_booking_sharing_the_iban_never_takes_the_legacy_row() {
     assert_eq!(stored_id(&conn), LEGACY_ID);
 }
 
+/// A real vault with one account holding a MoneyMoney row without IBAN under
+/// the ordinary name and with a purpose too short for `purposes_alike`: only
+/// the name can match it.
+fn vault_with_imported_row() -> (crate::test_support::TempDir, Arc<Vault>, i64) {
+    let dir = crate::test_support::TempDir::new("legacy-adoption");
+    let v = Vault::open(
+        dir.join("v.db").to_string_lossy().to_string(),
+        vec![7u8; 32],
+    )
+    .unwrap();
+    let account = {
+        let db = v.db().unwrap();
+        let account = crate::assets::create_account_in(&db, "Konto").unwrap();
+        insert_row(&db, account, "mm-1", "Zahlungsdienst GmbH");
+        account
+    };
+    (dir, v, account)
+}
+
+fn insert_row(conn: &rusqlite::Connection, account: i64, external_id: &str, name: &str) -> i64 {
+    conn.execute(
+        "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
+             amount_cents, counterparty, counterparty_iban, purpose)
+         VALUES (?1, ?2, '2025-01-03', '2025-01-03', -999, ?3, '', 'Abo')",
+        params![account, external_id, name],
+    )
+    .unwrap();
+    conn.last_insert_rowid()
+}
+
+fn live_rows(conn: &rusqlite::Connection) -> i64 {
+    conn.query_row(
+        "SELECT count(*) FROM transactions WHERE amount_cents = -999 AND deleted_ms IS NULL",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn ibanless_redelivery_adopts_the_imported_row_by_the_original_name() {
+    use crate::importers::moneymoney_import::{adopt_import, adopt_import_or_original};
+    let (_dir, v, account) = vault_with_imported_row();
+    let conn = v.db().unwrap();
+    let adopt = |original: &str| {
+        adopt_import_or_original(
+            &conn,
+            account,
+            "fints-1",
+            "2025-01-03",
+            -999,
+            "",
+            "Shop am Markt",
+            original,
+            "Abo",
+            "",
+        )
+        .unwrap()
+    };
+    // The displayed (ultimate) name alone misses the row …
+    assert!(
+        !adopt_import(
+            &conn,
+            account,
+            "fints-1",
+            "2025-01-03",
+            -999,
+            "",
+            "Shop am Markt",
+            "Abo",
+            ""
+        )
+        .unwrap()
+    );
+    assert!(!adopt(""));
+    // … the ordinary name takes it over instead of inserting a duplicate.
+    assert!(adopt("Zahlungsdienst GmbH"));
+    let ext: String = conn
+        .query_row(
+            "SELECT external_id FROM transactions WHERE amount_cents = -999",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ext, "fints-1");
+    assert_eq!(live_rows(&conn), 1);
+}
+
+#[test]
+fn ibanless_duplicate_merges_into_the_imported_row_by_the_original_name() {
+    use crate::importers::moneymoney_import::merge_synced_twin_or_original;
+    let (_dir, v, account) = vault_with_imported_row();
+    let conn = v.db().unwrap();
+    let bank_id = insert_row(&conn, account, "fints-1", "Shop am Markt");
+    let merge = |original: &str| {
+        merge_synced_twin_or_original(
+            &conn,
+            bank_id,
+            "2025-01-03",
+            -999,
+            "",
+            "Shop am Markt",
+            original,
+            "Abo",
+        )
+        .unwrap()
+    };
+    assert!(!merge(""));
+    assert_eq!(live_rows(&conn), 2);
+    assert!(merge("Zahlungsdienst GmbH"));
+    assert_eq!(live_rows(&conn), 1);
+}
+
 #[test]
 fn unchanged_name_still_adopts() {
     let conn = conn_with_legacy_row();
