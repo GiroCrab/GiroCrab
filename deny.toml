@@ -25,6 +25,14 @@ ignore = [
     # build and macros), no safe upgrade exists. Ignored by advisory ID (a `crate = …` entry here
     # only covers yanked crates); remove once Slint drops spin_on/pin-utils.
     { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1, transitive via Slint (Windows front end), no fixed version available" },
+    # Windows front end only: ttf-parser 0.25.1 (unmaintained) comes in via Slint's winit backend
+    # (i-slint-backend-winit 1.19), no safe upgrade exists. Remove once Slint moves to skrifa.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1, transitive via Slint (Windows front end), no fixed version available" },
+    # Windows front end only: zvariant 5.x and zbus_names 4.x (unmaintained, merged into zbus 6)
+    # come in via the zbus 5 D-Bus stack under Slint, no safe upgrade exists. Remove both once
+    # the Slint dependency tree moves to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant 5.15.1, transitive via Slint's zbus 5 stack (Windows front end), no fixed version available" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names 4.3.5, transitive via Slint's zbus 5 stack (Windows front end), no fixed version available" },
 ]
 
 [licenses]
