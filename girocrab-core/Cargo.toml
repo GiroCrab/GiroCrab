@@ -34,7 +34,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto", "use_pem"] }
-base64 = "0.22"
+base64 = "0.23"
 rsa = { version = "0.10", features = ["encoding", "getrandom", "pkcs1v15", "hazmat"] }
 getrandom = { version = "0.4", features = ["sys_rng"] }
 p256 = { version = "0.14", features = ["ecdsa"] }
