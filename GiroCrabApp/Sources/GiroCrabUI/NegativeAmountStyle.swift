@@ -61,6 +61,9 @@ enum NegativeAmountStyle: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Text colour of an amount of either sign (lists that are not the booking list).
+    func ink(_ cents: Int64) -> Color { cents > 0 ? positiveColor : color }
+
     var positiveColor: Color { self == .contrast ? Self.contrastColors.positive : Theme.inflow }
     var positiveBadge: Color { self == .contrast ? Self.contrastColors.badge : Theme.inflowBadge }
 

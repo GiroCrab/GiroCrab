@@ -167,6 +167,10 @@ fn booking_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Booking)> {
             creditor_id: r.get(26)?,
             external_id: r.get(27)?,
             tags: Vec::new(),
+            refund_marker: "none".into(),
+            refund_cents: 0,
+            refunded_cents: 0,
+            split_count: 0,
         },
     ))
 }
@@ -247,6 +251,8 @@ pub(crate) fn attach_split_categories(
 /// names, merchant, flow (salary, own transfers, loans), domain overrides.
 /// Only depends on the vault's data, so `ListCache` keeps it between calls.
 pub(super) struct BookingFinisher {
+    /// Refund link markers (#714); documentation only, no effect on sums.
+    refunds: Arc<crate::refunds::Resolved>,
     language: crate::i18n::Lang,
     category_flows: HashMap<i64, super::categories::CategoryFlow>,
     paths: HashMap<i64, (String, String, String, String)>,
@@ -262,7 +268,11 @@ pub(super) struct BookingFinisher {
 }
 
 impl BookingFinisher {
-    fn load(db: &rusqlite::Connection, merchants: Arc<MerchantRules>) -> Result<Self, CoreError> {
+    fn load(
+        db: &rusqlite::Connection,
+        merchants: Arc<MerchantRules>,
+        refunds: Arc<crate::refunds::Resolved>,
+    ) -> Result<Self, CoreError> {
         let paths = Vault::category_paths(db)?;
         let category_flows = Vault::category_flows(db)?;
         let loan_links = crate::loans::link_map(db)?;
@@ -288,6 +298,7 @@ impl BookingFinisher {
                 .collect::<Result<_, _>>()?
         };
         Ok(Self {
+            refunds,
             language: crate::i18n::current(),
             category_flows,
             paths,
@@ -304,6 +315,18 @@ impl BookingFinisher {
     /// With `visible` accounts (local interface, #136), a payment linked to a
     /// loan outside them reads as a transfer: the loan itself must not show.
     fn finish(&self, t: &mut Booking, visible: Option<&[i64]>) {
+        // like loan links: with `visible` accounts only links between visible bookings count,
+        // so a refund on a hidden account never shows on a visible booking (CodeRabbit #1852)
+        let scoped = visible.map(|v| self.refunds.summary_within(t.id, v));
+        if let Some(s) = scoped
+            .as_ref()
+            .or_else(|| self.refunds.summaries.get(&t.id))
+        {
+            t.refund_marker = s.marker().into();
+            t.refund_cents = s.refund_cents;
+            t.refunded_cents = s.refunded_cents;
+            t.split_count = s.split_count;
+        }
         if let Some((name, path, color, sym)) = t.category_id.and_then(|c| self.paths.get(&c)) {
             t.category_name = name.clone();
             t.category_path = path.clone();
@@ -389,6 +412,18 @@ impl Vault {
         db: &rusqlite::Connection,
         filter: &BookingFilter,
     ) -> Result<(String, String, Vec<Box<dyn ToSql>>, String), CoreError> {
+        // linked refunds netted when the user chose so (#714), for links whose other booking
+        // lies in the accounts this filter sums (`totals_set` in a totals context)
+        let refund_scope = if self.refund_offsets_ready(db)? {
+            let accounts: Vec<i64> = match totals_set(db, filter)? {
+                Some(set) if set.is_empty() => vec![-1], // "none": nothing nets
+                Some(set) => set.into_iter().collect(),
+                None => filter.account_ids.clone(),
+            };
+            Some(crate::refunds::scope_sql(&accounts))
+        } else {
+            None
+        };
         let mut wh: Vec<String> = vec![LIVE_BOOKINGS_SQL.into()];
         let mut args: Vec<Box<dyn ToSql>> = vec![];
         let mut cte = String::new();
@@ -467,11 +502,21 @@ impl Vault {
         let share_sql = match &cat_match {
             Some(m) => {
                 wh.push(category_match_sql(m));
+                let (part, whole) = match &refund_scope {
+                    Some(scope) => (
+                        format!(" - refund_offset(t.id, sp.uuid, {scope})"),
+                        format!(" - refund_offset(t.id, '', {scope})"),
+                    ),
+                    None => (String::new(), String::new()),
+                };
                 format!(
-                    "COALESCE((SELECT SUM(sp.amount_cents) FROM transaction_splits sp WHERE sp.transaction_id = t.id AND sp.category_id {m}), t.amount_cents)"
+                    "COALESCE((SELECT SUM(sp.amount_cents{part}) FROM transaction_splits sp WHERE sp.transaction_id = t.id AND sp.category_id {m}), t.amount_cents{whole})"
                 )
             }
-            None => "t.amount_cents".to_string(),
+            None => match &refund_scope {
+                Some(scope) => format!("t.amount_cents - refund_offset_total(t.id, {scope})"),
+                None => "t.amount_cents".to_string(),
+            },
         };
         if let Some(from) = filter.date_from.as_ref().filter(|s| !s.is_empty()) {
             args.push(Box::new(from.clone()));
@@ -1099,7 +1144,11 @@ impl Vault {
         {
             return Ok(finisher);
         }
-        let finisher = Arc::new(BookingFinisher::load(db, self.merchant_rules(db)?)?);
+        let finisher = Arc::new(BookingFinisher::load(
+            db,
+            self.merchant_rules(db)?,
+            self.refund_markers(db)?,
+        )?);
         self.list_cache
             .keep(db, stamp, |s| s.finisher = Some(finisher.clone()));
         Ok(finisher)

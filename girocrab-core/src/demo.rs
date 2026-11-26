@@ -1666,7 +1666,7 @@ impl Vault {
         // One account fetched on its own a minute ago, so the header of a single fetch shows in the demo (#1716).
         tx.execute(
             "UPDATE accounts SET last_fetch_unix = strftime('%s','now') - 60 WHERE id = ?1",
-            [acc_ids["demo-giro"]],
+            [acc_ids.values().min().copied().unwrap_or(0)],
         )?;
         // Scheduled transfers for the "Geplant" page (#240): fictional, relative to today.
         for (n, (days, name, iban, cents, purpose)) in [

@@ -254,6 +254,7 @@ struct ManualBookingSheet: View {
 
     /// The typed amount with its sign, `nil` while it is not a usable number.
     private var amountCents: Int64? {
+        if let booking = request.booking, booking.splitCount > 0 { return booking.amountCents }
         guard let cents = Money.parseCents(amountText), cents != 0 else { return nil }
         let magnitude = abs(cents)
         return flow == .out ? -magnitude : magnitude
@@ -275,8 +276,10 @@ struct ManualBookingSheet: View {
                     Text("Einnahme").tag(Flow.in)
                 }
                 .pickerStyle(.segmented)
+                .disabled((request.booking?.splitCount ?? 0) > 0)
                 TextField("Betrag", text: $amountText)
                     .multilineTextAlignment(.trailing)
+                    .disabled((request.booking?.splitCount ?? 0) > 0)
                     .sensitive(.amounts)
                 TextField("Name oder Empfänger", text: $counterparty).sensitive()
                 TextField("Verwendungszweck", text: $purpose).sensitive()

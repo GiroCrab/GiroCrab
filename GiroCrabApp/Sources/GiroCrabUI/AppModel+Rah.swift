@@ -31,6 +31,8 @@ extension AppModel {
     }
 
     func addRah10Connection(bytes: Data, password: String, name: String, bankKeys: [Rah10BankKeyCandidate], expected: [String], completion: @escaping (Bool) -> Void) {
+        // taken now: adding may wait for the policy, after the assistant closed
+        let history = newLoginHistory
         withFreshBankingPolicy { [self] in
             guard bankingAllowsAdding(bankingGate(forNew: .finTsGeneric)) else { completion(false); return }
             if demoActive, let ov = ownVault { useVault(ov, demo: false) }
@@ -38,7 +40,9 @@ extension AppModel {
             Task {
                 do {
                     let id = try await pin.run {
-                        try $0.addRah10ConnectionWithBankKeys(bytes: bytes, password: password, displayName: name, bankKeys: bankKeys, expectedFingerprints: expected)
+                        let id = try $0.addRah10ConnectionWithBankKeys(bytes: bytes, password: password, displayName: name, bankKeys: bankKeys, expectedFingerprints: expected)
+                        try Self.requestNewLoginHistory(history, for: id, in: $0)
+                        return id
                     }
                     // A committed import stays successful if the vault was swapped.
                     guard isCurrent(pin) else { completion(true); return }

@@ -276,6 +276,50 @@ pub fn wire(win: &MainWindow, slot: VaultSlot) {
 fn wire_open(win: &MainWindow) {
     let gs = win.global::<SettingsImportState>();
 
+    // Belege & Postbox: switches the document retrieval of the connection shown there (#954).
+    let weak = win.as_weak();
+    win.on_doc_fetch_toggled(move |on| {
+        let Some(win) = weak.upgrade() else {
+            return;
+        };
+        // Show the stored state until the vault confirmed the change.
+        win.set_doc_fetch_on(!on);
+        // Privacy mode locks changes like the other actions of the Belege view.
+        if crate::privacy_on(&win) {
+            win.set_view_status("Im Privatmodus nicht möglich.".into());
+            return;
+        }
+        let target = crate::views_ui::doc_connections::toggle_target();
+        let (Some(id), Some(v)) = (target, vault_now()) else {
+            return;
+        };
+        // Session of this request: a lock in between invalidates the completion.
+        let epoch = crate::views_ui::doc_connections::epoch();
+        spawn(
+            &win,
+            "Wird gespeichert …",
+            // The error is handled below: the Documents view shows `view_status`, not the
+            // status line of the settings dialog.
+            move || Ok(v.set_documents_fetch(id, on).map_err(|e| e.to_string())),
+            move |win, saved: Result<(), String>| {
+                if crate::views_ui::doc_connections::epoch() != epoch {
+                    return;
+                }
+                match saved {
+                    Ok(()) => {
+                        crate::views_ui::doc_connections::set_enabled(id, on);
+                        // Only the switch of the connection that was saved; if another one is
+                        // selected now, its own stored value stays visible.
+                        if crate::views_ui::doc_connections::toggle_target() == Some(id) {
+                            win.set_doc_fetch_on(on);
+                        }
+                    }
+                    Err(e) => win.set_view_status(e.into()),
+                }
+            },
+        );
+    });
+
     let weak = win.as_weak();
     gs.on_request(move || {
         let (Some(win), Some(v)) = (weak.upgrade(), vault_now()) else {

@@ -18,14 +18,21 @@ use crate::vault::Vault;
 pub(crate) struct DataStamp {
     generation: u64,
     changes: u64,
+    /// `PRAGMA data_version`: moves when another connection to the same file commits, which
+    /// `total_changes` of this connection never sees (CodeRabbit #1852).
+    data_version: i64,
 }
 
 impl Vault {
     /// The stamp of what `db` (this vault's connection, held by the caller) shows now.
     pub(crate) fn data_stamp(&self, db: &Connection) -> DataStamp {
+        let data_version = db
+            .pragma_query_value(None, "data_version", |r| r.get::<_, i64>(0))
+            .unwrap_or(0);
         DataStamp {
             generation: self.data_generation.load(Ordering::SeqCst),
             changes: db.total_changes(),
+            data_version,
         }
     }
 

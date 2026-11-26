@@ -52,10 +52,70 @@ fn period_is_capped_per_connector() {
     );
     // PSD2: an explicit start date beyond 90 days needs a fresh consent
     assert_eq!(HistoryRange::Maximum.days(ConnectorKind::EnableBanking), 90);
+    // the start date never reaches the bank, or a refusal is tried again
+    assert_eq!(
+        HistoryRange::Maximum.days(ConnectorKind::TradeRepublic),
+        3650
+    );
+    assert_eq!(HistoryRange::Maximum.days(ConnectorKind::Comdirect), 3650);
+    // three years of transaction search
+    assert_eq!(HistoryRange::Maximum.days(ConnectorKind::PayPal), 1090);
+    // sends the start date and has no retry
+    assert_eq!(HistoryRange::Maximum.days(ConnectorKind::Ffb), 730);
     let long = HistoryRange::Days { days: 5000 };
-    assert_eq!(long.days(ConnectorKind::Comdirect), 730);
+    assert_eq!(long.days(ConnectorKind::OpelDirektbank), 730);
     let short = HistoryRange::Days { days: 30 };
     assert_eq!(short.days(ConnectorKind::FinTsGeneric), 30);
+}
+
+#[test]
+fn a_refused_start_date_is_tried_again_with_90_days() {
+    let back = |n: i64| iso(today() - days(n));
+    let bank = |code: &str| CoreError::Bank {
+        code: code.into(),
+        message: "Zeitraum ungültig".into(),
+    };
+    assert_eq!(
+        history::retry_since(&back(3650), true, bank("400")).unwrap(),
+        back(90)
+    );
+    // the bank's own non-numeric code
+    assert_eq!(
+        history::retry_since(&back(365), true, bank("Error")).unwrap(),
+        back(90)
+    );
+    // within 90 days a shorter period would not help
+    assert!(matches!(
+        history::retry_since(&back(30), true, bank("400")),
+        Err(CoreError::Bank { .. })
+    ));
+    // not a refused request: the error stands (a bare 200 says nothing either)
+    for err in [
+        bank("200"),
+        bank("429"),
+        bank("401"),
+        bank("503"),
+        CoreError::Protocol {
+            message: "list incomplete".into(),
+        },
+        CoreError::Authentication {
+            message: "abgelaufen".into(),
+        },
+        CoreError::Network {
+            message: "offline".into(),
+        },
+    ] {
+        assert!(history::retry_since(&back(3650), true, err).is_err());
+    }
+    // an ordinary sync does not try again: the bookings between would be skipped
+    assert!(matches!(
+        history::retry_since(&back(3650), false, bank("400")),
+        Err(CoreError::Bank { .. })
+    ));
+    // names the date from which on bookings were fetched, so a gap is visible
+    let w = history::refused_warning("DE00ACC", "2026-08-24");
+    assert!(w.starts_with("DE00ACC: "), "{w}");
+    assert!(w.contains("24.08.2026") && w.contains("fehlen"), "{w}");
 }
 
 #[test]
@@ -142,6 +202,8 @@ async fn only_a_full_user_sync_reaches_back_and_finishes_it() {
         .begin_quiet_sync(conn.id, "pin".into(), true)
         .unwrap();
     assert_eq!(since(&quiet), incremental);
+    // a connector may try a refused start date again only in the full fetch
+    assert!(!quiet.clone_context().unwrap().full_fetch);
     let account = v
         .clone()
         .begin_account_sync(giro.id, "pin".into(), true)
@@ -151,6 +213,7 @@ async fn only_a_full_user_sync_reaches_back_and_finishes_it() {
     let s = v.clone().begin_sync(conn.id, "pin".into(), true).unwrap();
     let ctx = s.clone_context().unwrap();
     assert_eq!(ctx.since, back(400));
+    assert!(ctx.full_fetch);
     assert!(ctx.since_by_account.values().all(|d| *d <= back(400)));
     let mut step = s.start().await.unwrap();
     while !matches!(step, SyncStep::Finished { .. }) {
@@ -160,5 +223,46 @@ async fn only_a_full_user_sync_reaches_back_and_finishes_it() {
     assert_eq!(v.pending_full_history(conn.id).unwrap(), None);
     let next = since(&v.clone().begin_sync(conn.id, "pin".into(), true).unwrap());
     assert!(next > back(400));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn a_full_fetch_asks_enable_banking_for_the_longest_history_again() {
+    use crate::secret::SecretJson;
+    use serde_json::{Value, json};
+    let legacy = json!(["uid", "Giro", "DE00", "EUR"]);
+    let state = SecretJson::encode(&json!({"session_id": "s", "accounts": [
+        {"uid": "u1", "history_done": true},
+        {"uid": "u2", "history_done": false},
+        legacy,
+    ]}))
+    .unwrap();
+    let reset: Value = history::state_for_full_fetch(state)
+        .unwrap()
+        .decode()
+        .unwrap();
+    assert_eq!(reset["accounts"][0]["history_done"], false);
+    assert_eq!(reset["accounts"][1]["history_done"], false);
+    assert_eq!(
+        (&reset["session_id"], &reset["accounts"][2]),
+        (&json!("s"), &legacy)
+    );
+    // nothing to ask again: the state stays as it is, an empty one too
+    let other = json!({"system_id": "x", "accounts": [{"uid": "u", "history_done": false}]});
+    let out = history::state_for_full_fetch(SecretJson::encode(&other).unwrap()).unwrap();
+    assert_eq!(out.decode::<Value>().unwrap(), other);
+    let empty = history::state_for_full_fetch(SecretJson::default()).unwrap();
+    assert!(empty.is_empty());
+}
+
+#[test]
+fn a_pending_full_fetch_can_be_called_off() {
+    let (v, path) = demo_vault();
+    let id = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "one".into())
+        .unwrap();
+    assert!(v.pending_full_history(id).unwrap().is_some());
+    v.cancel_full_history(id).unwrap();
+    assert_eq!(v.pending_full_history(id).unwrap(), None);
     let _ = std::fs::remove_file(path);
 }

@@ -62,6 +62,11 @@ QtObject {
             if (done) done(true, "")
         }, err => {
             busy = false
+            // the core released the refund pin (the restore may have replaced data before it
+            // failed): an open refund sheet must not act on its booking ids any more
+            AppModel.refundBooking = null
+            // the refund card reloads too: its rows may predate data the failed restore replaced
+            AppModel.refundLinksRevision++
             if (done) done(false, AppModel.parseCoreError(err).message)
         })
     }

@@ -19,7 +19,7 @@ final class LocalApiServerTests: XCTestCase {
         await model.revokeLocalApiToken()
         await model.saveLocalApiScope(ShareScope(
             enabled: false, accountIds: [], shareAccountNumbers: false, shareCounterparty: true,
-            sharePurpose: true, shareNotes: false, tokenSha256: ""))
+            sharePurpose: true, shareNotes: false, allowEdits: false, tokenSha256: ""))
         XCTAssertFalse(model.isLocalApiRunning)
     }
 
