@@ -440,6 +440,7 @@ struct TransferKindPicker: View {
         return ContentSizedSegments(titles: kinds.map(\.1), selection: Binding(
             get: { kinds.firstIndex { $0.0 == selection.wrappedValue } ?? 0 },
             set: { selection.wrappedValue = kinds[$0].0 }))
+            .accessibilityLabel(Text("Art"))
     }
     #endif
 }
