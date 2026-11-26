@@ -115,6 +115,27 @@ fn adopt_legacy_content_id(
     Ok(n > 0)
 }
 
+/// Safety net for every connector: repairs UTF-8/Latin-1 mojibake in a
+/// fetched booking's texts. Includes `original_counterparty`, since older
+/// versions stored that name cleaned and legacy ids are adopted by it (#1721).
+/// The content id depends only on `counterparty`, so it does not change here.
+fn clean_fetched_text(t: &mut RemoteTransaction) {
+    t.counterparty = crate::text::clean_bank_text(&t.counterparty);
+    t.original_counterparty = crate::text::clean_bank_text(&t.original_counterparty);
+    t.purpose = crate::text::clean_bank_text(&t.purpose);
+    t.booking_text = crate::text::clean_bank_text(&t.booking_text);
+}
+
+/// The ultimate party's name (#1721) for a known booking that still holds the
+/// `Cdtr`/`Dbtr` name an older version stored; `None` for any other stored
+/// name, so names from other sources stay untouched.
+fn ultimate_rename<'a>(stored: &str, t: &'a RemoteTransaction) -> Option<&'a str> {
+    let original = t.original_counterparty.trim();
+    let fresh = t.counterparty.trim();
+    (!original.is_empty() && !fresh.is_empty() && original != fresh && stored.trim() == original)
+        .then_some(t.counterparty.as_str())
+}
+
 #[cfg(test)]
 mod legacy_adoption_tests;
 
@@ -197,7 +218,10 @@ fn refresh_existing(
     // likewise a booking text, e.g. the booking key of a Hanseatic interest booking
     let [text] = fill([&s.booking_text], [&t.booking_text]);
     let set = [
-        heal(&s.counterparty, &t.counterparty).or(named),
+        // an ultimate party replaces the `Cdtr`/`Dbtr` name an older version stored (#1721)
+        heal(&s.counterparty, &t.counterparty)
+            .or(named)
+            .or_else(|| ultimate_rename(&s.counterparty, t)),
         heal(&s.purpose, &t.purpose),
         code,
         gvc,
@@ -312,9 +336,7 @@ pub(crate) fn store_fetch(
             a.owner = crate::text::clean_bank_text(&a.owner);
         }
         for t in &mut data.transactions {
-            t.counterparty = crate::text::clean_bank_text(&t.counterparty);
-            t.purpose = crate::text::clean_bank_text(&t.purpose);
-            t.booking_text = crate::text::clean_bank_text(&t.booking_text);
+            clean_fetched_text(t);
         }
         // A connector without a bank id must not collapse bookings into one
         // `(account, "")` row: give them a deterministic content id instead.

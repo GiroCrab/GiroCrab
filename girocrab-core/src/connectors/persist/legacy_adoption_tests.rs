@@ -8,6 +8,11 @@ const IBAN: &str = "DE00000000000000000000";
 const LEGACY_ID: &str = "h0123456789abcdef";
 
 fn conn_with_legacy_row() -> rusqlite::Connection {
+    conn_with_legacy_row_named("Zahlungsdienst GmbH")
+}
+
+/// A legacy row whose counterparty an older version stored (already cleaned).
+fn conn_with_legacy_row_named(counterparty: &str) -> rusqlite::Connection {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER,
@@ -18,9 +23,8 @@ fn conn_with_legacy_row() -> rusqlite::Connection {
     conn.execute(
         "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
              amount_cents, counterparty, counterparty_iban, purpose)
-         VALUES (1, ?1, '2025-01-02', '2025-01-02', -2345, 'Zahlungsdienst GmbH', ?2,
-             'Bestellung 4711')",
-        params![LEGACY_ID, IBAN],
+         VALUES (1, ?1, '2025-01-02', '2025-01-02', -2345, ?3, ?2, 'Bestellung 4711')",
+        params![LEGACY_ID, IBAN, counterparty],
     )
     .unwrap();
     conn
@@ -74,4 +78,40 @@ fn unchanged_name_still_adopts() {
     let t = fetched("Zahlungsdienst GmbH", "", IBAN);
     assert!(adopt_legacy_content_id(&conn, 1, &t).unwrap());
     assert_eq!(stored_id(&conn), t.external_id);
+}
+
+#[test]
+fn repaired_original_name_adopts_the_row_stored_cleaned() {
+    // Older versions stored the `Cdtr` name through `clean_bank_text`.
+    let conn = conn_with_legacy_row_named("Müller Versand");
+    let mut t = fetched("Shop am Markt", "MÃ¼ller Versand", "");
+    let id = t.external_id.clone();
+    clean_fetched_text(&mut t);
+    assert_eq!(t.original_counterparty, "Müller Versand");
+    // the content id depends only on the counterparty and stays the same
+    assert_eq!(t.external_id, id);
+    assert_eq!(t.content_id(0), id);
+    assert!(adopt_legacy_content_id(&conn, 1, &t).unwrap());
+    assert_eq!(stored_id(&conn), id);
+}
+
+#[test]
+fn ultimate_name_replaces_only_the_stored_original_name() {
+    let t = fetched("Shop am Markt", "Zahlungsdienst GmbH", IBAN);
+    assert_eq!(
+        ultimate_rename("Zahlungsdienst GmbH", &t),
+        Some("Shop am Markt")
+    );
+    assert_eq!(
+        ultimate_rename(" Zahlungsdienst GmbH ", &t),
+        Some("Shop am Markt")
+    );
+    // a name from another source stays
+    assert_eq!(ultimate_rename("Eigener Name", &t), None);
+    // already the ultimate name: nothing to write
+    assert_eq!(ultimate_rename("Shop am Markt", &t), None);
+    // no ultimate party delivered: the stored name stays
+    let plain = fetched("Zahlungsdienst GmbH", "", IBAN);
+    assert_eq!(ultimate_rename("Zahlungsdienst GmbH", &plain), None);
+    assert_eq!(ultimate_rename("Anderer Name", &plain), None);
 }
