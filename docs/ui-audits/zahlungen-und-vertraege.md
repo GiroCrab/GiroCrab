@@ -28,17 +28,19 @@
 ### Geplant
 
 - **Demo-Einstieg:** `--demo-seed --view geplant`, „Alle Konten“ und „3 Monate“.
-- **GPL-1:** iPhone auf „Accessibility XL“ stellen. Die Filter in `PlannedPaymentsView` bleiben nebeneinander, mit festen Breitenbereichen. In `iphone-gross-geplant.png` bleiben Titel und Monatssummen am Rand unvollständig. Abnahme mit lesbaren Filtern, Monatssummen und vollständigen Zeilen.
-- **GPL-2:** Auf dem iPhone bei Standardgröße „Fitnessstudio Mitte“ antippen. `MainSplitView` verwendet den Titel aus `bookingSheetTitle` auch für die geplante Zahlung. Der Titel soll den dargestellten Vorgang benennen und persönliche Namen bei Schwärzung abdecken (`iphone-geplant-detail.png`, `iphone-lastschriften-detail.png`).
+- **GPL-1:** iPhone auf „Accessibility XL“ stellen. Die Filter in `PlannedPaymentsView` bleiben nebeneinander, mit festen Breitenbereichen. In `iphone-gross-geplant.png` bleiben Titel und Monatssummen am Rand unvollständig. Abnahme mit lesbaren Filtern, Monatssummen und vollständigen Zeilen. [Bildbelege (ZIP)][bildbelege]
+- **GPL-2:** Auf dem iPhone bei Standardgröße „Fitnessstudio Mitte“ antippen. `MainSplitView` verwendet den Titel aus `bookingSheetTitle` auch für die geplante Zahlung. Der Titel soll den dargestellten Vorgang benennen und persönliche Namen bei Schwärzung abdecken (`iphone-geplant-detail.png`, `iphone-lastschriften-detail.png`). [Bildbelege (ZIP)][bildbelege]
 
 ### Lastschriften
 
 - **Demo-Einstieg:** `--demo-seed --view lastschriften`, Gläubigerkonto „Musterbank Girokonto“. Im iPhone-Simulator von Standardgröße auf „Accessibility XL“ wechseln.
-- **LAS-1:** `DirectDebitsView` platziert `controls` oberhalb der separaten Listen-`ScrollView`. `accountPicker` begrenzt die Breite. `iphone-gross-lastschriften.png` zeigt den mehrzeiligen Kontonamen und verdeckte Mandate. Abnahme mit erreichbaren Mandaten und vollständig lesbaren Bedienoptionen.
+- **LAS-1:** `DirectDebitsView` platziert `controls` oberhalb der separaten Listen-`ScrollView`. `accountPicker` begrenzt die Breite. `iphone-gross-lastschriften.png` zeigt den mehrzeiligen Kontonamen und verdeckte Mandate. Abnahme mit erreichbaren Mandaten und vollständig lesbaren Bedienoptionen. [Bildbelege (ZIP)][bildbelege]
 - **Detail und Schwärzung:** Bei Standardgröße „Jan Muster“ öffnen. Der Rücklastschrift-Hinweis steht auch im Detail. Der Titel „Buchung“ ist in [GPL-2](#befunde) erfasst. Die Liste verdeckt in der geschwärzten Variante Namen und Beträge.
 
 ### Abos & Verträge
 
 - **Demo-Einstieg:** `--demo-seed --view abos`. „Original“ als Betragsbasis belassen. Vertragskopf und erste Ausgabenzeile auf iPhone bei Standardgröße und „Accessibility XL“ vergleichen.
-- **ABO-1:** `SubscriptionsView.totals` setzt Ein- und Ausgaben nebeneinander. Beide Spalten halten Beträge und Turnus mit `.fixedSize()` zusammen. Gleichzeitig bleiben auch im schmalen Zweig von `controls` mehrere Menüs in einer Zeile. Abnahme mit erreichbaren Such- und Filteraktionen, vollständigem Titel und vollständig lesbaren Summen pro Währung (`iphone-standard-abos.png`, `iphone-gross-abos.png`).
-- **ABO-2:** Nach Start auf dem iPhone „Autobank“ antippen (`iphone-abos-auswahl.png`). `SubscriptionRow` setzt die Auswahl, während das kompakte Detail in `MainSplitView` zusätzlich `showBookingSheet` benötigt. Auf dem Mac steht die Darlehensrate mit Kündigungsfrist im Inspektor. Abnahme mit öffnendem und schließbarem Vertragsdetail am iPhone. Die iCloud-Synchronisierung hat ihren eigenen offenen Punkt in [#1918](https://github.com/GiroCrab/GiroCrab/issues/1918).
+- **ABO-1:** `SubscriptionsView.totals` setzt Ein- und Ausgaben nebeneinander. Beide Spalten halten Beträge und Turnus mit `.fixedSize()` zusammen. Gleichzeitig bleiben auch im schmalen Zweig von `controls` mehrere Menüs in einer Zeile. Abnahme mit erreichbaren Such- und Filteraktionen, vollständigem Titel und vollständig lesbaren Summen pro Währung (`iphone-standard-abos.png`, `iphone-gross-abos.png`). [Bildbelege (ZIP)][bildbelege]
+- **ABO-2:** Nach Start auf dem iPhone „Autobank“ antippen (`iphone-abos-auswahl.png`). `SubscriptionRow` setzt die Auswahl, während das kompakte Detail in `MainSplitView` zusätzlich `showBookingSheet` benötigt. Auf dem Mac steht die Darlehensrate mit Kündigungsfrist im Inspektor. Abnahme mit öffnendem und schließbarem Vertragsdetail am iPhone. Die iCloud-Synchronisierung hat ihren eigenen offenen Punkt in [#1918](https://github.com/GiroCrab/GiroCrab/issues/1918). [Bildbelege (ZIP)][bildbelege]
+
+[bildbelege]: https://github.com/user-attachments/files/35449133/PR-Bildbelege.zip

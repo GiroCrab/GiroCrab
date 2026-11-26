@@ -23,5 +23,7 @@
 ### Seitenleiste
 
 - **Demo-Einstieg:** `--demo-seed`, Konten nach Gruppen. Auf dem iPhone von „Alle Konten“ mit dem Zurück-Pfeil zur Seitenleiste wechseln. Standard und „Accessibility XL“ vergleichen.
-- **SEI-1:** `AccountRow` und `AllAccountsRow` halten die Salden vollständig und begrenzen Namen auf eine Zeile. Auf dem schmalen Mac werden die Tagesgeldkonten ähnlich gekürzt, auf dem iPhone sind auch die ersten Konten schwer unterscheidbar (`mac-sidebar-gross.png`, `iphone-sidebar-gross.png`). Bei großer Schrift müssen Name und Saldo zusammen identifizierbar sein.
-- **SEI-2:** In `SidebarView` haben die Navigationssymbole eine feste Spaltenbreite von 20 pt. Im selben iPhone-Bild müssen Symbol und Text sichtbar getrennt bleiben. Das Öffnen des Girokontos über die Seitenleiste wurde bei Standardgröße geprüft.
+- **SEI-1:** `AccountRow` und `AllAccountsRow` halten die Salden vollständig und begrenzen Namen auf eine Zeile. Auf dem schmalen Mac werden die Tagesgeldkonten ähnlich gekürzt, auf dem iPhone sind auch die ersten Konten schwer unterscheidbar (`mac-sidebar-gross.png`, `iphone-sidebar-gross.png`). Bei großer Schrift müssen Name und Saldo zusammen identifizierbar sein. [Bildbelege (ZIP)][bildbelege]
+- **SEI-2:** In `SidebarView` haben die Navigationssymbole eine feste Spaltenbreite von 20 pt. Im selben iPhone-Bild müssen Symbol und Text sichtbar getrennt bleiben. Das Öffnen des Girokontos über die Seitenleiste wurde bei Standardgröße geprüft. [Bildbelege (ZIP)][bildbelege]
+
+[bildbelege]: https://github.com/user-attachments/files/35449133/PR-Bildbelege.zip
