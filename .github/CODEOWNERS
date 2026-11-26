@@ -3,7 +3,6 @@
 /girocrab-core/src/vault*                                  @dr-prinz
 /girocrab-core/src/secret*                                 @dr-prinz
 /girocrab-core/src/sys.rs                                  @dr-prinz
-/girocrab-core/src/sepa.rs                                 @dr-prinz
 /girocrab-core/src/payment_input.rs                        @dr-prinz
 /girocrab-core/src/connectors/                             @dr-prinz
 /girocrab-core/src/local_api/                              @dr-prinz

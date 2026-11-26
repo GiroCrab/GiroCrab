@@ -16,9 +16,9 @@
 ## Zahlungspfad / Payment path
 
 <!-- Nur nötig, wenn TransferSheetView.swift, payment_input.rs oder connectors/fints/sepa.rs, transfer.rs, debit.rs bzw. standing.rs geändert werden,
-     oder wenn eine geänderte Quelldatei Zahlungsfelder wie creditor_iban, amount_cents oder pain.001 enthält (scripts/lint-transfer-integrity.sh).
+     oder wenn geänderte Zeilen in .rs/.swift/.kt/.qml/.slint-Dateien Zahlungsfelder wie creditor_iban, amount_cents oder pain.001 nennen (scripts/lint-transfer-integrity.sh).
      Den Text des Punkts nicht ändern: Die CI sucht genau ihn, angehakt.
-     Only needed when one of those files changes, or when a changed source file contains payment fields such as creditor_iban, amount_cents or pain.001.
+     Only needed when one of those files changes, or when changed lines in .rs/.swift/.kt/.qml/.slint files name payment fields such as creditor_iban, amount_cents or pain.001.
      Keep the item's text: CI looks for exactly this item, ticked. -->
 - [ ] Zahlungspfad geprüft / payment path reviewed: IBAN-/Betragsprüfung, Bestätigung und TAN-Ablauf unverändert oder getestet, keine Umgehung, keine echten Kontodaten
 
