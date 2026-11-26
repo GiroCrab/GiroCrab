@@ -808,7 +808,7 @@ final class PortalBrowser {
         let download = """
         try {
           if (location.protocol !== 'https:' || location.host !== host) return '';
-          var u = new URL(path, location.origin);
+          var u = new URL(path, document.baseURI);
           if (u.host !== host) return '';
           var r = await fetch(u.toString(), {credentials: 'include'});
           if (!r.ok) return '';

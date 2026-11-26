@@ -202,6 +202,8 @@ fn list_like(field: Option<&str>, v: &serde_json::Value) -> bool {
             // a bare empty array is a list only at the root or under a
             // statement-named field — elsewhere it is no statements list
             let empty_list = a.is_empty() && field.is_none_or(|f| f.contains("statement"));
+            // an entry-shaped item: a closing date, or a PDF where `entry` would
+            // read one — directly or nested (a `files` array of link strings)
             let shaped = empty_list
                 || a.iter().any(|i| match i {
                     serde_json::Value::Object(m) => {
@@ -209,6 +211,7 @@ fn list_like(field: Option<&str>, v: &serde_json::Value) -> bool {
                             || m.values()
                                 .filter_map(|s| s.as_str())
                                 .any(|s| pdf_link(s).is_some())
+                            || m.values().find_map(pdf_in).is_some()
                     }
                     _ => false,
                 });
@@ -271,12 +274,14 @@ fn closing_date(s: &str) -> Option<String> {
         .map(crate::dates::iso)
 }
 
-/// A path or URL ending in `.pdf` (the statement PDFs of the portals); anything
-/// else (ids, tokens, HTML) is no link.
+/// A path or URL whose path part ends in `.pdf`, query or fragment included
+/// (`/S1.pdf?download=1`, the statement PDFs of the portals); anything else
+/// (ids, tokens, HTML) is no link. The link comes back as it is, download
+/// keeps the query. The rule matches the visible-links one in the page script.
 pub fn pdf_link(s: &str) -> Option<String> {
+    static PDF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\.pdf(\?|#|$)").unwrap());
     let t = s.trim();
-    (t.len() > 4 && t.to_lowercase().ends_with(".pdf") && !t.contains(char::is_whitespace))
-        .then(|| t.to_string())
+    (t.len() > 4 && !t.contains(char::is_whitespace) && PDF.is_match(t)).then(|| t.to_string())
 }
 
 /// `source_url` of a stored portal statement.
@@ -722,6 +727,26 @@ mod statement_list_tests {
             r#"{"statements":[{"date":"2026-10-15","url":"/ok.pdf"},{"files":["/missing.pdf"]}]}"#,
         );
         assert!(l.items.len() == 1 && l.rejected == 1, "{l:?}");
+        // entries with only nested PDF strings, no dated sibling: the listing
+        // reads, its two unidentified statements count rejected
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"files":["/a.pdf"]},{"files":["/b.pdf"]}]}"#,
+        );
+        assert!(l.readable && l.items.is_empty() && l.rejected == 2, "{l:?}");
+        // a PDF URL with a query downloads: date and link pair to one item
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"date":"2026-10-15","url":"/S1.pdf?download=1"}]}"#,
+        );
+        assert!(l.items.len() == 1 && l.rejected == 0, "{l:?}");
+        assert_eq!(
+            parse_portal_statement_listing(
+                r#"{"statements":[{"date":"2026-10-15","url":"/S1.pdf?download=1"}]}"#
+            )
+            .items
+            .first()
+            .map(|i| i.path.clone()),
+            Some("/S1.pdf?download=1".into())
+        );
         // a dated entry next to a rejected one: the one won, the other failed
         let l = parse_portal_statement_listing(
             r#"{"statements":[{"date":"2026-10-15","url":"/a/1.pdf"},{"url":"/S2.pdf"}]}"#,
