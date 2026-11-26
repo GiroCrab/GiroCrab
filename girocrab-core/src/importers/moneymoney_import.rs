@@ -1540,6 +1540,69 @@ pub(crate) fn adopt_import(
     Ok(true)
 }
 
+/// The names a bank booking can match an imported row by: the displayed one,
+/// then the ordinary counterparty when the bank names an ultimate party (#1721).
+fn names_to_match<'a>(name: &'a str, original: &'a str) -> impl Iterator<Item = &'a str> {
+    let original = original.trim();
+    std::iter::once(name)
+        .chain((!original.is_empty() && original != name.trim()).then_some(original))
+}
+
+/// [`adopt_import`] for a booking that names an ultimate party: the MoneyMoney
+/// row may still carry the ordinary counterparty `original`. Without an IBAN
+/// only the name finds it, so that name is tried when the displayed one misses.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn adopt_import_or_original(
+    conn: &Connection,
+    account_id: i64,
+    external_id: &str,
+    date: &str,
+    cents: i64,
+    iban: &str,
+    name: &str,
+    original: &str,
+    purpose: &str,
+    booking_text: &str,
+) -> CoreResult<bool> {
+    for n in names_to_match(name, original) {
+        if adopt_import(
+            conn,
+            account_id,
+            external_id,
+            date,
+            cents,
+            iban,
+            n,
+            purpose,
+            booking_text,
+        )? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// [`merge_synced_twin`] that also tries the ordinary counterparty `original`
+/// (see [`adopt_import_or_original`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn merge_synced_twin_or_original(
+    conn: &Connection,
+    bank_id: i64,
+    date: &str,
+    cents: i64,
+    iban: &str,
+    name: &str,
+    original: &str,
+    purpose: &str,
+) -> CoreResult<bool> {
+    for n in names_to_match(name, original) {
+        if merge_synced_twin(conn, bank_id, date, cents, iban, n, purpose)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Gives the MoneyMoney row the bank's external id and fills missing bank metadata;
 /// the MoneyMoney counterparty name (cleaner) is kept.
 fn take_over(

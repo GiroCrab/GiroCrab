@@ -4688,6 +4688,153 @@ fn bank_label_of_a_twin_goes_with_the_fold() {
     );
 }
 
+/// Archive time, stamp and #998 mark of account `id` as `unix:ms:unknown`
+/// (`-` = active).
+fn archive_state(v: &Vault, id: i64) -> String {
+    text(
+        v,
+        &format!(
+            "SELECT IFNULL(archived_unix, '-') || ':' || archived_ms || ':' || archive_unknown
+               FROM accounts WHERE id = {id}"
+        ),
+    )
+}
+
+/// #1691: folding a twin carries its archive state to the bank account by the
+/// merge's rule (newer stamp; equal stamps: known over marked, then archived
+/// over active), in both directions and with the #998 mark.
+#[test]
+fn twin_fold_passes_the_archive_state_on_like_a_merge() {
+    // (case, twin, bank, bank afterwards); a state is (archived_unix, archived_ms, archive_unknown)
+    for (case, twin_state, bank_state, expected) in [
+        (
+            "twin archived later",
+            "100, 20, 0",
+            "NULL, 10, 0",
+            "100:20:0",
+        ),
+        (
+            "bank archived later",
+            "NULL, 10, 0",
+            "100, 20, 0",
+            "100:20:0",
+        ),
+        (
+            "twin reactivated later",
+            "NULL, 20, 0",
+            "100, 10, 0",
+            "-:20:0",
+        ),
+        (
+            "equal stamps, known wins",
+            "100, 10, 1",
+            "NULL, 10, 0",
+            "-:10:0",
+        ),
+        ("twin marked later", "NULL, 20, 1", "100, 10, 0", "-:20:1"),
+    ] {
+        let dir = temp_dir("twin-archive");
+        let v = open(&dir, "a.db");
+        let c = comdirect(&v);
+        let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2"]);
+        let bank = giro(&v, c, "API1", &["mm-1", "mm-2", "b1"]);
+        for (id, state) in [(twin, twin_state), (bank, bank_state)] {
+            exec(
+                &v,
+                &format!(
+                    "UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = ({state})
+                      WHERE id = {id}"
+                ),
+            );
+        }
+        assert_eq!(
+            super::twins::fold_twins(&v.db().unwrap()).unwrap(),
+            1,
+            "{case}"
+        );
+        assert_eq!(archive_state(&v, bank), expected, "{case}");
+    }
+}
+
+/// #1691: an archive choice made on the twin by a device that hadn't folded it
+/// yet reaches the bank account the twin was folded into, like the note, and
+/// both devices end with the same archive state, whichever merges first.
+#[test]
+fn archive_on_an_already_folded_twin_reaches_the_bank_account() {
+    for a_first in [true, false] {
+        let dir = temp_dir("twin-archive-merge");
+        let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+        let ca = comdirect(&a);
+        let cb = comdirect(&b);
+        giro(&a, ca, MM_GIRO, &["mm-1", "mm-2"]);
+        let bank = giro(&a, ca, "API1", &["mm-1", "mm-2", "b1"]);
+        let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+        for v in [&a, &b] {
+            exec(v, "UPDATE bank_connections SET created_ms = 1");
+            exec(v, "UPDATE accounts SET created_ms = 1");
+        }
+        drop(a);
+        let a = open(&dir, "a.db");
+        assert_eq!(archive_state(&a, bank), "-:0:0", "folded, still active");
+        b.set_account_archived(twin, true).unwrap();
+        let chosen = archive_state(&b, twin);
+        if a_first {
+            merge(&a, &b);
+            assert_eq!(archive_state(&a, bank), chosen);
+            merge(&b, &a);
+        } else {
+            merge(&b, &a);
+            merge(&a, &b);
+        }
+        for v in [&a, &b] {
+            let live = n(v, "SELECT id FROM accounts WHERE deleted_ms IS NULL");
+            assert_eq!(archive_state(v, live), chosen, "a_first: {a_first}");
+        }
+    }
+}
+
+/// #1691 review: a device that gets a folded pair by merge (both accounts new
+/// there) passes the twin's archive state on after the bank's own is written,
+/// whichever of the two rows comes first; a newer bank state stays.
+#[test]
+fn folded_pair_new_on_a_device_gets_the_twin_archive_state() {
+    for twin_first in [true, false] {
+        for (bank_state, expected) in [("NULL, 10, 0", "100:20:0"), ("NULL, 30, 0", "-:30:0")] {
+            let dir = temp_dir("twin-archive-new");
+            let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+            let cb = comdirect(&b);
+            let (twin, bank) = if twin_first {
+                let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+                (twin, giro(&b, cb, "API1", &["mm-1", "mm-2", "b1"]))
+            } else {
+                let bank = giro(&b, cb, "API1", &["mm-1", "mm-2", "b1"]);
+                (giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]), bank)
+            };
+            assert_eq!(super::twins::fold_twins(&b.db().unwrap()).unwrap(), 1);
+            // what a fold before #1691 left: the twin's archive state stayed behind
+            exec(
+                &b,
+                &format!(
+                    "UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = (100, 20, 0)
+                      WHERE id = {twin};
+                     UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = ({bank_state})
+                      WHERE id = {bank};"
+                ),
+            );
+            merge(&a, &b);
+            merge(&b, &a);
+            for v in [&a, &b] {
+                let live = n(v, "SELECT id FROM accounts WHERE deleted_ms IS NULL");
+                assert_eq!(
+                    archive_state(v, live),
+                    expected,
+                    "twin_first: {twin_first}, bank: {bank_state}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn twin_refund_links_use_the_exact_booking_map_and_full_row_collision_rank() {
     for tombstone_wins in [false, true] {

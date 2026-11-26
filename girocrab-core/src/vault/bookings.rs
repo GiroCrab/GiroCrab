@@ -417,6 +417,18 @@ impl Vault {
         db: &rusqlite::Connection,
         filter: &BookingFilter,
     ) -> Result<(String, String, Vec<Box<dyn ToSql>>, String), CoreError> {
+        // linked refunds netted when the user chose so (#714), for links whose other booking
+        // lies in the accounts this filter sums (`totals_set` in a totals context)
+        let refund_scope = if self.refund_offsets_ready(db)? {
+            let accounts: Vec<i64> = match totals_set(db, filter)? {
+                Some(set) if set.is_empty() => vec![-1], // "none": nothing nets
+                Some(set) => set.into_iter().collect(),
+                None => filter.account_ids.clone(),
+            };
+            Some(crate::refunds::scope_sql(&accounts))
+        } else {
+            None
+        };
         let mut wh: Vec<String> = vec![LIVE_BOOKINGS_SQL.into()];
         let mut args: Vec<Box<dyn ToSql>> = vec![];
         let mut cte = String::new();
@@ -495,11 +507,21 @@ impl Vault {
         let share_sql = match &cat_match {
             Some(m) => {
                 wh.push(category_match_sql(m));
+                let (part, whole) = match &refund_scope {
+                    Some(scope) => (
+                        format!(" - refund_offset(t.id, sp.uuid, {scope})"),
+                        format!(" - refund_offset(t.id, '', {scope})"),
+                    ),
+                    None => (String::new(), String::new()),
+                };
                 format!(
-                    "COALESCE((SELECT SUM(sp.amount_cents) FROM transaction_splits sp WHERE sp.transaction_id = t.id AND sp.category_id {m}), t.amount_cents)"
+                    "COALESCE((SELECT SUM(sp.amount_cents{part}) FROM transaction_splits sp WHERE sp.transaction_id = t.id AND sp.category_id {m}), t.amount_cents{whole})"
                 )
             }
-            None => "t.amount_cents".to_string(),
+            None => match &refund_scope {
+                Some(scope) => format!("t.amount_cents - refund_offset_total(t.id, {scope})"),
+                None => "t.amount_cents".to_string(),
+            },
         };
         if let Some(from) = filter.date_from.as_ref().filter(|s| !s.is_empty()) {
             args.push(Box::new(from.clone()));

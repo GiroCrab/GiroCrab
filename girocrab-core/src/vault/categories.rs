@@ -329,10 +329,12 @@ impl Vault {
              WHERE category_id IN ({}){account_clause}
                AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
              GROUP BY m ORDER BY m",
-            crate::planning::effective_sql(
+            self.effective_sql(
+                &db,
                 ", t.account_id AS account_id",
-                crate::planning::sums_condition(account_ids.len())
-            ),
+                crate::planning::sums_condition(account_ids.len()),
+                &account_ids,
+            )?,
             in_list(&ids)
         );
         let mut stmt = db.prepare(&sql)?;
@@ -378,10 +380,12 @@ impl Vault {
              WHERE category_id IN ({}){account_clause}
                AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
              GROUP BY upper(currency) ORDER BY upper(currency)",
-            crate::planning::effective_sql(
+            self.effective_sql(
+                &db,
                 ", t.account_id AS account_id, t.currency AS currency",
-                " AND upper(t.currency) NOT IN ('', 'EUR')"
-            ),
+                " AND upper(t.currency) NOT IN ('', 'EUR')",
+                &account_ids,
+            )?,
             in_list(&ids)
         );
         let mut stmt = db.prepare(&sql)?;
@@ -436,7 +440,7 @@ impl Vault {
              WHERE category_id IS NOT NULL
                AND (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
              GROUP BY category_id, upper(currency)",
-            crate::planning::effective_sql(", t.currency AS currency", &condition)
+            self.effective_sql(&db, ", t.currency AS currency", &condition, &account_ids)?
         ))?;
         let checked = checked.map(i64::from);
         let own = stmt
@@ -784,7 +788,7 @@ impl Vault {
                 "SELECT category_id, SUM(amount_cents), COUNT(*) FROM {}
                  WHERE (?1 IS NULL OR booking_date >= ?1) AND (?2 IS NULL OR booking_date <= ?2)
                  GROUP BY category_id",
-                crate::planning::effective_sql("", &condition)
+                self.effective_sql(&db, "", &condition, &account_ids)?
             ))?;
             let checked = checked.map(i64::from);
             let it = stmt.query_map(params![date_from, date_to, checked], |r| {

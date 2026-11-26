@@ -755,20 +755,28 @@ fn refresh_dashboard(win: &MainWindow, vault: Arc<Vault>) {
     let (year, month) = cockpit::current_year_month();
     let period = win.get_cashflow_period();
     let account_flow = with_state(|st| match st.target {
-        Target::Account(_) => Some(cockpit::cashflow_from_rows(
-            &st.rows,
-            period,
-            (year, month),
-            6,
+        Target::Account(id) => Some((
+            id,
+            cockpit::cashflow_from_rows(&st.rows, period, (year, month), 6),
         )),
         _ => None,
     });
     let weak = win.as_weak();
     std::thread::spawn(move || {
         // One account: sum its loaded bookings; everything else: the core's all-account figures.
-        // The overview is an overall money figure (#337): effective total set only.
+        // The overview is an overall money figure (#337): effective total set only. With
+        // refunds netted (#714) the account's figures come from the core too: the loaded rows
+        // carry the stored amounts.
         let flow = match account_flow {
-            Some(f) => f,
+            Some((id, f)) => {
+                if vault.net_refunds_in_stats().unwrap_or(false) {
+                    vault
+                        .cashflow_by_period(gran, 6, Some(vec![id]), false)
+                        .unwrap_or(f)
+                } else {
+                    f
+                }
+            }
             None => vault
                 .cashflow_by_period(gran, 6, None, true)
                 .unwrap_or_default(),

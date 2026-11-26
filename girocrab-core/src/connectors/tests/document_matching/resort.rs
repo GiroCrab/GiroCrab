@@ -201,6 +201,52 @@ fn resort_retypes_portal_statements_without_moving_them() {
 }
 
 #[test]
+fn resort_retypes_accountless_portal_statements_only_for_their_source_login() {
+    for kind in [ConnectorKind::Fnz, ConnectorKind::Quirion] {
+        let (_dir, v) = open_vault("girocrab-resort-accountless-portal");
+        let conn = v
+            .add_bank_connection(kind, String::new(), "first".into())
+            .unwrap();
+        let other = v
+            .add_bank_connection(kind, String::new(), "second".into())
+            .unwrap();
+        let mut ids = Vec::new();
+        {
+            let db = v.db().unwrap();
+            for id in [conn, other] {
+                let source = format!("{}:{id}:statement", kind.as_str());
+                ids.push(
+                    crate::documents::insert_doc(
+                        &db,
+                        None,
+                        None,
+                        "Kontoauszug Nr. 5",
+                        "postbox",
+                        "application/pdf",
+                        "statement.pdf",
+                        b"%PDF",
+                        &source,
+                        "2025-12-04",
+                    )
+                    .unwrap()
+                    .unwrap(),
+                );
+            }
+        }
+        let result = v.resort_portal_documents(conn).unwrap();
+        assert_eq!((result.resorted, result.linked), (1, 0));
+        let docs = v.list_all_documents(Default::default()).unwrap();
+        for (id, doc_type) in ids.into_iter().zip(["kontoauszug", "postbox"]) {
+            let doc = docs.iter().find(|doc| doc.id == id).unwrap();
+            assert_eq!(
+                (doc.account_id, doc.booking_id, doc.doc_type.as_str()),
+                (None, None, doc_type)
+            );
+        }
+    }
+}
+
+#[test]
 fn resort_retypes_statements_after_duplicate_portal_logins_are_merged() {
     for kind in [ConnectorKind::Fnz, ConnectorKind::Quirion] {
         let (_dir, v) = open_vault("girocrab-resort-merged-portal");
