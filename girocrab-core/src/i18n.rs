@@ -860,6 +860,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Beim Spiegeln auf ein Darlehenskonto bitte den Tilgungsanteil angeben." => {
             "Enter the principal when mirroring a booking to a loan account."
         }
+        "Für diese Rate wurde bereits eine Tilgung auf dieses Darlehenskonto übernommen." => {
+            "A principal payment for this instalment has already been recorded in this loan account."
+        }
         "Saldokorrektur" => "Balance correction",
         // ------------------------------------------------------ user_groups.rs
         "Gruppe {0}" => "group {0}",

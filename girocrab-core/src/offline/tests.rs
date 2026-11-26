@@ -482,6 +482,67 @@ fn offline_loan_tracks_principal_and_booking_edits_after_merge() {
 }
 
 #[test]
+fn loan_payment_replays_are_rejected_and_sync_to_one_booking() {
+    let a = vault("loan-payment-replay-a");
+    let b = vault("loan-payment-replay-b");
+    let cash = a
+        .create_offline_account("Source".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    let loan = a
+        .create_offline_loan("Loan".into(), "EUR".into(), 10_000_00, 5_000_00)
+        .unwrap();
+    let source = a
+        .save_manual_booking(cash, None, setup("2026-11-26", -600_00, "Bank"))
+        .unwrap();
+
+    // Offset the peer IDs so the shared identity cannot be a local primary key.
+    let b_cash = b
+        .create_offline_account("Peer cash".into(), AccountKind::Cash, "EUR".into(), 0)
+        .unwrap();
+    b.save_manual_booking(b_cash, None, setup("2026-11-25", -100_00, "Other"))
+        .unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    let b_loan = b
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.kind == AccountKind::Loan)
+        .unwrap()
+        .id;
+    assert_ne!(loan, b_loan);
+    let b_source = b
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE counterparty = 'Bank'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+
+    assert_ne!(source, b_source);
+    let payment = a.mirror_offline_loan_payment(source, loan, 500_00).unwrap();
+    assert!(a.mirror_offline_loan_payment(source, loan, 500_00).is_err());
+    b.mirror_offline_loan_payment(b_source, b_loan, 500_00)
+        .unwrap();
+    for (receiver, sender, target) in [(&a, &b, loan), (&b, &a, b_loan)] {
+        receiver
+            .merge_other_vault(sender.file_path(), vec![7; 32])
+            .unwrap();
+        assert_eq!(live_count(receiver, target), 1);
+        assert_eq!(balance(receiver, target), -4_500_00);
+    }
+
+    a.delete_manual_booking(payment).unwrap();
+    b.merge_other_vault(a.file_path(), vec![7; 32]).unwrap();
+    assert!(
+        b.mirror_offline_loan_payment(b_source, b_loan, 500_00)
+            .is_err()
+    );
+    assert_eq!(balance(&b, b_loan), -5_000_00);
+}
+
+#[test]
 fn only_booked_offline_loans_accept_direct_entries() {
     let v = vault("offline-vs-linked-loan");
     let linked = v

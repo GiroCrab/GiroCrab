@@ -144,21 +144,22 @@ fn account_currency(conn: &Connection, account_id: i64) -> CoreResult<String> {
     )?)
 }
 
-fn new_external_id() -> String {
-    format!("{BOOKING_ID_PREFIX}{}", uuid::Uuid::new_v4())
-}
-
 /// Inserts one live booking (already validated) and returns its id.
 pub(crate) fn insert_booking(
     conn: &Connection,
     account_id: i64,
-    date: &str,
     s: &ManualBookingSetup,
-    counterparty: &str,
-    purpose: &str,
-    note: &str,
+    external_id: Option<&str>,
 ) -> CoreResult<i64> {
     let ms = now_ms();
+    let new_id;
+    let external_id = match external_id {
+        Some(id) => id,
+        None => {
+            new_id = format!("{BOOKING_ID_PREFIX}{}", uuid::Uuid::new_v4());
+            &new_id
+        }
+    };
     let currency = account_currency(conn, account_id)?;
     conn.execute(
         "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents, currency,
@@ -168,14 +169,14 @@ pub(crate) fn insert_booking(
                  CASE WHEN ?8 IS NULL THEN 'none' ELSE 'manual' END, ?9, 1, ?10, ?10, ?10, ?10)",
         params![
             account_id,
-            new_external_id(),
-            date,
+            external_id,
+            s.booking_date,
             s.amount_cents,
             currency,
-            counterparty,
-            purpose,
+            s.counterparty,
+            s.purpose,
             s.category_id,
-            note,
+            s.note,
             ms
         ],
     )?;
@@ -388,11 +389,14 @@ impl Vault {
             None => insert_booking(
                 &tx,
                 account_id,
-                &date,
-                &setup,
-                &counterparty,
-                &purpose,
-                &note,
+                &ManualBookingSetup {
+                    booking_date: date,
+                    counterparty,
+                    purpose,
+                    note,
+                    ..setup
+                },
+                None,
             )?,
             Some(id) => {
                 if booking_account(&tx, id)? != account_id {
@@ -533,16 +537,15 @@ impl Vault {
         if diff == 0 {
             return Ok(None);
         }
-        let label = tr("Saldokorrektur").to_string();
         let setup = ManualBookingSetup {
             booking_date: today(),
             amount_cents: diff,
-            counterparty: label.clone(),
+            counterparty: tr("Saldokorrektur").to_string(),
             purpose: String::new(),
             category_id: None,
             note: String::new(),
         };
-        let id = insert_booking(&tx, account_id, &today(), &setup, &label, "", "")?;
+        let id = insert_booking(&tx, account_id, &setup, None)?;
         crate::opening_balance::refresh(&tx, account_id)?;
         tx.commit()?;
         Ok(Some(id))
@@ -564,17 +567,18 @@ impl Vault {
             [account_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
-        let (source_account, date, cents, counterparty, purpose, source_currency): (
-            i64,
-            String,
-            i64,
-            String,
-            String,
-            String,
-        ) = tx
+        let (
+            source_account,
+            date,
+            cents,
+            counterparty,
+            purpose,
+            source_currency,
+            source_external_id,
+        ): (i64, String, i64, String, String, String, String) = tx
             .query_row(
                 "SELECT t.account_id, t.booking_date, t.amount_cents, t.counterparty, t.purpose,
-                        COALESCE(NULLIF(t.currency, ''), a.currency)
+                        COALESCE(NULLIF(t.currency, ''), a.currency), t.external_id
                    FROM transactions t JOIN accounts a ON a.id = t.account_id
                   WHERE t.id = ?1 AND t.deleted_ms IS NULL",
                 [booking_id],
@@ -586,6 +590,7 @@ impl Vault {
                         r.get(3)?,
                         r.get(4)?,
                         r.get(5)?,
+                        r.get(6)?,
                     ))
                 },
             )
@@ -600,7 +605,7 @@ impl Vault {
             .checked_neg()
             .filter(|&c| c != 0)
             .ok_or_else(|| CoreError::invalid(tr("Ungültiger Betrag.")))?;
-        let amount_cents = match (kind.as_str(), principal_cents) {
+        let (amount_cents, external_id) = match (kind.as_str(), principal_cents) {
             ("loan", Some(principal)) => {
                 if !source_currency.eq_ignore_ascii_case(&target_currency) {
                     return Err(CoreError::invalid(tr(
@@ -612,25 +617,42 @@ impl Vault {
                         "Der Tilgungsanteil muss größer als 0 und höchstens so hoch wie die Abbuchung sein.",
                     )));
                 }
-                principal
+                // Both devices derive the same booking key from the source's sync
+                // identity. The database scopes the key to the target account.
+                let source_key = crate::sync_merge::account_key(&tx, source_account)?;
+                let identity = format!("{}:{source_key}{source_external_id}", source_key.len());
+                let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, identity.as_bytes());
+                let external_id = format!("{BOOKING_ID_PREFIX}loan-payment-{id}");
+                let exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2)",
+                    params![account_id, external_id],
+                    |r| r.get(0),
+                )?;
+                // A deleted copy still blocks a replay, including after syncing.
+                if exists {
+                    return Err(CoreError::invalid(tr(
+                        "Für diese Rate wurde bereits eine Tilgung auf dieses Darlehenskonto übernommen.",
+                    )));
+                }
+                (principal, Some(external_id))
             }
             ("loan", None) | (_, Some(_)) => {
                 return Err(CoreError::invalid(tr(
                     "Beim Spiegeln auf ein Darlehenskonto bitte den Tilgungsanteil angeben.",
                 )));
             }
-            (_, None) => reversed,
+            (_, None) => (reversed, None),
         };
         ensure_opening(&tx, account_id)?;
         let setup = ManualBookingSetup {
-            booking_date: date.clone(),
+            booking_date: date,
             amount_cents,
-            counterparty: counterparty.clone(),
-            purpose: purpose.clone(),
+            counterparty,
+            purpose,
             category_id: None,
             note: String::new(),
         };
-        let id = insert_booking(&tx, account_id, &date, &setup, &counterparty, &purpose, "")?;
+        let id = insert_booking(&tx, account_id, &setup, external_id.as_deref())?;
         // no `finish`: the copy stays without a category, the rules are not run
         crate::opening_balance::refresh(&tx, account_id)?;
         tx.commit()?;

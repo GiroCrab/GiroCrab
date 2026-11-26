@@ -12422,6 +12422,17 @@
         }
       }
     },
+    "Die Tilgungsübernahme ist nicht mehr aktiv." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This principal payment request is no longer active."
+          }
+        }
+      }
+    },
     "Die Untergruppen bleiben erhalten und rücken auf die oberste Ebene." : {
       "extractionState" : "manual",
       "localizations" : {

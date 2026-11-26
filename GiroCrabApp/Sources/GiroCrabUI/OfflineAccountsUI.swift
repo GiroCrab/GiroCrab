@@ -159,9 +159,12 @@ extension AppModel {
     }
 
     func mirrorLoanPayment(_ request: OfflineLoanPaymentRequest, principalCents: Int64) throws {
-        guard let vault else { return }
+        guard let vault, offlineStore.loanPaymentRequest?.id == request.id else {
+            throw CoreError.InvalidInput(message: String(localized: "Die Tilgungsübernahme ist nicht mehr aktiv."))
+        }
         try vault.mirrorOfflineLoanPayment(bookingId: request.booking.id, accountId: request.account.id,
                                            principalCents: principalCents)
+        offlineStore.loanPaymentRequest = nil
         finishMirror(to: request.account)
     }
 
