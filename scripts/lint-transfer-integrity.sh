@@ -95,7 +95,7 @@ done
 # script or policy file must not hide behind the sentinel paths above.
 PROTECTED=(
   .github/CODEOWNERS .github/workflows scripts policy
-  girocrab-core/src/connectors girocrab-core/src/local_api
+  girocrab-core/src/connectors 'girocrab-core/src/local_api*'
   'girocrab-core/src/vault*' 'girocrab-core/src/secret*' girocrab-core/src/sys.rs
   GiroCrabApp/Sources/GiroCrabUI/VaultKeyManager.swift
   GiroCrabApp/Sources/GiroCrabUI/PrivacyRedaction.swift

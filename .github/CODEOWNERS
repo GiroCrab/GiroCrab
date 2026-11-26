@@ -5,7 +5,7 @@
 /girocrab-core/src/sys.rs                                  @dr-prinz
 /girocrab-core/src/payment_input.rs                        @dr-prinz
 /girocrab-core/src/connectors/                             @dr-prinz
-/girocrab-core/src/local_api/                              @dr-prinz
+/girocrab-core/src/local_api*                              @dr-prinz
 /GiroCrabApp/Sources/GiroCrabUI/VaultKeyManager.swift      @dr-prinz
 /GiroCrabApp/Sources/GiroCrabUI/PrivacyRedaction.swift     @dr-prinz
 /GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift        @dr-prinz
