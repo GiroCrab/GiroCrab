@@ -35,7 +35,7 @@ gleich anfühlen:
    Bestand sind, aber einen Verlauf haben, stehen eingeklappt unter „Verkaufte Positionen“.
    Im Einzeldepot ist der Stift einer Wertpapierzeile ein Menü: „Klassifizierung bearbeiten“ und „Einstandskurs
    bearbeiten …“ (auch im Kontextmenü, #1987). Der Dialog (`PurchasePriceSheet`) setzt den Einstandskurs pro Stück in
-   Kontowährung; ein leeres Feld entfernt ihn. Ein Abruf ohne Einstandskurs (FinTS) behält ihn (#1812), ein Kurs der Bank hat Vorrang.
+   Kontowährung, bei Anleihen in Prozent des Nennwerts; ein leeres Feld entfernt ihn. Ein Abruf ohne Einstandskurs (FinTS) behält ihn (#1812), ein Kurs der Bank hat Vorrang.
 
 **Reihenfolge:** Kopf → Kennzahlen → Zusammensetzung → Tabelle gilt für Einzeldepot und Sachwerte-Konto. In `Vermögen › Wertpapiere / Sachwerte` steht die Zusammensetzung direkt unter dem Kopf, die Kennzahlen folgen darunter; bei Wertpapieren kommt vor der Tabelle die Depotübersicht (Karte „Wertpapiere“, jede Zeile öffnet das Depot, Chevron `›`). Im Kopf von `Wertpapiere` wählt ein Zeitraum-Picker den Zeitraum von Ausschüttungen sowie Gebühren & Steuern.
 

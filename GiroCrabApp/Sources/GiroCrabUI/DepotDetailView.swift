@@ -437,7 +437,7 @@ extension DepotDetailView {
                                   })
                     .purchasePrice { p in
                         purchaseRequest = PurchasePriceRequest(accountId: account.id, isin: p.holding.isin, wkn: p.holding.wkn,
-                                                               name: p.displayName, currency: currency,
+                                                               name: p.displayName, currency: currency, basis: p.basis,
                                                                currentCents: p.holding.purchasePriceCents)
                     }
             }

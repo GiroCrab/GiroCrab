@@ -48,9 +48,10 @@ struct DepotPositionsTable<RowMenu: View>: View {
         return copy
     }
 
-    /// Only securities with an ISIN or WKN, never a Sachwert (it has its own purchase data).
+    /// Only securities with an ISIN or WKN, never a Sachwert (it has its own purchase data), and only
+    /// where a gain can be computed from the price (per unit or percent of nominal).
     private func editsPurchasePrice(_ p: DepotPosition) -> Bool {
-        purchasePriceEdit != nil && !p.isOwnItem && !p.identifier.isEmpty
+        purchasePriceEdit != nil && !p.isOwnItem && !p.identifier.isEmpty && p.basis != .unknown
     }
 
     func depotLabel(_ label: @escaping (DepotPosition) -> String?) -> Self {

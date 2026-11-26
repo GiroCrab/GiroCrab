@@ -8,13 +8,16 @@ struct PurchasePriceRequest: Identifiable {
     let wkn: String
     let name: String
     let currency: String
-    /// Per unit in the account currency; 0 = none stored.
+    /// How the price is quoted: per unit, or (bonds) in percent of the nominal amount.
+    let basis: PriceBasis
+    /// As stored (per unit in the account currency, or percent × 100); 0 = none stored.
     let currentCents: Int64
     var id: String { "\(accountId)-\(isin)-\(wkn)" }
 }
 
-/// Sets the purchase price per unit of a depot position (`docs/DEPOT_UND_VERMOEGEN_UI.md`).
-/// An empty field removes it; the depot's gain is computed from it when the bank reports none.
+/// Sets the purchase price of a depot position (`docs/DEPOT_UND_VERMOEGEN_UI.md`): per unit, for
+/// bonds in percent of the nominal amount (the way their price is stored). An empty field removes
+/// it; the depot's gain is computed from it when the bank reports none.
 struct PurchasePriceSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -24,6 +27,11 @@ struct PurchasePriceSheet: View {
     @State private var busy = false
     @State private var error: String?
 
+    private var label: String {
+        request.basis == .percentOfNominal
+            ? String(localized: "Einstandskurs in Prozent des Nennwerts")
+            : String(localized: "Einstandskurs pro Stück (\(request.currency))")
+    }
     private var trimmed: String { text.trimmingCharacters(in: .whitespaces) }
     /// nil while the field holds no valid amount; an empty field is 0 (remove).
     private var cents: Int64? {
@@ -36,8 +44,9 @@ struct PurchasePriceSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(request.name).sensitive(.labels).appFont(.headline)
             Form {
-                TextField("Einstandskurs pro Stück (\(request.currency))", text: $text,
-                          prompt: Text("z. B. \(Money.plain(44_49))"))
+                TextField(label, text: $text,
+                          prompt: Text("z. B. \(Money.plain(request.basis == .percentOfNominal ? 98_50 : 44_49))"))
+                    .sensitive(.amounts)
                     .onSubmit(save)
             }
             Text("Gilt, solange die Bank keinen eigenen Einstandskurs liefert. Ein leeres Feld entfernt den Wert.")
@@ -48,7 +57,7 @@ struct PurchasePriceSheet: View {
             }
             if let error { Text(error).foregroundStyle(Theme.negative).appFont(.caption) }
             HStack {
-                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction).disabled(busy)
                 Spacer()
                 if busy { ProgressView().controlSize(.small) }
                 Button("Speichern", action: save).buttonStyle(.borderedProminent)

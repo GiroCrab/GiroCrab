@@ -14456,6 +14456,17 @@
         }
       }
     },
+    "Einstandskurs in Prozent des Nennwerts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purchase price in percent of nominal value"
+          }
+        }
+      }
+    },
     "Einstandskurs pro Stück (%@)" : {
       "extractionState" : "manual",
       "localizations" : {
