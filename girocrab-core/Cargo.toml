@@ -54,7 +54,7 @@ url = "2"
 simpleicons-rs = "16"
 miniz_oxide = "0.9.1"
 # GiroCode (EPC QR) matrix for every front end (#663).
-qrcode = { version = "0.14", default-features = false }
+qrcode = { version = "0.15", default-features = false }
 # Watch-only Bitcoin wallets from an xpub/ypub/zpub: BIP32 public derivation
 # (secp256k1 point arithmetic) and address hashing (RIPEMD-160).
 k256 = { version = "0.14", default-features = false, features = ["arithmetic"] }
