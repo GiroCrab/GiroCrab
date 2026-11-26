@@ -878,6 +878,18 @@ struct MainSplitView: View {
                 else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
             }
+            // "Alle Konten abrufen": where the batch stands, and a way to end it from here
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if model.isPortalInSyncBatch(c) {
+                    HStack {
+                        SyncBatchProgressLabel()
+                        Spacer()
+                        Button("Alle abbrechen") { model.cancelAllSync() }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(.bar)
+                }
+            }
             .environment(model)
         }
         .capturableSheet(item: $model.setupRequest) { req in
