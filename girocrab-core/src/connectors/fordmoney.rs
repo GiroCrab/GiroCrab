@@ -414,6 +414,11 @@ fn parse_accounts(html: &str) -> CoreResult<(Vec<Account>, Vec<String>)> {
             .captures_iter(part)
             .map(|c| (text(&c[1]), text(&c[2])))
             .collect();
+        // a collapse link with neither a balance nor account details (a menu) is no account
+        if labels.is_empty() && !RIGHT_SUM.is_match(part) {
+            trace(&format!("part #{}: no account details, skipped", i + 1));
+            continue;
+        }
         // The account's own IBAN ends with its number; a Festgeld section may
         // show none, or only the IBAN of its reference account.
         let ibans: Vec<String> = labels
@@ -1051,17 +1056,6 @@ impl BankConnector for FordMoneyConnector {
             .collect();
         let mut known = KnownDocuments::from_state(&ctx.state);
 
-        if let Documents::StatementsOnly(only) = &ctx.documents {
-            let wanted: HashMap<String, String> =
-                refs.into_iter().filter(|(_, r)| r == only).collect();
-            let documents = self.documents(&wanted, &mut known).await?;
-            return Ok(FetchResult {
-                documents,
-                state: known.to_state(),
-                ..Default::default()
-            });
-        }
-
         let mut out = FetchResult::default();
         for number in &unreadable {
             out.warnings.push(trf(
@@ -1069,6 +1063,19 @@ impl BankConnector for FordMoneyConnector {
                 &[number],
             ));
         }
+
+        if let Documents::StatementsOnly(only) = &ctx.documents {
+            let wanted: HashMap<String, String> =
+                refs.into_iter().filter(|(_, r)| r == only).collect();
+            let documents = self.documents(&wanted, &mut known).await?;
+            return Ok(FetchResult {
+                documents,
+                state: known.to_state(),
+                warnings: out.warnings,
+                ..Default::default()
+            });
+        }
+
         for account in &accounts {
             let account_ref = account.external_ref();
             let since = ctx.since_for(&account_ref).to_string();
@@ -1513,6 +1520,25 @@ mod tests {
                 "its own transaction list, not the Tagesgeld one"
             );
         }
+    }
+
+    /// A menu link to a collapse target in an accordion before the accounts
+    /// has neither a balance nor account details: no account, no warning.
+    #[test]
+    fn a_menu_collapse_link_in_an_accordion_is_no_account() {
+        let html = format!(
+            r##"<section class="accordion"><a href="#collapse_99999999" data-bs-toggle="collapse">Menü</a></section>{}"##,
+            account_section(
+                "1000000001",
+                "DE00 1234 5678 1000 0000 01",
+                "1.234,56 €",
+                "contentForm:j_idt331:0:j_idt340"
+            ),
+        );
+        let (accounts, unreadable) = parse_accounts(&html).unwrap();
+        assert!(unreadable.is_empty(), "{unreadable:?}");
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].number, "1000000001");
     }
 
     #[test]
