@@ -6,30 +6,20 @@
 
 ## Context
 
-With German regional settings, typing or pasting `12.50` into a transfer field
-yields `1250` cents on macOS and Linux, which call the core's `parse_cents`.
-Android's transfer form uses its own parser: it removes the period and builds a
-draft for `125000` cents. Windows has a third parser of its own. An amount
-difference of this kind can pass validation because both results are valid
-integers. [Issue #1937](https://github.com/GiroCrab/GiroCrab/issues/1937) · [Windows parser](../../GiroCrabWindows/src/planning.rs)
+Monetary input crosses a boundary between text and exact amounts in every
+frontend. Each frontend reads amount text with rules of its own, so the same
+input can give different amounts, and the difference passes validation because
+every result is a valid integer. An amount the app already knows can also change
+when a form formats it and reads it back. [#1937](https://github.com/GiroCrab/GiroCrab/issues/1937) · [#1761](https://github.com/GiroCrab/GiroCrab/pull/1761#discussion_r4697292648)
 
-An amount the app already knows can also change when it takes a detour through
-text. The split editor can calculate `10000000` cents from a preset, format it
-as `1,00,000.00` under English (India), and disable Save when its parser rejects
-the generated grouping. A mandate draft can turn a parse failure into a zero
-default while saving an unrelated edit. These are different failures at the
-same boundary between display text and amounts. [Split review](https://github.com/GiroCrab/GiroCrab/pull/1761#discussion_r4697292648) · [Mandate draft](../../GiroCrabApp/Sources/GiroCrabUI/DirectDebitTypes.swift)
-
-All of these parsers interpret free text in which `.` and `,` can each be a
-decimal or a grouping separator. `parse_cents` reads a single separator between
-one to three digits and exactly three digits as grouping, so an English `12.500` meant as 12.5 and a
-German `12,500` meant as 12,5 both become `1250000` cents. The regional settings
-do not settle which key the user presses. The iOS decimal pad shows the
-separator of the active keyboard, not of the region, and Android's on-screen
-keyboards are not bound by the field's key filter. A field that accepts only the
-region's separator can leave a user without a decimal key. A field that treats
-the other one as grouping turns `15.56` into 1556,00 €. Both failures recur in
-finance software. [Existing money parsers](../../girocrab-core/src/money.rs) · [iOS decimal pad](https://developer.apple.com/forums/thread/107269) · [Android key filter](https://developer.android.com/reference/android/text/method/DigitsKeyListener)
+In free text, `.` and `,` can each be a decimal or a grouping separator.
+Guessing from the digits misreads a three-digit fraction by a factor of 1000.
+The regional settings do not settle which key the user presses either. The iOS
+decimal pad shows the separator of the active keyboard, not of the region, and
+Android's on-screen keyboards are not bound by a field's key filter. A field
+that accepts only the region's separator can leave a user without a decimal
+key; a field that treats the other one as grouping turns `15.56` into
+1556,00 €. [iOS decimal pad](https://developer.apple.com/forums/thread/107269) · [Android key filter](https://developer.android.com/reference/android/text/method/DigitsKeyListener)
 
 ## Decision drivers
 
@@ -87,12 +77,11 @@ finance software. [Existing money parsers](../../girocrab-core/src/money.rs) · 
    Invalid input blocks the write. Clearing an optional value requires the user
    to empty the field or use a dedicated clear action.
 5. **Calculations and writes.** Business operations consume exact,
-   locale-independent values. Bookings and payments already use integer cents,
-   with currency supplied by the surrounding record or operation. A bridge
-   that cannot carry the full integer range uses a lossless representation,
-   such as an ASCII integer string. A payment review and submission use the same
-   exact draft value, and an edit requires a fresh review. The core enforces its
-   business rules at acceptance or save time. [Transfer and split input types](../../girocrab-core/src/models.rs)
+   locale-independent integer cents; the currency comes from the surrounding
+   record or operation. A bridge that cannot carry the full integer range uses
+   a lossless representation, such as an ASCII integer string. A payment review
+   and submission use the same exact draft value, and an edit requires a fresh
+   review. The core enforces its business rules at acceptance or save time.
 
 The decision covers every monetary input field on macOS, iOS, Linux, Windows
 and Android. Percentage shares carry an exact decimal or ratio into the split
@@ -108,11 +97,11 @@ format and hand exact values to the form or operation.
 
 ## Alternatives considered
 
-- **Guess grouping from the digits.** `parse_cents` reads a separator followed
-  by three digits as thousands; a variant could do so only for the field's own
-  grouping separator. A German `1.500` would stay 1.500 €, but a `12.500` typed
-  by habit from another format becomes `1250000` cents without notice
-  (drivers 1 and 3). Asking the user in that case needs a choice in each
+- **Guess grouping from the digits.** The core's text parser reads a separator
+  followed by three digits as thousands; a variant could do so only for the
+  field's own grouping separator. A German `1.500` would stay 1.500 €, but a
+  `12.500` typed by habit from another format becomes `1250000` cents without
+  notice (drivers 1 and 3). Asking the user in that case needs a choice in each
   frontend's field, and a German user who types thousands separators is better
   served by a visible error.
 - **Accept only the region's decimal separator.** The platform keyboard may not
@@ -133,12 +122,11 @@ format and hand exact values to the form or operation.
   and keeps the possibility of changing an already exact amount during prefill.
 - **Parse with native locale APIs in each frontend.** The same rules would be
   implemented and tested on each platform (driver 1). Locale parsers reject or
-  regroup the other separator, as Qt does for `12.50` under `de-DE`. Linux QML
-  would parse through JavaScript numbers.
-- **Change the existing Rust parser in place.** Its callers include connectors,
-  CSV importers and search. A new interpretation of an accepted string could
-  change imported amounts or search results. An opt-in form parser lets each
-  migration verify its own accepted inputs. [Batch CSV example](../../girocrab-core/src/batch_csv.rs) · [Search example](../../girocrab-core/src/search_expr.rs)
+  regroup the other separator, as Qt does for `12.50` under `de-DE`.
+- **Change the existing Rust text parser in place.** Connectors, file importers
+  and search also read amounts with it. A new interpretation of an accepted
+  string could change imported amounts or search results (driver 4). A separate
+  form parser lets each migration verify its own accepted inputs.
 
 ## Consequences
 
@@ -149,11 +137,11 @@ fields that intentionally round.
 
 Each frontend filters keystrokes, switches between editing and display text on
 focus, and passes its two separators to the parser. Typed thousands separators
-stop working: `parse_cents` reads a typed `1.500` as `150000` cents today, a
-migrated field shows an error. Pasted text in another format with a three-digit
-fraction, such as an English `12.500` under `de-DE`, is read in the field's own
-format; the field shows the result before anything is saved. Revisit the typing
-rule if users report the `1.500` error often.
+stop working: a typed `1.500` is an error instead of 1.500 €. Pasted text in
+another format with a three-digit fraction, such as an English `12.500` under
+`de-DE`, is read in the field's own format; the field shows the result before
+anything is saved. Revisit the typing rule if users report the `1.500` error
+often.
 
 ## Confirmation
 
