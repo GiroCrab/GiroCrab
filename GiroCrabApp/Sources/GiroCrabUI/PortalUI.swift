@@ -522,7 +522,8 @@ final class PortalBrowser {
         return list
     }
 
-    /// Types user name and password into the visible login form (empty fields only).
+    /// Types user name (into an empty field only) and password into the visible login form.
+    /// The password field is only written, never read (`scripts/lint-webview-security.sh`).
     /// Runs in an isolated script world, so the page's scripts never get the values
     /// as arguments; does not submit.
     func fillLogin(user: String, password: String) async -> Bool {
@@ -544,12 +545,11 @@ final class PortalBrowser {
         var before = texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; });
         var u = named || before[before.length - 1];
         var set = function(el, v) {
-          if (el.value) return;
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
           el.dispatchEvent(new Event('input', {bubbles: true}));
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
-        if (u) set(u, user);
+        if (u && !u.value) set(u, user);
         set(pw, password);
         return true;
         """
