@@ -1,5 +1,10 @@
 # Advanzia-Konnektor
 
+<!-- sync:connector-note:start -->
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Advanzia Bank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Advanzia Bank. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
+<!-- sync:connector-note:end -->
+
 Der Konnektor unterstützt Kreditkarten mit Zugang über `https://mein.advanzia.com/`.
 Die Unterstützung richtet sich nach dem verwendeten Portal, nicht nach dem Namen
 auf der Karte. Andere Advanzia-Portale sind nicht abgedeckt.

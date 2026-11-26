@@ -142,14 +142,25 @@ impl Vault {
         // the cashflow card. The booking list itself is never narrowed by this.
         // One guard for both reads, so a merge committing in between cannot mix
         // old amounts with new eligibility.
-        let (all, merchants): (Vec<Booking>, _) = {
+        let (all, merchants, netted): (Vec<Booking>, _, HashMap<i64, i64>) = {
             let db = self.db()?;
             let allowed = crate::user_groups::total_account_ids(&db)?;
             let all = all_bookings(self, &db, BookingScope::All)?
                 .into_iter()
                 .filter(|b| allowed.contains(&b.account_id))
                 .collect();
-            (all, self.merchant_rules(&db)?)
+            // linked refunds netted in the monthly flows when the user chose so (#714): the
+            // KPI share of the totals set, like the tiles and the cashflow card
+            let netted = if self.refund_offsets_ready(&db)? {
+                let filter = BookingFilter {
+                    respect_in_total: true,
+                    ..Default::default()
+                };
+                self.kept_shares(&db, &filter)?.into_iter().collect()
+            } else {
+                HashMap::new()
+            };
+            (all, self.merchant_rules(&db)?, netted)
         };
 
         // Monthly flows
@@ -169,11 +180,12 @@ impl Vault {
             .collect();
         for b in &all {
             if let Some(mf) = monthly.get_mut(&month_key(&b.booking_date)) {
+                let amount = netted.get(&b.id).copied().unwrap_or(b.amount_cents);
                 match b.flow {
-                    FlowKind::Consumption => mf.consumption_cents += -b.amount_cents,
-                    FlowKind::Investment => mf.investment_cents += -b.amount_cents,
-                    FlowKind::Perk if b.amount_cents < 0 => mf.investment_cents += -b.amount_cents,
-                    FlowKind::Income => mf.income_cents += b.amount_cents,
+                    FlowKind::Consumption => mf.consumption_cents += -amount,
+                    FlowKind::Investment => mf.investment_cents += -amount,
+                    FlowKind::Perk if amount < 0 => mf.investment_cents += -amount,
+                    FlowKind::Income => mf.income_cents += amount,
                     _ => {}
                 }
             }
