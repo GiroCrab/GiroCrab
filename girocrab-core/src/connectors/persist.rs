@@ -21,6 +21,57 @@ pub(super) fn is_content_id(id: &str, prefix: char) -> bool {
     id.len() == 17 && c.next() == Some(prefix) && c.all(|c| c.is_ascii_hexdigit())
 }
 
+/// A depot position's purchase price as stored before a fetch (#1812).
+struct KeptPurchase {
+    isin: String,
+    wkn: String,
+    currency: String,
+    purchase_price_cents: i64,
+    native_purchase_price_cents: Option<i64>,
+}
+
+/// Purchase prices currently stored for a depot, including positions without
+/// one (0): they make a position ambiguous in `kept_purchase_for`.
+fn kept_purchase_prices(
+    conn: &rusqlite::Connection,
+    account_id: i64,
+) -> CoreResult<Vec<KeptPurchase>> {
+    let mut q = conn.prepare(
+        "SELECT isin, wkn, currency, purchase_price_cents, native_purchase_price_cents
+         FROM holdings WHERE account_id = ?1",
+    )?;
+    let rows = q.query_map([account_id], |r| {
+        Ok(KeptPurchase {
+            isin: r.get(0)?,
+            wkn: r.get(1)?,
+            currency: r.get(2)?,
+            purchase_price_cents: r.get(3)?,
+            native_purchase_price_cents: r.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The stored purchase price for `h`: every stored row of the same position
+/// (ISIN, or WKN when one side lacks the ISIN) must agree on it, otherwise
+/// none is returned. Never a row without a purchase price.
+fn kept_purchase_for<'a>(
+    old: &'a [KeptPurchase],
+    h: &crate::models::Holding,
+) -> Option<&'a KeptPurchase> {
+    let mut hits = old.iter().filter(|o| {
+        (!h.isin.is_empty() && o.isin == h.isin)
+            || ((h.isin.is_empty() || o.isin.is_empty()) && !h.wkn.is_empty() && o.wkn == h.wkn)
+    });
+    let first = hits.next()?;
+    let agree = hits.all(|o| {
+        o.purchase_price_cents == first.purchase_price_cents
+            && o.native_purchase_price_cents == first.native_purchase_price_cents
+            && o.currency == first.currency
+    });
+    (agree && first.purchase_price_cents != 0).then_some(first)
+}
+
 /// One-time migration of ids from older versions: a booking stored under a
 /// legacy content id (`h…`, `DefaultHasher` / list position) with exactly the
 /// same content gets the new id instead of being imported a second time.
@@ -644,9 +695,24 @@ pub(crate) fn store_fetch(
             previous.insert(*acc_id, held.into_iter().collect());
         }
         for (acc_id, list) in &by_account {
+            // #1812: a fetch without a purchase price (FinTS MT535) keeps the one
+            // already stored for the same position (e.g. from an import), but only
+            // when it is unambiguous and its currency does not contradict the fetch.
+            let old = kept_purchase_prices(&tx, *acc_id)?;
             tx.execute("DELETE FROM holdings WHERE account_id = ?1", [acc_id])?;
             for remote in list {
-                let h = &remote.holding;
+                let mut h = remote.holding.clone();
+                if h.purchase_price_cents == 0
+                    && h.profit_loss_purchase_cents.is_none()
+                    && let Some(o) = kept_purchase_for(&old, &h)
+                    && (o.currency.is_empty() || h.currency.is_empty() || o.currency == h.currency)
+                {
+                    h.purchase_price_cents = o.purchase_price_cents;
+                    if h.native_purchase_price_cents.is_none() && o.currency == h.currency {
+                        h.native_purchase_price_cents = o.native_purchase_price_cents;
+                    }
+                }
+                let h = &h;
                 tx.execute(
                     "INSERT INTO holdings(account_id, isin, wkn, name, quantity, current_price_cents, purchase_price_cents, value_cents,
                             prev_day_price_cents, prev_day_value_cents, profit_loss_purchase_cents, profit_loss_purchase_rel,
