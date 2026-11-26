@@ -705,6 +705,11 @@ public final class AppModel {
     /// The balance chart has keyboard focus (Return there jumps to its day,
     /// instead of editing the selected booking's note).
     @ObservationIgnored var chartHasKeyboardFocus = false
+    /// The sidebar has keyboard focus (macOS): a list that appears because of a sidebar
+    /// selection then leaves it there, so ↑/↓ go on through the sidebar (#1779).
+    @ObservationIgnored var sidebarHasKeyboardFocus = false
+    /// A list in the main column may take the keyboard focus when it appears.
+    var listMayTakeFocusOnAppear: Bool { options.screenshotPath == nil && !sidebarHasKeyboardFocus }
     /// Run after the command palette sheet has been dismissed (opens the next sheet).
     @ObservationIgnored var afterPaletteDismiss: (@MainActor () -> Void)?
     var showCategorizer = false
@@ -914,6 +919,11 @@ public final class AppModel {
     var refundHistoryTask: Task<Void, Never>?
     var refundHistoryPending = 0
     var refundRevision = 0
+    /// Einstellungen › Allgemein › Auswertungen „Erstattungen mit der Ursprungsbuchung verrechnen“ (#714):
+    /// linked refunds are netted against their originals in every statistic; bookings stay as they are.
+    var netRefundsInStats = false
+    /// Bumped by every toggle of `netRefundsInStats`: only the newest write publishes its result.
+    var netRefundsWriteGeneration = 0
     var transferBusy = false
     var syncQueue: [BankConnection] = []
     /// "Alle abrufen": number of logins in the running batch (0 = single sync).

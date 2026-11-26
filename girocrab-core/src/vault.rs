@@ -30,6 +30,7 @@ pub(crate) mod cache;
 mod categories;
 pub(crate) mod connections;
 pub(crate) mod enable_banking_apps;
+mod holdings;
 mod merge;
 mod rah10;
 mod rules;

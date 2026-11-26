@@ -397,7 +397,7 @@ pub(crate) fn adopt_peer_references<'a>(
 /// with the order's end-to-end reference settles it first ([`settle_referenced`]). A booking
 /// without a reference settles by the same IBAN (when both sides have one) and amount, booked
 /// on or after the day the order was placed; such a booking settles one order only: only the
-/// bookings this fetch inserted (`fetched`, their ids) count, so a later fetch, or a second
+/// bookings this fetch inserted or adopted (`fetched`, their ids) count, so a later fetch, or a second
 /// call within the same second, cannot use it for a second order. A booking with a reference
 /// never settles another order by amount. Pending/held rows are no bookings. Orders the bank
 /// executes early or on another day (weekend, holiday) would otherwise stay until their date
@@ -432,14 +432,14 @@ pub(crate) fn drop_booked(
     let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
     let mut used: std::collections::HashSet<i64> = Default::default();
     let mut find = db.prepare(
-        "SELECT id, counterparty_iban, end_to_end_id FROM transactions
+        "SELECT id, COALESCE(counterparty_iban, ''), COALESCE(end_to_end_id, '') FROM transactions
          WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
            AND booking_date >= ?3
            AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
          ORDER BY booking_date, external_id, id",
     )?;
-    // Two passes: an exact IBAN match first, so an order without a better booking cannot take
-    // the booking of another order; then bookings without an IBAN on either side.
+    // References were settled above. First pass: exact IBAN, so an order without a better
+    // booking cannot take the booking of another order; second: no IBAN on either side.
     let mut open = orders;
     for exact in [true, false] {
         let mut left = Vec::new();

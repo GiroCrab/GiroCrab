@@ -170,7 +170,7 @@ jobs:
       - name: Linux UI texts have English (Localizable.xcstrings or i18n/en-linux.json)
         run: python3 -I GiroCrabLinux/scripts/i18n-report.py
       - name: Test String-Catalog-Merge-Driver
-        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py scripts/test_coderabbit_flow.py
+        run: python3 -m unittest scripts/test_xcstrings.py scripts/test_sync_docs.py scripts/test_coderabbit_flow.py scripts/test_lint_transfer_integrity.py
       - name: Test AI provenance classifier
         run: python3 -m unittest tools/test_export_ai_provenance.py tools/test_check_security_checklist.py
       - name: Test FNZ portal browser scripts
@@ -181,6 +181,24 @@ jobs:
         run: scripts/lint-ffi-exports.sh
       - name: Every schema step is described in schema.rs and docs/ARCHITECTURE.md
         run: scripts/lint-schema-docs.sh
+      # Payment-path integrity (CODEOWNERS, bypass patterns, PR checklist) runs in
+      # pr-checklist.yml: it must rerun when the PR description is edited.
+      - name: Install lychee (offline Markdown link checker)
+        run: |
+          ver=0.24.2
+          archive=lychee-x86_64-unknown-linux-musl.tar.gz
+          sha256=73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --retry-delay 2 \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-v${ver}/${archive}" -o "${tmp}/${archive}"
+          echo "${sha256}  ${tmp}/${archive}" | sha256sum -c -
+          tar -xzf "${tmp}/${archive}" -C "${tmp}" lychee-x86_64-unknown-linux-musl/lychee
+          mkdir -p "${RUNNER_TEMP}/bin"
+          install -m 0755 "${tmp}/lychee-x86_64-unknown-linux-musl/lychee" "${RUNNER_TEMP}/bin/lychee"
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+      - name: Relative links and anchors in Markdown files lead somewhere
+        run: scripts/check-doc-links.sh
       - name: No unsafe outside sys.rs, no processes, hidden includes or encoded data in the payment path
         run: scripts/lint-no-obfuscation.sh
       - if: needs.changes.outputs.rust == 'true'

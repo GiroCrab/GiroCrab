@@ -545,6 +545,7 @@ QtObject {
         vaultLoaded = false
         hasOwnVault = false
         demoActive = false
+        netRefundsInStats = false
         groups = []; userGroups = []; accountsByID = ({}); accountMarkers = ({}); bookings = []; categories = []; categoryTree = []; uncategorizedFilteredCount = null
         connections = []; page = null; ListBalances.clear(); merchantStats = null; merchantAccountStats = null; streamItems = []; streamModel.clear(); dayGroups = []; history = []
         rules = []; settings = []; dashboard = null; budgets = []; recurring = []; recurringMonth = null; recurringHidden = []
@@ -1800,10 +1801,21 @@ QtObject {
 
     // MARK: - Settings (vault/settings.rs)
     property var settings: []
-    function reloadSettings() { run(() => { settings = core("list_settings"); fintsProductIDSource = core("fints_product_id_source") }) }
+    function reloadSettings() { run(() => { settings = core("list_settings"); fintsProductIDSource = core("fints_product_id_source")
+                                            netRefundsInStats = core("net_refunds_in_stats") }) }
     property string fintsProductIDSource: ""
     function settingEntry(key) { return settings.find(e => e.key === key) || null }
     function saveSetting(key, value) { run(() => core("set_setting", { key: key, value: value })); reloadSettings() }
+    /// Erstattungen mit der Ursprungsbuchung verrechnen (#714, refunds/offsets.rs): off by default.
+    property bool netRefundsInStats: false
+    function setNetRefundsInStats(on) {
+        if (!run(() => { core("set_net_refunds_in_stats", { on: on }); return true })) return
+        netRefundsInStats = on
+        reloadStatistics()
+    }
+    /// Every sum that leaves linked refunds out: sidebar category totals, budgets, the list's
+    /// KPI tiles, cash flow and category history (reloadBookings), the investment dashboard.
+    function reloadStatistics() { reloadCategories(); reloadBookings(); reloadPlanning(); reloadDashboard() }
 
     // MARK: - Bank catalog
     readonly property var bankCatalog: core("bank_catalog")
@@ -1847,39 +1859,85 @@ QtObject {
     function usesPortal(c) { return usesPortalLogin(c) }   // MARK: Web logins
 
     // MARK: - Adding banks
+    /// AppModel.swift › newLoginHistory: period of the first fetch chosen in "Bank hinzufügen"
+    /// (#1043), as `sync.days_back` stores it; null = the setting, which the core marks a new
+    /// login with anyway.
+    property var newLoginHistory: null
     /// Adds a login at any FinTS 3.0 bank once the banking policy is fresh and allows it.
     function addFinTsConnection(name, blz, url, login, tanMedium) {
+        // taken now: adding may wait for the policy, after the assistant closed
+        const history = newLoginHistory
         withFreshBankingPolicy(() => {
             if (!isMagicDemoLogin(login) && !bankingAllowsAdding(bankingGateForKey("fints:" + (blz || "").trim()))) return
-            addFinTsConnectionChecked(name, blz, url, login, tanMedium)
+            addFinTsConnectionChecked(name, blz, url, login, tanMedium, history)
         })
     }
     function addConnection(kind, login) {
+        const history = newLoginHistory
         withFreshBankingPolicy(() => {
             if (!isMagicDemoLogin(login) && !bankingAllowsAdding(bankingGateForNew(kind))) return
-            addConnectionChecked(kind, login)
+            addConnectionChecked(kind, login, history)
         })
     }
     function addEnableBankingConnection(aspsp, country, name, label) {
+        const history = newLoginHistory
         withFreshBankingPolicy(() => {
             if (!isMagicDemoLogin(label) && !bankingAllowsAdding(bankingGateForNew("EnableBanking"))) return
-            addEnableBankingConnectionChecked(aspsp, country, name, label)
+            addEnableBankingConnectionChecked(aspsp, country, name, label, history)
         })
     }
-    function addFinTsConnectionChecked(name, blz, url, login, tanMedium) {
+    function addFinTsConnectionChecked(name, blz, url, login, tanMedium, history) {
         if (demoActive && hasOwnVault) useVault(false)
         const id = run(() => core("add_fints_connection", { blz: blz, url: url, display_name: name, login_name: login, tan_medium: tanMedium || "" }))
-        afterAdd(id)
+        afterAddWithHistory(id, history)
     }
-    function addConnectionChecked(kind, login) {
+    function addConnectionChecked(kind, login, history) {
         if (demoActive && hasOwnVault) useVault(false)
         const id = run(() => core("add_bank_connection", { connector: kind, display_name: "", login_name: login }))
-        afterAdd(id)
+        afterAddWithHistory(id, history)
     }
-    function addEnableBankingConnectionChecked(aspsp, country, name, label) {
+    function addEnableBankingConnectionChecked(aspsp, country, name, label, history) {
         if (demoActive && hasOwnVault) useVault(false)
         const id = run(() => core("add_enable_banking_connection", { aspsp: aspsp, country: country, display_name: name, login_name: label }))
+        afterAddWithHistory(id, history)
+    }
+    /// The login `id` exists once added: a period that could not be stored shows its error
+    /// (the core's default mark stays), the add still finishes so it is not added twice.
+    function afterAddWithHistory(id, history) {
+        if (id !== null && id !== undefined) run(() => { requestNewLoginHistory(history, id); return true })
         afterAdd(id)
+    }
+    /// AppModelTypes.swift › HistoryRange(setting:) / .setting: `max` or days, as the core's JSON.
+    function historyRange(setting) { return setting === "max" ? "Maximum" : { Days: { days: parseInt(setting) || 90 } } }
+    function historySetting(range) { return !range ? "" : range === "Maximum" ? "max" : String(range.Days.days) }
+    /// HistoryRange.pickerOptions: the periods the pickers offer, shortest first.
+    readonly property var historyOptions: [{ id: "90", title: qsTr("90 Tage") }, { id: "365", title: qsTr("1 Jahr") },
+                                           { id: "730", title: qsTr("2 Jahre") }, { id: "max", title: qsTr("Maximum") }]
+    /// historyOptions; a value set elsewhere (e.g. synced from another device) stays selectable.
+    function historyOptionsWith(current) {
+        return !current || historyOptions.some(o => o.id === current) ? historyOptions
+            : historyOptions.concat([{ id: current, title: qsTr("%1 Tage").arg(parseInt(current) || 90) }])
+    }
+    /// AppModel+Connections.swift › requestNewLoginHistory: marks the just added login `id` for a
+    /// full first fetch of the period chosen in "Bank hinzufügen" (#1043); null leaves the default
+    /// the core marked it with. Throws like `core`.
+    function requestNewLoginHistory(setting, id) {
+        if (setting === null || setting === undefined) return
+        core("request_full_history", { connection_id: id, range: historyRange(setting) })
+    }
+    /// Period of the full fetch pending for login `id` (`max` or days; "" = none, #1043).
+    function pendingFullHistory(id) { return historySetting(coreOrNull("pending_full_history", { connection_id: id })) }
+    /// Marks login `id` for a full fetch of `setting` at its next sync the user starts, or calls a
+    /// pending one off (""). False when it was not stored (the error is shown).
+    function setFullHistory(id, setting) {
+        try {
+            if (setting === "") core("cancel_full_history", { connection_id: id })
+            else core("request_full_history", { connection_id: id, range: historyRange(setting) })
+            return true
+        } catch (e) {
+            errorMessage = e.message
+            return false
+        }
     }
     /// Fixed catalog entry "Demo-Bank (Test & Vorschau)".
     function addDemoBank() { addFinTsConnection("Demo-Bank", "99999999", "https://demo.invalid/fints", "demo") }
@@ -3242,9 +3300,10 @@ QtObject {
             UndoManager.register(action === "unlink" ? qsTr("Verknüpfung aufheben") : qsTr("Erstattung zuordnen"), () => {
                 if (vaultGeneration === generation) changeRefundLink(inversePair, inverse, undoToken)
             }, phase, branch)
-            // documentation only (#714): sums stay, only the list markers change
+            // without the setting documentation only (#714): sums stay, only the list markers change
             refundLinksRevision++
-            reloadBookings()
+            if (netRefundsInStats) reloadStatistics()
+            else reloadBookings()
         }, failed) } catch (e) { failed(e.message) }
     }
     readonly property var colorPalette: core("account_color_palette")

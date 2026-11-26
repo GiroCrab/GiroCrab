@@ -148,6 +148,76 @@ fn book(v: &Vault, acc: i64, ext: &str, date: &str, cents: i64, iban: &str) {
         .unwrap();
 }
 
+/// A booking to the orders' payee that carries an end-to-end id.
+fn book_e2e(v: &Vault, acc: i64, ext: &str, cents: i64, e2e: &str) {
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty_iban, end_to_end_id)
+             VALUES (?1, ?2, '2999-01-10', ?3, 'DE89370400440532013000', ?4)",
+            rusqlite::params![acc, ext, cents, e2e],
+        )
+        .unwrap();
+}
+
+#[test]
+fn another_payment_to_the_same_payee_does_not_settle_the_order() {
+    let v = vault("planned-other-e2e");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 300))
+        .unwrap();
+    // same amount and IBAN, but another end-to-end id: another payment
+    book_e2e(&v, a, "x1", -300, "OTHER-REF");
+    settle(&v, a);
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+    // SEPA's placeholder is no id: the IBAN match decides
+    book_e2e(&v, a, "x2", -300, "NOTPROVIDED");
+    settle(&v, a);
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}
+
+#[test]
+fn end_to_end_id_picks_the_order_among_equal_ones() {
+    let v = vault("planned-e2e-pick");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 400))
+        .unwrap();
+    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 400))
+        .unwrap();
+    // the later order is booked first: its id wins over the earlier execution date
+    book_e2e(&v, a, "x1", -400, "E2");
+    settle(&v, a);
+    let left: String = v
+        .db()
+        .unwrap()
+        .query_row("SELECT end_to_end_id FROM planned_transfers", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, "E1");
+}
+
+#[test]
+fn batch_sum_order_is_settled_by_a_booking_with_a_payment_id() {
+    let v = vault("planned-batch-sum");
+    let a = account(&v, "Giro");
+    Vault::insert_planned_debit(
+        &v.db().unwrap(),
+        a,
+        "D1-SUM",
+        "2999-01-15",
+        "Lastschrift-Einzug",
+        "",
+        500,
+        "",
+    )
+    .unwrap();
+    // the sum booking carries one collection's id, never the local sum id
+    book_e2e(&v, a, "x1", 500, "D2");
+    settle(&v, a);
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}
+
 #[test]
 fn booked_order_leaves_the_list_once_per_booking() {
     let v = vault("planned-booked");
@@ -241,6 +311,42 @@ fn booking_of_the_day_before_the_order_does_not_settle_it() {
     );
     settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 0);
+}
+
+/// Planned rows of `acc` of every kind (`count_planned_payments` need not list collections).
+fn planned_rows(v: &Vault, acc: i64) -> i64 {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM planned_transfers WHERE account_id = ?1",
+            [acc],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn collection_is_settled_only_by_an_incoming_booking() {
+    let v = vault("planned-debit");
+    let a = account(&v, "Giro");
+    Vault::insert_planned_debit(
+        &v.db().unwrap(),
+        a,
+        "D1",
+        "2999-01-15",
+        "Debtor",
+        "DE89 3704 0044 0532 0130 00",
+        500,
+        "Beitrag",
+    )
+    .unwrap();
+    // an outgoing booking of the same amount and IBAN is no collection
+    book(&v, a, "out", "2999-01-10", -500, "DE89370400440532013000");
+    settle(&v, a);
+    assert_eq!(planned_rows(&v, a), 1);
+    book(&v, a, "in", "2999-01-10", 500, "DE89370400440532013000");
+    settle(&v, a);
+    assert_eq!(planned_rows(&v, a), 0);
 }
 
 #[test]

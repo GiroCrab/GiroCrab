@@ -270,6 +270,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Ungültige Konto-Zuordnung." => "Invalid account mapping.",
         "Bankzugang nicht gefunden." => "Bank connection not found.",
+        "Der Einstandskurs darf nicht negativ sein." => "The purchase price must not be negative.",
+        "Die Position hat weder ISIN noch WKN." => "The position has neither an ISIN nor a WKN.",
+        "Depotposition" => "Depot position",
         "Falscher Bankzugang." => "Wrong bank connection.",
         "Ungültiger Sitzungszustand." => "Invalid session state.",
         "Die Konto-Zuordnung hat sich geändert. Bitte erneut anmelden." => {
