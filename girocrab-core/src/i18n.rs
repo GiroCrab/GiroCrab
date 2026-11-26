@@ -689,6 +689,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Empfänger-IBAN ist ungültig." => "The recipient IBAN is invalid.",
         "Die BIC ist ungültig." => "The BIC is invalid.",
         "Der Empfängername fehlt." => "The recipient name is missing.",
+        "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich." => {
+            "Only transfers to your own current accounts are possible from a savings account."
+        }
         "Zahlung {0}: {1}" => "Payment {0}: {1}",
         "Lastschrift {0}: {1}" => "Direct debit {0}: {1}",
         "Der Name des Zahlungspflichtigen fehlt." => "The debtor's name is missing.",
