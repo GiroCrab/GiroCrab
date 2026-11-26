@@ -21,6 +21,7 @@ fn booking_takes_day_sign_and_reference_account() {
     assert_eq!(deposit.counterparty_iban, "DE02120300000000202051");
     assert_eq!(deposit.counterparty, "");
     assert_eq!(deposit.purpose, "Einzahlung");
+    assert_eq!(deposit.booking_text, "Einzahlung");
     assert!(deposit.external_id.is_empty(), "content id from the vault");
 
     let interest = parse_booking(
@@ -41,6 +42,20 @@ fn booking_takes_day_sign_and_reference_account() {
     .unwrap();
     assert_eq!(withdrawal.amount_cents, -10_050);
     assert_eq!(withdrawal.purpose, "Auszahlung");
+    assert_eq!(withdrawal.booking_text, "Auszahlung");
+}
+
+#[test]
+fn purpose_does_not_follow_the_app_language() {
+    // the purpose goes into the content id: the same booking must keep it in English
+    let t = json!({"date": "2026-10-01T00:00:00.000Z", "reference": "DE02120300000000202051",
+                   "description": "", "amount": 2500});
+    let de = parse_booking("a", &t).unwrap();
+    crate::i18n::with_language(crate::i18n::Lang::En, || {
+        let en = parse_booking("a", &t).unwrap();
+        assert_eq!(en.content_key(), de.content_key());
+        assert_eq!(en.booking_text, "Deposit", "the booking text is translated");
+    });
 }
 
 #[test]
@@ -115,6 +130,11 @@ fn read_request(s: &mut std::net::TcpStream) -> String {
 
 /// A mock of the online banking: user `erika` / `geheim`, SMS code `123456`.
 fn serve() -> (String, Arc<Mutex<Vec<String>>>) {
+    serve_with(false)
+}
+
+/// `two_accounts`: a second account whose list fails, and per-account lists.
+fn serve_with(two_accounts: bool) -> (String, Arc<Mutex<Vec<String>>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -177,11 +197,19 @@ fn serve() -> (String, Arc<Mutex<Vec<String>>>) {
             } else if !(logged_in && otp) {
                 ("401 Unauthorized", json!({}))
             } else if first.starts_with("GET /api/savings/account-current") {
-                (
-                    "200 OK",
-                    json!({"accounts": [{"id": "1234567", "productNumber": "NL91ABNA0417164300",
-                    "interestRate": 2.3, "amount": 2504.17, "accruedInterest": 1.2}], "totalBalance": 2504.17}),
-                )
+                let mut accounts = vec![
+                    json!({"id": "1234567", "productNumber": "NL91ABNA0417164300",
+                    "interestRate": 2.3, "amount": 2504.17, "accruedInterest": 1.2}),
+                ];
+                if two_accounts {
+                    accounts.push(
+                        json!({"id": "7654321", "productNumber": "NL02ABNA0123456789",
+                        "interestRate": 2.3, "amount": 100, "accruedInterest": 0}),
+                    );
+                }
+                ("200 OK", json!({"accounts": accounts}))
+            } else if first.starts_with("GET /api/savings/account-transactions?accountId=7654321") {
+                ("500 Internal Server Error", json!({}))
             } else if first.starts_with("GET /api/savings/account-transactions") {
                 // empty for the Tagesgeld account, as seen live
                 ("200 OK", json!([]))
@@ -288,5 +316,35 @@ async fn wrong_sms_code_is_an_authentication_error() {
     assert!(
         c.fetch(&ctx).await.is_err(),
         "no data without the second factor"
+    );
+}
+
+#[tokio::test]
+async fn one_failed_account_keeps_the_others() {
+    let (base, _log) = serve_with(true);
+    let mut c = AyvensConnector::with_base(base);
+    let ctx = ctx("erika", "geheim", "2026-01-01");
+    c.begin(&ctx).await.unwrap();
+    c.respond(
+        &ctx,
+        ChallengeResponse::Code(SecretString::new("123456".into())),
+    )
+    .await
+    .unwrap();
+    let out = c.fetch(&ctx).await.unwrap();
+    // both balances, no bookings: one list is empty, the other failed
+    assert_eq!(out.accounts.len(), 2);
+    assert_eq!(out.balances_reported.len(), 2);
+    assert!(out.transactions.is_empty());
+    assert_eq!(out.warnings.len(), 2, "{:?}", out.warnings);
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("ayvens:1234567") && w.contains("keine Umsätze"))
+    );
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("ayvens:7654321") && w.contains("nicht geladen"))
     );
 }

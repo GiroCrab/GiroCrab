@@ -39,14 +39,18 @@ JSON-Schnittstelle, mit der das Online-Banking unter `https://sparen.ayvensbank.
 ## Regeln
 
 * Buchungsdatum ist der Kalendertag aus `date`. Verwendungszweck ist `description`, sonst
-  „Einzahlung“ oder „Auszahlung“ nach dem Vorzeichen. Mit `reference` steht die IBAN des
+  „Einzahlung“ oder „Auszahlung“ nach dem Vorzeichen, immer auf Deutsch: er geht in die Inhalts-ID ein,
+  die sich sonst mit der Sprache der App ändern würde. Nur der Buchungstext wird übersetzt. Mit `reference` steht die IBAN des
   Referenzkontos als Gegenkonto in der Buchung, sonst ist „Ayvens Bank“ die Gegenpartei.
 * Das Feld `id` der Liste ist **keine** Buchungs-ID: alle Zinsbuchungen tragen dieselbe, Einzahlungen
   die IBAN des Referenzkontos. Die Buchungen bekommen deshalb Inhalts-IDs vom Tresor.
 * Passwort, SMS-Code und Sitzungs-Cookie gehen nur an `https://sparen.ayvensbank.de`; Weiterleitungen
   werden nur innerhalb dieses Hosts verfolgt.
-* Eine Buchung ohne lesbares Datum oder ohne lesbaren Betrag verwirft den ganzen Abruf, ebenso ein Konto
-  ohne Saldo oder eine Umsatzantwort, die keine Liste ist.
+* Ein Konto ohne Saldo verwirft den ganzen Abruf. Eine Umsatzliste, die keine Liste ist oder eine Buchung
+  ohne lesbares Datum oder ohne lesbaren Betrag enthält, verwirft die Umsätze dieses Kontos: Saldo und
+  andere Konten bleiben, eine Warnung nennt das Konto, und der nächste Abruf holt die Umsätze nach.
+* Bei mehreren Konten meldet eine leere Liste je Konto eine Warnung, statt das Konto still ohne Umsätze
+  zu führen.
 * Jeder Abruf fragt den SMS-Code ab: zwischen zwei Abrufen bleibt keine Sitzung gespeichert.
 
 ## Offene Punkte

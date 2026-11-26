@@ -1460,6 +1460,12 @@ fn english(de: &str) -> Option<&'static str> {
         "Ayvens Bank: Der SMS-Code wurde abgelehnt. Bitte den Abruf erneut starten." => {
             "Ayvens Bank: The SMS code was refused. Please start the sync again."
         }
+        "Ayvens Bank: Für Konto {0} kamen keine Umsätze. Bei mehreren Konten ist der Abruf noch nicht geprüft." => {
+            "Ayvens Bank: No bookings came for account {0}. With several accounts the fetch is not verified yet."
+        }
+        "Ayvens Bank: Die Umsätze von Konto {0} konnten nicht geladen werden ({1}). Der nächste Abruf holt sie nach." => {
+            "Ayvens Bank: The bookings of account {0} could not be loaded ({1}). The next sync catches up."
+        }
         "Ayvens Bank: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen." => {
             "Ayvens Bank: Incomplete booking in the response. No data was taken over."
         }

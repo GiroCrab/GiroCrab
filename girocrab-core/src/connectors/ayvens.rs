@@ -167,7 +167,15 @@ fn parse_booking(account_ref: &str, t: &Value) -> Option<RemoteTransaction> {
             String::new()
         },
         counterparty_iban: reference.into(),
-        purpose: booking_text.clone(),
+        // part of the content id: never a translated text, so a booking keeps its id
+        // when the app language changes (the bank's own texts are German too)
+        purpose: if !description.is_empty() {
+            description.into()
+        } else if amount_cents < 0 {
+            "Auszahlung".into()
+        } else {
+            "Einzahlung".into()
+        },
         booking_text,
         ..Default::default()
     })
@@ -254,6 +262,30 @@ impl AyvensConnector {
             });
         }
         Ok(!callback_refused(&v))
+    }
+
+    /// The bookings in the list at `path` from `since` on, and how many the list held. An
+    /// answer that is no list or holds an incomplete booking fails as a whole.
+    async fn bookings(
+        &self,
+        path: &str,
+        account_ref: &str,
+        since: &str,
+    ) -> CoreResult<(Vec<RemoteTransaction>, usize)> {
+        let v = self.get(path).await?;
+        let items = v.as_array().ok_or_else(|| unexpected(200))?;
+        let mut out = Vec::new();
+        for t in items {
+            let b = parse_booking(account_ref, t).ok_or_else(|| {
+                CoreError::invalid(tr(
+                    "Ayvens Bank: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen.",
+                ))
+            })?;
+            if b.booking_date.as_str() >= since {
+                out.push(b);
+            }
+        }
+        Ok((out, items.len()))
     }
 
     /// `user` of the Auth.js session; `None` while not logged in.
@@ -356,6 +388,7 @@ impl BankConnector for AyvensConnector {
         let list = current["accounts"]
             .as_array()
             .ok_or_else(|| unexpected(200))?;
+        let several = list.len() > 1;
         let mut out = FetchResult::default();
         for a in list {
             let (id, account) = parse_account(a).ok_or_else(|| unexpected(200))?;
@@ -364,22 +397,27 @@ impl BankConnector for AyvensConnector {
             // the per-account list stayed empty for a live Tagesgeld account while
             // `/transactions` held its bookings; that list names no account, so it
             // serves a login with one account only
-            let path = if list.len() == 1 {
-                "/api/savings/transactions".to_string()
-            } else {
+            let path = if several {
                 format!("/api/savings/account-transactions?accountId={id}")
+            } else {
+                "/api/savings/transactions".to_string()
             };
-            let v = self.get(&path).await?;
-            let items = v.as_array().ok_or_else(|| unexpected(200))?;
-            for t in items {
-                let b = parse_booking(&account_ref, t).ok_or_else(|| {
-                    CoreError::invalid(tr(
-                        "Ayvens Bank: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen.",
-                    ))
-                })?;
-                if b.booking_date.as_str() >= since.as_str() {
-                    out.transactions.push(b);
+            // one account's failed list must not cost the others theirs; the balance
+            // stays, and the next sync catches up from the newest stored booking
+            match self.bookings(&path, &account_ref, &since).await {
+                Ok((bookings, 0)) if several => {
+                    debug_assert!(bookings.is_empty());
+                    out.warnings.push(trf(
+                        "Ayvens Bank: Für Konto {0} kamen keine Umsätze. Bei mehreren Konten ist der Abruf noch nicht geprüft.",
+                        &[&account_ref],
+                    ));
                 }
+                Ok((bookings, _)) => out.transactions.extend(bookings),
+                Err(e @ CoreError::Authentication { .. }) => return Err(e),
+                Err(e) => out.warnings.push(trf(
+                    "Ayvens Bank: Die Umsätze von Konto {0} konnten nicht geladen werden ({1}). Der nächste Abruf holt sie nach.",
+                    &[&account_ref, &e],
+                )),
             }
             out.balances_reported.push(account_ref);
             out.accounts.push(account);
