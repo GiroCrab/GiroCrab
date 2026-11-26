@@ -730,7 +730,8 @@ pub(crate) fn store_fetch(
         }
         let match_rules = super::document_matching::rules_for_connection(&tx, connection_id, kind)?;
         let mut new_booking_ids = HashSet::new();
-        // every booking this fetch inserted (settles planned payments, #1881)
+        // every booking this fetch inserted or adopted from an import (settles planned
+        // payments, #1881)
         let mut inserted_ids = HashSet::new();
         let mut changed_document_ids = HashSet::new();
         let mut imported = 0u32;
@@ -833,10 +834,12 @@ pub(crate) fn store_fetch(
                                 )?
                                 .execute(params![t.amount_cents, t.booking_date, acc_id])?;
                             }
-                        } else if match_rules.is_some()
-                            && let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)?
-                        {
-                            new_booking_ids.insert(adopted.id);
+                        } else if let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)? {
+                            // an adopted import is new to this fetch as well (#1881)
+                            inserted_ids.insert(adopted.id);
+                            if match_rules.is_some() {
+                                new_booking_ids.insert(adopted.id);
+                            }
                         }
                     }
                 }

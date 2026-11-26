@@ -148,6 +148,55 @@ fn book(v: &Vault, acc: i64, ext: &str, date: &str, cents: i64, iban: &str) {
         .unwrap();
 }
 
+/// A booking to the orders' payee that carries an end-to-end id.
+fn book_e2e(v: &Vault, acc: i64, ext: &str, cents: i64, e2e: &str) {
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents, counterparty_iban, end_to_end_id)
+             VALUES (?1, ?2, '2999-01-10', ?3, 'DE89370400440532013000', ?4)",
+            rusqlite::params![acc, ext, cents, e2e],
+        )
+        .unwrap();
+}
+
+#[test]
+fn another_payment_to_the_same_payee_does_not_settle_the_order() {
+    let v = vault("planned-other-e2e");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 300))
+        .unwrap();
+    // same amount and IBAN, but another end-to-end id: another payment
+    book_e2e(&v, a, "x1", -300, "OTHER-REF");
+    settle(&v, a);
+    assert_eq!(v.count_planned_payments().unwrap(), 1);
+    // SEPA's placeholder is no id: the IBAN match decides
+    book_e2e(&v, a, "x2", -300, "NOTPROVIDED");
+    settle(&v, a);
+    assert_eq!(v.count_planned_payments().unwrap(), 0);
+}
+
+#[test]
+fn end_to_end_id_picks_the_order_among_equal_ones() {
+    let v = vault("planned-e2e-pick");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 400))
+        .unwrap();
+    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 400))
+        .unwrap();
+    // the later order is booked first: its id wins over the earlier execution date
+    book_e2e(&v, a, "x1", -400, "E2");
+    settle(&v, a);
+    let left: String = v
+        .db()
+        .unwrap()
+        .query_row("SELECT end_to_end_id FROM planned_transfers", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, "E1");
+}
+
 #[test]
 fn booked_order_leaves_the_list_once_per_booking() {
     let v = vault("planned-booked");

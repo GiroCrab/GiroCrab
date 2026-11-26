@@ -328,74 +328,107 @@ impl Vault {
 }
 
 /// Removes the planned payments of `account_id` the bank has booked by now (#1881): the
-/// same IBAN (when both sides have one) and amount, booked on or after the day the order
-/// was placed. Only orders with an execution date from today on are matched, earliest
-/// execution date first, so an order already past its date cannot take the booking of a
-/// listed one. Bookings with the exact IBAN are assigned before bookings without an IBAN.
-/// A booking settles one order only: only the bookings this fetch inserted (`fetched`,
-/// their ids) count, so a later fetch cannot use the same booking for a second order.
-/// Pending/held rows are no bookings. Orders the bank executes early or on another day
-/// (weekend, holiday) would otherwise stay until their date has passed.
+/// same amount, booked on or after the day the order was placed. Only orders with an
+/// execution date from today on are matched; among those the earliest execution date goes
+/// first, so an order already past its date cannot take the booking of a listed one.
+/// Three passes: a booking carrying the order's end-to-end id first, then one with the exact
+/// IBAN, then one without an IBAN on either side. A booking with another end-to-end id than
+/// the order is another payment (same amount to the same payee) and never settles it; an id
+/// missing on either side (or SEPA's `NOTPROVIDED`) leaves the IBAN match to decide.
+/// A booking settles one order only: only the bookings this fetch inserted or adopted
+/// (`fetched`, their ids) count, so a later fetch cannot use the same booking for a second
+/// order. Pending/held rows are no bookings. Orders the bank executes early or on another
+/// day (weekend, holiday) would otherwise stay until their date has passed.
 pub(crate) fn drop_booked(
     db: &Connection,
     account_id: i64,
     fetched: &std::collections::HashSet<i64>,
 ) -> CoreResult<()> {
+    struct Order {
+        id: i64,
+        iban: String,
+        signed: i64,
+        since: String,
+        e2e: String,
+    }
+    if fetched.is_empty() {
+        return Ok(());
+    }
     let mut q = db.prepare(
-        "SELECT id, execution_date, recipient_iban, amount_cents, kind,
-                date(created_ms / 1000, 'unixepoch', 'localtime')
+        "SELECT id, recipient_iban, amount_cents, kind,
+                date(created_ms / 1000, 'unixepoch', 'localtime'),
+                COALESCE(end_to_end_id, '')
          FROM planned_transfers WHERE account_id = ?1 AND execution_date >= ?2
          ORDER BY execution_date, id",
     )?;
-    let orders: Vec<(i64, String, String, i64, String, String)> = q
+    let orders: Vec<Order> = q
         .query_map(params![account_id, today()], |r| {
-            Ok((
-                r.get(0)?,
-                r.get(1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-                r.get(5)?,
-            ))
+            let cents: i64 = r.get(2)?;
+            let kind: String = r.get(3)?;
+            Ok(Order {
+                id: r.get(0)?,
+                iban: r.get(1)?,
+                signed: if kind == "debit" { cents } else { -cents },
+                since: r.get(4)?,
+                e2e: r.get(5)?,
+            })
         })?
         .collect::<Result<_, _>>()?;
-    if orders.is_empty() || fetched.is_empty() {
+    if orders.is_empty() {
         return Ok(());
     }
     let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
+    // SEPA's placeholder for "no end-to-end id" counts as none
+    let ref_id = |s: &str| {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("NOTPROVIDED") {
+            String::new()
+        } else {
+            s.to_string()
+        }
+    };
     let mut used: std::collections::HashSet<i64> = Default::default();
     let mut find = db.prepare(
-        "SELECT id, counterparty_iban FROM transactions
+        "SELECT id, COALESCE(counterparty_iban, ''), COALESCE(end_to_end_id, '') FROM transactions
          WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
            AND booking_date >= ?3
            AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
          ORDER BY booking_date, id",
     )?;
-    // Two passes: an exact IBAN match first, so an order without a better booking cannot take
-    // the booking of another order; then bookings without an IBAN on either side.
+    // Pass 0: same end-to-end id; pass 1: exact IBAN, so an order without a better booking
+    // cannot take the booking of another order; pass 2: no IBAN on either side.
     let mut open = orders;
-    for exact in [true, false] {
+    for pass in 0..3 {
         let mut left = Vec::new();
         for order in open {
-            let (id, _date, iban, cents, kind, since) = &order;
-            let signed = if kind == "debit" { *cents } else { -*cents };
-            let cands: Vec<(i64, String)> = find
-                .query_map(params![account_id, signed, since], |r| {
-                    Ok((r.get(0)?, r.get(1)?))
+            let cands: Vec<(i64, String, String)> = find
+                .query_map(params![account_id, order.signed, order.since], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
                 })?
                 .collect::<Result<_, _>>()?;
-            let hit = cands.iter().find(|(tid, tiban)| {
-                !used.contains(tid)
-                    && fetched.contains(tid)
-                    && if exact {
-                        !iban.is_empty() && norm(iban) == norm(tiban)
-                    } else {
-                        iban.is_empty() || tiban.is_empty() || norm(iban) == norm(tiban)
+            let mine = ref_id(&order.e2e);
+            let hit = cands.iter().find(|(tid, tiban, te2e)| {
+                if used.contains(tid) || !fetched.contains(tid) {
+                    return false;
+                }
+                let theirs = ref_id(te2e);
+                if !mine.is_empty() && !theirs.is_empty() {
+                    // both carry an id: it alone decides
+                    return pass == 0 && mine == theirs;
+                }
+                match pass {
+                    0 => false,
+                    1 => !order.iban.is_empty() && norm(&order.iban) == norm(tiban),
+                    _ => {
+                        order.iban.is_empty()
+                            || tiban.is_empty()
+                            || norm(&order.iban) == norm(tiban)
                     }
+                }
             });
-            if let Some((tid, _)) = hit {
+            if let Some((tid, _, _)) = hit {
                 used.insert(*tid);
-                db.execute("DELETE FROM planned_transfers WHERE id = ?1", [id])?;
+                db.execute("DELETE FROM planned_transfers WHERE id = ?1", [order.id])?;
             } else {
                 left.push(order);
             }
