@@ -3127,13 +3127,14 @@ fn booking_on_deleted_category_ends_uncategorised() {
     );
 }
 
-/// Review of #1833, finding 1 (open: the policy for redirects from older builds is still to be
-/// decided). Builds before v45 combined same-named categories by themselves; a snapshot from
-/// one can bring a redirect this vault never made. Today the merge applies it and moves this
-/// vault's own bookings to the survivor. This pins that behaviour so the policy change has to
-/// update it on purpose.
+/// Review of #1833, finding 1, decided: a redirect from an older build's snapshot is followed
+/// like any other, so every device converges; this vault's own bookings move to the survivor.
+/// Builds before v45 still combine same-named categories by themselves. An older build refuses
+/// v45 snapshots (`SchemaTooNew`), so it only gets a same-named pair to combine from another
+/// device that is also still on the old version: with three or more devices on mixed
+/// versions, an automatic combination can still reach updated devices until all are updated.
 #[test]
-fn older_snapshot_redirect_moves_local_bookings_pending_policy() {
+fn older_snapshot_redirect_is_followed() {
     let dir = temp_dir("old-redirect");
     let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
     for v in [&a, &b] {

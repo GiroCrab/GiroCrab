@@ -296,7 +296,10 @@ pub(crate) fn merge_categories(
     }
 
     // whatever points at a deleted category follows its survivor or becomes
-    // uncategorised (as a deletion does); derived, no stamps
+    // uncategorised (as a deletion does); derived, no stamps. Redirects from
+    // builds before v45, which combined same-named categories by themselves, are
+    // followed too (#1833: edge case of mixed versions on three or more devices,
+    // see `older_snapshot_redirect_is_followed`).
     for c in state.values().filter(|c| c.deleted_ms.is_some()) {
         let id = ids[&c.uuid];
         match cat_survivor(&state, &c.uuid) {
