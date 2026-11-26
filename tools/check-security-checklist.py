@@ -21,9 +21,14 @@ CRITICAL_PREFIXES = (
     "girocrab-core/src/sepa.rs",
     "girocrab-core/src/payment_input.rs",
     "girocrab-core/src/connectors/",
-    "girocrab-core/src/local_api/",
+    "girocrab-core/src/local_api",
     "GiroCrabApp/Sources/GiroCrabUI/VaultKeyManager.swift",
     "GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift",
+    "GiroCrabApp/Sources/GiroCrabUI/AppModel+LocalApi.swift",
+    "GiroCrabLinux/src/local_api.rs",
+    "GiroCrabLinux/src/vault_key.rs",
+    "GiroCrabWindows/src/vault_key.rs",
+    "GiroCrabAndroid/app/src/main/java/de/girocrab/app/security/",
     ".github/workflows/",
     "scripts/",
 )
@@ -39,6 +44,30 @@ FENCE_RE = re.compile(
 # `- [x] **Security-Check:** <what was checked>` (also `* [X] Security-Check: ok`); an unticked `[ ]`, a plain
 # bullet or a ticked label without an explanation on the same line does not count.
 CHECKED_RE = re.compile(r"^[ \t]*[-*][ \t]*\[[xX]\][ \t]*\**[ \t]*Security-Check\b[*: \t]*[^\s*:]", re.M)
+LIST_ITEM_RE = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)")
+
+
+def strip_indented_code(text):
+    """Drops lines indented by 4+ spaces or a tab unless they belong to a list item: outside a list they are an
+    indented code block (or paragraph text), never a checkbox; inside a list they are nested items and stay."""
+    out, in_list, prev_blank = [], False, True
+    for line in text.split("\n"):
+        if not line.strip():
+            out.append(line)
+            prev_blank = True
+            continue
+        if line.startswith(("    ", "\t")):
+            if in_list:
+                out.append(line)
+            prev_blank = False
+            continue
+        if LIST_ITEM_RE.match(line):
+            in_list = True
+        elif prev_blank:
+            in_list = False
+        out.append(line)
+        prev_blank = False
+    return "\n".join(out)
 
 
 def critical_paths(paths):
@@ -46,9 +75,10 @@ def critical_paths(paths):
 
 
 def has_checked_security_check(body):
-    """HTML comments are template hints and fenced blocks are examples, so a ticked box inside either does not
-    count; the ticked box needs an explanation after the label."""
-    text = FENCE_RE.sub("", HTML_COMMENT_RE.sub("", body or ""))
+    """HTML comments are template hints and fenced or indented code blocks are examples, so a ticked box inside
+    any of them does not count (a nested item under a list item does); the ticked box needs an explanation after
+    the label."""
+    text = strip_indented_code(FENCE_RE.sub("", HTML_COMMENT_RE.sub("", body or "")))
     return bool(CHECKED_RE.search(text))
 
 

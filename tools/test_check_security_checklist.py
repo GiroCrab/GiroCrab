@@ -11,10 +11,14 @@ spec.loader.exec_module(chk)
 CRITICAL = [
     "girocrab-core/src/vault.rs", "girocrab-core/src/vault/bookings.rs", "girocrab-core/src/secret_store.rs",
     "girocrab-core/src/lib.rs", "girocrab-core/src/sepa.rs", "girocrab-core/src/payment_input.rs",
-    "girocrab-core/src/connectors/fints/mod.rs", "girocrab-core/src/local_api/server.rs",
+    "girocrab-core/src/connectors/fints/mod.rs", "girocrab-core/src/local_api.rs",
     "GiroCrabApp/Sources/GiroCrabUI/VaultKeyManager.swift", "GiroCrabApp/Sources/GiroCrabUI/BankingPolicy.swift",
+    "GiroCrabApp/Sources/GiroCrabUI/AppModel+LocalApi.swift", "GiroCrabLinux/src/local_api.rs",
+    "GiroCrabLinux/src/vault_key.rs", "GiroCrabWindows/src/vault_key.rs",
+    "GiroCrabAndroid/app/src/main/java/de/girocrab/app/security/VaultKeyStore.kt",
     ".github/workflows/ci.yml", "scripts/lint-fonts.sh",
 ]
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class SecurityChecklist(unittest.TestCase):
@@ -34,9 +38,30 @@ class SecurityChecklist(unittest.TestCase):
             self.assertFalse(ok, body)
             self.assertIn("girocrab-core/src/lib.rs", msg)
 
+    def test_critical_list_names_existing_files(self):
+        for p in CRITICAL:
+            if not p.startswith((".github/", "scripts/")):
+                self.assertTrue((ROOT / p).exists(), p)
+
+    def test_local_api_module_file_is_gated(self):
+        self.assertFalse(chk.verdict(["girocrab-core/src/local_api.rs"], "")[0])
+
     def test_ticked_and_explained_check_passes(self):
         for body in ("- [x] **Security-Check:** Nothing relevant", "* [X] Security-Check: ok",
                      "  - [x] Security-Check keine neuen Zugriffe"):
+            self.assertTrue(chk.verdict(CRITICAL, body)[0], body)
+
+    def test_ticked_example_in_indented_code_block_does_not_count(self):
+        for body in ("Notes:\n\n    - [x] **Security-Check:** example",
+                     "    - [x] **Security-Check:** example",
+                     "Notes:\n\n\t- [x] **Security-Check:** example",
+                     "Notes:\n\n    - [x] **Security-Check:** example\n\n- [ ] **Security-Check:**"):
+            self.assertFalse(chk.verdict(CRITICAL, body)[0], body)
+
+    def test_nested_ticked_item_under_list_item_passes(self):
+        for body in ("- [ ] **Security-Check:**\n    - [x] **Security-Check:** Nothing relevant: nur CI",
+                     "- Punkt\n\n    - [x] **Security-Check:** Nothing relevant: nur CI",
+                     "Notes:\n\n- [x] **Security-Check:** Nothing relevant: nur CI"):
             self.assertTrue(chk.verdict(CRITICAL, body)[0], body)
 
     def test_ticked_without_explanation_fails(self):
