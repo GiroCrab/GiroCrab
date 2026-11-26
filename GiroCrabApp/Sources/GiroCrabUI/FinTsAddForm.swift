@@ -69,6 +69,8 @@ struct FinTsAddForm: View {
                     .onChange(of: presetID) { _, _ in
                         guard let p = preset else { return }
                         bankName = p.id == "custom" ? "" : p.name
+                        // the directory hit belongs to the previous BLZ: the preset's name is not its name
+                        found = nil
                         urlEdited = false
                         autoURL = p.url
                         url = p.url

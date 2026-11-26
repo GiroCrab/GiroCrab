@@ -327,8 +327,11 @@ Sheet {
                     Layout.fillWidth: true
                     model: ff.presets.map(p => p.name)
                     onActivated: i => { const p = ff.presets[i]; ff.presetName = p.id === "custom" ? "" : p.name
-                                        ff.bankName = ff.presetName; ff.urlEdited = false
-                                        ff.autoURL = p.url; ff.url = p.url; ff.blz = p.blz; blzField.text = p.blz; urlField.text = p.url }
+                                        // the directory hit belongs to the previous BLZ: the preset's name is not its name
+                                        ff.found = null; ff.bankName = ff.presetName; ff.urlEdited = false
+                                        ff.autoURL = p.url; ff.url = p.url; ff.blz = p.blz; blzField.text = p.blz; urlField.text = p.url
+                                        // also when the BLZ is unchanged (no onBlzChanged): the directory's name applies in any order
+                                        ff.lookup() }
                 }
                 Text { visible: !ff.known; text: qsTr("Bankleitzahl"); color: Theme.text }
                 TextField {
