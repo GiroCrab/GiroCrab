@@ -578,9 +578,10 @@ struct SidebarView: View {
                 .padding(.leading, indent)
                 .listRowInsets(Self.rowInsets)
                 #if os(macOS)
-                // only leaves take dragged bookings, as only leaves are assigned;
-                // a dragged category goes above or below, or into a main category (#977)
-                .modifier(categoryDropSlot(node, indent: indent, takesBookings: true))
+                // only leaves of the full tree take dragged bookings, as only those are assigned;
+                // a booking filter may hide the children of a parent, which must not make it a leaf here.
+                // A dragged category goes above or below, or into a main category (#977)
+                .modifier(categoryDropSlot(node, indent: indent, takesBookings: model.categoryTree.node(node.id)?.children == nil))
                 #endif
                 .tag(SidebarItem.category(node.id))
                 .contextMenu { categoryMenu(node.category) }
