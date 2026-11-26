@@ -323,10 +323,17 @@ struct BatchTransferSheet: View {
                 if typeSize.isAccessibilitySize { warning }
                 ForEach(rows) { r in
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack {
+                        let amount = Text(Money.format(r.cents ?? 0)).monospacedDigit()
+                        if typeSize.isAccessibilitySize {
+                            // On its own line: at the largest sizes an amount can be wider than the row.
                             Text(r.name)
-                            Spacer()
-                            Text(Money.format(r.cents ?? 0)).monospacedDigit().fixedSize()
+                            amount
+                        } else {
+                            HStack {
+                                Text(r.name)
+                                Spacer()
+                                amount.fixedSize()
+                            }
                         }
                         Text(r.iban).appFont(.caption, design: .monospaced).foregroundStyle(Theme.secondary)
                         Text(r.purpose).appFont(.caption).foregroundStyle(Theme.secondary)
