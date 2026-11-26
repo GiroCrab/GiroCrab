@@ -6627,6 +6627,17 @@
         }
       }
     },
+    "Auswertungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statistics"
+          }
+        }
+      }
+    },
     "Auswertungen anzeigen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12125,6 +12136,17 @@
         }
       }
     },
+    "Die Erstattung wird in Auswertungen mit der Buchung verrechnet, wenn beide in den betrachteten Konten liegen. Buchungen und Kontostände bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The refund is netted against the booking in reports when both are in the accounts shown. Bookings and balances stay unchanged."
+          }
+        }
+      }
+    },
     "Die Gruppe ist leer." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14154,6 +14176,17 @@
         }
       }
     },
+    "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A linked refund no longer counts as income in totals, budgets and charts; it reduces the amount of its original booking instead, also retroactively in that booking's month. This applies when the refund and the original booking are in the accounts shown. Bookings, the list and balances stay unchanged."
+          }
+        }
+      }
+    },
     "Einfügen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15193,6 +15226,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Refunds"
+          }
+        }
+      }
+    },
+    "Erstattungen mit der Ursprungsbuchung verrechnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Net refunds against their original booking"
           }
         }
       }

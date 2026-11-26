@@ -192,6 +192,21 @@ ScrollView {
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                    text: qsTr("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.") }
         }
+        SettingsFormSection {
+            title: qsTr("Auswertungen")
+            // refunds/offsets.rs (#714): stored in the vault, so only with an open vault
+            CheckBox {
+                text: qsTr("Erstattungen mit der Ursprungsbuchung verrechnen")
+                enabled: AppModel.isUnlocked
+                checked: AppModel.netRefundsInStats
+                onToggled: {
+                    AppModel.setNetRefundsInStats(checked)
+                    checked = Qt.binding(() => AppModel.netRefundsInStats) // a failed write shows the stored value
+                }
+            }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                   text: qsTr("Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert.") }
+        }
         // SettingsView.swift › TransferSettingsSection: opt-in clipboard check (#663), per device
         SettingsFormSection {
             title: qsTr("Überweisungen")
