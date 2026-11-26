@@ -275,7 +275,11 @@ fn matches_all(haystack: &str, words: &[&str]) -> bool {
 const FINTS_ALIASES: &[(&str, &str)] = &[
     ("76030080", "dab bnp paribas"),
     ("50070439", "lufthansa mastercard"),
-    ("10130800", "vitrade biw bank flatexdegiro"),
+    // flatexDEGIRO: former name "biw Bank für Investments und Wertpapiere" plus its brands
+    (
+        "10130800",
+        "vitrade biw bank flatexdegiro fur investments und wertpapiere",
+    ),
 ];
 
 fn fints_result(b: FinTsBankInfo) -> BankSearchResult {
@@ -827,6 +831,7 @@ mod tests {
             "vitrade",
             "biw",
             "biw bank",
+            "biw bank für investments und wertpapiere",
             "10130800",
             "30330800",
             "DE11 1013 0800 1234 5678 90",
