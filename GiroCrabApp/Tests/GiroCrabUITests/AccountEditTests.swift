@@ -77,6 +77,26 @@ final class AccountEditTests: XCTestCase {
         XCTAssertEqual(BankLabelChoice.custom.label(custom: "  Haushalt "), "Haushalt")
     }
 
+    func testSidebarOmitsTheAccountNoteForEveryBankLabelChoice() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let original = try XCTUnwrap(model.allAccounts.first { !$0.bankName.isEmpty })
+        let note = "Erste Zeile\nZweite Zeile"
+        model.saveAccountEdits(original, name: original.name, owner: original.owner, kind: original.kind, note: note, bankLabel: "")
+
+        var account = try XCTUnwrap(model.account(for: original.id))
+        XCTAssertEqual(account.note, note)
+        XCTAssertEqual(account.sidebarSubtitle(distinction: ""), "")
+        XCTAssertEqual(account.sidebarSubtitle(distinction: "…1234"), "…1234")
+
+        account.bankLabel = "Haushalt"
+        XCTAssertEqual(account.sidebarSubtitle(distinction: ""), "Haushalt")
+        XCTAssertEqual(account.sidebarSubtitle(distinction: "…1234"), "Haushalt · …1234")
+        account.bankLabel = nil
+        XCTAssertEqual(account.sidebarSubtitle(distinction: ""), account.bankName)
+        account.bankName = ""
+        XCTAssertEqual(account.sidebarSubtitle(distinction: ""), "")
+    }
+
     /// #1467: the sidebar shows the user's label, nothing, or the bank name again.
     func testSavedBankLabelReplacesTheBankNameInTheSidebar() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))

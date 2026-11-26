@@ -344,6 +344,11 @@ enum BankLabelChoice: Hashable, CaseIterable {
 extension Account {
     /// The bank in the sidebar row (#1467): the user's label, else the bank name.
     var sidebarBankName: String { bankLabel ?? bankName }
+
+    /// The subtitle combines the chosen bank label with the distinction for namesakes.
+    func sidebarSubtitle(distinction: String) -> String {
+        [sidebarBankName, distinction].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
 }
 
 /// IBAN, else account number, else bank.

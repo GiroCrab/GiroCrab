@@ -912,7 +912,7 @@ struct AccountRow: View {
             .help("Archiviert – wird nicht mehr abgerufen")
     }
 
-    /// Bank, note or search hit below the name. Only the plain bank name stays
+    /// Bank, account distinction or search hit below the name. Only the plain bank name stays
     /// visible in reports: owner / IBAN hits and the user's own bank label are personal.
     private func subtitle(_ text: String) -> some View {
         Text(text)
@@ -941,15 +941,11 @@ struct AccountRow: View {
         return !(model.accountDistinction(account) == account.owner && text.contains(account.owner))
     }
 
-    /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
-    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
-        let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
-        // the owner tells accounts of the same name apart
-        let owner = model.accountDistinction(account)
-        return [account.sidebarBankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        account.sidebarSubtitle(distinction: model.accountDistinction(account))
     }
 
+    /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
     private var searchAwareSubtitle: String {
         guard model.isSidebarAccountSearching else { return baseSubtitle }
         let q = model.sidebarAccountSearch.trimmingCharacters(in: .whitespacesAndNewlines)
