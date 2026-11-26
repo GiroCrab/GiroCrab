@@ -136,7 +136,8 @@ fn parse_account(a: &Value) -> Option<(String, RemoteAccount)> {
     ))
 }
 
-/// One booking of `/api/savings/account-transactions`; `None` without a usable date or amount.
+/// One booking of a booking list (`/api/savings/transactions`, or `account-transactions` with
+/// several accounts); `None` without a usable date or amount.
 fn parse_booking(account_ref: &str, t: &Value) -> Option<RemoteTransaction> {
     let date = t["date"]
         .as_str()?
