@@ -1110,7 +1110,8 @@ impl BankConnector for FordMoneyConnector {
             let mut fetched = known.clone();
             if let Ok(documents) = self.documents(&wanted, &mut fetched).await {
                 out.documents = documents;
-                out.statements_fetched = due.to_vec();
+                // only what was asked for: an account left out was not
+                out.statements_fetched = wanted.values().cloned().collect();
                 known = fetched;
             }
         }
