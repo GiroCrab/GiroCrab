@@ -350,14 +350,34 @@ fn trace(msg: &str) {
 /// starts at the tag that holds an account's first `#collapse_<number>` (its
 /// header): Festgeld sections are marked up differently from the Tagesgeld
 /// one, and cutting at `<section class="accordion">` gave them all to the
-/// account before them (#1766). The search starts at the first accordion
-/// section, which skips the links before the account list; a page without one
-/// is searched whole (`parse_accounts` drops parts that are no account).
+/// account before them (#1766). The list starts at the first accordion
+/// section, which skips the links before the account list, or earlier at a
+/// header followed by detail rows (an account in other markup listed first,
+/// a menu link has none); a page without an accordion section is searched
+/// whole (`parse_accounts` drops parts that are no account).
 fn account_parts(html: &str) -> Vec<(String, &str)> {
-    let start = SECTION_TAG
+    let accordion = SECTION_TAG
         .find_iter(html)
         .find(|m| m.as_str().contains("accordion"))
         .map_or(0, |m| m.start());
+    let early: Vec<(String, usize)> = ACCOUNT_HEADER
+        .captures_iter(&html[..accordion])
+        .map(|c| (c[1].to_string(), c.get(0).map_or(0, |m| m.start())))
+        .collect();
+    let start = early
+        .iter()
+        .enumerate()
+        .find(|(i, (number, at))| {
+            // up to the next header of another number (or the accordion)
+            let end = early[i + 1..]
+                .iter()
+                .find(|(n, _)| n != number)
+                .map_or(accordion, |(_, e)| *e);
+            LABEL_VALUE.is_match(&html[*at..end])
+        })
+        .map_or(accordion, |(_, (_, at))| {
+            html[..*at].rfind('<').unwrap_or(0)
+        });
     let list = &html[start..];
     let mut seen = HashSet::new();
     let starts: Vec<(String, usize)> = ACCOUNT_HEADER
@@ -1548,6 +1568,34 @@ mod tests {
         let numbers: Vec<&str> = accounts.iter().map(|a| a.number.as_str()).collect();
         assert_eq!(numbers, ["2000000001", "2000000002"]);
         assert_eq!(accounts[1].balance_cents, 500_000);
+    }
+
+    /// A Festgeld account in `<div>`s listed before the Tagesgeld accordion
+    /// section is still read; the menu link before it stays no account.
+    #[test]
+    fn festgeld_before_the_accordion_section_is_read() {
+        let html = format!(
+            r##"<nav><a href="#collapse_99999999" data-bs-toggle="collapse">Menü</a></nav>{}{}"##,
+            festgeld_entry(
+                "<div>",
+                "</div>",
+                "2000000001",
+                "DE00 1234 5678 2000 0000 01",
+                "10.000,00 €"
+            ),
+            account_section(
+                "1000000001",
+                "DE00 1234 5678 1000 0000 01",
+                "1.234,56 €",
+                "contentForm:j_idt331:0:j_idt340"
+            ),
+        );
+        let (accounts, unreadable) = parse_accounts(&html).unwrap();
+        assert!(unreadable.is_empty(), "{unreadable:?}");
+        let numbers: Vec<&str> = accounts.iter().map(|a| a.number.as_str()).collect();
+        assert_eq!(numbers, ["2000000001", "1000000001"]);
+        assert_eq!(accounts[0].balance_cents, 1_000_000);
+        assert_eq!(accounts[1].balance_cents, 123_456);
     }
 
     /// A menu link to a collapse target in an accordion before the accounts
