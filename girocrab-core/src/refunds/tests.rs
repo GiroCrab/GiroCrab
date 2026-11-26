@@ -4384,3 +4384,313 @@ mod round9 {
         assert_eq!(allocated(&f.v, r, bank), 60);
     }
 }
+
+/// Linked refunds netted in the statistics (opt-in, `stats.net_refunds`).
+mod stats_netting {
+    use super::*;
+    use crate::models::{BookingDirection, BookingFilter};
+
+    struct Ledger {
+        f: Fixture,
+        shop: i64,
+        back: i64,
+        refund: i64,
+        original: i64,
+    }
+
+    /// A purchase of 100 € in "Shop", a refund of 30 € in "Back", linked.
+    fn ledger() -> Ledger {
+        let f = Fixture::new();
+        let shop =
+            f.v.create_category("Shop".into(), None, String::new(), String::new())
+                .unwrap();
+        let back =
+            f.v.create_category("Back".into(), None, String::new(), String::new())
+                .unwrap();
+        let original = f.add("original", -10_000);
+        let refund = f.add("refund", 3_000);
+        raw(
+            &f.v,
+            &format!(
+                "UPDATE transactions SET category_id={shop}, category_source='manual' WHERE id={original};
+                 UPDATE transactions SET category_id={back}, category_source='manual' WHERE id={refund}"
+            ),
+        );
+        f.link(refund, "", original, "");
+        Ledger {
+            f,
+            shop,
+            back,
+            refund,
+            original,
+        }
+    }
+
+    fn totals(l: &Ledger) -> (i64, i64) {
+        let cats =
+            l.f.v
+                .list_categories_filtered(None, None, Vec::new(), None, BookingDirection::All)
+                .unwrap();
+        let total = |id| cats.iter().find(|c| c.id == id).unwrap().total_cents;
+        (total(l.shop), total(l.back))
+    }
+
+    fn flow(l: &Ledger) -> (i64, i64) {
+        let page = l.f.v.list_transactions(BookingFilter::default()).unwrap();
+        (page.income_cents, page.expense_cents)
+    }
+
+    #[test]
+    fn off_by_default_the_sums_keep_the_stored_amounts() {
+        let l = ledger();
+        assert!(!l.f.v.net_refunds_in_stats().unwrap());
+        assert_eq!(totals(&l), (-10_000, 3_000));
+    }
+
+    #[test]
+    fn on_the_refund_leaves_the_sums_and_reduces_the_original() {
+        let l = ledger();
+        let before = flow(&l);
+        l.f.v.set_net_refunds_in_stats(true).unwrap();
+        assert!(l.f.v.net_refunds_in_stats().unwrap());
+        assert_eq!(totals(&l), (-7_000, 0));
+        let history =
+            l.f.v
+                .category_history(l.shop, Vec::new(), None, None)
+                .unwrap();
+        assert_eq!(history[0].cents, -7_000);
+        // the KPI tiles: the refund no longer counts, the purchase only with what was kept
+        let after = flow(&l);
+        assert_ne!(before, after);
+        assert_eq!(after.0 + after.1, -7_000);
+        // the bookings themselves keep their amounts
+        let page = l.f.v.list_transactions(BookingFilter::default()).unwrap();
+        let amount = |id| {
+            page.transactions
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .amount_cents
+        };
+        assert_eq!((amount(l.original), amount(l.refund)), (-10_000, 3_000));
+        // and off again restores the stored sums
+        l.f.v.set_net_refunds_in_stats(false).unwrap();
+        assert_eq!(totals(&l), (-10_000, 3_000));
+        assert_eq!(flow(&l), before);
+    }
+
+    #[test]
+    fn a_new_link_or_an_unlink_moves_the_sums_at_once() {
+        let l = ledger();
+        l.f.v.set_net_refunds_in_stats(true).unwrap();
+        assert_eq!(totals(&l), (-7_000, 0));
+        l.f.unlink(l.refund, "", l.original, "");
+        assert_eq!(totals(&l), (-10_000, 3_000));
+    }
+
+    #[test]
+    fn split_parts_are_offset_per_part() {
+        let l = ledger();
+        let other =
+            l.f.v
+                .create_category("Other".into(), None, String::new(), String::new())
+                .unwrap();
+        let parts = l.f.split(l.original, &[-6_000, -4_000]);
+        raw(
+            &l.f.v,
+            &format!(
+                "UPDATE transaction_splits SET category_id={} WHERE uuid='{}';
+                 UPDATE transaction_splits SET category_id={other} WHERE uuid='{}'",
+                l.shop, parts[0], parts[1]
+            ),
+        );
+        l.f.unlink(l.refund, "", l.original, "");
+        l.f.link(l.refund, "", l.original, &parts[1]);
+        l.f.v.set_net_refunds_in_stats(true).unwrap();
+        let cats =
+            l.f.v
+                .list_categories_filtered(None, None, Vec::new(), None, BookingDirection::All)
+                .unwrap();
+        let total = |id| cats.iter().find(|c| c.id == id).unwrap().total_cents;
+        assert_eq!(
+            (total(l.shop), total(other), total(l.back)),
+            (-6_000, -1_000, 0)
+        );
+        let budget_filter = BookingFilter {
+            category_id: Some(other),
+            ..Default::default()
+        };
+        let page = l.f.v.list_transactions(budget_filter).unwrap();
+        assert_eq!(page.expense_cents, -1_000);
+    }
+
+    #[test]
+    fn budgets_and_cash_flow_follow_the_setting() {
+        let l = ledger();
+        l.f.v.set_category_budget(l.shop, Some(20_000)).unwrap();
+        let spent = |l: &Ledger| {
+            l.f.v
+                .list_category_budget_progress(2026, 1)
+                .unwrap()
+                .into_iter()
+                .find(|b| b.category_id == l.shop)
+                .unwrap()
+                .spent_cents
+        };
+        let cash = |l: &Ledger| {
+            let rows = crate::planning::cashflow_for(
+                &l.f.v,
+                crate::models::PeriodGranularity::Month,
+                1,
+                &[],
+                2026,
+                1,
+                false,
+            )
+            .unwrap();
+            (rows[0].income_cents, rows[0].expense_cents)
+        };
+        let (spent_before, cash_before) = (spent(&l), cash(&l));
+        l.f.v.set_net_refunds_in_stats(true).unwrap();
+        assert_eq!(spent(&l), 7_000);
+        assert_ne!(spent_before, spent(&l));
+        assert_eq!(cash(&l), (0, 7_000));
+        l.f.v.set_net_refunds_in_stats(false).unwrap();
+        assert_eq!(cash(&l), cash_before);
+    }
+
+    /// Audit (#714): a link nets only when its other booking is in the accounts summed, so a
+    /// single account still adds up to its own bookings.
+    #[test]
+    fn netting_follows_the_account_scope() {
+        let f = Fixture::new();
+        let other =
+            f.v.create_offline_account("Card".into(), AccountKind::Cash, "EUR".into(), 0)
+                .unwrap();
+        let original = f.add("original", -10_000);
+        let refund = f.add("refund", 3_000);
+        raw(
+            &f.v,
+            &format!("UPDATE transactions SET account_id={other} WHERE id={refund}"),
+        );
+        f.link(refund, "", original, "");
+        f.v.set_net_refunds_in_stats(true).unwrap();
+        let sums = |accounts: Vec<i64>| {
+            let page =
+                f.v.list_transactions(BookingFilter {
+                    account_ids: accounts,
+                    ..Default::default()
+                })
+                .unwrap();
+            (page.income_cents, page.expense_cents)
+        };
+        assert_eq!(sums(Vec::new()), (0, -7_000));
+        assert_eq!(sums(vec![f.account, other]), (0, -7_000));
+        assert_eq!(sums(vec![f.account]), (0, -10_000));
+        assert_eq!(sums(vec![other]), (3_000, 0));
+        // the totals set: an account left out of the totals nets nothing into them
+        raw(
+            &f.v,
+            &format!("UPDATE accounts SET include_in_total=0 WHERE id={other}"),
+        );
+        let page =
+            f.v.list_transactions(BookingFilter {
+                respect_in_total: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.expense_cents, -10_000);
+        // the cashflow card in a totals context (no selection): the same scope
+        assert_eq!(
+            crate::planning::cashflow_for(
+                &f.v,
+                crate::models::PeriodGranularity::Month,
+                1,
+                &[],
+                2026,
+                1,
+                true,
+            )
+            .unwrap()[0]
+                .expense_cents,
+            10_000
+        );
+        assert_eq!(
+            crate::planning::cashflow_for(
+                &f.v,
+                crate::models::PeriodGranularity::Month,
+                1,
+                &[f.account],
+                2026,
+                1,
+                false,
+            )
+            .unwrap()[0]
+                .expense_cents,
+            10_000
+        );
+    }
+
+    #[test]
+    fn off_and_without_links_the_sql_carries_no_function_call() {
+        let f = Fixture::new();
+        let db = f.v.db().unwrap();
+        let sql = f.v.effective_sql(&db, "", "", &[]).unwrap();
+        assert!(!sql.contains("refund_offset"));
+        Vault::set_setting_inner(&db, crate::refunds::NET_REFUNDS_KEY, "1").unwrap();
+        // on, but no live link: still plain amounts, nothing loaded
+        let sql = f.v.effective_sql(&db, "", "", &[]).unwrap();
+        assert!(!sql.contains("refund_offset"));
+    }
+
+    /// The refunded amount counts in the original's month: a February refund of a January
+    /// purchase lowers January and adds nothing to February.
+    #[test]
+    fn a_later_refund_counts_in_the_original_month() {
+        let l = ledger();
+        raw(
+            &l.f.v,
+            &format!(
+                "UPDATE transactions SET booking_date='2026-02-10' WHERE id={}",
+                l.refund
+            ),
+        );
+        l.f.v.set_net_refunds_in_stats(true).unwrap();
+        let rows = crate::planning::cashflow_for(
+            &l.f.v,
+            crate::models::PeriodGranularity::Month,
+            2,
+            &[],
+            2026,
+            2,
+            false,
+        )
+        .unwrap();
+        let months: Vec<_> = rows
+            .iter()
+            .map(|r| (r.key.as_str(), r.income_cents, r.expense_cents))
+            .collect();
+        assert_eq!(months, [("2026-01", 0, 7_000), ("2026-02", 0, 0)]);
+        let history =
+            l.f.v
+                .category_history(l.shop, Vec::new(), None, None)
+                .unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .map(|p| (p.period.as_str(), p.cents))
+                .collect::<Vec<_>>(),
+            [("2026-01", -7_000)]
+        );
+        let back =
+            l.f.v
+                .category_history(l.back, Vec::new(), None, None)
+                .unwrap();
+        assert_eq!(
+            back.iter()
+                .map(|p| (p.period.as_str(), p.cents))
+                .collect::<Vec<_>>(),
+            [("2026-02", 0)]
+        );
+    }
+}
