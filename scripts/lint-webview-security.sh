@@ -169,10 +169,12 @@ done
 # addresses a password field needs its own location.origin/hostname check
 PW_GATE_RE='location\.(origin|hostname)'
 pw_segments() {   # stdin = file, $1 = literal delimiter; each literal on one line, last the code outside them
+    # the opening line belongs to the literal (a gate right after the delimiter counts), and so does the closing line
     awk -v d="$1" '{ n = gsub(d, d) }
+        !inl && n % 2 { inl = 1; lit = $0; next }
         inl { lit = lit " " $0 }
         !inl { out = out " " $0 }
-        n % 2 { if (inl) { print lit; lit = "" } inl = !inl }
+        inl && n % 2 { print lit; lit = ""; inl = 0 }
         END { if (inl) print lit; print out }'
 }
 pw_gate_gap() {   # $1 = file, $2 = literal delimiter; succeeds when a script touches a password field ungated
@@ -191,7 +193,8 @@ pw_gate_gap() {   # $1 = file, $2 = literal delimiter; succeeds when a script to
     return 1
 }
 pw_outside() {   # stdin = file, $1 = literal delimiter; the lines outside multi-line literals
-    awk -v d="$1" '{ n = gsub(d, d) } !inl { print } n % 2 { inl = !inl }'
+    # opening and closing lines are part of their literal and are checked with it (pw_segments)
+    awk -v d="$1" '{ n = gsub(d, d) } !inl && n % 2 == 0 { print } n % 2 { inl = !inl }'
 }
 gate_ok=$'let a = """\nif (location.hostname !== host) return false;\ndocument.querySelector(\'input[type=password]\').value = pw;\n"""'
 pw_gate_gap "$gate_ok"$'\nlet b = """\ndocument.querySelector(\'input[type=password]\').value = pw;\n"""' '"""' \
@@ -204,6 +207,15 @@ pw_gate_gap $'let a = "if (location.hostname == h) {}"\nlet b = "document.queryS
 if pw_gate_gap $'let a = "location.hostname == h && document.querySelector(\'input[type=password]\').value = pw;"' '"""'; then
     err "self-test: gated one-line password script flagged"
 fi
+# the opening line of a multi-line literal belongs to it (AdvanziaWebLoginFlow.qml `inspect`)
+if pw_gate_gap $'readonly property string a: `if (location.origin !== o) return 0;\nif (inputs.some(e => e.type === \'password\')) return 1;\nreturn 2;`' '`'; then
+    err "self-test: password script gated on its opening line flagged"
+fi
+if pw_gate_gap $'readonly property string a: `const f = document.querySelector(\'input[type=password]\');\nif (location.origin !== o) return;\nf.value = v;`' '`'; then
+    err "self-test: password field on the opening line of a gated literal flagged"
+fi
+pw_gate_gap $'// location.origin\nreadonly property string a: `const ok = 1;\nif (inputs.some(e => e.type === \'password\')) return 1;`' '`' \
+    || err "self-test: literal gated only by a line before its opening line accepted"
 for f in $(grep -lE "$PW_FIELD_RE" "$SWIFT_DIR"/*.swift "$QML_DIR"/*.qml 2>/dev/null); do
     d='"""'; [[ "$f" == *.qml ]] && d='`'
     ! pw_gate_gap "$(cat "$f")" "$d" || err "$f: password field script without its own location.origin/hostname gate"
