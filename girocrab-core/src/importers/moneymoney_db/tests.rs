@@ -5541,3 +5541,83 @@ fn show_in_diagrams_zero_maps_to_neutral_role() {
         crate::models::CategoryRole::Consumption
     );
 }
+
+#[test]
+fn category_only_reimport_keeps_explicit_roles_and_resets() {
+    use crate::models::CategoryRole;
+
+    let local_dir = crate::test_support::TempDir::new("mm-roles-local");
+    let peer_dir = crate::test_support::TempDir::new("mm-roles-peer");
+    let local = Vault::open(local_dir.join("v.db").to_string_lossy().into(), vec![7; 32]).unwrap();
+    let peer = Vault::open(peer_dir.join("v.db").to_string_lossy().into(), vec![7; 32]).unwrap();
+    let mm = fake_db_with(
+        false,
+        "ALTER TABLE categories ADD COLUMN showInDiagrams INTEGER DEFAULT 1;
+         INSERT INTO categories (rowid, name, type, group_key, sort, showInDiagrams) VALUES
+           (10, 'Ausgelegt', 1, 0, 10, 0),
+           (11, 'Vorschuss', 1, 0, 11, 0);",
+    );
+    let import = |replaces| {
+        let preview = local
+            .preview_moneymoney_database(mm.clone(), PW.into(), None)
+            .unwrap();
+        assert_eq!(preview.replaces_starter_categories, replaces);
+        let mut options = options_from(&preview, false);
+        options.accounts.clear();
+        local
+            .import_moneymoney_database(mm.clone(), PW.into(), options)
+            .unwrap();
+        assert_eq!(
+            local
+                .list_transactions(BookingFilter::default())
+                .unwrap()
+                .total_count,
+            0
+        );
+    };
+    let state = |vault: &Vault| {
+        let entries = vault.list_categories(None, None).unwrap();
+        let db = vault.db().unwrap();
+        ["Ausgelegt", "Vorschuss"].map(|name| {
+            let cat = entries.iter().find(|c| c.name == name).unwrap();
+            let stamp: i64 = db
+                .query_row(
+                    "SELECT role_ms FROM categories WHERE id = ?1",
+                    [cat.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (cat.id, cat.role, cat.effective_role, stamp)
+        })
+    };
+
+    local.seed_starter_categories().unwrap();
+    import(true);
+    let [outlay, advance] = state(&local);
+    assert_eq!(outlay.1, Some(CategoryRole::Neutral));
+    assert_eq!(advance.1, Some(CategoryRole::Neutral));
+
+    local.set_category_role(outlay.0, None).unwrap();
+    local
+        .set_category_role(advance.0, Some(CategoryRole::Loan))
+        .unwrap();
+    let expected = state(&local);
+    assert_eq!(expected[0].1, None);
+    assert_eq!(expected[0].2, CategoryRole::Consumption);
+    assert_eq!(expected[1].1, Some(CategoryRole::Loan));
+    assert_eq!(expected[1].2, CategoryRole::Loan);
+    assert!(expected.iter().all(|row| row.3 > 0));
+
+    import(false);
+    assert_eq!(state(&local), expected);
+    peer.merge_other_vault(local_dir.join("v.db").to_string_lossy().into(), vec![7; 32])
+        .unwrap();
+    let roles = |rows: [(i64, Option<CategoryRole>, CategoryRole, i64); 2]| {
+        rows.map(|(_, role, effective, stamp)| (role, effective, stamp))
+    };
+    assert_eq!(roles(state(&peer)), roles(expected));
+    local
+        .merge_other_vault(peer_dir.join("v.db").to_string_lossy().into(), vec![7; 32])
+        .unwrap();
+    assert_eq!(state(&local), expected);
+}

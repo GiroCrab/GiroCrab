@@ -2751,8 +2751,8 @@ fn unique<T>(mut it: impl Iterator<Item = T>) -> Option<T> {
     it.next().is_none().then_some(first)
 }
 
-/// MoneyMoney's tree replaces the starter categories only in a vault without
-/// bookings: nothing can be assigned to them yet, so nothing is lost.
+/// Replace the starter tree only while no booking uses it and no live category
+/// carries an explicit GiroCrab role choice, including a reset to inherit.
 fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bool> {
     if src.categories.order.is_empty() {
         return Ok(false);
@@ -2762,7 +2762,12 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
         [],
         |r| r.get(0),
     )?;
-    Ok(bookings == 0)
+    if bookings != 0 {
+        return Ok(false);
+    }
+    Ok(!Vault::explicit_roles(conn)?
+        .values()
+        .any(|&(_, stamp)| stamp > 0))
 }
 
 /// Every way to connect a MoneyMoney bank login, best first (FinTS, own
