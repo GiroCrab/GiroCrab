@@ -17,10 +17,10 @@ ignore = [
     # basic-toml: unmaintained, only pulled in by askama_derive (UniFFI build-time codegen).
     # Same reason as in `.cargo/audit.toml`; remove with it.
     "RUSTSEC-2026-0374",
-    # Windows front end only: chrono comes in via i-slint-core (Slint 1.19), no safe upgrade
-    # exists. Pinned to this version so a chrono bump in GiroCrabWindows/Cargo.lock is reviewed
-    # again; remove once Slint drops chrono.
-    { crate = "chrono@0.4.45", reason = "transitive via Slint (Windows front end), no fixed version available" },
+    # Windows front end only: chrono (unmaintained) comes in via i-slint-core (Slint 1.19), no
+    # safe upgrade exists. Ignored by advisory ID, so it applies to every chrono version (no
+    # version pin); remove once Slint drops chrono.
+    { id = "RUSTSEC-2026-0543", reason = "transitive via Slint (Windows front end), no fixed version available" },
 ]
 
 [licenses]
