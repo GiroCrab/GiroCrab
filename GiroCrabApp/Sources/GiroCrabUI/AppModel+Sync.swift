@@ -154,8 +154,8 @@ extension AppModel {
 
     /// A browser login opened by "Alle Konten abrufen" was closed (imported or closed
     /// without import): on with the next login, unless a sync runs meanwhile.
-    func continueSyncBatchAfterPortal() {
-        guard syncingConnectionID == nil, syncBatchTotal > 0 else { return }
+    func continueSyncBatchAfterPortal(generation: Int) {
+        guard generation == syncBatchGeneration, syncingConnectionID == nil, syncBatchTotal > 0 else { return }
         syncNextInQueue()
     }
 
@@ -246,10 +246,11 @@ extension AppModel {
 
     /// Runs `logins` one after another; read once the banking policy is fresh.
     private func requestSyncBatch(_ logins: @escaping @MainActor () -> [BankConnection]) {
-        guard syncingConnectionID == nil else { return }
+        // a batch waiting for its browser login keeps its queue: no second batch over it
+        guard syncingConnectionID == nil, portalBatchConnectionID == nil else { return }
         refreshAssetPrices()
         withFreshBankingPolicy { [self] in
-            guard syncingConnectionID == nil else { return }
+            guard syncingConnectionID == nil, portalBatchConnectionID == nil else { return }
             let batch = logins()
             // Logins the banking policy blocks are skipped and named at the end.
             let blocked = batch.filter { bankingGate(for: $0) != nil }
@@ -260,6 +261,7 @@ extension AppModel {
                 }
                 return
             }
+            syncBatchGeneration &+= 1
             syncQueue = Array(allowed.dropFirst())
             syncBatchTotal = allowed.count
             syncBatchSkipped = blocked.map { String(localized: "\($0.displayName) (Sicherheitssperre)") }
@@ -352,6 +354,7 @@ extension AppModel {
     }
 
     func resetSyncBatch() {
+        syncBatchGeneration &+= 1
         syncQueue = []
         syncBatchTotal = 0
         syncBatchSkipped = []

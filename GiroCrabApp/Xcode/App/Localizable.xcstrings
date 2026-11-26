@@ -38480,12 +38480,12 @@
         }
       }
     },
-    "Öffnet das Anmeldefenster dieses Zugangs, nachdem alle übrigen Bankzugänge abgerufen sind. Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt diesen Zugang aus." : {
+    "Öffnet das Anmeldefenster dieses Zugangs, nachdem die Bankzugänge ohne Anmeldefenster abgerufen sind. Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt diesen Zugang aus." : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Opens this login's sign-in window after all other bank logins have been fetched. “Done” moves on to the next one, “Cancel” leaves this login out."
+            "value" : "Opens this login's sign-in window after the bank logins without a sign-in window have been fetched. “Done” moves on to the next one, “Cancel” leaves this login out."
           }
         }
       }

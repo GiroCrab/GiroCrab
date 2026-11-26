@@ -858,7 +858,12 @@ struct MainSplitView: View {
                 .environment(model)
                 .interactiveDismissDisabled()
         }
-        .capturableSheet(item: $model.webLoginConnection) { c in
+        .capturableSheet(item: $model.webLoginConnection, onDismiss: {
+            // "Alle Konten abrufen": the next login once this window is really gone
+            let next = model.afterWebLoginDismiss
+            model.afterWebLoginDismiss = nil
+            next?()
+        }) { c in
             Group {
                 if c.connector == .tradeRepublic { WebLoginSheet(connection: c) }
                 else if c.connector == .amazonOrders { AmazonWebSheet(connection: c) }

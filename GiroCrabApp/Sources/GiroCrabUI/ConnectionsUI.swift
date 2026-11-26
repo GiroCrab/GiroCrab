@@ -555,7 +555,7 @@ struct ConnectionEditSheet: View {
                     } header: {
                         Text("Abruf").appSectionHeader()
                     } footer: {
-                        Text("Öffnet das Anmeldefenster dieses Zugangs, nachdem alle übrigen Bankzugänge abgerufen sind. Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt diesen Zugang aus.")
+                        Text("Öffnet das Anmeldefenster dieses Zugangs, nachdem die Bankzugänge ohne Anmeldefenster abgerufen sind. Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt diesen Zugang aus.")
                             .appFont(.caption).foregroundStyle(Theme.secondary)
                             .leadingFooter()
                     }
