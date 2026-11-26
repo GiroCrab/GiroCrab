@@ -48,14 +48,15 @@ class StandingOrderRhythmTest {
         assertNull(o.noNextRunNote(LocalDate.parse("2026-11-26")))
     }
 
-    /** Only a bank-reported last execution in the past makes an order ended. */
+    /** Only a bank-reported last execution up to today makes an order ended. */
     @Test
-    fun onlyAReportedLastExecutionInThePastMeansEnded() {
+    fun onlyAReportedLastExecutionUpToTodayMeansEnded() {
         val today = LocalDate.parse("2026-11-26")
-        val ended = order().copy(lastDate = LocalDate.parse("2026-06-01"))
-        assertEquals("keine (beendet)", ended.noNextRunNote(today))
-        // Last execution today is not "in the past" — the run may still come.
-        assertEquals("kein Termin im Zeitfenster", ended.copy(lastDate = today).noNextRunNote(today))
+        assertEquals("keine (beendet)", order().copy(lastDate = LocalDate.parse("2026-06-01")).noNextRunNote(today))
+        // Executed today: that execution is history, no run follows.
+        assertEquals("keine (beendet)", order().copy(lastDate = today).noNextRunNote(today))
+        // A reported end in the future is not reached yet — the order is not ended.
+        assertEquals("kein Termin im Zeitfenster", order().copy(lastDate = today.plusDays(1)).noNextRunNote(today))
     }
 
     /** An open order without a run in the 400-day window is not ended. */

@@ -213,8 +213,8 @@ data class StandingOrder(
 }
 
 /**
- * What the card may claim when the core reported no run for this order (#1429, 3.2b): ended only if
- * the bank's last reported execution lies in the past. An open order without a run in the window is
+ * What the card may claim when the core reported no run for this order (#1429, 3.2b): ended once the
+ * bank's last reported execution is today or earlier. An open order without a run in the window is
  * not ended — it just has no execution inside those days.
  */
 fun StandingOrder.noNextRunNote(today: LocalDate): String? = when {
