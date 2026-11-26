@@ -34,14 +34,14 @@
 - **Ort:** `PlannedPaymentsView.swift`, Filter mit festen Breitenbereichen und Monatskopf.
 - **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ ragt „Geplant“ links aus dem Bild, der Monatsbetrag rechts. „3 Monate“ bricht mitten im Wort um.
 - **Vorschlag:** Filter bei beengter Breite stapeln. Monatsbeträge auf eine eigene Zeile setzen, wenn Beschriftung und Summe nebeneinander keinen Platz haben.
-- **Prüfung:** „Alle Konten“ und „3 Monate“ mit der genannten Schriftstufe prüfen. Filter, Titel, Monatsbetrag und erste Zeile bleiben lesbar. [Bildbelege (ZIP)][bildbelege] · `iphone-gross-geplant.png`.
+- **Prüfung:** „Alle Konten“ und „3 Monate“ mit der genannten Schriftstufe prüfen. Filter, Titel, Monatsbetrag und erste Zeile bleiben lesbar.
 
 #### GPL-2 · Detailtitel „Buchung“ bezeichnet zwei andere Vorgänge
 
 - **Ort:** `RootView.swift`, `MainSplitView.bookingSheetTitle`.
 - **Beobachtung:** Auf dem iPhone bei Standardgröße heißen die Details der geplanten Zahlung „Fitnessstudio Mitte“ und des Mandats „Jan Muster“ jeweils „Buchung“.
 - **Vorschlag:** Titel nach dem dargestellten Vorgang wählen, etwa „Geplante Zahlung“ und „Lastschriftmandat“. Personenbezogene Titelanteile müssen bei Schwärzung verdeckt bleiben.
-- **Prüfung:** Beide Details öffnen und die Titel in Standardgröße sowie mit Schwärzung prüfen. [Bildbelege (ZIP)][bildbelege] · `iphone-geplant-detail.png`, `iphone-lastschriften-detail.png`.
+- **Prüfung:** Beide Details öffnen und die Titel in Standardgröße sowie mit Schwärzung prüfen.
 
 ### Lastschriften
 
@@ -54,7 +54,7 @@
 - **Ort:** `DirectDebitsView.swift`, `controls`, `accountPicker` und die separate Listen-`ScrollView`.
 - **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ füllen Kopf und Aktionen die sichtbare Fläche. Beim Öffnen ist kein Mandat sichtbar. Kontoname und Dateiaktionen werden umgebrochen oder gekürzt.
 - **Vorschlag:** Kopf und Mandate gemeinsam scrollen lassen und schmale Aktionsgruppen stapeln.
-- **Prüfung:** „Musterbank Girokonto“ bei „Accessibility XL“ öffnen, bis zum ersten Mandat scrollen und es öffnen. Konto- und Aktionsbeschriftungen sind vollständig lesbar. [Bildbelege (ZIP)][bildbelege] · `iphone-gross-lastschriften.png`.
+- **Prüfung:** „Musterbank Girokonto“ bei „Accessibility XL“ öffnen, bis zum ersten Mandat scrollen und es öffnen. Konto- und Aktionsbeschriftungen sind vollständig lesbar.
 
 ### Abos & Verträge
 
@@ -65,13 +65,11 @@
 - **Ort:** `SubscriptionsView.swift`, `totals` und `controls`.
 - **Beobachtung:** Ein- und Ausgaben stehen nebeneinander und halten Betrag und Turnus per `.fixedSize()` zusammen. Mehrere Menüs bleiben auch im schmalen Zweig nebeneinander. Bei Standardgröße sind Titel und Zeilen angeschnitten, bei „Accessibility XL“ auch die Summen.
 - **Vorschlag:** Summenspalten und Filter auf kleinen Breiten stapeln. Währungsbeträge zusammenhalten und die Zeilenbreite begrenzen.
-- **Prüfung:** Auf dem iPhone mit „Original“ bei Standard und „Accessibility XL“ Titel, erste Zeile, Such- und Filteraktionen sowie vollständige Summen pro Währung prüfen. [Bildbelege (ZIP)][bildbelege] · `iphone-standard-abos.png`, `iphone-gross-abos.png`.
+- **Prüfung:** Auf dem iPhone mit „Original“ bei Standard und „Accessibility XL“ Titel, erste Zeile, Such- und Filteraktionen sowie vollständige Summen pro Währung prüfen.
 
 #### ABO-2 · Tippen auf Vertrag öffnet kein Detail
 
 - **Ort:** `SubscriptionRow.swift`, `SubscriptionRow`, sowie `RootView.swift`, `MainSplitView.showBookingSheet`.
 - **Beobachtung:** Auf dem iPhone „Autobank“ antippen. Die Zeile wird ausgewählt. Das kompakte Detail bleibt zu, während der Mac die Darlehensrate im Inspektor zeigt.
 - **Vorschlag:** Beim Antippen in der kompakten Darstellung zusätzlich das Detail-Sheet öffnen und den bestehenden Auswahlpfad beibehalten.
-- **Prüfung:** Auf dem iPhone „Autobank“ öffnen, Rate und Kündigungsfrist prüfen und das Detail schließen. Auf dem Mac die Auswahl im Inspektor nachprüfen. Die iCloud-Synchronisierung bleibt in [#1918](https://github.com/GiroCrab/GiroCrab/issues/1918) erfasst. [Bildbelege (ZIP)][bildbelege] · `iphone-abos-auswahl.png`.
-
-[bildbelege]: https://github.com/user-attachments/files/35449133/PR-Bildbelege.zip
+- **Prüfung:** Auf dem iPhone „Autobank“ öffnen, Rate und Kündigungsfrist prüfen und das Detail schließen. Auf dem Mac die Auswahl im Inspektor nachprüfen. Die iCloud-Synchronisierung bleibt in [#1918](https://github.com/GiroCrab/GiroCrab/issues/1918) erfasst.

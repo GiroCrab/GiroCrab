@@ -29,13 +29,11 @@
 - **Ort:** `SidebarView.swift` (`AccountRow`) und `AllAccountsRoot.swift` (`AllAccountsRow`).
 - **Beobachtung:** Auf dem schmalen Mac werden Tagesgeldnamen gekürzt. Am iPhone bleibt bei „Accessibility XL“ vom Girokonto „M“ und bei der Kreditkarte nur das Kürzungszeichen.
 - **Vorschlag:** Bei Platzmangel Namen und Saldo untereinander anordnen oder dem Namen eine zweite Zeile geben.
-- **Prüfung:** Auf Mac und iPhone die ersten Konten bei großer Schrift vergleichen und das Girokonto auswählen. Namen und Salden bleiben zuordenbar. [Bildbelege (ZIP)][bildbelege] · `mac-sidebar-gross.png`, `iphone-sidebar-gross.png`.
+- **Prüfung:** Auf Mac und iPhone die ersten Konten bei großer Schrift vergleichen und das Girokonto auswählen. Namen und Salden bleiben zuordenbar.
 
 #### SEI-2 · Seitensymbole ragen in den Text
 
 - **Ort:** `SidebarView.swift`, Navigationszeilen mit 20-pt-Symbolspalte.
 - **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ ragen die Symbole in „Neue Umsätze“ und „Vermögen“ in die Beschriftung.
 - **Vorschlag:** Die reservierte Symbolspalte mit der Schrift skalieren und einen festen sichtbaren Abstand zum Text vorsehen.
-- **Prüfung:** Dieselben Navigationspunkte bei Standard und „Accessibility XL“ vergleichen. Beide Symbole bleiben vom Text getrennt. [Bildbelege (ZIP)][bildbelege] · `iphone-sidebar-gross.png`.
-
-[bildbelege]: https://github.com/user-attachments/files/35449133/PR-Bildbelege.zip
+- **Prüfung:** Dieselben Navigationspunkte bei Standard und „Accessibility XL“ vergleichen. Beide Symbole bleiben vom Text getrennt.

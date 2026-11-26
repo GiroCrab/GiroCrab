@@ -37,7 +37,7 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
    Die Tabelle fasst jeden Befund in einer Zeile zusammen. Beim Anlegen erhält jeder offene Befund und jede
    offene Entscheidung sofort einen eigenen Detailabschnitt unter der Ansicht im „Prüfnachweis“. Dort stehen
    **Ort** (Datei und Symbol), **Beobachtung** (Zustand, Schritte und sichtbares Ergebnis), **Vorschlag**
-   (Lösungsansatz oder die noch zu klärende Frage) und **Prüfung** (Abnahmekriterium und Beleg, falls vorhanden).
+   (Lösungsansatz oder die noch zu klärende Frage) und **Prüfung** (Abnahmekriterium).
    Gemeinsame Startargumente können einmal bei der Ansicht stehen. Sobald ein Befund nachgeprüft `fixed` ist,
    kann der Detailabschnitt entfallen. Befund-ID, Status, Fix-Link und kurze Nachprüfung bleiben im Bericht.
 6. **Sortieren.** Jeder Befund bekommt genau einen Weg:
@@ -48,8 +48,9 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
      bleibt im Bericht und wird im RFC-Issue zur Diskussion gestellt, nicht nebenbei geändert.
    - **Verworfen:** nach Prüfung kein Problem → mit Begründung im Bericht lassen.
 7. **Nachprüfen und abschließen.** Den Demo-Fall bei einem Fix im selben Zustand auf dem Ausgangsstand und
-   auf dem Fix-Stand wiederholen. Datum, Commit, Plattform, Ergebnis und Beleg im Bericht ergänzen. Im PR die
-   IDs der behobenen Befunde nennen und Vorher/Nachher-Aufnahmen zuordnen. Der Bericht verlinkt
+   auf dem Fix-Stand wiederholen. Datum, Commit, Plattform und Ergebnis im Bericht ergänzen. In der
+   Beschreibung des Fix-PRs die IDs der behobenen Befunde nennen und die Vorher/Nachher-Aufnahmen zuordnen.
+   Der Bericht verlinkt
    den zuständigen PR oder das Issue und führt pro Befund genau einen Status:
    `open` für offene Befunde (auch teilweise behobene), `fixed` für vollständig behobene und nachgeprüfte
    Befunde, deren Fix auf `main` liegt oder im selben PR mitgeliefert wird,
@@ -66,7 +67,7 @@ liest beide. Technische Regeln stehen in [`CLAUDE.md`](../CLAUDE.md).
   dieser Zeile. Textkorrekturen, Links und reine Statuspflege lassen beide Angaben bestehen.
 - **Gezielte Nachprüfung.** Nach einem Fix, einem Verdacht auf Regression oder einer kleinen Änderung
   die betroffenen Demo-Fälle auf dem aktuellen Stand wiederholen. Unter „Prüfnachweis“ eine Zeile mit Datum,
-  geprüftem Commit, Befund-IDs und Plattformen ergänzen. Ergebnis und Beleg den geprüften IDs zuordnen.
+  geprüftem Commit, Befund-IDs und Plattformen ergänzen. Das Ergebnis den geprüften IDs zuordnen.
   Wenn der neue Durchgang dieselben Fälle abdeckt, den bisherigen Nachweis ersetzen. Datum und Scores
   gelten weiter für den vollständigen Durchgang. Tritt ein behobener Befund erneut auf, seine ID mit `open` wieder öffnen.
 - **Vollständiges Audit wiederholen.** Wenn sich Aufgabe, Aufbau, Bedienung, Plattformverhalten oder
@@ -143,8 +144,9 @@ rg -n 'withAnimation\(|\.animation\(' "$TARGET"              # Bewegung reduzier
 Immer mit Demo-Daten und ohne Banner aufnehmen. In der Demo-App unter „Einstellungen › Allgemein ›
 Mitteilungen“ die Projektmitteilungen ausstellen. `--screenshot` blendet den Demo-Hinweis aus. `--pick <Text>`
 wählt die erste Buchung, deren Händler oder Gegenpartei den Text enthält, `--select <Konto>` ein Konto.
-Screenshots im PR oder Issue anhängen und dort nach Befund-ID beschriften. Im Bericht beim jeweiligen Befund
-den PR, das Issue oder den Bildlink angeben, damit der Beleg über den Dateinamen hinaus auffindbar bleibt.
+Einzelaufnahmen des Ausgangszustands können in der Beschreibung des Audit-PRs stehen. Vorher/Nachher-Paare
+gehören in die Beschreibung des jeweiligen Fix-PRs. Die Aufnahmen dort den Befund-IDs zuordnen. Die Berichte
+halten die Reproduktion und das beobachtete Ergebnis fest. Links zu zuständigen Issues und Fix-PRs bleiben beim Befund.
 
 Für Fixes gehören **Vorher/Nachher-Paare** in den PR: dieselbe Ansicht mit denselben Einstellungen, „nachher“ mit dem
 Stand des Branches, „vorher“ aus `main` in einem eigenen Worktree. Das xcframework im Worktree aus dem
@@ -237,7 +239,7 @@ herstellen und die genaue Folge im Bericht notieren.
 - **Ansicht:** <was genau, auf welchen Plattformen>
 - **Dateien:** `GiroCrabApp/Sources/GiroCrabUI/<Datei>.swift`
 - **Werkzeug:** Impeccable `critique` und `audit` (nativ), dazu GiroCrab-Regeln von Hand
-- **Nachweis:** <Plattformen, geprüfte Varianten und Demo-Screenshots>
+- **Nachweis:** <Plattformen und geprüfte Demo-Varianten>
 
 ## Befunde
 
@@ -258,7 +260,7 @@ herstellen und die genaue Folge im Bericht notieren.
 
 ### Beispielansicht
 
-- **Nachprüfung:** <Datum, Commit, IDs, Plattformen, Ergebnis und Beleg, falls vorhanden>
+- **Nachprüfung:** <Datum, Commit, IDs, Plattformen und Ergebnis>
 - **Umgebung:** <Plattformen, Versionen, Geräte, Sprache, geprüfte Varianten und Abweichungen von der Prüfmatrix>
 - **Build:** <fester Patch-Commit oder Diff und abweichender Core-Stand, falls verwendet>
 - **Demo-Einstieg:** <Startargumente, Auswahl und Bedienfolge>
@@ -268,7 +270,7 @@ herstellen und die genaue Folge im Bericht notieren.
 - **Ort:** <Datei und Symbol>
 - **Beobachtung:** <Zustand, Schritte und sichtbares Ergebnis>
 - **Vorschlag:** <Lösungsansatz oder offene Frage>
-- **Prüfung:** <Abnahmekriterium und ggf. Beleglink>
+- **Prüfung:** <Abnahmekriterium>
 
 #### XYZ-3 · <Kurztitel der offenen Entscheidung>
 

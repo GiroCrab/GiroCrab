@@ -46,14 +46,14 @@
 - **Ort:** `CompositionCharts.swift`, `CompositionRing`.
 - **Beobachtung:** Bei „Accessibility XL“ wächst der Betrag weiter, obwohl der Durchmesser begrenzt bleibt. Auf iPhone und iPad ragt die Ringsumme in die farbigen Segmente.
 - **Vorschlag:** Die Summe bei zu kleinem Innenradius außerhalb des Rings platzieren.
-- **Prüfung:** Den beschriebenen Ringfall auf iPhone und iPad wiederholen. Summe und Segmente überlagern sich nicht. [Bildbelege (ZIP)][bildbelege] · `iphone-vermoegen-ring-gross.png`.
+- **Prüfung:** Den beschriebenen Ringfall auf iPhone und iPad wiederholen. Summe und Segmente überlagern sich nicht.
 
 #### VER-6 · Legendenbeträge brechen innerhalb der Zahl um
 
 - **Ort:** `CompositionCharts.swift`, `CompositionLegend`.
 - **Beobachtung:** Auf dem iPhone teilen sich Label, Betrag und Anteil eine Zeile. Bei „Accessibility XL“ bricht etwa „29.798,1“ vor „6 €“ um. Auf dem iPad bleibt der Betrag ganz.
 - **Vorschlag:** Bei geringer Breite Betrag und Anteil unter das Label setzen und den formatierten Betrag zusammenhalten.
-- **Prüfung:** Den beschriebenen Ringfall am iPhone nachstellen. Jeder Legendeneintrag zeigt den Betrag samt Währung zusammenhängend. [Bildbelege (ZIP)][bildbelege] · `iphone-vermoegen-ring-gross.png`.
+- **Prüfung:** Den beschriebenen Ringfall am iPhone nachstellen. Jeder Legendeneintrag zeigt den Betrag samt Währung zusammenhängend.
 
 ### Sparpläne & Perks
 
@@ -66,7 +66,7 @@
 - **Ort:** `InvestmentDashboardView.swift`, `PlanGrid` mit 28 bzw. 40 pt breiten Monatsspalten.
 - **Beobachtung:** Am schmalen Mac mit großer Schrift bleiben von den Planzeilen nur Signets übrig. Am iPhone bei „Accessibility XL“ überlappen sich Monatsüberschriften.
 - **Vorschlag:** Die Mindestbreiten an Schriftgröße und Inhalt koppeln. Bei Platzmangel horizontal scrollen oder eine gestapelte Darstellung anbieten.
-- **Prüfung:** „Monatliche Sparpläne“ auf Mac und iPhone prüfen. Namen, Monate und Beträge sind einander zuordenbar. Den Depot-Reiter „Sparpläne“ mitprüfen. [Bildbelege (ZIP)][bildbelege] · `mac-sparplaene-gross.png`, `iphone-gross-sparplaene.png`.
+- **Prüfung:** „Monatliche Sparpläne“ auf Mac und iPhone prüfen. Namen, Monate und Beträge sind einander zuordenbar. Den Depot-Reiter „Sparpläne“ mitprüfen.
 
 ### Einzeldepot
 
@@ -79,7 +79,7 @@
 - **Ort:** `AssetAccountFrame.swift` (`AssetHeaderCard`), `DepotDetailView.swift` und `DepotValueChart.swift`.
 - **Beobachtung:** Bei `--select "Welt-Depot"` bleiben auf dem iPhone bei „Accessibility XL“ Wert und Kopf nebeneinander. Depotwert, Betragsachse und Dokumentaktion enden am Bildschirmrand.
 - **Vorschlag:** Den gemeinsamen Kopf bei Platzmangel stapeln. Verlauf und Dokumentaktion separat auf überbreite Inhalte prüfen.
-- **Prüfung:** Im Depot-Reiter „Positionen“ bei „Accessibility XL“ Wert, Achse und Dokumentaktion vollständig sehen und die Aktion öffnen. Mit [SAC-1](#sachwerte-konto) abgleichen. [Bildbelege (ZIP)][bildbelege] · `iphone-gross-depot.png`.
+- **Prüfung:** Im Depot-Reiter „Positionen“ bei „Accessibility XL“ Wert, Achse und Dokumentaktion vollständig sehen und die Aktion öffnen. Mit [SAC-1](#sachwerte-konto) abgleichen.
 
 ### Sachwerte-Konto
 
@@ -92,6 +92,4 @@
 - **Ort:** `AssetAccountFrame.swift` (`AssetHeaderCard`) und `TangibleAccountDetailView.swift`.
 - **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ läuft der Wert „522.187,19 €“ im Kopf „Sachwerte · Gesamt“ nach rechts aus dem Bild. Der Bewertungstext bleibt nur in Bruchstücken sichtbar.
 - **Vorschlag:** Den gemeinsamen Kopf wie beim Depot stapeln und dem Bewertungstext seine volle Breite geben.
-- **Prüfung:** Gesamtansicht mit großem Text prüfen. Wert und Bewertung sind vollständig lesbar, die Dokumentaktion bleibt erreichbar. Mit [DEP-1](#einzeldepot) abgleichen. [Bildbelege (ZIP)][bildbelege] · `iphone-gross-sachwerte.png`.
-
-[bildbelege]: https://github.com/user-attachments/files/35449133/PR-Bildbelege.zip
+- **Prüfung:** Gesamtansicht mit großem Text prüfen. Wert und Bewertung sind vollständig lesbar, die Dokumentaktion bleibt erreichbar. Mit [DEP-1](#einzeldepot) abgleichen.

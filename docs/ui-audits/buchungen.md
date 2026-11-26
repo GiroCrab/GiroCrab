@@ -55,21 +55,21 @@
 - **Ort:** `BookingListView.swift` (`BookingRow`) und `TagsUI.swift` (`BookingTagMarkers`).
 - **Beobachtung:** Beim REWE-Umsatz bleibt in der Standardliste auf dem iPhone „S…“, auf dem schmalen Mac mit großer Schrift „Super…“. Der Tag behält seine feste Breite.
 - **Vorschlag:** Die Kategorie vor den optionalen Markern priorisieren. Bei wenig Platz einen Marker verdichten oder den Namen in eine eigene Zeile setzen.
-- **Prüfung:** REWE mit Standardgröße am iPhone und am Mac mit `--text-size larger --window-width 900` prüfen. Die Kategorie muss erkennbar bleiben und der Betrag vollständig sichtbar sein. [Bildbelege (ZIP)][bildbelege] · `booking-iphone-standard.png`, `booking-mac-gross.png`.
+- **Prüfung:** REWE mit Standardgröße am iPhone und am Mac mit `--text-size larger --window-width 900` prüfen. Die Kategorie muss erkennbar bleiben und der Betrag vollständig sichtbar sein.
 
 #### BUC-2 · Kategorie-Direktwahl in der Kompaktliste fehlt
 
 - **Ort:** `BookingListView.swift`, `ViewThatFits` in `BookingRow`.
 - **Beobachtung:** Bei „Bäckerei Konditorei König“ fällt in der unselektierten Kompaktzeile die Direktwahl weg, wenn das volle Label nicht passt. Der Tag bleibt sichtbar.
 - **Vorschlag:** Einen kompakten, eindeutig beschrifteten Zugang zur selben Kategorieauswahl als Alternative in `ViewThatFits` anbieten.
-- **Prüfung:** Die Bäckerei bei „Kompakt“ ohne Auswahl öffnen. Die Kategorie muss direkt wählbar sein. Dieselbe Zeile bei Standarddichte vergleichen. [Bildbelege (ZIP)][bildbelege] · `booking-mac-kompakt.png`.
+- **Prüfung:** Die Bäckerei bei „Kompakt“ ohne Auswahl öffnen. Die Kategorie muss direkt wählbar sein. Dieselbe Zeile bei Standarddichte vergleichen.
 
 #### BUC-3 · Kategorietext hat zu wenig Kontrast bei Auswahl
 
 - **Ort:** `BookingListView.swift`, `BookingCategoryLabel` und `RowSelectionBackground`.
 - **Beobachtung:** Bei `--pick rewe` im Hellmodus liegen „Supermarkt“ (`#B5474F`) und die blaue Auswahlfläche (`#D2DDEE`) bei rund 3,9:1 nach sRGB. `Color.readable` berücksichtigt die Auswahlfläche nicht.
 - **Vorschlag:** Die Textfarbe gegen den tatsächlich sichtbaren Hintergrund bestimmen oder in der Auswahl eine kontrastreiche Textfarbe verwenden.
-- **Prüfung:** Hell und Dunkel bei ausgewählter und nicht ausgewählter REWE-Zeile vergleichen. Der Kategorietext erreicht jeweils mindestens 4,5:1. [Bildbelege (ZIP)][bildbelege] · `booking-mac-auswahl.png`.
+- **Prüfung:** Hell und Dunkel bei ausgewählter und nicht ausgewählter REWE-Zeile vergleichen. Der Kategorietext erreicht jeweils mindestens 4,5:1.
 
 ### Buchungsinspektor
 
@@ -93,27 +93,27 @@
 - **Ort:** `BookingDetailView.swift`, `TextEditor` in `NoteCard` mit `.scrollContentBackground(.hidden)` und `Theme.systemSurface`.
 - **Beobachtung:** Im Mac-Dunkelmodus bleibt rechts am leeren Notizfeld ein heller Streifen sichtbar. Kategorienflächen und iPhone-Sheet folgen inzwischen dem Erscheinungsbild.
 - **Vorschlag:** Am nativen Editor und an seiner Scrollfläche prüfen, welche Fläche den Rand zeichnet. Die Fläche an den Systemhintergrund des Notizfelds anpassen.
-- **Prüfung:** Das Notizfeld am Mac leer und mit Text in Hell und Dunkel prüfen. Der Rand bleibt gleichmäßig. Kategorien, iPhone-Sheet und geschwärzte Titel stichprobenartig nachprüfen. [Bildbelege (ZIP)][bildbelege] · `mac-inspektor-dunkel.png`.
+- **Prüfung:** Das Notizfeld am Mac leer und mit Text in Hell und Dunkel prüfen. Der Rand bleibt gleichmäßig. Kategorien, iPhone-Sheet und geschwärzte Titel stichprobenartig nachprüfen.
 
 #### INS-13 · Händler-Historie liegt unter dichten Auswahlflächen
 
 - **Ort:** `TagsUI.swift` (`TagsCard`), `BookingDetailView.swift` (`CategoryGridCard`) und `InspectorLayout.swift`.
 - **Beobachtung:** Bei Standardgröße stehen acht Vorschläge plus „+3 weitere“, elf Hauptkategorien und Unterkategorien vor der Historie. Beim Wechsel zwischen Buchungen kostet der Weg dorthin Scrollen.
 - **Vorschlag:** Kompaktere oder erst bei Fokus sichtbare Vorschläge und ein kompakteres Raster als Varianten vergleichen. Die Kategorie-Direktwahl aus [#1890](https://github.com/GiroCrab/GiroCrab/pull/1890) berücksichtigen.
-- **Prüfung:** Am Mac bei Standardgröße prüfen, ob die Historie ohne Scrollen erreichbar wird und wiederholtes Kategorisieren per Maus und Tastatur flüssig bleibt. [Bildbelege (ZIP)][bildbelege] · `mac-inspektor-hell.png`.
+- **Prüfung:** Am Mac bei Standardgröße prüfen, ob die Historie ohne Scrollen erreichbar wird und wiederholtes Kategorisieren per Maus und Tastatur flüssig bleibt.
 
 ### Buchungssuche und Filter
 
 - **Demo-Einstieg:** `--demo-seed --select "Musterbank Girokonto" --demo-filter expense`. Auf dem Mac „Sehr groß“ und schmale Fensterbreite wählen, auf dem iPhone „Accessibility XL“.
 
-- **Ohne Treffer:** Auf dem iPhone im Suchfeld `zzzauditkeintreffer` eingeben. „Keine Treffer“, die eingegebene Suche und die Aktion zum Zurücksetzen sind vorhanden (`iphone-filter-ohne-treffer.png`). [Bildbelege (ZIP)][bildbelege]
+- **Ohne Treffer:** Auf dem iPhone im Suchfeld `zzzauditkeintreffer` eingeben. „Keine Treffer“, die eingegebene Suche und die Aktion zum Zurücksetzen sind vorhanden.
 
 #### SUC-1 · Weitere Filter sind bei großer Schrift schwer auffindbar
 
 - **Ort:** `BalanceHeaderView.swift`, `StreamHeaderCard.filterRow`.
 - **Beobachtung:** Im Demo-Fall mit aktivem Ausgabenfilter endet die horizontal scrollende Zeile am schmalen Mac mitten in „Ta…“. Am iPhone bleiben Zeitraum und Status sichtbar. Betragsfilter und weitere Aktionen liegen ohne Scrollindikator außerhalb des Ausschnitts.
 - **Vorschlag:** Bei großer Schrift einen sichtbaren Hinweis auf weitere Filter oder einen beschrifteten Überlaufzugang anbieten.
-- **Prüfung:** Mit dem beschriebenen Demo-Start auf dem schmalen Mac und am iPhone bei „Accessibility XL“ den Betragsfilter öffnen. Der Zugangsweg muss erkennbar sein. [Bildbelege (ZIP)][bildbelege] · `iphone-gross-filter.png`, `mac-filter-gross.png`.
+- **Prüfung:** Mit dem beschriebenen Demo-Start auf dem schmalen Mac und am iPhone bei „Accessibility XL“ den Betragsfilter öffnen. Der Zugangsweg muss erkennbar sein.
 
 ### Kontoübersicht und Kennzahlen
 
@@ -124,25 +124,25 @@
 - **Ort:** `BalanceHeaderView.swift`, `KPI`.
 - **Beobachtung:** Die Beträge werden einzeilig verkleinert. In „Alle Konten“ erscheint am Mac eine gekürzte Konsumkennzahl wie „−4.947,21…“. Am iPhone sind Kennzahlen unter dem verfügbaren Betrag betroffen.
 - **Vorschlag:** Bei wenig Breite weniger Kennzahlen pro Zeile anordnen und den Geldbetrag samt Währung zusammenhalten.
-- **Prüfung:** „Alle Konten“ und das Girokonto bei großer Schrift am schmalen Mac und am iPhone vergleichen. Alle Kennzahlenbeträge bleiben vollständig lesbar. [Bildbelege (ZIP)][bildbelege] · `mac-konto-gross.png`, `iphone-gross-konto.png`.
+- **Prüfung:** „Alle Konten“ und das Girokonto bei großer Schrift am schmalen Mac und am iPhone vergleichen. Alle Kennzahlenbeträge bleiben vollständig lesbar.
 
 #### KON-2 · Verfügbarer Betrag ist im Kopf gekürzt
 
 - **Ort:** `BalanceHeaderView.swift`, kompakte Kopfzeile in `StreamHeaderCard`.
 - **Beobachtung:** In „Alle Konten“ bleibt auf dem iPhone bei „Accessibility XL“ der verfügbare Betrag auf eine Zeile begrenzt und wird gekürzt.
 - **Vorschlag:** Bei Platzmangel dem Betrag eine eigene Zeile geben und das Label getrennt anordnen.
-- **Prüfung:** Am iPhone bei „Accessibility XL“ „Alle Konten“ öffnen. Vorzeichen, Betrag und Währung sind vollständig sichtbar. [Bildbelege (ZIP)][bildbelege] · `iphone-gross-konto.png`.
+- **Prüfung:** Am iPhone bei „Accessibility XL“ „Alle Konten“ öffnen. Vorzeichen, Betrag und Währung sind vollständig sichtbar.
 
 #### KON-3 · Beschriftungen im Saldoverlauf überlappen
 
 - **Ort:** `BalanceHeaderView.swift`, `BalanceChart`.
 - **Beobachtung:** In „Alle Konten“ überlagern sich am iPhone bei „Accessibility XL“ skalierende Datums- und Betragsbeschriftungen in der kompakten Diagrammfläche.
 - **Vorschlag:** Die Zahl der Achsenmarken bei großer Schrift reduzieren oder mehr Platz für die Achsen reservieren.
-- **Prüfung:** Auf demselben iPhone „Alle Konten“ in Standardgröße und „Accessibility XL“ vergleichen. Daten und Werte bleiben einzeln lesbar. [Bildbelege (ZIP)][bildbelege] · `iphone-gross-konto.png`.
+- **Prüfung:** Auf demselben iPhone „Alle Konten“ in Standardgröße und „Accessibility XL“ vergleichen. Daten und Werte bleiben einzeln lesbar.
 
 ### Neue Umsätze
 
-- **Demo-Einstieg:** `--demo-seed --view neu`. Auf dem iPhone von Standardgröße auf „Accessibility XL“ wechseln. Die erste Kontogruppe vergleichen (`iphone-standard-neu.png`, `iphone-gross-neu.png`). [Bildbelege (ZIP)][bildbelege]
+- **Demo-Einstieg:** `--demo-seed --view neu`. Auf dem iPhone von Standardgröße auf „Accessibility XL“ wechseln. Die erste Kontogruppe vergleichen.
 
 - **Schwärzung:** Im Mac-Durchgang `--redact=labels` verwenden. Für den Leerzustand alle neuen Umsätze des Demo-Tresors als gelesen markieren.
 
@@ -152,5 +152,3 @@
 - **Beobachtung:** In „Neue Umsätze“ bleibt am iPhone bei „Accessibility XL“ von „Musterbank Girokonto“ nur „Mu…“. Die Zeile mit Bank und IBAN hilft kaum bei der Zuordnung; der Saldo bleibt lesbar.
 - **Vorschlag:** Bei geringer Breite den Namen und den fest dimensionierten Saldo untereinander anordnen.
 - **Prüfung:** Auf dem iPhone mit dem Demo-Einstieg Standard und „Accessibility XL“ vergleichen. Der erste Kontoname ist identifizierbar und der Saldo vollständig sichtbar.
-
-[bildbelege]: https://github.com/user-attachments/files/35449133/PR-Bildbelege.zip
