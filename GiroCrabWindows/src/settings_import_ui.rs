@@ -52,6 +52,9 @@ struct Ui {
 thread_local! {
     static UI: RefCell<Ui> = RefCell::new(Ui::default());
     static SLOT: RefCell<Option<VaultSlot>> = const { RefCell::new(None) };
+    /// `spawn` jobs still running: `busy` clears only when the last one is done (the menu's
+    /// "Einstellungen …" starts the dialog's load and the tab's load together).
+    static PENDING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
@@ -120,6 +123,7 @@ fn spawn<T: Send + 'static>(
     done: impl FnOnce(&MainWindow, T) + Send + 'static,
 ) {
     let gs = win.global::<SettingsImportState>();
+    PENDING.with(|p| p.set(p.get() + 1));
     gs.set_busy(true);
     gs.set_status(busy_text.into());
     let weak = win.as_weak();
@@ -127,8 +131,14 @@ fn spawn<T: Send + 'static>(
         let result = work();
         let _ = weak.upgrade_in_event_loop(move |win| {
             let gs = win.global::<SettingsImportState>();
-            gs.set_busy(false);
-            gs.set_show_progress(false);
+            let pending = PENDING.with(|p| {
+                p.set(p.get().saturating_sub(1));
+                p.get()
+            });
+            if pending == 0 {
+                gs.set_busy(false);
+                gs.set_show_progress(false);
+            }
             match result {
                 Ok(v) => done(&win, v),
                 Err(e) => set_status(&win, e),
