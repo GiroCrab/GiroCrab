@@ -10,11 +10,14 @@ use crate::i18n::tr;
 use crate::vault::Vault;
 
 mod api;
+mod offsets;
 mod search;
 mod store;
 #[cfg(test)]
 mod tests;
 
+pub use offsets::NET_REFUNDS_KEY;
+pub(crate) use offsets::{OffsetSlot, scope_sql};
 pub(crate) use store::{fold_booking, merge_attached, merge_folded, move_booking, move_endpoints};
 
 /// One stored link between a refund and an original (docs/adr/0004-refund-links.md).
