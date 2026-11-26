@@ -1387,6 +1387,69 @@ fn seeded_role_of_a_duplicate_live_on_another_device_does_not_count() {
     }
 }
 
+/// Review of #1833: a seeded role (stamp 0) belongs to the place it was seeded at. A stale
+/// snapshot that still has `Sparen & Investieren` at the top level (seeded `investment`)
+/// must not attach its default to the newer position below an ordinary folder, where the
+/// other device seeded nothing. A default seeded before a later move goes with that move
+/// (roles stay with the category, `moved_builtin_category_follows_tree_role_inheritance`).
+#[test]
+fn seeded_role_follows_the_parent_that_wins_the_merge() {
+    // (role the moved copy holds, effective role expected below the folder)
+    for (moved_role, expected) in [
+        ("NULL", CategoryRole::Consumption),
+        ("'investment'", CategoryRole::Investment),
+    ] {
+        for reverse in [false, true] {
+            let a_dir = crate::test_support::TempDir::new("roles-stale-seed-a");
+            let b_dir = crate::test_support::TempDir::new("roles-stale-seed-b");
+            let a = vault(&a_dir);
+            let b = vault(&b_dir);
+            for v in [&a, &b] {
+                v.db()
+                    .unwrap()
+                    .execute(
+                        "INSERT INTO categories(id, parent_id, name, uuid, name_ms)
+                           VALUES (101, NULL, 'Haushalt', 'u-folder', 1)",
+                        [],
+                    )
+                    .unwrap();
+            }
+            // a: stale, still at the top level with the role step 44 seeded there
+            a.db()
+                .unwrap()
+                .execute(
+                    "INSERT INTO categories(id, parent_id, name, uuid, builtin_role, role, role_ms, name_ms, parent_ms)
+                       VALUES (102, NULL, 'Sparen & Investieren', 'u-inv', 'Sparen & Investieren', 'investment', 0, 1, 1)",
+                    [],
+                )
+                .unwrap();
+            // b: moved below the folder later
+            b.db()
+                .unwrap()
+                .execute(
+                    &format!(
+                        "INSERT INTO categories(id, parent_id, name, uuid, builtin_role, role, role_ms, name_ms, parent_ms)
+                           VALUES (102, 101, 'Sparen & Investieren', 'u-inv', 'Sparen & Investieren', {moved_role}, 0, 1, 5)"
+                    ),
+                    [],
+                )
+                .unwrap();
+            let (dst, src) = if reverse { (&b, &a_dir) } else { (&a, &b_dir) };
+            dst.merge_other_vault(src.join("v.db").to_string_lossy().into(), vec![7; 32])
+                .unwrap();
+            let cats = dst.list_categories(None, None).unwrap();
+            let folder = cats.iter().find(|c| c.name == "Haushalt").unwrap();
+            let inv = cats
+                .iter()
+                .find(|c| c.name == "Sparen & Investieren")
+                .unwrap();
+            let case = format!("moved_role={moved_role}, reverse={reverse}");
+            assert_eq!(inv.parent_id, Some(folder.id), "{case}");
+            assert_eq!(inv.effective_role, expected, "{case}");
+        }
+    }
+}
+
 /// Clearing or editing a role stamps `role_ms` strictly above any stored ahead-of-clock
 /// peer timestamp so the local change wins the next iCloud merge.
 #[test]
@@ -1417,70 +1480,4 @@ fn set_category_role_monotonic_stamp_beats_ahead_peer() {
         .unwrap();
     assert_eq!(role, None);
     assert!(role_ms > ahead, "expected role_ms ({role_ms}) > {ahead}");
-}
-
-/// Same-named siblings stay separate rows: the display label carries a suffix,
-/// `edit_name` and the stored name stay what the user typed, and saving the edit
-/// name again neither bakes a suffix into the stored name nor re-stamps it.
-#[test]
-fn same_named_siblings_get_display_suffixes_and_clean_edits() {
-    let dir = crate::test_support::TempDir::new("roles-siblings");
-    let v = vault(&dir);
-    let a = v
-        .create_category("Sparen".into(), None, "tag".into(), "".into())
-        .unwrap();
-    let b = v
-        .create_category("sparen".into(), None, "tag".into(), "".into())
-        .unwrap();
-    // a literal label of the derived shape stays distinguishable from both
-    let literal = v
-        .create_category("Sparen (2)".into(), None, "tag".into(), "".into())
-        .unwrap();
-    let cats = v.list_categories(None, None).unwrap();
-    let by_id = |id: i64| cats.iter().find(|c| c.id == id).unwrap();
-    assert_eq!(by_id(literal).name, "Sparen (2)");
-    assert_eq!(by_id(literal).edit_name, "Sparen (2)");
-    let suffixed = if by_id(a).name.ends_with(" (3)") {
-        a
-    } else {
-        b
-    };
-    let plain = if suffixed == a { b } else { a };
-    assert_eq!(by_id(plain).name, by_id(plain).edit_name);
-    assert_eq!(
-        by_id(suffixed).name,
-        format!("{} (3)", by_id(suffixed).edit_name)
-    );
-    assert_eq!(by_id(a).edit_name, "Sparen");
-    assert_eq!(by_id(b).edit_name, "sparen");
-
-    // the vault mutex is not reentrant: drop the connection before update_category
-    let ms_before: i64 = v
-        .db()
-        .unwrap()
-        .query_row(
-            "SELECT name_ms FROM categories WHERE id = ?1",
-            [suffixed],
-            |r| r.get(0),
-        )
-        .unwrap();
-    v.update_category(
-        suffixed,
-        by_id(suffixed).edit_name.clone(),
-        None,
-        "tag".into(),
-        "".into(),
-    )
-    .unwrap();
-    let (stored, ms_after): (String, i64) = v
-        .db()
-        .unwrap()
-        .query_row(
-            "SELECT name, name_ms FROM categories WHERE id = ?1",
-            [suffixed],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(stored, by_id(suffixed).edit_name);
-    assert_eq!(ms_after, ms_before);
 }

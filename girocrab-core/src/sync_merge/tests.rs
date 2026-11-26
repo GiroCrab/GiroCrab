@@ -320,6 +320,45 @@ fn uuid_backfill_matches_only_starter_provenance() {
     );
 }
 
+/// The other two branches of the backfill: rows from a v7 build (the v8 step) all take
+/// their path key, also custom and nested ones, so v7 devices keep matching; and a path
+/// key goes to one row only. The lowest id gets it, any later row with the same path
+/// (or a path whose key some row already holds) gets a random UUID.
+#[test]
+fn uuid_backfill_v7_takes_path_keys_and_never_reuses_one() {
+    let dir = temp_dir("fill-v7");
+    let v = open(&dir, "a.db");
+    let db = v.db().unwrap();
+    db.execute_batch(
+        "INSERT INTO categories(id, parent_id, name) VALUES (1, NULL, 'Hobby'), (2, 1, 'Modellbau');",
+    )
+    .unwrap();
+    fill_missing_sync_keys(&db, true).unwrap();
+    let uuid = |id: i64| -> String {
+        db.query_row("SELECT uuid FROM categories WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(uuid(1), category_uuid_for_path(&["Hobby"]));
+    assert_eq!(uuid(2), category_uuid_for_path(&["Hobby", "Modellbau"]));
+
+    // same-named starter siblings (allowed since v45) and a custom row already
+    // holding the key of a later starter row's path
+    db.execute_batch(&format!(
+        "INSERT INTO categories(id, parent_id, name, builtin_role) VALUES
+           (10, NULL, 'Freizeit', 'Freizeit'), (11, NULL, 'Freizeit', 'Freizeit');
+         INSERT INTO categories(id, parent_id, name, uuid) VALUES (12, NULL, 'Eigene', '{}');
+         INSERT INTO categories(id, parent_id, name, builtin_role) VALUES (13, NULL, 'Gesundheit', 'Gesundheit');",
+        category_uuid_for_path(&["Gesundheit"])
+    ))
+    .unwrap();
+    fill_missing_uuids(&db).unwrap();
+    assert_eq!(uuid(10), category_uuid_for_path(&["Freizeit"]));
+    assert_ne!(uuid(11), uuid(10));
+    assert_ne!(uuid(13), category_uuid_for_path(&["Gesundheit"]));
+}
+
 /// Two vaults built the same way, with a category, a booking and its stamps.
 fn identical_pair(dir: &std::path::Path) -> (Arc<Vault>, Arc<Vault>) {
     let pair = (open(dir, "p1.db"), open(dir, "p2.db"));
@@ -3085,6 +3124,49 @@ fn booking_on_deleted_category_ends_uncategorised() {
                 0
             );
         },
+    );
+}
+
+/// Review of #1833, finding 1 (open: the policy for redirects from older builds is still to be
+/// decided). Builds before v45 combined same-named categories by themselves; a snapshot from
+/// one can bring a redirect this vault never made. Today the merge applies it and moves this
+/// vault's own bookings to the survivor. This pins that behaviour so the policy change has to
+/// update it on purpose.
+#[test]
+fn older_snapshot_redirect_moves_local_bookings_pending_policy() {
+    let dir = temp_dir("old-redirect");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    for v in [&a, &b] {
+        shared_account(v);
+    }
+    exec(
+        &a,
+        "INSERT INTO categories(id, name, uuid, name_ms) VALUES (101, 'Sparen', 'u-x', 1), (102, 'Sparen', 'u-y', 1);
+         INSERT INTO transactions(id, account_id, external_id, booking_date, amount_cents, category_id, category_ms)
+             VALUES (1, 1, 'e1', '2026-01-01', -500, 101, 100);",
+    );
+    // b, written by a v44 build that combined `u-x` into `u-y`
+    exec(
+        &b,
+        "INSERT INTO categories(id, name, uuid, name_ms) VALUES (102, 'Sparen', 'u-y', 1);
+         INSERT INTO categories(id, name, uuid, name_ms, deleted_ms, merged_into)
+             VALUES (101, 'Sparen', 'u-x', 1, 5, 'u-y');
+         PRAGMA user_version = 44;",
+    );
+    merge(&a, &b);
+    assert_eq!(
+        text(
+            &a,
+            "SELECT c.uuid FROM transactions t JOIN categories c ON c.id = t.category_id WHERE t.id = 1"
+        ),
+        "u-y"
+    );
+    assert_eq!(
+        n(
+            &a,
+            "SELECT count(*) FROM categories WHERE uuid = 'u-x' AND deleted_ms IS NOT NULL"
+        ),
+        1
     );
 }
 

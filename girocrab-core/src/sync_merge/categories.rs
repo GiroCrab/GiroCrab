@@ -35,18 +35,31 @@ impl Cat {
         // A peer can clear built-in provenance when importing into the same
         // UUID. Preserve custom provenance so its name remains literal.
         merge_category_role(&mut self.builtin_role, o.builtin_role);
+        if self.role_ms == 0 && o.role_ms == 0 {
+            // Nobody chose a role (stamp 0): each side holds the default schema step 44 or
+            // an import derived from where the category was then. It goes with the parent
+            // that wins, so a stale snapshot's default never lands on a newer position
+            // (`Some` would otherwise beat `None` at the equal stamp). Same order as
+            // `take_newer` on the parent; the role only breaks a full tie.
+            if (o.parent_ms, &o.parent, &o.category_role)
+                > (self.parent_ms, &self.parent, &self.category_role)
+            {
+                self.category_role = o.category_role;
+            }
+        } else {
+            take_newer(
+                &mut self.category_role,
+                &mut self.role_ms,
+                o.category_role,
+                o.role_ms,
+            );
+        }
         take_newer(&mut self.name, &mut self.name_ms, o.name, o.name_ms);
         take_newer(&mut self.parent, &mut self.parent_ms, o.parent, o.parent_ms);
         take_newer(&mut self.symbol, &mut self.symbol_ms, o.symbol, o.symbol_ms);
         take_newer(&mut self.color, &mut self.color_ms, o.color, o.color_ms);
         take_newer(&mut self.budget, &mut self.budget_ms, o.budget, o.budget_ms);
         take_newer(&mut self.order, &mut self.order_ms, o.order, o.order_ms);
-        take_newer(
-            &mut self.category_role,
-            &mut self.role_ms,
-            o.category_role,
-            o.role_ms,
-        );
         merge_deletion(
             &mut self.deleted_ms,
             &mut self.merged_into,

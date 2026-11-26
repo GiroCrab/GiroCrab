@@ -678,6 +678,8 @@ impl Vault {
 }
 
 #[cfg(test)]
+mod name_tests;
+#[cfg(test)]
 mod reorder_tests;
 #[cfg(test)]
 mod role_tests;
