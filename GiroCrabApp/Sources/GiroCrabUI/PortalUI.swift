@@ -457,9 +457,10 @@ final class PortalBrowser {
     }
 
     /// Amex: the latest statement list (`documents/info/statements`) and the card token of
-    /// its request; Amazon Visa: the last captured response whose URL names a statement
-    /// (its list page loads it; schema-agnostic, `parsePortalStatementListing`). Both are
-    /// kept in memory only, for the statement download while the session is open.
+    /// its request; Amazon Visa: the last captured response that is a readable
+    /// statement list and whose URL names a statement (its list page loads it;
+    /// schema-agnostic, `parsePortalStatementListing`). Both are kept in memory
+    /// only, for the statement download while the session is open.
     @ObservationIgnored private(set) var statementList: (body: String, token: String)?
 
     func captured(_ body: String, url: String, card: String = "") {
@@ -468,7 +469,12 @@ final class PortalBrowser {
             statementList = (body, card)
         } else if domains.kind == .amazonVisa,
                   lower.contains("statement") || lower.contains("abrechnung"), !Self.isBookingList(url) {
-            statementList = (body, card)
+            // only a readable statements list replaces the capture (also an
+            // empty one): a later response that merely has "statement" in
+            // its URL must not shove the list aside
+            if parsePortalStatementListing(body: body).readable {
+                statementList = (body, card)
+            }
         }
         let path = Self.maskedPath(url)
         seenPaths.append(path)
@@ -683,7 +689,10 @@ final class PortalBrowser {
 
     /// The statements tab of the Open-Bank portal (Amazon Visa); it mirrors the
     /// booking page's route. The portal opens as `…/amazon/transactions`, so the
-    /// relative form stays right even for other card sections.
+    /// relative form stays right even for other card sections. The route stays
+    /// unverified against the live portal: when it differs, the poll runs dry
+    /// and the fallback reads the visible links of whatever page is up — at
+    /// worst a bounded wait and a counted failure, recoverable the next run.
     static let visaStatementsPageJS =
         "location.href = location.origin + '/amazon/statements'; return true;"
 

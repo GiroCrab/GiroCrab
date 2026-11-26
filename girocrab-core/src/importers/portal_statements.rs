@@ -230,6 +230,7 @@ fn field_name(k: &str) -> String {
 /// The PDF links of `v` that no dated entry claims (`under_entry` when beneath
 /// a dated one): each unidentified statement is a failure, like an undated
 /// visible link — one link once, and PDFs of a dated entry belong to its date.
+/// String items of arrays are PDF links too (`pdf_in` reads them as well).
 fn rejected_entries(v: &serde_json::Value, under_entry: bool, out: &mut HashSet<String>) {
     match v {
         serde_json::Value::Object(m) => {
@@ -241,9 +242,15 @@ fn rejected_entries(v: &serde_json::Value, under_entry: bool, out: &mut HashSet<
             }
             m.values().for_each(|val| rejected_entries(val, under, out));
         }
-        serde_json::Value::Array(a) => a
-            .iter()
-            .for_each(|val| rejected_entries(val, under_entry, out)),
+        serde_json::Value::Array(a) => {
+            for item in a.iter().filter_map(|i| i.as_str()) {
+                if !under_entry && let Some(path) = pdf_link(item) {
+                    out.insert(path.to_string());
+                }
+            }
+            a.iter()
+                .for_each(|val| rejected_entries(val, under_entry, out));
+        }
         _ => {}
     }
 }
@@ -709,6 +716,12 @@ mod statement_list_tests {
         let l =
             parse_portal_statement_listing(r#"{"statements":[{"url":"/a.pdf"},{"url":"/b.pdf"}]}"#);
         assert!(l.readable && l.items.is_empty() && l.rejected == 2, "{l:?}");
+        // PDF links as plain strings inside a `files` array: unidentified
+        // entries count rejected as well
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"date":"2026-10-15","url":"/ok.pdf"},{"files":["/missing.pdf"]}]}"#,
+        );
+        assert!(l.items.len() == 1 && l.rejected == 1, "{l:?}");
         // a dated entry next to a rejected one: the one won, the other failed
         let l = parse_portal_statement_listing(
             r#"{"statements":[{"date":"2026-10-15","url":"/a/1.pdf"},{"url":"/S2.pdf"}]}"#,
