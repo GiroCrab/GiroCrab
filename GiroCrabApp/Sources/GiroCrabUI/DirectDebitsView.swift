@@ -204,11 +204,12 @@ struct DirectDebitsView: View {
                 return .handled
             }
             .onChange(of: model.selectedMandateID) { _, id in
-                listFocused = true
+                // not when a reload drops the selection
                 guard let id else { return }
+                listFocused = true
                 withAnimation(Motion.animation(.easeOut(duration: 0.15))) { proxy.scrollTo(id) }
             }
-            .onAppear { listFocused = model.options.screenshotPath == nil }
+            .onAppear { if model.listMayTakeFocusOnAppear { listFocused = true } }
         }
     }
 
