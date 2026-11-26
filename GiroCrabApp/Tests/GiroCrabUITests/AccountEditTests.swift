@@ -87,14 +87,19 @@ final class AccountEditTests: XCTestCase {
         XCTAssertEqual(account.note, note)
         XCTAssertEqual(account.sidebarSubtitle(distinction: ""), "")
         XCTAssertEqual(account.sidebarSubtitle(distinction: "…1234"), "…1234")
+        XCTAssertFalse(account.matchesSidebarSearch("Zweite Zeile"))
 
         account.bankLabel = "Haushalt"
         XCTAssertEqual(account.sidebarSubtitle(distinction: ""), "Haushalt")
         XCTAssertEqual(account.sidebarSubtitle(distinction: "…1234"), "Haushalt · …1234")
         account.bankLabel = nil
         XCTAssertEqual(account.sidebarSubtitle(distinction: ""), account.bankName)
-        account.bankName = ""
-        XCTAssertEqual(account.sidebarSubtitle(distinction: ""), "")
+
+        let cash = try XCTUnwrap(model.offlineAccounts.first { $0.bankName.isEmpty })
+        model.setAccountNote(note, for: cash.id)
+        let savedCash = try XCTUnwrap(model.account(for: cash.id))
+        XCTAssertEqual(savedCash.note, note)
+        XCTAssertEqual(savedCash.sidebarSubtitle(distinction: ""), "")
     }
 
     /// #1467: the sidebar shows the user's label, nothing, or the bank name again.
