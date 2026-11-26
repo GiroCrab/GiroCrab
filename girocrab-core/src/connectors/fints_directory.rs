@@ -133,9 +133,11 @@ pub fn url_for_blz(blz: &str) -> Option<&'static str> {
     find(blz).map(|e| e.2)
 }
 
-/// Endpoints earlier directory versions handed out that the bank no longer serves
-/// (apoBank left Atruvia in 2020, #1385; the Sparkassen host hs5 of 1822direkt
-/// no longer resolves).
+/// Endpoints earlier directory versions handed out that the bank has moved on from
+/// (apoBank left Atruvia in 2020, #1385; the Sparkassen host hs5 of 1822direkt no
+/// longer resolves; flatex switched from its former "biw Bank" host to
+/// `https://banking.flatexdegiro.com/hbci` – the old address still answers, but is
+/// not the one the directory offers today).
 const RETIRED_URLS: &[(&str, &str)] = &[
     ("30060601", "https://fints1.atruvia.de/cgi-bin/hbciservlet"),
     ("50050201", "https://banking-hs5.s-fints-pt-hs.de/fints30"),
@@ -181,13 +183,15 @@ pub fn search(query: &str, limit: usize) -> Vec<FinTsBankInfo> {
         if d.len() < 3 {
             return vec![];
         }
-        return banks()
+        // the pinned rows are not part of the sorted generated table: collect and
+        // order them, otherwise a small `limit` can drop a pinned institute
+        let mut hits = banks()
             .iter()
             .filter(|e| !is_overridden(e.0) && e.0.starts_with(&d))
             .chain(FLATEX.iter().filter(|e| e.0.starts_with(&d)))
-            .take(limit)
-            .map(info)
-            .collect();
+            .collect::<Vec<_>>();
+        hits.sort_by(|a, b| a.0.cmp(b.0));
+        return hits.into_iter().take(limit).map(info).collect();
     }
     let words: Vec<&str> = q.split(' ').collect();
     let mut prefix = vec![];
@@ -481,6 +485,18 @@ mod tests {
         assert!(search("flatex", 20).iter().any(|b| b.blz == "76030800"));
         assert!(search("degiro", 20).iter().any(|b| b.blz == "10130800"));
         assert!(search("1013", 20).iter().any(|b| b.blz == "10130800"));
+        // pinned institutes keep the BLZ order: for the short prefix "760" the flatex
+        // row is within the first ten instead of behind the 40 generated rows
+        let top = search("760", 10);
+        assert!(
+            top.iter().any(|b| b.blz == "76030800"),
+            "760 with limit 10: {:?}",
+            top.iter().map(|b| b.blz.clone()).collect::<Vec<_>>()
+        );
+        let blz = top.iter().map(|b| b.blz.clone()).collect::<Vec<_>>();
+        let mut sorted = blz.clone();
+        sorted.sort();
+        assert_eq!(blz, sorted);
         // the DK table still carries the superseded biw address; the pinned one wins
         assert!(
             banks()
