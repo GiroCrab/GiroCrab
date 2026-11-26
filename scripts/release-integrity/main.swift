@@ -11,6 +11,8 @@
 //   * banking-policy.json (+ .sig), published at a fixed address
 //     (raw.githubusercontent.com/<repo>/main/policy): reachable, signature
 //     against BankingPolicy.publicKeys, `sequence` never lower than the last run's.
+//   * SHA256SUMS.txt of the latest stable release (Windows): every listed
+//     .exe/.msi/.zip exists and matches its SHA-256.
 // A part is skipped while its key is not configured (placeholder).
 // Exit 0 = all fine, 1 = findings (written to --report), 2 = usage.
 import CryptoKit

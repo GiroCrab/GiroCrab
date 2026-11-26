@@ -6,8 +6,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 TAG="${1:?usage: $0 <tag>}"
 VER="${TAG#v}"
-[[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+|-nightly\.[0-9]{8})?$ ]] \
-  || { echo "error: '$TAG' is not vX.Y.Z[-beta.N|-rc.N|-nightly.YYYYMMDD]" >&2; exit 2; }
+[[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+|-nightly\.[0-9]{8})?$ ]] \
+  || { echo "error: '$TAG' is not vX.Y.Z[-beta.N|-nightly.YYYYMMDD]" >&2; exit 2; }
 python3 -I - "$VER" <<'PY'
 import re, sys
 ver = sys.argv[1]
