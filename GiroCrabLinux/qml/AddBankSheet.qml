@@ -295,12 +295,14 @@ Sheet {
             readonly property bool canAdd: blzValid && urlValid && login.text.trim() !== ""
             function lookup() {
                 const info = blzValid ? AppModel.core("lookup_fints_bank_by_blz", { blz: blz }) : null
+                // a name the directory filled in follows the BLZ, so no hint or name of the previous bank stays
+                const filled = found !== null && bankName === found.name
                 if (!info) {
-                    if (found) { found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
+                    if (found) { if (filled) bankName = ""; found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
                     return
                 }
                 found = info
-                if (bankName === "") bankName = info.name
+                if (bankName === "" || filled) bankName = info.name
                 if (!urlEdited || url === "") { autoURL = info.url; url = info.url; urlEdited = false }
             }
             function commit() {
