@@ -10,11 +10,22 @@ cd "$ROOT"
 # macOS-only APIs (unavailable on iOS). Extend when another one bites.
 PATTERN='homeDirectoryForCurrentUser|NSWorkspace\.shared|NSOpenPanel|NSSavePanel|toggleStyle[(][[:space:]]*[.]checkbox[[:space:]]*[)]|buttonStyle[(][[:space:]]*[.]link[[:space:]]*[)]'
 
+# A branch counts as macOS-only if its condition names os(macOS) or !os(iOS) without `||`. GiroCrabUI
+# builds for macOS and iOS only, so a branch after an iOS-only one (`#if os(iOS)` / `#if !os(macOS)`,
+# then `#elseif` / `#else`) is macOS-only too, and the `#else` of `#if os(macOS)` is checked.
 bad=$(find GiroCrabApp/Sources/GiroCrabUI -name '*.swift' -print0 | xargs -0 awk -v pat="$PATTERN" '
-    FNR == 1 { depth = 0; mac = 0 }
-    /^[[:space:]]*#if / { depth++; if ($0 ~ /os\(macOS\)/ && !mac) mac = depth }
-    /^[[:space:]]*#endif/ { if (mac == depth) mac = 0; depth-- }
-    !mac && $0 !~ /^[[:space:]]*\/\// && $0 ~ pat { print FILENAME ":" FNR ": " $0 }
+    function maconly(c) { return (c ~ /(^|[^!])os\(macOS\)/ || c ~ /!os\(iOS\)/) && c !~ /[|][|]/ }
+    function iosonly(c) { return (c ~ /(^|[^!])os\(iOS\)/ || c ~ /!os\(macOS\)/) && c !~ /[|][|]/ }
+    FNR == 1 { depth = 0 }
+    /^[[:space:]]*#if[[:space:]]/ { depth++; m[depth] = maconly($0); ios[depth] = iosonly($0); next }
+    /^[[:space:]]*#elseif[[:space:]]/ { m[depth] = ios[depth] || maconly($0); ios[depth] = ios[depth] || iosonly($0); next }
+    /^[[:space:]]*#else/ { m[depth] = ios[depth]; next }
+    /^[[:space:]]*#endif/ { depth--; next }
+    {
+        mac = 0
+        for (i = 1; i <= depth; i++) if (m[i]) mac = 1
+        if (!mac && $0 !~ /^[[:space:]]*\/\// && $0 ~ pat) print FILENAME ":" FNR ": " $0
+    }
 ')
 if [[ -n "$bad" ]]; then
     echo "macOS-only API outside #if os(macOS) (breaks the iOS build):" >&2
