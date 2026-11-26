@@ -760,6 +760,18 @@ mod statement_list_tests {
         assert!(l.items.len() == 1 && l.rejected == 0, "{l:?}");
     }
 
+    /// A closing date is only a day that exists (29.02.2024 is leap year,
+    /// 29.02.2025 is not) — in the core as in the page script's date reading.
+    #[test]
+    fn closing_dates_accept_only_existing_calendar_days() {
+        for good in ["2024-02-29", "2024-02-29T12:00:00Z", "29.02.2024"] {
+            assert_eq!(closing_date(good).as_deref(), Some("2024-02-29"), "{good}");
+        }
+        for bad in ["2025-02-29", "29.02.2025", "31.04.2026", "2026-04-31"] {
+            assert_eq!(closing_date(bad), None, "{bad}");
+        }
+    }
+
     /// The statement PDFs land with the card account of the visa login, once each.
     #[test]
     fn amazon_visa_statements_are_stored_once_with_the_card_account() {
