@@ -21,7 +21,7 @@ Portal: `https://banking.volkswagenbank.de/#/login` (React-Single-Page-App) übe
 | 3 | `POST …/pushtan/transaction/checkstate` `{RequestKey}` (alle paar Sekunden) | `AuthorizationPending`, dann `TransactionConfirmed` |
 | 4 | `POST AuthenticationService/authentication/execute` (Header `X-REQUEST-KEY`, leerer Body) | `Status: Success` |
 | 5 | `GET AccountListService/accountlist` | Konten mit IBAN, Kontonummer, Saldo, `Features.CashFlow` |
-| 6 | `POST CashFlowService/cashflow/list/get` `{accountNumber, dateFrom, dateTo}` (Mitschnitt: `YYYY-MM-DDZ`; der Connector sendet Berliner Mitternacht in UTC, z. B. `2026-10-22T22:00:00.0000000Z` für den 23.10., **Annahme**, siehe „Offen“) | `CashflowList` mit `CreditAmount`/`DebitAmount`, `PaymentNotes`, `ReferenceAccount` |
+| 6 | `POST CashFlowService/cashflow/list/get` `{accountNumber, dateFrom, dateTo}` (Tage wie im Mitschnitt als `YYYY-MM-DDZ`, z. B. `2026-10-23Z` für den 23.10.; siehe „Offen“) | `CashflowList` mit `CreditAmount`/`DebitAmount`, `PaymentNotes`, `ReferenceAccount` |
 
 - Jede Antwort enthält einen neuen Header `Authorization: bearer …`; der jeweils neueste wird beim
   nächsten Aufruf zurückgeschickt. **Annahme:** Der Mitschnitt zeigt keine Anfrage-Header mit
@@ -40,9 +40,9 @@ Portal: `https://banking.volkswagenbank.de/#/login` (React-Single-Page-App) übe
 ## Offen
 
 - [ ] Live-Test mit echtem Konto (Anmeldung, Zurücksenden des Bearer-Tokens, Umsätze)
-- [ ] Anfrageformat von `dateFrom`/`dateTo` bestätigen: Der Mitschnitt zeigt `YYYY-MM-DDZ`, der
-      Connector sendet einen UTC-Zeitstempel. Bisher ist nicht belegt, dass eines der Formate den
-      HTTP 400 aus #1081 auslöst; ein Live-Tester meldet, dass beide funktionieren.
+- [ ] Anfrageformat von `dateFrom`/`dateTo` bestätigen: Der Connector sendet wie der Mitschnitt
+      `YYYY-MM-DDZ`. Bisher ist nicht belegt, dass ein Datumsformat den HTTP 400 aus #1081 auslöst;
+      ein Live-Tester meldet, dass Tagesangabe und UTC-Zeitstempel beide funktionieren.
 - [ ] photoTAN: Mitschnitt einer photoTAN-Anmeldung (Code-Eingabe) und Erzeugung der Grafik aus
       `X-CHALLENGES.PhotoTan.ImageCreationChallenge` (die Portal-JavaScript baut sie)
 - [ ] Statuswerte bei falschen Zugangsdaten, abgelehnter oder abgelaufener pushTAN (bisher nur

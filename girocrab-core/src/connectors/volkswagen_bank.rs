@@ -519,9 +519,11 @@ fn berlin_today() -> Date {
 
 /// The message of a refused call: the endpoint and the first 200 characters
 /// of the error body on one line (the portal usually says what it did not
-/// like). Never the request: it can hold the password.
+/// like). Never the request: it can hold the password. The answer can echo
+/// account numbers or IBANs, so long digit runs are masked before cutting
+/// (a cut must not leave the tail of a number behind).
 fn http_error_message(status: u16, path: &str, body: &str) -> String {
-    let detail = body
+    let detail = mask_digit_runs(body)
         .chars()
         .take(200)
         .collect::<String>()
@@ -536,6 +538,31 @@ fn http_error_message(status: u16, path: &str, body: &str) -> String {
     )
     .trim_end()
     .to_string()
+}
+
+/// Runs of 8 or more digits (account numbers, IBAN tails) become `…`;
+/// shorter ones (codes, date parts, HTTP statuses) stay.
+fn mask_digit_runs(s: &str) -> String {
+    fn flush(out: &mut String, run: &mut String) {
+        if run.len() >= 8 {
+            out.push('…');
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut run = String::new();
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            run.push(c);
+        } else {
+            flush(&mut out, &mut run);
+            out.push(c);
+        }
+    }
+    flush(&mut out, &mut run);
+    out
 }
 
 fn photo_tan_challenge(image: Vec<u8>) -> Challenge {
@@ -916,6 +943,24 @@ mod tests {
             msg.ends_with("[CashFlowService/cashflow/list/get]"),
             "{msg:?}"
         );
+
+        // Echoed account numbers and IBANs are masked; short codes and dates stay.
+        let msg = http_error_message(
+            400,
+            path,
+            "{\"accountNumber\":\"1234567890\",\"Iban\":\"DE89370400440532013000\",\"Code\":\"E4711\",\"dateFrom\":\"2026-10-23Z\"}",
+        );
+        assert!(!msg.contains("1234567890"), "{msg}");
+        assert!(!msg.contains("370400440532013000"), "{msg}");
+        assert!(!msg.contains("89370400"), "{msg}");
+        assert!(msg.contains("\"accountNumber\":\"…\""), "{msg}");
+        assert!(msg.contains("E4711"), "{msg}");
+        assert!(msg.contains("2026-10-23Z"), "{msg}");
+
+        // A number at the 200-character cut is masked as a whole, no tail left.
+        let msg = http_error_message(400, path, &format!("{}1234567890", "x".repeat(195)));
+        assert!(!msg.contains("12345"), "{msg}");
+        assert!(msg.ends_with('…'), "{msg:?}");
     }
 
     #[test]
