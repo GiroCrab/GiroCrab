@@ -1466,6 +1466,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Ayvens Bank: Die Umsätze von Konto {0} konnten nicht geladen werden ({1}). Der nächste Abruf holt sie nach." => {
             "Ayvens Bank: The bookings of account {0} could not be loaded ({1}). The next sync catches up."
         }
+        "Ayvens Bank: Die Umsätze von Konto {0} konnten nicht geladen werden ({1}). Sie lassen sich in den Einstellungen des Zugangs unter „Umsätze“ › „Beim nächsten Abruf“ erneut abrufen." => {
+            "Ayvens Bank: The bookings of account {0} could not be loaded ({1}). They can be fetched again in the login's settings under “Transactions” › “On the next fetch”."
+        }
         "Ayvens Bank: Unvollständige Buchung in der Antwort. Es wurden keine Daten übernommen." => {
             "Ayvens Bank: Incomplete booking in the response. No data was taken over."
         }

@@ -348,3 +348,30 @@ async fn one_failed_account_keeps_the_others() {
             .any(|w| w.contains("ayvens:7654321") && w.contains("nicht geladen"))
     );
 }
+
+#[tokio::test]
+async fn a_failed_list_in_the_full_fetch_points_to_the_period_setting() {
+    // stored with warnings the full fetch counts as done: later syncs do not reach back
+    let (base, _log) = serve_with(true);
+    let mut c = AyvensConnector::with_base(base);
+    let ctx = ConnectContext {
+        full_fetch: true,
+        ..ctx("erika", "geheim", "2016-01-01")
+    };
+    c.begin(&ctx).await.unwrap();
+    c.respond(
+        &ctx,
+        ChallengeResponse::Code(SecretString::new("123456".into())),
+    )
+    .await
+    .unwrap();
+    let out = c.fetch(&ctx).await.unwrap();
+    assert_eq!(out.accounts.len(), 2);
+    let failed = out
+        .warnings
+        .iter()
+        .find(|w| w.contains("ayvens:7654321"))
+        .unwrap();
+    assert!(failed.contains("Beim nächsten Abruf"), "{failed}");
+    assert!(!failed.contains("holt sie nach"), "{failed}");
+}
