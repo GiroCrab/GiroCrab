@@ -1,6 +1,7 @@
 package de.girocrab.app.model
 
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 /** Domain models mirroring `girocrab-core` (models.rs). All money values are cents (Long). */
 
@@ -189,7 +190,7 @@ data class StandingOrder(
     val unit: String,
     /** How many [unit]s lie between two runs (1 = monthly or weekly, 3 = quarterly). */
     val every: Int,
-    /** Day of the month the bank executes on; 0 = the day of [firstDate]. */
+    /** Day of the month the bank executes on; 0 is clamped to day 1, like the core. */
     val execDay: Int,
     val firstDate: LocalDate,
     /** Last execution the bank reported; `null` = open-ended. */
@@ -198,12 +199,12 @@ data class StandingOrder(
     /** "wöchentlich", "monatlich", "alle 2 Monate", … */
     val rhythm: String
         get() = when {
-            unit == "W" && every == 1 -> "wöchentlich"
-            unit == "W" -> "alle $every Wochen"
-            every == 1 -> "monatlich"
-            every == 3 -> "vierteljährlich"
-            every == 12 -> "jährlich"
-            else -> "alle $every Monate"
+            unit == "W" && step == 1 -> "wöchentlich"
+            unit == "W" -> "alle $step Wochen"
+            step == 1 -> "monatlich"
+            step == 3 -> "vierteljährlich"
+            step == 12 -> "jährlich"
+            else -> "alle $step Monate"
         }
 
     /** First run on or after [today]; `null` once [lastDate] has passed. */
@@ -211,26 +212,41 @@ data class StandingOrder(
 
     /** First run strictly after [date]; `null` at the end of the order. */
     fun after(date: LocalDate): LocalDate? {
-        if (firstDate > date) return firstDate.takeIf { lastDate == null || it <= lastDate }
-        var k = 1
-        while (k <= 1200) {
+        // Start at the step just before [date], like the core: an old open order must not
+        // fall off the 1000-step cap.
+        val k0 = if (unit == "W") {
+            val monday = firstDate.minusDays(firstDate.dayOfWeek.value - 1L)
+            maxOf(0, ChronoUnit.DAYS.between(monday, date) / (7L * step) - 1)
+        } else {
+            val firstMonths = firstDate.year * 12 + firstDate.monthValue - 1
+            val fromMonths = date.year * 12 + date.monthValue - 1
+            maxOf(0, (fromMonths - firstMonths) / step - 1)
+        }
+        for (k in k0..k0 + 1000) {
             val d = occurrence(k) ?: return null
-            if (d > date) return d
-            k++
+            if (d > date && d >= firstDate) return d
         }
         return null
     }
 
+    /** How many [unit]s lie between two runs; a stored 0 counts as one, like the core. */
+    private val step: Int get() = maxOf(every, 1)
+
     /**
      * The k-th run, counted from [firstDate] — not iterated, so a clamped month end (31 → 28/30)
-     * cannot drift into every following month. [execDay] then sets the day within that month.
+     * cannot drift into every following month. A weekly run falls on the Monday of
+     * [firstDate]'s week plus [execDay] - 1 (1 = Monday), not on [firstDate]'s weekday;
+     * [execDay] is clamped like the core, so 0 is day 1.
      */
     private fun occurrence(k: Int): LocalDate? {
         val base = if (unit == "W") {
-            firstDate.plusWeeks(every.toLong() * k)
+            val monday = firstDate.minusDays(firstDate.dayOfWeek.value - 1L)
+            val exec = monday.plusDays((execDay.coerceIn(1, 7) - 1).toLong())
+            exec.plusDays(7L * step * k)
         } else {
-            val m = firstDate.plusMonths(every.toLong() * k)
-            if (execDay in 1..31) m.withDayOfMonth(minOf(execDay, m.lengthOfMonth())) else m
+            val months = firstDate.year * 12 + firstDate.monthValue - 1 + step.toLong() * k
+            val m = LocalDate.of((months / 12).toInt(), (months % 12).toInt() + 1, 1)
+            m.withDayOfMonth(minOf(execDay.coerceIn(1, 31), m.lengthOfMonth()))
         }
         return if (lastDate != null && base > lastDate) null else base
     }

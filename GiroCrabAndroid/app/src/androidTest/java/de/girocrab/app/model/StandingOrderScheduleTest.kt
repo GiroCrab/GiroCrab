@@ -3,6 +3,7 @@ package de.girocrab.app.model
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,5 +86,32 @@ class StandingOrderScheduleTest {
         assertEquals("vierteljährlich", order(every = 3).rhythm)
         assertEquals("jährlich", order(every = 12).rhythm)
         assertEquals("alle 2 Monate", order(every = 2).rhythm)
+    }
+
+    @Test
+    fun oldOpenWeeklyOrderStillFindsItsNextRun() {
+        // An open weekly order from 2000 must not fall off the step cap.
+        val o = order(unit = "W", every = 1, execDay = 1, first = "2000-01-03")
+        val next = o.nextRun(LocalDate.of(2026, 11, 25))
+        assertNotNull(next)
+        assertEquals(2026, next!!.year)
+        assertEquals(11, next!!.monthValue)
+    }
+
+    @Test
+    fun zeroEveryCountsAsOne() {
+        // A stored every = 0 counts as one, like the core's `interval.max(1)`.
+        val zero = order(every = 0, execDay = 15, first = "2024-01-15")
+        assertEquals(LocalDate.of(2026, 11, 15), zero.nextRun(LocalDate.of(2026, 11, 1)))
+        assertEquals(LocalDate.of(2026, 12, 15), zero.nextRun(LocalDate.of(2026, 11, 20)))
+    }
+
+    @Test
+    fun weeklyExecDayIsOffsetFromMonday() {
+        // execDay = 5 (Friday) on a Monday first date gives Fridays, not the first date's weekday.
+        val o = order(unit = "W", every = 1, execDay = 5, first = "2026-01-05")
+        val next = o.nextRun(LocalDate.of(2026, 11, 25))
+        assertEquals(LocalDate.of(2026, 11, 27), next)
+        assertEquals(java.time.DayOfWeek.FRI, next?.dayOfWeek)
     }
 }
