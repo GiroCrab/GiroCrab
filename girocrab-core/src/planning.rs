@@ -454,9 +454,12 @@ pub(crate) fn cashflow_for(
     } else {
         None
     };
+    // the same totals set scopes the netted refunds (#714): a refund on an account left out of
+    // the totals does not reduce a purchase in them
     let filter = BookingFilter {
         account_ids: account_ids.to_vec(),
         date_from: Some(from),
+        respect_in_total,
         ..Default::default()
     };
     let mut acc: HashMap<String, (i64, i64)> = HashMap::new();

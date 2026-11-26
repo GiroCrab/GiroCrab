@@ -4600,6 +4600,21 @@ mod stats_netting {
             })
             .unwrap();
         assert_eq!(page.expense_cents, -10_000);
+        // the cashflow card in a totals context (no selection): the same scope
+        assert_eq!(
+            crate::planning::cashflow_for(
+                &f.v,
+                crate::models::PeriodGranularity::Month,
+                1,
+                &[],
+                2026,
+                1,
+                true,
+            )
+            .unwrap()[0]
+                .expense_cents,
+            10_000
+        );
         assert_eq!(
             crate::planning::cashflow_for(
                 &f.v,
@@ -4626,5 +4641,56 @@ mod stats_netting {
         // on, but no live link: still plain amounts, nothing loaded
         let sql = f.v.effective_sql(&db, "", "", &[]).unwrap();
         assert!(!sql.contains("refund_offset"));
+    }
+
+    /// The refunded amount counts in the original's month: a February refund of a January
+    /// purchase lowers January and adds nothing to February.
+    #[test]
+    fn a_later_refund_counts_in_the_original_month() {
+        let l = ledger();
+        raw(
+            &l.f.v,
+            &format!(
+                "UPDATE transactions SET booking_date='2026-02-10' WHERE id={}",
+                l.refund
+            ),
+        );
+        l.f.v.set_net_refunds_in_stats(true).unwrap();
+        let rows = crate::planning::cashflow_for(
+            &l.f.v,
+            crate::models::PeriodGranularity::Month,
+            2,
+            &[],
+            2026,
+            2,
+            false,
+        )
+        .unwrap();
+        let months: Vec<_> = rows
+            .iter()
+            .map(|r| (r.key.as_str(), r.income_cents, r.expense_cents))
+            .collect();
+        assert_eq!(months, [("2026-01", 0, 7_000), ("2026-02", 0, 0)]);
+        let history =
+            l.f.v
+                .category_history(l.shop, Vec::new(), None, None)
+                .unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .map(|p| (p.period.as_str(), p.cents))
+                .collect::<Vec<_>>(),
+            [("2026-01", -7_000)]
+        );
+        let back =
+            l.f.v
+                .category_history(l.back, Vec::new(), None, None)
+                .unwrap();
+        assert_eq!(
+            back.iter()
+                .map(|p| (p.period.as_str(), p.cents))
+                .collect::<Vec<_>>(),
+            [("2026-02", 0)]
+        );
     }
 }
