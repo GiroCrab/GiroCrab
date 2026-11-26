@@ -284,6 +284,42 @@ fn deleted_category_name_can_be_reused() {
     assert_ne!(u[0], u[1]);
 }
 
+/// Backfill on a current vault: only starter provenance converges on the
+/// deterministic path key. Custom rows and importer rows (`import:` provenance)
+/// keep an identity of their own, so the same import on two devices stays two
+/// categories and never steals a starter row's key.
+#[test]
+fn uuid_backfill_matches_only_starter_provenance() {
+    let dir = temp_dir("fill-provenance");
+    let v = open(&dir, "a.db");
+    let db = v.db().unwrap();
+    db.execute(
+        "INSERT INTO categories(name, builtin_role) VALUES ('Freizeit', 'Freizeit')",
+        [],
+    )
+    .unwrap();
+    db.execute("INSERT INTO categories(name) VALUES ('Hobby')", [])
+        .unwrap();
+    db.execute(
+        "INSERT INTO categories(name, builtin_role) VALUES ('Umbuchungen', 'import:transfers')",
+        [],
+    )
+    .unwrap();
+    fill_missing_uuids(&db).unwrap();
+    let uuid = |name: &str| -> String {
+        db.query_row("SELECT uuid FROM categories WHERE name = ?1", [name], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(uuid("Freizeit"), category_uuid_for_path(&["Freizeit"]));
+    assert_ne!(uuid("Hobby"), category_uuid_for_path(&["Hobby"]));
+    assert_ne!(
+        uuid("Umbuchungen"),
+        category_uuid_for_path(&["Umbuchungen"])
+    );
+}
+
 /// Two vaults built the same way, with a category, a booking and its stamps.
 fn identical_pair(dir: &std::path::Path) -> (Arc<Vault>, Arc<Vault>) {
     let pair = (open(dir, "p1.db"), open(dir, "p2.db"));
