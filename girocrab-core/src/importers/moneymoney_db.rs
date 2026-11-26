@@ -2346,26 +2346,32 @@ fn find_existing_accounts(
         let mut logins = import_logins(conn, src, b, None)?;
         logins.sort_unstable();
         logins.dedup();
+        // the cards `card_taken_over_from` accepts too: no IBAN, and below in `a`'s currency
+        // (a card in another currency is not `a`, not even for a tie, #1976)
         let mut st = conn.prepare(
-            "SELECT id, name, IFNULL(account_number, '') FROM accounts
+            "SELECT id, name, IFNULL(account_number, ''), upper(IFNULL(currency, '')) FROM accounts
              WHERE connection_id = ?1 AND kind = ?2 AND deleted_ms IS NULL
-               AND external_ref NOT LIKE 'moneymoney-db:%'",
+               AND external_ref NOT LIKE 'moneymoney-db:%'
+               AND replace(IFNULL(iban, ''), ' ', '') = ''",
         )?;
-        let mut synced: Vec<(i64, String, String)> = Vec::new();
+        let mut synced: Vec<(i64, String, String, String)> = Vec::new();
         for login in logins {
             let rows = st.query_map(params![login, AccountKind::CreditCard.as_str()], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })?;
             synced.extend(rows.collect::<Result<Vec<_>, _>>()?);
         }
         for a in cards {
+            let currency = a.currency.trim().to_uppercase();
             let free = synced
                 .iter()
                 .enumerate()
-                .filter(|(_, (id, _, _))| !claimed.contains(id))
-                .map(|(i, (_, _, number))| (i, number.as_str()));
+                .filter(|(_, (id, _, _, cur))| {
+                    !claimed.contains(id) && (cur.is_empty() || *cur == currency)
+                })
+                .map(|(i, (_, _, number, _))| (i, number.as_str()));
             if let CardMatch::One(i) = card_by_number(free, &a.account) {
-                let (id, name, _) = &synced[i];
+                let (id, name, _, _) = &synced[i];
                 claimed.insert(*id);
                 out.insert(a.id, (*id, name.clone()));
             }

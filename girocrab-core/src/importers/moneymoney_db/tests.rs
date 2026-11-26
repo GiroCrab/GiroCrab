@@ -5175,6 +5175,71 @@ fn preview_never_guesses_a_card_number_synced_on_two_linked_logins() {
     assert_eq!(proposed(), None);
 }
 
+#[test]
+fn preview_proposes_a_card_only_without_iban_and_in_its_currency() {
+    // #1976: like `card_taken_over_from`, a card in another currency or with an IBAN is not the
+    // MoneyMoney card, not even for a tie, on a linked login (Enable Banking) as on the own one
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
+           VALUES (40, 'DE', '12030000', 'hb-login', '', 'GEHEIM-40', 'Hanseatic Bank', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (41, 40, '5232 XXXX XXXX 4242', '12030000', 0, '', 'EUR', 'Hanseatic Kreditkarte', 'Max Mustermann', 0, 3, 41, 0, 0, 'GEHEIM');",
+    );
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let psd2 = p.banks.iter().find(|b| b.mm_id == 40).unwrap();
+    let psd2 = psd2
+        .connection_options
+        .iter()
+        .find(|o| o.via == MoneyMoneyDbConnectionVia::EnableBanking)
+        .unwrap();
+    let (login, gid) = {
+        let db = v.db().unwrap();
+        let (login, _) = Vault::add_bank_connection_keyed(
+            &db,
+            psd2.connector,
+            &psd2.key,
+            Some("12030000"),
+            "Hanseatic Bank".into(),
+            "hb-login".into(),
+        )
+        .unwrap();
+        (
+            login,
+            Vault::ensure_group(&db, "Karten", "creditcard", 1).unwrap(),
+        )
+    };
+    let card = |name: &str, currency: &str, iban: &str| -> i64 {
+        let db = v.db().unwrap();
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, iban, kind)
+             VALUES (?1, ?2, ?3, ?3, '5232000000004242', ?4, ?5, 'credit_card')",
+            params![login, gid, name, currency, iban],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    card("usd-card", "usd", "");
+    card("iban-card", "EUR", "DE02 1203 0000 0000 4242 42");
+    let proposed = || {
+        let p = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        p.accounts
+            .iter()
+            .find(|a| a.mm_id == 41)
+            .unwrap()
+            .existing_account_id
+    };
+    assert_eq!(proposed(), None);
+    let eur = card("eur-card", "EUR", "");
+    // neither other card ties with it
+    assert_eq!(proposed(), Some(eur));
+}
+
 /// Device A imported the fixture and step 38 marked its Girokonto; device B has it from A by
 /// merge. Returns (A, B, Girokonto on A, Girokonto on B).
 fn repaired_on_two_devices() -> (Arc<Vault>, Arc<Vault>, i64, i64) {
