@@ -1201,8 +1201,19 @@ struct PortalWebSheet: View {
     private func fillStoredLogin() async -> Bool {
         // privacy mode or a running bug-report capture: nothing is read or typed now;
         // the poll goes on and fills once the redaction ends (a transient state must
-        // not end the autofill for the session)
-        guard redaction.isEmpty else { return false }
+        // not end the autofill for the session). The environment value in this
+        // running task is a snapshot of the first render — privacy mode is re-read
+        // from its defaults switch, before the vault read and after it (the read
+        // can outlast the switch).
+        func redactedNow() -> Bool {
+            let scope = (UserDefaults.standard.string(forKey: PrivacyMode.scopeKey))
+                .flatMap(PrivacyMode.Scope.init(rawValue:)) ?? PrivacyMode.defaultScope
+            return !redaction.isEmpty
+                || PrivacyMode.redaction(
+                    enabled: UserDefaults.standard.bool(forKey: PrivacyMode.enabledKey),
+                    scope: scope) != []
+        }
+        guard !redactedNow() else { return false }
         let id = connection.id
         var answered = true
         var storedUser = "", password = ""
@@ -1218,6 +1229,9 @@ struct PortalWebSheet: View {
         } catch {
             answered = false
         }
+        // privacy turned on while the read was pending: nothing is processed
+        // or typed — the next poll decides fresh
+        guard !redactedNow() else { return false }
         // the limit counts consecutive unanswered reads: an answered vault
         // starts fresh, recoveries must not be spent on the earlier gap
         if answered { missingTries = 0 }
