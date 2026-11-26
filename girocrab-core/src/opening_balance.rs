@@ -13,8 +13,8 @@
 //! "before the first booking". "Kalibrieren" solves the equation the other way
 //! round: it picks the opening amount that yields a given current balance.
 //!
-//! Accounts whose balance comes from the bank ignore it, depots and loans have
-//! none. A cleared opening balance stays as a row with `NULL` cents, so a
+//! Accounts whose balance comes from the bank ignore it. Depots and loans
+//! managed by terms have none. A cleared opening balance stays as a row with `NULL` cents, so a
 //! vault merge does not bring an older value back.
 
 use std::collections::HashMap;
@@ -30,7 +30,8 @@ use crate::vault::Vault;
 /// A MoneyMoney import shows its accounts under their bank login right away,
 /// but until a sync takes one over (new `external_ref`) the bank has never
 /// reported a balance for it: it still counts as computed (#212).
-pub(crate) const DERIVED_SQL: &str = "a.deleted_ms IS NULL AND a.kind NOT IN ('brokerage', 'loan')
+pub(crate) const DERIVED_SQL: &str = "a.deleted_ms IS NULL AND a.kind <> 'brokerage'
+     AND (a.kind <> 'loan' OR (a.connection_id IS NULL AND a.external_ref GLOB 'offline-loan-*'))
      AND (a.connection_id IS NULL OR a.balance_derived = 1 OR a.external_ref LIKE 'moneymoney-db:%')";
 
 fn not_found(account_id: i64) -> CoreError {

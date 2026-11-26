@@ -10,9 +10,9 @@
 //! edits carry the per-field stamps and deletions are soft (`deleted_ms`), so
 //! the vault merge converges as it does for bank bookings.
 //!
-//! Depots and loans have their own flows (Sachwerte, `loans.rs`) and are never
-//! offline accounts in this sense; accounts of a bank connection are synced and
-//! stay read-only.
+//! Offline loans use the same opening balance and bookings, with a negative
+//! balance for the outstanding debt. Loans with terms in `loans.rs`, depots
+//! and accounts of a bank connection use their own flows.
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -24,14 +24,15 @@ use crate::models::AccountKind;
 use crate::vault::Vault;
 
 const EXTERNAL_REF_PREFIX: &str = "offline-";
+const OFFLINE_LOAN_REF_PREFIX: &str = "offline-loan-";
 const BOOKING_ID_PREFIX: &str = "manual-";
 const MAX_NAME_CHARS: usize = 100;
 const MAX_TEXT_CHARS: usize = 500;
 const MAX_NOTE_CHARS: usize = 5000;
 
 /// Accounts that take manual bookings (SQL condition on `a`).
-pub(crate) const OFFLINE_SQL: &str =
-    "a.deleted_ms IS NULL AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage', 'loan')";
+pub(crate) const OFFLINE_KIND_SQL: &str =
+    "a.kind <> 'brokerage' AND (a.kind <> 'loan' OR a.external_ref GLOB 'offline-loan-*')";
 
 /// What the booking editor sends: a new booking or the new values of one.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -73,7 +74,7 @@ fn parse_date(date: &str) -> CoreResult<String> {
 fn require_offline(conn: &Connection, account_id: i64) -> CoreResult<()> {
     let ok: Option<bool> = conn
         .query_row(
-            &format!("SELECT {OFFLINE_SQL} FROM accounts a WHERE a.id = ?1"),
+            &format!("SELECT a.deleted_ms IS NULL AND a.connection_id IS NULL AND {OFFLINE_KIND_SQL} FROM accounts a WHERE a.id = ?1"),
             [account_id],
             |r| r.get(0),
         )
@@ -201,6 +202,7 @@ fn offline_symbol(kind: AccountKind) -> &'static str {
         AccountKind::Cash => "banknote",
         AccountKind::Savings => "percent",
         AccountKind::TimeDeposit => "lock.circle",
+        AccountKind::Loan => "house",
         _ => "pencil.and.list.clipboard",
     }
 }
@@ -216,9 +218,18 @@ pub(crate) fn create_in(
     let currency = clean_currency(currency)?;
     let name = clean(name, MAX_NAME_CHARS)?;
     let name = if name.is_empty() {
-        tr("Bargeld").to_string()
+        match kind {
+            AccountKind::Loan => tr("Darlehen / Kredit"),
+            _ => tr("Bargeld"),
+        }
+        .to_string()
     } else {
         name
+    };
+    let prefix = if kind == AccountKind::Loan {
+        OFFLINE_LOAN_REF_PREFIX
+    } else {
+        EXTERNAL_REF_PREFIX
     };
     let (group, symbol, order) = group_for(kind);
     let gid = Vault::ensure_group(conn, group, symbol, order)?;
@@ -228,7 +239,7 @@ pub(crate) fn create_in(
          VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT IFNULL(MAX(sort_order), 0) + 1 FROM accounts))",
         params![
             gid,
-            format!("{EXTERNAL_REF_PREFIX}{}", uuid::Uuid::new_v4()),
+            format!("{prefix}{}", uuid::Uuid::new_v4()),
             name,
             kind.as_str(),
             offline_symbol(kind),
@@ -289,12 +300,41 @@ impl Vault {
         Ok(id)
     }
 
-    /// Ids of the accounts that take manual bookings: live, without a bank
-    /// connection, no depots or loans.
+    /// Creates a loan without a bank connection. Both amounts are entered as
+    /// positive magnitudes (the remaining debt may be zero).
+    pub fn create_offline_loan(
+        &self,
+        name: String,
+        currency: String,
+        original_cents: i64,
+        remaining_cents: i64,
+    ) -> Result<i64, CoreError> {
+        if original_cents <= 0 {
+            return Err(CoreError::invalid(tr(
+                "Der ursprüngliche Kreditbetrag muss größer als 0 sein.",
+            )));
+        }
+        if remaining_cents < 0 {
+            return Err(CoreError::invalid(tr(
+                "Die Restschuld darf nicht negativ sein.",
+            )));
+        }
+        let db = self.db()?;
+        let tx = db.unchecked_transaction()?;
+        let id = create_in(&tx, &name, AccountKind::Loan, &currency, -remaining_cents)?;
+        tx.execute(
+            "UPDATE accounts SET initial_balance_cents = ?1 WHERE id = ?2",
+            params![original_cents, id],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Ids of the live accounts that take manual bookings, including offline loans.
     pub fn list_offline_account_ids(&self) -> Result<Vec<i64>, CoreError> {
         let db = self.db()?;
         let mut stmt = db.prepare(&format!(
-            "SELECT a.id FROM accounts a WHERE {OFFLINE_SQL} ORDER BY a.id"
+            "SELECT a.id FROM accounts a WHERE a.deleted_ms IS NULL AND a.connection_id IS NULL AND {OFFLINE_KIND_SQL} ORDER BY a.id"
         ))?;
         let ids = stmt
             .query_map([], |r| r.get(0))?
@@ -457,46 +497,18 @@ impl Vault {
         booking_id: i64,
         account_id: i64,
     ) -> Result<i64, CoreError> {
-        let db = self.db()?;
-        let tx = db.unchecked_transaction()?;
-        require_offline(&tx, account_id)?;
-        let (source_account, date, cents, counterparty, purpose): (
-            i64,
-            String,
-            i64,
-            String,
-            String,
-        ) = tx
-            .query_row(
-                "SELECT account_id, booking_date, amount_cents, counterparty, purpose
-                   FROM transactions WHERE id = ?1 AND deleted_ms IS NULL",
-                [booking_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
-            .optional()?
-            .ok_or_else(|| not_found(trf("Buchung {0}", &[&booking_id])))?;
-        if source_account == account_id {
-            return Err(CoreError::invalid(tr(
-                "Eine Buchung lässt sich nicht in ihr eigenes Konto spiegeln.",
-            )));
-        }
-        if cents == 0 {
-            return Err(CoreError::invalid(tr("Der Betrag darf nicht 0 sein.")));
-        }
-        ensure_opening(&tx, account_id)?;
-        let setup = ManualBookingSetup {
-            booking_date: date.clone(),
-            amount_cents: -cents,
-            counterparty: counterparty.clone(),
-            purpose: purpose.clone(),
-            category_id: None,
-            note: String::new(),
-        };
-        let id = insert_booking(&tx, account_id, &date, &setup, &counterparty, &purpose, "")?;
-        // no `finish`: the copy stays without a category, the rules are not run
-        crate::opening_balance::refresh(&tx, account_id)?;
-        tx.commit()?;
-        Ok(id)
+        self.mirror_offline_booking(booking_id, account_id, None)
+    }
+
+    /// Copies only the user-confirmed principal of an outgoing payment into an
+    /// offline loan. The source booking may also include interest.
+    pub fn mirror_offline_loan_payment(
+        &self,
+        booking_id: i64,
+        account_id: i64,
+        principal_cents: i64,
+    ) -> Result<i64, CoreError> {
+        self.mirror_offline_booking(booking_id, account_id, Some(principal_cents))
     }
 
     /// Books the difference between the account balance and `target_cents` as
@@ -534,6 +546,95 @@ impl Vault {
         crate::opening_balance::refresh(&tx, account_id)?;
         tx.commit()?;
         Ok(Some(id))
+    }
+}
+
+impl Vault {
+    fn mirror_offline_booking(
+        &self,
+        booking_id: i64,
+        account_id: i64,
+        principal_cents: Option<i64>,
+    ) -> CoreResult<i64> {
+        let db = self.db()?;
+        let tx = db.unchecked_transaction()?;
+        require_offline(&tx, account_id)?;
+        let (kind, target_currency): (String, String) = tx.query_row(
+            "SELECT kind, currency FROM accounts WHERE id = ?1",
+            [account_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let (source_account, date, cents, counterparty, purpose, source_currency): (
+            i64,
+            String,
+            i64,
+            String,
+            String,
+            String,
+        ) = tx
+            .query_row(
+                "SELECT t.account_id, t.booking_date, t.amount_cents, t.counterparty, t.purpose,
+                        COALESCE(NULLIF(t.currency, ''), a.currency)
+                   FROM transactions t JOIN accounts a ON a.id = t.account_id
+                  WHERE t.id = ?1 AND t.deleted_ms IS NULL",
+                [booking_id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| not_found(trf("Buchung {0}", &[&booking_id])))?;
+        if source_account == account_id {
+            return Err(CoreError::invalid(tr(
+                "Eine Buchung lässt sich nicht in ihr eigenes Konto spiegeln.",
+            )));
+        }
+        let reversed = cents
+            .checked_neg()
+            .filter(|&c| c != 0)
+            .ok_or_else(|| CoreError::invalid(tr("Ungültiger Betrag.")))?;
+        let amount_cents = match (kind.as_str(), principal_cents) {
+            ("loan", Some(principal)) => {
+                if !source_currency.eq_ignore_ascii_case(&target_currency) {
+                    return Err(CoreError::invalid(tr(
+                        "Buchung und Darlehenskonto müssen dieselbe Währung haben.",
+                    )));
+                }
+                if principal <= 0 || principal > reversed {
+                    return Err(CoreError::invalid(tr(
+                        "Der Tilgungsanteil muss größer als 0 und höchstens so hoch wie die Abbuchung sein.",
+                    )));
+                }
+                principal
+            }
+            ("loan", None) | (_, Some(_)) => {
+                return Err(CoreError::invalid(tr(
+                    "Beim Spiegeln auf ein Darlehenskonto bitte den Tilgungsanteil angeben.",
+                )));
+            }
+            (_, None) => reversed,
+        };
+        ensure_opening(&tx, account_id)?;
+        let setup = ManualBookingSetup {
+            booking_date: date.clone(),
+            amount_cents,
+            counterparty: counterparty.clone(),
+            purpose: purpose.clone(),
+            category_id: None,
+            note: String::new(),
+        };
+        let id = insert_booking(&tx, account_id, &date, &setup, &counterparty, &purpose, "")?;
+        // no `finish`: the copy stays without a category, the rules are not run
+        crate::opening_balance::refresh(&tx, account_id)?;
+        tx.commit()?;
+        Ok(id)
     }
 }
 

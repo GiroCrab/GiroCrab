@@ -847,6 +847,19 @@ fn english(de: &str) -> Option<&'static str> {
         "Eine Buchung lässt sich nicht in ihr eigenes Konto spiegeln." => {
             "A booking cannot be mirrored into its own account."
         }
+        "Darlehen / Kredit" => "Loan / credit",
+        "Der ursprüngliche Kreditbetrag muss größer als 0 sein." => {
+            "The original loan amount must be greater than 0."
+        }
+        "Buchung und Darlehenskonto müssen dieselbe Währung haben." => {
+            "The booking and the loan account must use the same currency."
+        }
+        "Der Tilgungsanteil muss größer als 0 und höchstens so hoch wie die Abbuchung sein." => {
+            "The principal must be greater than 0 and cannot exceed the debit."
+        }
+        "Beim Spiegeln auf ein Darlehenskonto bitte den Tilgungsanteil angeben." => {
+            "Enter the principal when mirroring a booking to a loan account."
+        }
         "Saldokorrektur" => "Balance correction",
         // ------------------------------------------------------ user_groups.rs
         "Gruppe {0}" => "group {0}",

@@ -788,7 +788,7 @@ struct AccountRow: View {
 
     private var repaid: Double? {
         guard account.kind == .loan, let p = account.initialBalanceCents, p > 0 else { return nil }
-        return max(0, min(1, 1 - Double(-account.balanceCents) / Double(p)))
+        return max(0, min(1, 1 - -Double(account.balanceCents) / Double(p)))
     }
 
     private var signetSize: CGFloat { density == .compact ? 20 : 24 }
