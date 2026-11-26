@@ -247,6 +247,9 @@ fun sequenceTypeFor(m: DirectDebitMandate, oneOff: Set<String>): SequenceType = 
     }
 }
 
+/** What the core's `collect` accepts: active, and not a one-off mandate that has already been collected. */
+private fun DirectDebitMandate.einziehbar(): Boolean = active && !(oneOff && lastCollected != null)
+
 /** Minimal pain.008.001.02 skeleton for a collection (preview/export). */
 fun buildPain008(
     creditorName: String, creditorIban: String, creditorId: String,
@@ -521,6 +524,7 @@ private fun DirectDebitsTab(state: AppUiState, today: LocalDate, masked: Boolean
     var pain by remember { mutableStateOf<String?>(null) }
     var showCollect by remember { mutableStateOf(false) }
     val mandates = state.data.mandates
+    val collectableIds = mandates.filter { it.einziehbar() }.map { it.id }.toSet()
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -562,7 +566,7 @@ private fun DirectDebitsTab(state: AppUiState, today: LocalDate, masked: Boolean
 
     if (showCollect) {
         CollectionDialog(
-            mandates = mandates, selected = selected, onSelected = { selected = it },
+            mandates = mandates, selected = selected.filter { it in collectableIds }.toSet(), onSelected = { selected = it },
             seqOf = { sequenceTypeFor(it, oneOff) },
             accounts = state.data.accounts,
             today = today,
@@ -597,7 +601,7 @@ private fun CollectionDialog(
     var accountId by rememberSaveable { mutableStateOf(accounts.firstOrNull { it.kind == AccountKind.Giro }?.id) }
     var amounts by remember { mutableStateOf(mapOf<String, String>()) }
     val acc = accounts.firstOrNull { it.id == accountId }
-    val items = mandates.filter { it.id in selected }.mapNotNull { m -> parseCents(amounts[m.id].orEmpty())?.let { Triple(m, it, seqOf(m)) } }
+    val items = mandates.filter { it.id in selected && it.einziehbar() }.mapNotNull { m -> parseCents(amounts[m.id].orEmpty())?.let { Triple(m, it, seqOf(m)) } }
     val valid = name.isNotBlank() && creditorId.isNotBlank() && acc?.iban?.let(::isValidIban) == true && items.isNotEmpty()
 
     AlertDialog(
@@ -610,14 +614,19 @@ private fun CollectionDialog(
                 AccountDropdown(accounts, accountId, allowAll = false, onSelect = { accountId = it })
                 mandates.forEach { m ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(m.id in selected, { c -> onSelected(if (c) selected + m.id else selected - m.id) })
+                        androidx.compose.material3.Checkbox(m.id in selected, { c -> onSelected(if (c) selected + m.id else selected - m.id) }, enabled = m.einziehbar())
                         Column(Modifier.weight(1f)) {
                             Text(m.debtorName, maxLines = 1)
-                            Text("${seqOf(m).code} · ${m.reference}", style = MaterialTheme.typography.labelSmall)
+                            Text(
+                                if (m.einziehbar()) "${seqOf(m).code} · ${m.reference}"
+                                else if (m.active) "bereits eingezogen"
+                                else "inaktiv",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
                         }
                         OutlinedTextField(
                             amounts[m.id].orEmpty(), { amounts = amounts + (m.id to it) }, label = { Text("€") }, singleLine = true,
-                            enabled = m.id in selected, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            enabled = m.einziehbar() && m.id in selected, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.width(100.dp),
                         )
                     }

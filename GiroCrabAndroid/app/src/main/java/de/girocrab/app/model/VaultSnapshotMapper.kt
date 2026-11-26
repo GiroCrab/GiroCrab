@@ -219,11 +219,6 @@ object VaultSnapshotMapper {
         colorHex = color(row.colorHex, 0xFF1976D2),
     )
 
-    /**
-     * The core keeps the EUR value of a holding; the app recomputes it as
-     * `quantity * priceCents * fxRateToEur`. Instead of assuming a rate, the rate is derived, so the
-     * app's own arithmetic lands on the core's value to the cent.
-     */
     /** One standing order. The core has no next date — only first/last, exec day and rhythm. */
     private fun standingOrder(row: CoreStandingOrder): StandingOrder = StandingOrder(
         id = row.id.toString(),
@@ -236,7 +231,7 @@ object VaultSnapshotMapper {
         every = row.interval.toInt(),
         execDay = row.execDay.toInt(),
         firstDate = LocalDate.parse(row.firstDate),
-        lastDate = row.lastDate?.let(LocalDate::parse),
+        lastDate = parseOderNull(row.lastDate),
     )
 
     /**
@@ -260,10 +255,15 @@ object VaultSnapshotMapper {
         defaultPurpose = row.defaultPurpose,
         note = row.note,
         active = row.active,
-        lastCollected = row.lastCollected?.let(LocalDate::parse),
+        lastCollected = parseOderNull(row.lastCollected),
         nextSequence = row.nextSequence,
     )
 
+    /**
+     * The core keeps the EUR value of a holding; the app recomputes it as
+     * `quantity * priceCents * fxRateToEur`. Instead of assuming a rate, the rate is derived, so the
+     * app's own arithmetic lands on the core's value to the cent.
+     */
     private fun holding(accountId: Long, row: CoreHolding, quoteCurrency: String): Holding {
         val costBasis = row.profitLossPurchaseCents?.let { row.valueCents - it } ?: row.valueCents
         val fx = if (row.quantity > 0.0 && row.currentPriceCents > 0L) {
@@ -299,6 +299,11 @@ object VaultSnapshotMapper {
     )
 
     private fun date(raw: String): LocalDate = LocalDate.parse(raw)
+
+    /** Optionales Datum: liefert null statt zu werfen, damit ein kaputter Wert den Snapshot nicht
+     * scheitern lässt. */
+    private fun parseOderNull(s: String?): LocalDate? =
+        s?.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 
     /** The core sends `#RRGGBB`; the app models carry ARGB as a Long. */
     private fun color(hex: String, fallback: Long): Long {
