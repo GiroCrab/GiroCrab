@@ -175,7 +175,8 @@ fi
 generate_release_notes() {
   local target_tag="$1"
   local prev_tag
-  prev_tag="$(git tag --list 'v*' --sort=-version:refname | grep -vxF "$target_tag" | head -1 || true)"
+  # Windows nightlies (vX.Y.Z-nightly.YYYYMMDD) are no release-notes baseline.
+  prev_tag="$(git tag --list 'v*' --sort=-version:refname | grep -v -e '-nightly\.' | grep -vxF "$target_tag" | head -1 || true)"
 
   local range="HEAD"
   [ -n "$prev_tag" ] && range="${prev_tag}..HEAD"
@@ -583,6 +584,15 @@ ${NOTES}"
   # Betas: CI creates the release as a draft; publish it now that the DMG is attached.
   # Stable stays a draft until the maintainer releases it.
   if [ "$CHANNEL" = "beta" ]; then
+    # The Windows installer is attached by the separate windows-package job of release.yml.
+    # Do not publish a beta the Windows updater cannot use; re-run once that job is done.
+    WIN_ASSET="girocrab-windows-x86_64-setup.exe"
+    RELEASE_ASSETS="$(gh release view "$UPLOAD_TAG" --json assets -q '.assets[].name')"
+    if ! printf '%s\n' "$RELEASE_ASSETS" | grep -qxF "$WIN_ASSET"; then
+      echo "error: $UPLOAD_TAG has no $WIN_ASSET yet (release.yml job windows-package)." >&2
+      echo "       The beta stays a draft. Re-run this script after that job has finished." >&2
+      exit 1
+    fi
     echo "==> Publishing beta release $UPLOAD_TAG"
     gh release edit "$UPLOAD_TAG" --draft=false --prerelease --latest=false
   fi
