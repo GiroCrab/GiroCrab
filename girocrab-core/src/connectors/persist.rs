@@ -119,7 +119,9 @@ fn adopt_legacy_content_id(
 /// Safety net for every connector: repairs UTF-8/Latin-1 mojibake in a
 /// fetched booking's texts. Includes `original_counterparty`, since older
 /// versions stored that name cleaned and legacy ids are adopted by it (#1721).
-/// The content id depends only on `counterparty`, so it does not change here.
+/// The id stays as it is: `external_id` is not recomputed here, and
+/// `original_counterparty` is not part of the content key (booking and value
+/// date, amount, counterparty, purpose).
 fn clean_fetched_text(t: &mut RemoteTransaction) {
     t.counterparty = crate::text::clean_bank_text(&t.counterparty);
     t.original_counterparty = crate::text::clean_bank_text(&t.original_counterparty);

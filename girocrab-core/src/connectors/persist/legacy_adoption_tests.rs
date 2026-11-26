@@ -264,7 +264,8 @@ fn repaired_original_name_adopts_the_row_stored_cleaned() {
     let id = t.external_id.clone();
     clean_fetched_text(&mut t);
     assert_eq!(t.original_counterparty, "Müller Versand");
-    // the content id depends only on the counterparty and stays the same
+    // cleaning keeps the external id, and `original_counterparty` is not part
+    // of the content key: the id derived from the content stays the same
     assert_eq!(t.external_id, id);
     assert_eq!(t.content_id(0), id);
     assert!(adopt_legacy_content_id(&conn, 1, &t).unwrap());
