@@ -293,6 +293,8 @@ public final class AppModel {
     var scope: BookingScope = .all {
         didSet {
             guard scope != oldValue else { return }
+            // The previous filter's categories must not stay listed until the new set has loaded.
+            if scopeCategoryIDs != nil { scopeCategoryIDs = nil }
             loadScopeCategories()
             listLimit = Self.defaultListLimit
             if scope == .investments, dashboardStale { loadDashboard() }
