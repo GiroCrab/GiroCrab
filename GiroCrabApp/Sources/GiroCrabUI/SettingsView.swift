@@ -251,7 +251,6 @@ enum SettingsTab: Hashable {
 struct BankConnectionsSettings: View {
     @Environment(\.reportRedaction) private var redaction
     @Environment(AppModel.self) private var model
-    @AppStorage(AppModel.syncAllPortalsKey) private var syncAllPortals = false
     @State private var showAddBank = false
     @State private var editing: BankConnection?
     @State private var confirmRemove: BankConnection?
@@ -310,11 +309,6 @@ struct BankConnectionsSettings: View {
                     .onTapGesture { editing = c }
                 }
             } header: { Text("Verbundene Banken").appSectionHeader() }
-            Section {
-                Toggle("Zugänge mit Browser-Anmeldung einbeziehen", isOn: $syncAllPortals)
-                Text("Öffnet nach allen übrigen Bankzugängen nacheinander das Anmeldefenster der Zugänge, die sich im Browserfenster anmelden (z. B. Kreditkarten-Portale). Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt einen Zugang aus.")
-                    .appFont(.caption).foregroundStyle(.secondary)
-            } header: { Text("Alle Konten abrufen").appSectionHeader() }
             Section {
                 Button { showAddBank = true } label: {
                     Label("Bank suchen und hinzufügen …", systemImage: "magnifyingglass")

@@ -7579,6 +7579,16 @@
         }
       }
     },
+    "Bei „Alle Konten abrufen“ einbeziehen" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Include in “Fetch all accounts”"
+          }
+        }
+      }
+    },
     "Bei „Nur Symbol“ steht der Betrag nur im Popover." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36951,16 +36961,6 @@
         }
       }
     },
-    "Zugänge mit Browser-Anmeldung einbeziehen" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Include logins with a browser sign-in"
-          }
-        }
-      }
-    },
     "Zuklappen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38480,6 +38480,16 @@
         }
       }
     },
+    "Öffnet das Anmeldefenster dieses Zugangs, nachdem alle übrigen Bankzugänge abgerufen sind. Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt diesen Zugang aus." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens this login's sign-in window after all other bank logins have been fetched. “Done” moves on to the next one, “Cancel” leaves this login out."
+          }
+        }
+      }
+    },
     "Öffnet die Übersicht der wiederkehrenden Buchungen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38487,16 +38497,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Opens the overview of recurring transactions"
-          }
-        }
-      }
-    },
-    "Öffnet nach allen übrigen Bankzugängen nacheinander das Anmeldefenster der Zugänge, die sich im Browserfenster anmelden (z. B. Kreditkarten-Portale). Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt einen Zugang aus." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "After all other bank logins, opens the sign-in window of each login that signs in through a browser window (e.g. card portals), one after another. “Done” moves on to the next one, “Cancel” leaves a login out."
           }
         }
       }

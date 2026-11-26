@@ -117,19 +117,39 @@ extension AppModel {
         requestSyncBatch { [self] in syncAllConnections() }
     }
 
-    /// Per device, off by default: "Alle Konten abrufen" also opens the browser login of
-    /// logins without a stored session (card portals and other web logins), one after
-    /// another at the end, after every login that syncs on its own.
-    static let syncAllPortalsKey = "sync.allIncludesPortals"
+    /// Setting key per login: "Alle Konten abrufen" also opens this login's browser sign-in.
+    static func syncAllPortalKey(_ connectionID: Int64) -> String { "sync.all_includes_portal.\(connectionID)" }
+
+    /// A login that signs in through a browser window (card portal, …) and can join
+    /// "Alle Konten abrufen" when switched on in its sheet (Abruf). Advanzia runs its own
+    /// workflow, which does not report back to the batch.
+    func offersSyncAllPortal(_ connection: BankConnection) -> Bool {
+        usesPortal(connection) && !usesFileImport(connection) && connection.connector != .advanzia
+    }
+
+    /// Off by default; stored in the vault like the login's sync interval.
+    func syncAllIncludesPortal(_ id: Int64) -> Bool {
+        revealSetting(Self.syncAllPortalKey(id)) == "1"
+    }
+
+    @discardableResult
+    func setSyncAllIncludesPortal(_ id: Int64, _ on: Bool) -> Bool {
+        guard let vault, connections.contains(where: { $0.id == id && offersSyncAllPortal($0) }) else { return false }
+        do {
+            try vault.setSetting(key: Self.syncAllPortalKey(id), value: on ? "1" : "")
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
+        }
+    }
 
     /// The logins of "Alle Konten abrufen" in order: those that sync unattended first, then
-    /// (when chosen in Einstellungen › Bankzugänge) the ones with a browser login.
+    /// the browser-login ones switched on for it, each opening its window in turn.
     func syncAllConnections() -> [BankConnection] {
         let live = connections.filter { !$0.allAccountsArchived }
         let unattended = live.filter { supportsSyncSchedule($0) && syncSchedule($0.id) != AutoSync.never }
-        guard AppDefaults.store.bool(forKey: Self.syncAllPortalsKey) else { return unattended }
-        // Advanzia runs its own workflow, which does not report back to the batch
-        return unattended + live.filter { usesPortal($0) && !usesFileImport($0) && $0.connector != .advanzia }
+        return unattended + live.filter { offersSyncAllPortal($0) && syncAllIncludesPortal($0.id) }
     }
 
     /// A browser login opened by "Alle Konten abrufen" was closed (imported or closed
