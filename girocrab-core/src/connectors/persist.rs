@@ -683,7 +683,9 @@ pub(crate) fn store_fetch(
                     && h.profit_loss_purchase_cents.is_none()
                     && let Some(o) = old.iter().find(|o| {
                         !h.isin.is_empty() && o.isin == h.isin
-                            || h.isin.is_empty() && !h.wkn.is_empty() && o.wkn == h.wkn
+                            || (h.isin.is_empty() || o.isin.is_empty())
+                                && !h.wkn.is_empty()
+                                && o.wkn == h.wkn
                     })
                 {
                     h.purchase_price_cents = o.purchase_price_cents;
