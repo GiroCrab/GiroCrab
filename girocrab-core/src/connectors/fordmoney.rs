@@ -346,19 +346,19 @@ fn trace(msg: &str) {
     crate::depot_debug::log(&format!("fordmoney {msg}"));
 }
 
-/// The overview cut into one part per account, with its number. From the
-/// first accordion section on, a part starts at the tag that holds an
-/// account's first `#collapse_<number>` (its header): Festgeld sections are
-/// marked up differently from the Tagesgeld one, and cutting at
-/// `<section class="accordion">` gave them all to the account before them (#1766).
+/// The overview cut into one part per account, with its number. A part
+/// starts at the tag that holds an account's first `#collapse_<number>` (its
+/// header): Festgeld sections are marked up differently from the Tagesgeld
+/// one, and cutting at `<section class="accordion">` gave them all to the
+/// account before them (#1766). The search starts at the first accordion
+/// section, which skips the links before the account list; a page without one
+/// is searched whole (`parse_accounts` drops parts that are no account).
 fn account_parts(html: &str) -> Vec<(String, &str)> {
-    let Some(first) = SECTION_TAG
+    let start = SECTION_TAG
         .find_iter(html)
         .find(|m| m.as_str().contains("accordion"))
-    else {
-        return Vec::new();
-    };
-    let list = &html[first.start()..];
+        .map_or(0, |m| m.start());
+    let list = &html[start..];
     let mut seen = HashSet::new();
     let starts: Vec<(String, usize)> = ACCOUNT_HEADER
         .captures_iter(list)
@@ -414,8 +414,8 @@ fn parse_accounts(html: &str) -> CoreResult<(Vec<Account>, Vec<String>)> {
             .captures_iter(part)
             .map(|c| (text(&c[1]), text(&c[2])))
             .collect();
-        // a collapse link with neither a balance nor account details (a menu) is no account
-        if labels.is_empty() && !RIGHT_SUM.is_match(part) {
+        // a collapse link with no product, balance or account details (a menu) is no account
+        if labels.is_empty() && !RIGHT_SUM.is_match(part) && !PRODUCT.is_match(part) {
             trace(&format!("part #{}: no account details, skipped", i + 1));
             continue;
         }
@@ -1522,6 +1522,34 @@ mod tests {
         }
     }
 
+    /// No accordion section at all (only Festgeld, headers in `<div>`s): the
+    /// whole page is searched, a menu link before the accounts is still no account.
+    #[test]
+    fn festgeld_only_overview_without_accordion_section_is_read() {
+        let html = format!(
+            r##"<nav><a href="#collapse_99999999" data-bs-toggle="collapse">Menü</a></nav>{}{}"##,
+            festgeld_entry(
+                "<div>",
+                "</div>",
+                "2000000001",
+                "DE00 1234 5678 2000 0000 01",
+                "10.000,00 €"
+            ),
+            festgeld_entry(
+                "<div>",
+                "</div>",
+                "2000000002",
+                "DE00 1234 5678 2000 0000 02",
+                "5.000,00 €"
+            ),
+        );
+        let (accounts, unreadable) = parse_accounts(&html).unwrap();
+        assert!(unreadable.is_empty(), "{unreadable:?}");
+        let numbers: Vec<&str> = accounts.iter().map(|a| a.number.as_str()).collect();
+        assert_eq!(numbers, ["2000000001", "2000000002"]);
+        assert_eq!(accounts[1].balance_cents, 500_000);
+    }
+
     /// A menu link to a collapse target in an accordion before the accounts
     /// has neither a balance nor account details: no account, no warning.
     #[test]
@@ -1539,6 +1567,28 @@ mod tests {
         assert!(unreadable.is_empty(), "{unreadable:?}");
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].number, "1000000001");
+    }
+
+    /// An account header with its product but no detail rows and no balance
+    /// is an account that could not be read, not a menu link.
+    #[test]
+    fn a_heading_without_details_or_balance_is_reported_unreadable() {
+        let html = format!(
+            r##"{}<section class="accordion">
+              <a class="row accordion-container__header collapsed" data-bs-toggle="collapse" href="#collapse_2000000001">
+                <div class="col-sm-10 col-xs-8"><div>Festgeld</div></div>
+              </a>
+            </section>"##,
+            account_section(
+                "1000000001",
+                "DE00 1234 5678 1000 0000 01",
+                "1.234,56 €",
+                "contentForm:j_idt331:0:j_idt340"
+            ),
+        );
+        let (accounts, unreadable) = parse_accounts(&html).unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(unreadable, ["2000000001"]);
     }
 
     #[test]
