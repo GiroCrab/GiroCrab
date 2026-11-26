@@ -273,14 +273,16 @@ async fn dialog_init_9010_with_stale_system_id_does_not_fall_back() {
     assert!(c.st.system_id.is_empty());
 }
 
-#[tokio::test]
-async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
-    const LOGIN_REFUSED: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Dialoginitialisierung abgebrochen.'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.'";
-    let (url, seen) = mock_bank(vec![LOGIN_REFUSED]);
-    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
-    let mut c = two_step_connector(&url, state);
-    let Err(CoreError::Bank { code, message }) = c.open_dialog(&test_ctx()).await else {
-        panic!("expected a bank error");
+/// The bank's answer to a refused login; `extra` adds codes of the same reply.
+fn login_refused_reply(extra: &str) -> String {
+    format!(
+        "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Dialoginitialisierung abgebrochen.'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.{extra}'"
+    )
+}
+
+fn assert_login_refused(result: CoreResult<impl std::fmt::Debug>) {
+    let Err(CoreError::Bank { code, message }) = result else {
+        panic!("expected a bank error, got {result:?}");
     };
     assert_eq!(code, "9040");
     assert!(
@@ -288,7 +290,36 @@ async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
         "{message}"
     );
     assert!(message.contains("Anmeldung fehlgeschlagen"), "{message}");
-    // a refused login must not be sent again: every attempt counts towards the lock
+}
+
+#[tokio::test]
+async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
+    // alone, with a "malformed" 9010 (one-step retry) and with 9110 (other TAN
+    // functions): a refused login must not be sent again, every attempt counts
+    // towards the lock
+    for extra in [
+        "",
+        "+9010::Fehler.",
+        "+9110::Falsche Segmentzusammenstellung",
+    ] {
+        let reply: &'static str = login_refused_reply(extra).leak();
+        let (url, seen) = mock_bank(vec![reply, ACCEPT]);
+        let state =
+            state_with_functions("913", &[("913", "chipTAN QR"), ("911", "chipTAN optisch")]);
+        let mut c = two_step_connector(&url, state);
+        assert_login_refused(c.open_dialog(&test_ctx()).await);
+        assert_eq!(seen.lock().unwrap().len(), 1, "{extra}");
+    }
+}
+
+#[tokio::test]
+async fn sync_dialog_9040_explains_the_refused_login() {
+    // a new login has no system ID yet: the sync dialog is the bank's first contact
+    let reply: &'static str = login_refused_reply("").leak();
+    let (url, seen) = mock_bank(vec![reply]);
+    let state = serde_json::json!({"system_id": "", "sec_func": "", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    assert_login_refused(c.sync_dialog(&test_ctx()).await);
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
 

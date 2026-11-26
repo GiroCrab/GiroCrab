@@ -113,6 +113,28 @@ fn init_rejected_as_malformed(reply: &BankReply) -> bool {
     reply.has("9010") && !stale_system_id(reply)
 }
 
+/// 9040: the bank refused the login name or the PIN/password. Explains it, warns
+/// about the lock and keeps the bank's text. No fallback may send the refused
+/// credentials again: every attempt counts towards the lock.
+fn login_refused(reply: &BankReply) -> Option<CoreError> {
+    if !reply.has("9040") {
+        return None;
+    }
+    let bank = match reply.check() {
+        Err(CoreError::Bank { message, .. }) => message,
+        _ => String::new(),
+    };
+    Some(CoreError::Bank {
+        code: "9040".into(),
+        message: format!(
+            "{} ({bank})",
+            tr(
+                "Anmeldename oder PIN wurden abgelehnt. Bei manchen Banken ist die PIN das Kennwort des Online-Bankings (z. B. Deutsche Bank: Kennwort der Deutsche Bank ID). Bitte prüfen, bevor Sie es erneut versuchen: Nach mehreren Fehlversuchen sperrt die Bank den Zugang."
+            )
+        ),
+    })
+}
+
 /// 9931/9942: the stored system ID or TAN function is stale, a new sync is due.
 fn stale_system_id(reply: &BankReply) -> bool {
     reply.has("9931") || reply.has("9942")
@@ -120,7 +142,7 @@ fn stale_system_id(reply: &BankReply) -> bool {
 
 /// An answer to a retry that no other variant can improve: its error is the one to report.
 fn ends_hktan_retry(reply: &BankReply) -> bool {
-    reply.has("9930") || stale_system_id(reply)
+    reply.has("9930") || stale_system_id(reply) || reply.has("9040")
 }
 
 /// Dialog init refused with 9110 ("Falsche Segmentzusammenstellung", #1641) or 9200 ("Zwei-Schritt-
@@ -566,6 +588,9 @@ impl FinTsConnector {
         ];
         let reply = self.send(ctx, payload, "999", None).await?;
         self.blz_rejected = blz_mismatch(&reply);
+        if let Some(e) = login_refused(&reply) {
+            return Err(e);
+        }
         reply.check()?;
         self.learn_bpd(&reply);
         // Optional: TAN media list (needed by some banks for HKTAN).
@@ -838,6 +863,10 @@ impl FinTsConnector {
             self.blz_rejected = true;
             reply.check()?;
         }
+        // a refused login (9040) ends here: the fallbacks below would send it again
+        if let Some(e) = self.refused_login(&reply) {
+            return Err(e);
+        }
         // Some banks reject HKTAN in the dialog init as malformed (9010 without a
         // PIN/TAN/system-id code): retry once one-step and remember it.
         if sec != "999" && init_rejected_as_malformed(&reply) {
@@ -861,6 +890,10 @@ impl FinTsConnector {
                 reply = retry;
                 sec = self.sec();
             }
+        }
+        // a fallback answered 9040: not the TAN medium retry below either
+        if let Some(e) = self.refused_login(&reply) {
+            return Err(e);
         }
         self.learn_bpd(&reply);
         // The bank wants the TAN device name in every HKTAN and offered no way to
@@ -894,27 +927,22 @@ impl FinTsConnector {
             if reply.has("9931") || reply.has("9942") || reply.has("9010") {
                 self.st.system_id.clear();
             }
-            // 9040: login name or PIN/password refused. Say which fields to check and
-            // warn that further attempts lock the access; keep the bank's text.
-            if reply.has("9040")
-                && let CoreError::Bank { message, .. } = &e
-            {
-                return Err(CoreError::Bank {
-                    code: "9040".into(),
-                    message: format!(
-                        "{} ({message})",
-                        tr(
-                            "Anmeldename oder PIN wurden abgelehnt. Bei manchen Banken ist die PIN das Kennwort des Online-Bankings (z. B. Deutsche Bank: Kennwort der Deutsche Bank ID). Bitte prüfen, bevor Sie es erneut versuchen: Nach mehreren Fehlversuchen sperrt die Bank den Zugang."
-                        )
-                    ),
-                });
-            }
             return Err(e);
         }
         if let Some(p) = self.challenge_from(&reply)? {
             return Ok(p);
         }
         Ok(Phase::Ready)
+    }
+
+    /// `login_refused` for the dialog init; a stale system ID in the same reply is
+    /// forgotten as on any other refused init.
+    fn refused_login(&mut self, reply: &BankReply) -> Option<CoreError> {
+        let e = login_refused(reply)?;
+        if stale_system_id(reply) || reply.has("9010") {
+            self.st.system_id.clear();
+        }
+        Some(e)
     }
 
     async fn send_dialog_init(&mut self, ctx: &ConnectContext, sec: &str) -> CoreResult<BankReply> {
