@@ -33,6 +33,72 @@ pub struct PortalStatementItem {
     pub path: String,
 }
 
+/// One entry of a portal's statement list that names its PDF only by a document
+/// id (Open Bank / Amazon Visa, live-checked at the real portal): the statements
+/// response carries a closing date and a `documentId` (+ `version`) per entry,
+/// the PDF itself answers a second request per statement
+/// (`documents/:id/versions/:version` → `{ "documentUri": "…x.pdf" }`).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PortalStatementRef {
+    pub date: String,
+    pub document_id: String,
+    /// The document's version from the same entry, `""` when the entry has none.
+    pub version: String,
+}
+
+pub fn parse_portal_statement_refs(body: &str) -> Vec<PortalStatementRef> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .map(|v| {
+            let mut out = Vec::new();
+            refs(&v, &mut out);
+            out
+        })
+        .unwrap_or_default()
+}
+
+/// Every dated entry with its own document id onto `out`, once each — same
+/// boundary as `entry`: the id is a direct field of the dated object, never
+/// one of a nested entry (a movement's `date` names no statement).
+fn refs(v: &serde_json::Value, out: &mut Vec<PortalStatementRef>) {
+    if let Some(r) = statement_ref(v)
+        && !out.contains(&r)
+    {
+        out.push(r);
+    }
+    match v {
+        serde_json::Value::Object(m) => m.values().for_each(|v| refs(v, out)),
+        serde_json::Value::Array(a) => a.iter().for_each(|v| refs(v, out)),
+        _ => {}
+    }
+}
+
+/// One list entry of the document-id kind: its closing date and its
+/// `documentId` are direct fields of the same object.
+fn statement_ref(v: &serde_json::Value) -> Option<PortalStatementRef> {
+    let m = match v {
+        serde_json::Value::Object(m) => m,
+        _ => return None,
+    };
+    let date = own_date(m)?;
+    let document_id = m
+        .iter()
+        .filter(|(k, _)| field_name(k) == "documentid")
+        .find_map(|(_, v)| v.as_str())
+        .filter(|s| !s.is_empty() && !s.contains(char::is_whitespace))?;
+    let version = m
+        .iter()
+        .filter(|(k, _)| field_name(k) == "version")
+        .find_map(|(_, v)| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Some(PortalStatementRef {
+        date,
+        document_id: document_id.to_string(),
+        version,
+    })
+}
+
 /// The statements list of the Amazon-Visa portal (Open Bank), schema-agnostic:
 /// its JSON schema is undocumented and changes, so every object that carries a
 /// closing date and a PDF link is an entry (`{…, "date": "2026-10-15", "url":
@@ -758,6 +824,175 @@ mod statement_list_tests {
             r#"{"statements":[{"date":"2026-10-15","files":[{"created":"2026-10-20","url":"/a/1.pdf"}]}]}"#,
         );
         assert!(l.items.len() == 1 && l.rejected == 0, "{l:?}");
+    }
+
+    /// The statements list of the real Amazon-Visa portal (Open Bank), captured
+    /// live and anonymized (two entries, one booking each): its entries name
+    /// their PDF only by `documentId` (+ `version`) — no PDF links at all.
+    const VISA_STATEMENTS_SAMPLE: &str = r#"{
+ "metadata": {
+  "hasPendingRecords": false
+ },
+ "elements": [
+  {
+   "id": "C000000000001-20240924",
+   "cardContract": "C000000000001",
+   "statementDate": "2024-09-24",
+   "paymentDueDate": "2024-09-30",
+   "countryCode": "ES",
+   "billRef": "99999999999999999999",
+   "postponePurchaseMonthCourse": 0,
+   "statementStatus": "PAID",
+   "composeData": {
+    "documentDate": "2024-09-25",
+    "product": "OPEN CREDIT CLIENTES",
+    "iban": "DE02300209000106531065",
+    "settlementPeriod": "2024-09-24",
+    "cycleDate": "2024-09-24",
+    "paymentDueDate": "2024-09-30",
+    "customerId": "1000000001",
+    "amountPayConsumptionMonth": 835.39,
+    "availableBalance": 1164.61,
+    "claimCommissionsDebtPositions": 0.0,
+    "consumptionExpenseMonthCourse": 0.0,
+    "creditLimit": 2000.0,
+    "currency": "EUR",
+    "currentBalance": 835.39,
+    "currentCycleInterest": 0.0,
+    "currentCyclePrincipal": 835.39,
+    "interestResolutionAmount": 0.0,
+    "outstandingBalance": 835.39,
+    "overlimit": 0.0,
+    "paymentAmount": 835.39,
+    "paymentMethod": "FULL_ACCOUNT_BALANCE",
+    "penaltyInterestAmount": 0.0,
+    "previousBalance": 0.0,
+    "tae": 20.12,
+    "tin": 0.0,
+    "totalInterest": 0,
+    "totalPendingConsumptionAfterPayment": 0.0,
+    "totalSettlementAmount": 835.39,
+    "unpaidBalance": 0.0,
+    "cmsAccountId": "9999999999999999999",
+    "movementsMonth": [
+     {
+      "date": "2024-09-04",
+      "settlementDate": "2024-09-04",
+      "referenceNumber": "09999999980904000470454",
+      "authorizationCode": "EB4EB9",
+      "cardNumber": "9999999999999999999",
+      "description": "INCENTIVE CAMPAIGN",
+      "amount": 25.0,
+      "planNumber": "10000",
+      "transactionType": "C"
+     }
+    ],
+    "deferPurchase": []
+   },
+   "documentId": "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ab",
+   "version": "1"
+  },
+  {
+   "id": "C000000000001-20241024",
+   "cardContract": "C000000000001",
+   "statementDate": "2024-10-24",
+   "paymentDueDate": "2024-10-29",
+   "countryCode": "ES",
+   "billRef": "99999999999999999999",
+   "postponePurchaseMonthCourse": 0,
+   "statementStatus": "PAID",
+   "composeData": {
+    "documentDate": "2024-10-25",
+    "product": "OPEN CREDIT CLIENTES",
+    "iban": "DE02300209000106531065",
+    "settlementPeriod": "2024-10-24",
+    "cycleDate": "2024-10-24",
+    "paymentDueDate": "2024-10-29",
+    "customerId": "1000000001",
+    "amountPayConsumptionMonth": 1660.86,
+    "availableBalance": 303.76,
+    "claimCommissionsDebtPositions": 0.0,
+    "consumptionExpenseMonthCourse": 0.0,
+    "creditLimit": 2000.0,
+    "currency": "EUR",
+    "currentBalance": 1660.86,
+    "currentCycleInterest": 0.0,
+    "currentCyclePrincipal": 1660.86,
+    "interestResolutionAmount": 0.0,
+    "outstandingBalance": 1660.86,
+    "overlimit": 0.0,
+    "paymentAmount": 1660.86,
+    "paymentMethod": "FULL_ACCOUNT_BALANCE",
+    "penaltyInterestAmount": 0.0,
+    "previousBalance": 835.39,
+    "tae": 19.42,
+    "tin": 0.0,
+    "totalInterest": 0,
+    "totalPendingConsumptionAfterPayment": 0.0,
+    "totalSettlementAmount": 1660.86,
+    "unpaidBalance": 0.0,
+    "cmsAccountId": "9999999999999999999",
+    "movementsMonth": [
+     {
+      "date": "2024-09-30",
+      "settlementDate": "2024-09-30",
+      "referenceNumber": "09999999980930000693712",
+      "authorizationCode": "92F939",
+      "cardNumber": "9999999999999999999",
+      "description": "PAGO DE RECIBO CONTRATO TARJETA",
+      "amount": 835.39,
+      "planNumber": "10000",
+      "transactionType": "C"
+     }
+    ],
+    "deferPurchase": []
+   },
+   "documentId": "ZzYyXwWvVuUtSrRqQpPoOnNmLk9j8i7h6g5f4e3d",
+   "version": "1"
+  }
+ ]
+}"#;
+
+    /// The live schema pairs each entry's closing date with its own document
+    /// id — the bookings inside an entry carry dates of their own, they name
+    /// no entry. The listing parser reads the same response as a readable
+    /// list without items: the PDFs answer a second request per statement
+    /// (`documentUri`), the refs parser prepares it.
+    #[test]
+    fn the_open_bank_list_pairs_dates_with_document_ids() {
+        let refs = parse_portal_statement_refs(VISA_STATEMENTS_SAMPLE);
+        assert_eq!(
+            refs,
+            vec![
+                PortalStatementRef {
+                    date: "2024-09-24".into(),
+                    document_id: "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ab".into(),
+                    version: "1".into(),
+                },
+                PortalStatementRef {
+                    date: "2024-10-24".into(),
+                    document_id: "ZzYyXwWvVuUtSrRqQpPoOnNmLk9j8i7h6g5f4e3d".into(),
+                    version: "1".into(),
+                },
+            ]
+        );
+        // the listing parser reads the same response as a readable list —
+        // without PDF links, no items, nothing rejected
+        let l = parse_portal_statement_listing(VISA_STATEMENTS_SAMPLE);
+        assert!(l.readable && l.items.is_empty() && l.rejected == 0, "{l:?}");
+        // an entry without a version still reads; an entry without an id
+        // names no document and stays out
+        let r = parse_portal_statement_refs(
+            r#"[{"statementDate":"2026-10-15","documentId":"D1"},{"statementDate":"2026-11-15","documentId":""}]"#,
+        );
+        assert_eq!(
+            r,
+            vec![PortalStatementRef {
+                date: "2026-10-15".into(),
+                document_id: "D1".into(),
+                version: String::new(),
+            }]
+        );
     }
 
     /// A closing date is only a day that exists (29.02.2024 is leap year,
