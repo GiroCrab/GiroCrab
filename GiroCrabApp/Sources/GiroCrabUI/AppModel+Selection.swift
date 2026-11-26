@@ -358,9 +358,10 @@ extension AppModel {
                 self.recurringMonth = loaded.recurring.month
                 // A sync or merge (`keepingShown`) may have filled a category of the booking filter,
                 // also outside the period the category list counts, so it always reloads the set.
-                // A plain selection change or a changed category list reloads it only when the
-                // list differs; otherwise it skips the full scan.
-                let categoriesChanged = self.categories != loaded.categories
+                // The set depends on the scope only, not on period or accounts: a plain selection
+                // change (other amounts, same categories) skips the full scan; only a changed set of
+                // categories reloads it. Edits reload it themselves.
+                let categoriesChanged = self.categories.map(\.id) != loaded.categories.map(\.id)
                 self.categories = loaded.categories
                 self.uncategorizedFilteredCount = loaded.uncategorized
                 self.categoryTree = Self.buildTree(loaded.categories)

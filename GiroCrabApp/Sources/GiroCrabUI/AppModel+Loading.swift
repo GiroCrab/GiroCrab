@@ -148,9 +148,9 @@ extension AppModel {
 
     /// The categories of the booking filter for the sidebar (`scopeCategoryIDs`); the core reads
     /// every booking for it, so it runs off the main thread. Scope changes and edit refreshes call
-    /// it always, the background selection load only when the category list changed (a sync or
-    /// merge changes its counts): a category assigned meanwhile must not stay hidden, but a plain
-    /// selection change must not scan every booking again.
+    /// it always, the background selection load after a sync or merge and when the set of category
+    /// ids changed: a category assigned meanwhile must not stay hidden, but a plain period or
+    /// account change (only the amounts differ) must not scan every booking again.
     /// A failed load keeps the list empty (no fallback to every category) and reports the error.
     func loadScopeCategories() {
         scopeCategoryTask?.cancel()
