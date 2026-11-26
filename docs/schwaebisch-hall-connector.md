@@ -21,9 +21,14 @@ die das Portal selbst lädt. Unten stehen nur Pfade, Feldnamen und Regeln, keine
 ## Zugang
 
 * Im Assistenten „Bank hinzufügen“ per „Schwäbisch Hall“, „Bausparvertrag“, „BSH“ oder BLZ zu finden.
-* Der Name der Verbindung ist frei wählbar. Zugangsdaten speichert GiroCrab nicht: Die Anmeldung
-  (Benutzername, Passwort und gegebenenfalls ein zweiter Faktor) läuft im eingebetteten Browser
-  auf den Seiten der Bausparkasse.
+* Der Name der Verbindung ist frei wählbar. Die Anmeldung (Benutzername, Passwort und
+  gegebenenfalls ein zweiter Faktor) läuft im eingebetteten Browser auf den Seiten der
+  Bausparkasse. Optional schaltet man in den Einstellungen der Verbindung
+  „Anmeldedaten im Tresor speichern“ ein: GiroCrab legt Benutzername und Passwort dann
+  verschlüsselt im Tresor ab und tippt sie beim nächsten Öffnen des Fensters in das
+  Anmeldeformular ein (nur leere Felder, kein Absenden – „Anmelden“ und der zweite Faktor
+  bleiben eine bewusste Handlung). Nach dem Login stößt das Fenster den Abruf selbst an und
+  schließt sich nach vollständigem Erfolg.
 * Die Sitzungs-Cookies bleiben wie bei den anderen Portal-Anbindungen im Browser-Datenspeicher
   der App; das Portal beendet die Sitzung nach einiger Zeit selbst. „Web-Sitzung (Cookies)
   löschen …“ in den Einstellungen der Verbindung entfernt sie sofort.

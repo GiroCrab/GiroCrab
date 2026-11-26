@@ -301,8 +301,8 @@ struct ConnectionEditSheet: View {
     /// Logins whose stored secret is a password, not a PIN.
     private var usesPassword: Bool { [.easybank, .alteLeipziger, .uberspace, .fordMoney, .opelDirektbank, .hanseaticBank, .kontist, .monefit, .finpension, .goAndGrow].contains(connection.connector) }
     private var isTR: Bool { connection.connector == .tradeRepublic }
-    /// Amex and Amazon Visa: portal credentials are kept as vault secrets and
-    /// filled into the login form of the portal window.
+    /// Amex, Amazon Visa and Schwäbisch Hall: portal credentials are kept as vault
+    /// secrets and filled into the login form of the portal window.
     private var savesPortalLogin: Bool { AppModel.supportsStoredPortalLogin(connection.connector) }
     @State private var storePortalLogin = false
     @State private var portalUser = ""
