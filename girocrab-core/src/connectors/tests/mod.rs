@@ -250,6 +250,93 @@ fn store_fetch_matches_stored_purchase_price_by_wkn_when_isin_is_missing() {
 }
 
 #[test]
+fn store_fetch_keeps_no_purchase_price_when_stored_rows_disagree_or_currency_changes() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-depot-purchase-ambiguous");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "login".into())
+        .unwrap();
+    // every row: same ISIN, (currency, purchase price) as given
+    let fetch = |rows: &[(&str, i64)]| FetchResult {
+        accounts: vec![RemoteAccount {
+            external_ref: "0012345678".into(),
+            name: "Depot".into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: "0012345678".into(),
+            currency: "EUR".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents: 5000,
+            balance_date: "2026-11-10".into(),
+        }],
+        holdings: rows
+            .iter()
+            .map(|&(currency, purchase)| RemoteHolding {
+                classification: Default::default(),
+                direct_crypto: false,
+                account_ref: "0012345678".into(),
+                holding: crate::models::Holding {
+                    isin: "DE0001234567".into(),
+                    name: "X".into(),
+                    quantity: 1.0,
+                    current_price_cents: 100,
+                    purchase_price_cents: purchase,
+                    value_cents: 100,
+                    currency: currency.into(),
+                    ..Default::default()
+                },
+            })
+            .collect(),
+        ..Default::default()
+    };
+    // synthetic data: two stored rows of one ISIN with different purchase prices
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(&[("EUR", 80), ("EUR", 95)]),
+    )
+    .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(&[("EUR", 0), ("EUR", 0)]),
+    )
+    .unwrap();
+    let acc = v.list_accounts().unwrap().pop().unwrap();
+    let held = v.list_holdings(acc.id).unwrap();
+    assert_eq!(held.len(), 2);
+    assert!(
+        held.iter().all(|h| h.purchase_price_cents == 0),
+        "ambiguous: nothing is kept"
+    );
+    // a stored row with a price next to one without is ambiguous too
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(&[("EUR", 80), ("EUR", 0)]),
+    )
+    .unwrap();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 0)])).unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 0);
+    // a stored USD purchase price is not carried over to an EUR position
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("USD", 80)])).unwrap();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 0)])).unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 0, "currency changed");
+    assert_eq!(h.native_purchase_price_cents, None);
+    // the same currency keeps it
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 80)])).unwrap();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 0)])).unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 80);
+}
+
+#[test]
 fn history_bookings_arrive_checked_and_stored_documents_get_linked() {
     let p_dir = crate::test_support::TempDir::new("girocrab-history-docs");
     let p = p_dir.join("v.db");
