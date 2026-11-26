@@ -449,6 +449,8 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     crate::user_groups::pass_note_on(conn, twin, bank)?;
     // and the sidebar's bank label (#1467), the same way
     crate::user_groups::pass_bank_label_on(conn, twin, bank)?;
+    // and its archive state with the #998 mark, by the merge's rule (#1691)
+    crate::user_groups::pass_archive_on(conn, twin, bank)?;
     super::soft_delete_account(conn, twin)?;
     Ok(())
 }

@@ -1914,7 +1914,11 @@ QtObject {
     property var syncingConnectionID: null
     /// The bank dialog in progress (session handle of src/sessions.rs).
     property var activeSession: null
-    /// { connection, challenge, waiting, busy, error }
+    /// { connection, challenge, waiting, busy, error, canSkipOrder, polling }
+    /// canSkipOrder: the TAN is for one order of the fetch, not the login: „TAN auslassen“
+    /// leaves that order out and the rest is stored (#1827, step.fetching).
+    /// polling: a poll of this question is in flight (fetch only): core may move on to the
+    /// next order, so „TAN auslassen“ would hit that one and not the one on screen.
     property var activeChallenge: null
     property var pendingLogin: null          // BankConnection asking for the PIN
     property var setupRequest: null          // { connection, keys }
@@ -1928,6 +1932,9 @@ QtObject {
     readonly property var syncBatchProgress: syncBatchTotal > 1 ? { current: syncBatchTotal - syncQueue.length, total: syncBatchTotal } : null
     readonly property bool canSkipInSyncBatch: syncQueue.length > 0
     property Timer pollTimer: Timer { property var connection; onTriggered: model.pollSession(connection) }
+    /// session_poll calls not answered yet: a step that arrives meanwhile (the answer to a TAN)
+    /// keeps `polling` set, so „TAN auslassen“ stays off until the poll has settled.
+    property int sessionPollsInFlight: 0
 
     function requestSync(connection) {
         withFreshBankingPolicy(() => {
@@ -2034,6 +2041,8 @@ QtObject {
             activeSession = id
             coreAsync("session_start", { session: id }, step => {
                 if (activeSession !== id || gen !== syncGeneration) return   // skipped / cancelled meanwhile
+                // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with Finished
+                if (activeChallenge && activeChallenge.busy && !step.Finished) return
                 handleStep(step, connection)
             }, err => { if (activeSession === id) { keepSecret(); finishSync(err, connection) } })
         }
@@ -2082,13 +2091,17 @@ QtObject {
         }
         if (step.NeedsChallenge) {
             const c = step.NeedsChallenge.challenge
-            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "" }
+            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "",
+                                canSkipOrder: step.fetching === true, polling: sessionPollsInFlight > 0 }
             if (c.kind === "DecoupledPush" || c.kind === "Progress") schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.StillWaiting) {
             const c = step.StillWaiting.challenge
             activeChallenge = activeChallenge === null
-                ? { connection: connection, challenge: c, waiting: true, busy: false, error: "" }
-                : Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false })
+                ? { connection: connection, challenge: c, waiting: true, busy: false, error: "",
+                    canSkipOrder: step.fetching === true, polling: sessionPollsInFlight > 0 }
+                // progress steps bring a new text
+                : Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false,
+                                                       canSkipOrder: step.fetching === true, polling: sessionPollsInFlight > 0 })
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             const s = step.Finished.summary
@@ -2103,6 +2116,8 @@ QtObject {
                 postboxConnectionID = null
                 documentsVersion++
                 toast = qsTr("%1: %2 neue Kontoauszüge").arg(connection.display_name).arg(n)
+                // a skipped order („TAN auslassen“) leaves the fetch incomplete: say so, as syncNotice does
+                if (s.warnings.length > 0) toast += " · " + qsTr("Nicht alles abgerufen, Details im Abruf-Protokoll")
             } else if (postboxConnectionID === connection.id) {
                 postboxConnectionID = null
                 documentsVersion++
@@ -2139,6 +2154,8 @@ QtObject {
         const parts = [qsTr("%1: %2 neue Buchungen, %3 kategorisiert").arg(connection.display_name).arg(s.transactions_imported).arg(s.transactions_categorized)]
         if (s.new_accounts.length) parts.push(qsTr("Neue Konten: %1").arg(s.new_accounts.join(", ")))
         if (s.revoked_accounts.length) parts.push(qsTr("Kein Zugriff mehr: %1").arg(s.revoked_accounts.join(", ")))
+        // e.g. an order left out with „TAN auslassen“ (#1827): the sync log names it
+        if (s.warnings.length) parts.push(qsTr("Nicht alles abgerufen, Details im Abruf-Protokoll"))
         let text = parts.join(" · ")
         if (s.transactions_skipped_archived) text += " · " + qsTr("%1 Buchungen archivierter Konten übersprungen").arg(s.transactions_skipped_archived)
         return text
@@ -2153,15 +2170,44 @@ QtObject {
         if (activeTransfer !== null) { pollTransfer(connection); return }
         const id = activeSession
         if (id === null) return
-        coreAsync("session_poll", { session: id }, step => { if (activeSession === id) handleStep(step, connection) },
-                  err => { if (activeSession === id) finishSync(err, connection) })
+        if (activeChallenge && activeChallenge.canSkipOrder) activeChallenge = Object.assign({}, activeChallenge, { polling: true })
+        sessionPollsInFlight++
+        coreAsync("session_poll", { session: id }, step => {
+            sessionPollsInFlight--
+            if (activeSession !== id) { settleForeignPoll(); return }   // skipped / cancelled meanwhile
+            // a TAN or skip answered meanwhile owns the sheet, unless the sync ended with Finished
+            if (activeChallenge && activeChallenge.busy && !step.Finished) return
+            handleStep(step, connection)
+        }, err => {
+            sessionPollsInFlight--
+            if (activeSession === id) finishSync(err, connection)
+            else settleForeignPoll()
+        })
+    }
+    /// A poll of a skipped or cancelled session has come back: the challenge shown now (maybe of
+    /// the next session, built while that poll was out) must not keep „TAN auslassen“ locked.
+    function settleForeignPoll() {
+        if (activeChallenge && activeChallenge.polling && sessionPollsInFlight === 0)
+            activeChallenge = Object.assign({}, activeChallenge, { polling: false })
     }
     function submitCode(code) {
         if (activeTransfer !== null && activeChallenge) { submitTransferCode(code); return }
         const id = activeSession, ch = activeChallenge
         if (id === null || !ch) return
+        pollTimer.stop()   // as skipOrder: no new poll while the TAN is on its way
         activeChallenge = Object.assign({}, ch, { busy: true, error: "" })
         coreAsync("session_submit", { session: id, code: code }, step => { if (activeSession === id) handleStep(step, ch.connection) },
+                  err => { if (activeSession === id) finishSync(err, ch.connection) })
+    }
+    /// „TAN auslassen“ (AppModel+Sync.swift › skipOrder, #1827): leaves out the order the bank
+    /// wants a TAN for during the fetch; the sync goes on with the rest and reports the order
+    /// as a warning (sync log „Teilweise“).
+    function skipOrder() {
+        const id = activeSession, ch = activeChallenge
+        if (id === null || !ch || !ch.canSkipOrder || ch.busy || activeTransfer !== null) return
+        pollTimer.stop()
+        activeChallenge = Object.assign({}, ch, { busy: true, error: "" })
+        coreAsync("session_skip", { session: id }, step => { if (activeSession === id) handleStep(step, ch.connection) },
                   err => { if (activeSession === id) finishSync(err, ch.connection) })
     }
     /// Cancel button of the TAN sheet: in a batch drop this login and go on.

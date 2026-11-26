@@ -22,7 +22,8 @@ the [refund UI guide](../ERSTATTUNGEN_UI.md) describes platform interactions.
 1. Preserve bank bookings, user-authored splits and account balances.
 2. Converge across snapshot merge orders and different local database ids.
 3. Resolve changed endpoints conservatively, without expanding the user's intent.
-4. Leave every report unchanged: a link is documentation, not bookkeeping.
+4. Leave every report unchanged by default: a link is documentation, not bookkeeping.
+   Netting refunds in the statistics is an explicit opt-in.
 5. Make undo conditional.
 
 ## Decision
@@ -212,6 +213,25 @@ the same category already does that today. Allocated cents are only shown: as
 row markers, in the refund card and as the open capacity in the assignment
 dialog (#714: "links must not change amounts, categories or balances").
 
+### Opt-in: refunds netted in the statistics
+
+The setting `stats.net_refunds` (off by default, per device) nets linked
+refunds against their originals in the statistics: the refund endpoint counts `amount - allocated`,
+the original endpoint `amount + allocated`. This applies to category totals and
+history, budgets, selection sums and KPI tiles, cashflow, the dashboard's monthly
+flows and tag totals. A link nets only when its other booking lies in the accounts
+the aggregate sums (the selection, or the totals set in a totals context), so a
+single account still adds up to its own bookings. Bookings,
+list rows, balances and the local API keep the stored amounts. The aggregates read
+amounts through the SQL functions `refund_offset(id, part, scope)` and
+`refund_offset_total(id, scope)` (`girocrab-core/src/refunds/offsets.rs`), backed by the
+same allocation as the refund card. Only `Vault::effective_sql` and `filter_clauses`
+hand out SQL that calls them, and both rebuild the offsets for the current data
+stamp first. The refunded amount counts in the original's category and month, also
+retroactively. Off, or without a live link, the SQL carries plain amounts and nothing
+is loaded. Unlike the archived projection, it adds no second read path per report.
+The Windows top-spending fallback (no budgets) sums loaded rows and stays unnetted.
+
 ## Not covered
 
 Bank booking amount sync changes, per-part split conflict merging and cross-currency
@@ -249,7 +269,8 @@ back into existence; the UI omits it and may require an explicit new assignment.
 Concurrent creations of the same natural key take the winning row's priority,
 not necessarily the earliest creation seen on either peer.
 
-Reports need no refund awareness. UUID migration, exact id maps, retained tombstones and caches add complexity
+Reports need no refund awareness unless the opt-in is on; then they read amounts
+through `effective_sql` or the KPI share, never their own allocation. UUID migration, exact id maps, retained tombstones and caches add complexity
 and storage cost. Revisit this decision if endpoints need a different durable
 identity or scoped/currency semantics change, rather than adding UI-only repairs.
 
