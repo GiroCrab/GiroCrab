@@ -284,6 +284,8 @@ Sheet {
             property string url: prefill ? prefill.url : ""
             property string bankName: prefill ? prefill.name : ""
             property var found: null
+            // name of the chosen preset; the directory's name replaces it like on macOS/iOS
+            property string presetName: ""
             property string autoURL: url
             property bool urlEdited: false
             readonly property bool blzValid: /^[0-9]{8}$/.test(blz)
@@ -302,7 +304,7 @@ Sheet {
                     return
                 }
                 found = info
-                if (bankName === "" || filled) bankName = info.name
+                if (bankName === "" || filled || (presetName !== "" && bankName === presetName)) bankName = info.name
                 if (!urlEdited || url === "") { autoURL = info.url; url = info.url; urlEdited = false }
             }
             function commit() {
@@ -324,7 +326,8 @@ Sheet {
                     visible: !ff.known && ff.presets.length > 1
                     Layout.fillWidth: true
                     model: ff.presets.map(p => p.name)
-                    onActivated: i => { const p = ff.presets[i]; ff.bankName = p.id === "custom" ? "" : p.name; ff.urlEdited = false
+                    onActivated: i => { const p = ff.presets[i]; ff.presetName = p.id === "custom" ? "" : p.name
+                                        ff.bankName = ff.presetName; ff.urlEdited = false
                                         ff.autoURL = p.url; ff.url = p.url; ff.blz = p.blz; blzField.text = p.blz; urlField.text = p.url }
                 }
                 Text { visible: !ff.known; text: qsTr("Bankleitzahl"); color: Theme.text }
