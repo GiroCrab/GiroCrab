@@ -2368,6 +2368,49 @@ mod own_transfer_tests {
     }
 
     #[test]
+    fn categories_in_scope_counts_a_split_booking_only_by_its_parts() {
+        let (_d, v, ids) = vault_with(&[
+            ("Kino", -40_00, "Film", Some("Freizeit")),
+            ("Markt", -30_00, "Einkauf", Some("Lebensmittel")),
+        ]);
+        let cat = |i: usize| {
+            v.list_transactions(BookingFilter::default())
+                .unwrap()
+                .transactions
+                .into_iter()
+                .find(|t| t.id == ids[i])
+                .unwrap()
+                .category_id
+        };
+        let (leisure, groceries) = (cat(0).unwrap(), cat(1).unwrap());
+        // the cinema booking is split: one part groceries, one part without category
+        {
+            let db = v.db().unwrap();
+            for (position, (category, cents)) in [(Some(groceries), -25_00_i64), (None, -15_00)]
+                .into_iter()
+                .enumerate()
+            {
+                db.execute(
+                    "INSERT INTO transaction_splits (transaction_id, category_id, amount_cents, uuid, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![ids[0], category, cents, format!("part-{position}"), position as i64],
+                )
+                .unwrap();
+            }
+        }
+        // its own category holds none of it, the part's category does; no part adds `None`
+        assert_eq!(
+            v.categories_in_scope(BookingScope::Everyday).unwrap(),
+            vec![groceries]
+        );
+        assert!(
+            !v.categories_in_scope(BookingScope::All)
+                .unwrap()
+                .contains(&leisure)
+        );
+    }
+
+    #[test]
     fn explicit_imported_transfer_role_is_a_transfer() {
         let (_d, v, ids) = vault_with(&[
             ("Papa", 500_00, "x", Some("Umbuchung")),

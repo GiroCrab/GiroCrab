@@ -147,9 +147,11 @@ extension AppModel {
     }
 
     /// The categories of the booking filter for the sidebar (`scopeCategoryIDs`); the core reads
-    /// every booking for it, so it runs off the main thread. Every rebuild of `categoryTree`
-    /// (synchronous, background selection load, edit refresh) calls it: a category assigned
-    /// meanwhile must not stay hidden.
+    /// every booking for it, so it runs off the main thread. Scope changes and edit refreshes call
+    /// it always, the background selection load only when the category list changed (a sync or
+    /// merge changes its counts): a category assigned meanwhile must not stay hidden, but a plain
+    /// selection change must not scan every booking again.
+    /// A failed load keeps the list empty (no fallback to every category) and reports the error.
     func loadScopeCategories() {
         scopeCategoryTask?.cancel()
         let scope = scope
@@ -158,10 +160,16 @@ extension AppModel {
             return
         }
         scopeCategoryTask = Task { [weak self] in
-            let ids = try? await Self.offMain { try vault.categoriesInScope(scope: scope) }
-            guard !Task.isCancelled, let self, self.vault === vault, self.scope == scope else { return }
-            let next = ids.map(Set.init)
-            if self.scopeCategoryIDs != next { self.scopeCategoryIDs = next }
+            do {
+                let ids = try await Self.offMain { try vault.categoriesInScope(scope: scope) }
+                guard !Task.isCancelled, let self, self.vault === vault, self.scope == scope else { return }
+                let next = Set(ids)
+                if self.scopeCategoryIDs != next { self.scopeCategoryIDs = next }
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), let self,
+                      self.vault === vault, self.scope == scope else { return }
+                self.errorMessage = describe(error)
+            }
         }
     }
 
