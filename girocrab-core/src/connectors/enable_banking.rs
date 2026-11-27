@@ -1086,10 +1086,6 @@ impl EnableBankingConnector {
             balance_date: ref_date.unwrap_or_else(super::today),
         });
         out.transactions.extend(txs);
-        if !complete {
-            // holds on the pages not read must not be removed
-            out.holds_incomplete.push(acc.ext_ref.clone());
-        }
         Ok(complete)
     }
 
