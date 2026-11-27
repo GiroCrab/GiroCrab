@@ -37,6 +37,17 @@ final class MoneyMoneyDbChoiceTests: XCTestCase {
         XCTAssertFalse(Choice.ready([Choice]()))
     }
 
+    func testAReloadedPreviewMovesOnlyTargetsNobodyPicked() {
+        var auto = Choice.suggested(account(existing: nil, needsChoice: false))
+        auto.kind = .savings
+        let now = auto.refreshed(by: account(existing: nil, needsChoice: true))
+        XCTAssertTrue(now.undecided)
+        XCTAssertEqual(now.kind, .savings)
+        var picked = auto
+        picked.picked = true
+        XCTAssertEqual(picked.refreshed(by: account(existing: nil, needsChoice: true)), picked)
+    }
+
     func testThePickerOffersOnlyAccountsInTheSourcesCurrencyOrWithoutOne() {
         XCTAssertTrue(MoneyMoneyDatabaseImportView.currencyFits(" eur ", source: "EUR"))
         XCTAssertTrue(MoneyMoneyDatabaseImportView.currencyFits("", source: "USD"))

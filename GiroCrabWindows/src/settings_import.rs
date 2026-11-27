@@ -177,10 +177,10 @@ pub fn import_result_text(r: &MoneyMoneyImportResult) -> String {
 
 /// The accounts a database import sends from here, without a target picker: each with its
 /// suggested kind and target. One whose IBAN fits several accounts (#1993) stays out, as
-/// neither a guess nor a new account is the user's choice; its name comes back for the result.
+/// neither a guess nor a new account is the user's choice; their number comes back for the result.
 pub fn db_account_choices(
     accounts: &[MoneyMoneyDbAccount],
-) -> (Vec<MoneyMoneyDbAccountChoice>, Vec<String>) {
+) -> (Vec<MoneyMoneyDbAccountChoice>, usize) {
     let choices = accounts
         .iter()
         .map(|a| MoneyMoneyDbAccountChoice {
@@ -190,23 +190,18 @@ pub fn db_account_choices(
             target_account_id: a.existing_account_id,
         })
         .collect();
-    let left_out = accounts
-        .iter()
-        .filter(|a| a.target_needs_choice)
-        .map(|a| a.name.clone())
-        .collect();
+    let left_out = accounts.iter().filter(|a| a.target_needs_choice).count();
     (choices, left_out)
 }
 
-/// What the result adds for the accounts [`db_account_choices`] left out.
-pub fn db_left_out_text(names: &[String]) -> String {
-    if names.is_empty() {
-        return String::new();
+/// What the result adds for the accounts [`db_account_choices`] left out. A count, no names:
+/// the line stays on screen when privacy mode is switched on (like the export status).
+pub fn db_left_out_text(count: usize) -> String {
+    match count {
+        0 => String::new(),
+        1 => " 1 Konto nicht importiert, weil mehrere Konten zur IBAN passen.".into(),
+        n => format!(" {n} Konten nicht importiert, weil mehrere Konten zur IBAN passen."),
     }
-    format!(
-        " Nicht importiert, weil mehrere Konten zur IBAN passen: {}.",
-        names.join(", ")
-    )
 }
 
 pub fn db_result_text(r: &MoneyMoneyDbImportResult) -> String {
@@ -961,7 +956,7 @@ mod tests {
     }
 
     #[test]
-    fn an_account_needing_a_target_choice_is_left_out_and_named() {
+    fn an_account_needing_a_target_choice_is_left_out_and_counted() {
         // #1993: no picker here, so neither the guess nor a new account
         let (choices, left_out) = db_account_choices(&[
             db_account(1, "Wallet EUR", Some(7), false),
@@ -972,11 +967,15 @@ mod tests {
             .map(|c| (c.mm_id, c.import, c.target_account_id))
             .collect();
         assert_eq!(sent, vec![(1, true, Some(7)), (2, false, None)]);
-        assert_eq!(left_out, vec!["Wallet USD".to_string()]);
+        assert_eq!(left_out, 1);
+        // a count only: no account names in the status line (privacy mode)
+        let text = db_left_out_text(left_out);
         assert_eq!(
-            db_left_out_text(&left_out),
-            " Nicht importiert, weil mehrere Konten zur IBAN passen: Wallet USD."
+            text,
+            " 1 Konto nicht importiert, weil mehrere Konten zur IBAN passen."
         );
-        assert_eq!(db_left_out_text(&[]), "");
+        assert!(!text.contains("Wallet"));
+        assert!(db_left_out_text(2).starts_with(" 2 Konten"));
+        assert_eq!(db_left_out_text(0), "");
     }
 }

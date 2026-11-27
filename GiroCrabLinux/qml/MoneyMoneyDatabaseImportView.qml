@@ -189,7 +189,12 @@ ColumnLayout {
     function apply(p) {
         preview = p
         const c = {}
-        for (const a of p.accounts) c[a.mm_id] = choices[a.mm_id] || suggestedChoice(a)
+        // read again (statements folder): selection and kind stay, a target nobody picked follows the new suggestion
+        for (const a of p.accounts) {
+            const old = choices[a.mm_id]
+            c[a.mm_id] = !old ? suggestedChoice(a) : old.picked ? old
+                : Object.assign({}, old, { target: a.existing_account_id, undecided: a.target_needs_choice === true })
+        }
         choices = c
     }
 
@@ -340,6 +345,8 @@ ColumnLayout {
     function runImport() {
         if (!preview) return
         error = ""
+        // a reloaded preview (statements folder) can leave a target to choose (#1993)
+        if (!Object.keys(choices).some(k => choices[k].selected) || undecidedSelected) { go("accounts"); return }
         if (isDemo) {
             // demo: nothing to read – show what the summary looks like
             result = AppModel.demoMoneyMoneyDbResult(preview, importStatements, plannedPsd2Links)
@@ -574,7 +581,7 @@ ColumnLayout {
                                     return list
                                 }
                                 currentIndex: rowItem.c.undecided ? 0 : Math.max(0, model.findIndex(o => o.id === rowItem.c.target))
-                                onActivated: i => { if (!model[i].undecided) v.setChoice(rowItem.modelData, { target: model[i].id, undecided: false }) }
+                                onActivated: i => { if (!model[i].undecided) v.setChoice(rowItem.modelData, { target: model[i].id, undecided: false, picked: true }) }
                             }
                         }
                     }

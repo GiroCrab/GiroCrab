@@ -1865,7 +1865,7 @@ fn import_file(
                 r.bookings_duplicates,
                 r.accounts_created,
                 r.accounts_merged,
-                settings_import::db_left_out_text(&left_out)
+                settings_import::db_left_out_text(left_out)
             ))
         }
     }

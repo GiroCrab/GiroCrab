@@ -36,10 +36,22 @@ struct MoneyMoneyDatabaseImportView: View {
         /// The IBAN fits several accounts (#1993): no target, not even a new account,
         /// until the user picks one.
         var undecided = false
+        /// The user picked the target; otherwise it follows the preview.
+        var picked = false
 
         /// What the preview suggests for `a`.
         static func suggested(_ a: MoneyMoneyDbAccount) -> Choice {
             Choice(selected: true, kind: a.suggestedKind, target: a.existingAccountId, undecided: a.targetNeedsChoice)
+        }
+
+        /// This choice after the preview was read again (statements folder): selection and
+        /// kind stay, a target nobody picked follows the new suggestion.
+        func refreshed(by a: MoneyMoneyDbAccount) -> Choice {
+            guard !picked else { return self }
+            var c = self
+            c.target = a.existingAccountId
+            c.undecided = a.targetNeedsChoice
+            return c
         }
 
         /// Whether the accounts step can go on: an account to import, each with a target.
@@ -404,6 +416,7 @@ struct MoneyMoneyDatabaseImportView: View {
                 case .account(let id): c.target = id
                 }
                 c.undecided = false
+                c.picked = true
                 choice.wrappedValue = c
             }
         )
@@ -965,7 +978,7 @@ struct MoneyMoneyDatabaseImportView: View {
         model.loadLivePsd2Banks()
         var c: [Int64: Choice] = [:]
         for a in p.accounts {
-            c[a.mmId] = choices[a.mmId] ?? Choice.suggested(a)
+            c[a.mmId] = choices[a.mmId]?.refreshed(by: a) ?? Choice.suggested(a)
         }
         choices = c
     }
@@ -1034,6 +1047,8 @@ struct MoneyMoneyDatabaseImportView: View {
     private func runImport() {
         guard let url = fileURL, let preview else { return }
         error = nil
+        // a reloaded preview (statements folder) can leave a target to choose (#1993)
+        guard Choice.ready(choices.values) else { go(.accounts); return }
         if model.demoDbPreview != nil {
             // demo: nothing to read – show what the summary looks like
             result = Self.demoResult(preview, statements: importStatements, psd2: plannedPsd2Links)

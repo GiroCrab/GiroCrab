@@ -567,7 +567,7 @@ fn wire_import(win: &MainWindow) {
                 let r = v
                     .import_moneymoney_database_with_progress(location, password, options, observer)
                     .map_err(|e| e.to_string())?;
-                Ok(view::db_result_text(&r) + &view::db_left_out_text(&left_out))
+                Ok(view::db_result_text(&r) + &view::db_left_out_text(left_out))
             },
             move |win, text| {
                 refresh_main(win, &vault);
