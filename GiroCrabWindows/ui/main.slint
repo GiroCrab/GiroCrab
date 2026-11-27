@@ -810,6 +810,22 @@ component Dialog inherits Rectangle {
     }
 }
 
+// One column on the start screen: heading plus one line per way in. Text only — while the vault is
+// locked there is nothing to click, and a dead button would be worse than no button.
+component CapBlock inherits VerticalLayout {
+    in property <string> title;
+    in property <[string]> lines;
+    width: 200px;
+    spacing: 4px;
+    Text { text: root.title; font-size: 12px; font-weight: 600; color: Theme.text; }
+    for line in root.lines : Text {
+        text: line;
+        font-size: 11px;
+        color: Theme.muted;
+        wrap: word-wrap;
+    }
+}
+
 export component MainWindow inherits Window {
     /// "Letzten Abruf anzeigen" (#815): off by default, as in the reference app.
     in-out property <bool> show-fetched: false;
@@ -1341,6 +1357,51 @@ export component MainWindow inherits Window {
             spacing: 12px;
             Button { text: first-run ? "Tresor anlegen" : "Entsperren"; primary: true; clicked => { root.unlock(); } }
             Button { text: "Demo-Modus"; clicked => { root.demo(); } }
+        }
+        // What this client actually does, said on the locked window. The macOS client says the same
+        // on an empty vault (Onboarding.swift › EmptyVaultCard); here as four columns, because the
+        // locked window has no vault to hang buttons on.
+        Rectangle { width: 640px; height: 1px; background: Theme.border; }
+        Text { text: "Was dieser Client kann"; font-size: 13px; font-weight: 600; color: Theme.text; horizontal-alignment: center; }
+        Text {
+            text: "Der Tresor liegt als Datei auf diesem Rechner; der Abruf geht an deine Bank oder an den PSD2-Dienst.";
+            width: 620px;
+            font-size: 11px;
+            color: Theme.muted;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            spacing: 24px;
+            CapBlock {
+                title: "Bankabruf (PIN/TAN)";
+                lines: [
+                    "FinTS mit photoTAN, pushTAN und chipTAN, u. a. 1822direkt",
+                    "Eigene Zugänge für comdirect und Trade Republic",
+                ];
+            }
+            CapBlock {
+                title: "PSD2 im Browser";
+                lines: [
+                    "American Express, Amazon Visa, Enable Banking",
+                    "Freigabe im Browser statt Passwort im Client",
+                ];
+            }
+            CapBlock {
+                title: "Ohne Bankzugang";
+                lines: [
+                    "Kontoauszug importieren: CSV, XML, CAMT.053, MT940",
+                    "Offline-Konto für Bargeld und Konten ohne Abruf",
+                    "PayPal über API-Signatur, Finpension per Exportdatei",
+                ];
+            }
+            CapBlock {
+                title: "Tresor";
+                lines: [
+                    "Verschlüsselte Datei, Schlüssel in der Windows-Anmeldeinformationsverwaltung",
+                    "Sicherung mit eigenem Passwort schreiben und einspielen",
+                ];
+            }
         }
         Text { text: root.message; color: Theme.negative; horizontal-alignment: center; wrap: word-wrap; }
     }
