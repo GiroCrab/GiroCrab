@@ -517,7 +517,8 @@ private fun StandingOrdersTab(state: AppUiState, today: LocalDate, masked: Boole
                     Text(
                         "${o.rhythm} · seit ${o.firstDate.format(dateFmt)} · " +
                             "nächste Ausführung ${next?.format(dateFmt) ?: "keine (beendet)"}" +
-                            acc?.let { " · ${it.name}" }.orEmpty(),
+                            // The account name is data like the recipient: hidden while the app is masked.
+                            acc?.takeUnless { masked }?.let { " · ${it.name}" }.orEmpty(),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
                     )
                 }
