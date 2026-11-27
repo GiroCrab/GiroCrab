@@ -7612,6 +7612,17 @@
         }
       }
     },
+    "Bei „Bitte wählen“ passen mehrere Konten zur IBAN. Wählen Sie das Ziel, „Neues Konto“ oder nehmen Sie das Konto aus dem Import." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For “Please choose”, several accounts match the IBAN. Choose the target, “New account”, or leave the account out of the import."
+          }
+        }
+      }
+    },
     "Bei „Nur Symbol“ steht der Betrag nur im Popover." : {
       "extractionState" : "manual",
       "localizations" : {

@@ -12,8 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use girocrab_core::export::{Camt053Request, ExportCsvBalanceLine, export_csv};
 use girocrab_core::importers::moneymoney_db::{
-    MoneyMoneyDbAccountChoice, MoneyMoneyDbImportOptions, MoneyMoneyDbImportProgress,
-    MoneyMoneyImportObserver,
+    MoneyMoneyDbImportOptions, MoneyMoneyDbImportProgress, MoneyMoneyImportObserver,
 };
 use girocrab_core::sync_log::{SyncLogEntry, SyncLogFilter};
 use girocrab_core::{BookingFilter, ConnectorKind, SettingEntry, Vault};
@@ -553,17 +552,9 @@ fn wire_import(win: &MainWindow) {
                 let preview = v
                     .preview_moneymoney_database(location.clone(), password.clone(), None)
                     .map_err(|e| e.to_string())?;
+                let (accounts, left_out) = view::db_account_choices(&preview.accounts);
                 let options = MoneyMoneyDbImportOptions {
-                    accounts: preview
-                        .accounts
-                        .iter()
-                        .map(|a| MoneyMoneyDbAccountChoice {
-                            mm_id: a.mm_id,
-                            import: true,
-                            kind: a.suggested_kind,
-                            target_account_id: a.existing_account_id,
-                        })
-                        .collect(),
+                    accounts,
                     import_categories: true,
                     import_notes: true,
                     create_connections: false,
@@ -576,7 +567,7 @@ fn wire_import(win: &MainWindow) {
                 let r = v
                     .import_moneymoney_database_with_progress(location, password, options, observer)
                     .map_err(|e| e.to_string())?;
-                Ok(view::db_result_text(&r))
+                Ok(view::db_result_text(&r) + &view::db_left_out_text(&left_out))
             },
             move |win, text| {
                 refresh_main(win, &vault);

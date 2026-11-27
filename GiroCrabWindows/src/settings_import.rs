@@ -11,7 +11,8 @@ use girocrab_core::importers::amazon_orders::{
     Capture, bookings, is_asin, parse_date, price_cents,
 };
 use girocrab_core::importers::moneymoney_db::{
-    MoneyMoneyDbImportProgress, MoneyMoneyDbImportResult,
+    MoneyMoneyDbAccount, MoneyMoneyDbAccountChoice, MoneyMoneyDbImportProgress,
+    MoneyMoneyDbImportResult,
 };
 use girocrab_core::importers::moneymoney_import::{
     MmRow, fingerprint, parse_camt_statement, parse_csv_export, parse_export,
@@ -171,6 +172,40 @@ pub fn import_result_text(r: &MoneyMoneyImportResult) -> String {
         } else {
             ""
         }
+    )
+}
+
+/// The accounts a database import sends from here, without a target picker: each with its
+/// suggested kind and target. One whose IBAN fits several accounts (#1993) stays out, as
+/// neither a guess nor a new account is the user's choice; its name comes back for the result.
+pub fn db_account_choices(
+    accounts: &[MoneyMoneyDbAccount],
+) -> (Vec<MoneyMoneyDbAccountChoice>, Vec<String>) {
+    let choices = accounts
+        .iter()
+        .map(|a| MoneyMoneyDbAccountChoice {
+            mm_id: a.mm_id,
+            import: !a.target_needs_choice,
+            kind: a.suggested_kind,
+            target_account_id: a.existing_account_id,
+        })
+        .collect();
+    let left_out = accounts
+        .iter()
+        .filter(|a| a.target_needs_choice)
+        .map(|a| a.name.clone())
+        .collect();
+    (choices, left_out)
+}
+
+/// What the result adds for the accounts [`db_account_choices`] left out.
+pub fn db_left_out_text(names: &[String]) -> String {
+    if names.is_empty() {
+        return String::new();
+    }
+    format!(
+        " Nicht importiert, weil mehrere Konten zur IBAN passen: {}.",
+        names.join(", ")
     )
 }
 
@@ -886,5 +921,62 @@ mod tests {
         p.account_count = 3;
         p.account_name = "Giro".into();
         assert!(progress_text(&p).contains("Konto 2 von 3"));
+    }
+
+    fn db_account(
+        mm_id: i64,
+        name: &str,
+        existing: Option<i64>,
+        needs_choice: bool,
+    ) -> MoneyMoneyDbAccount {
+        MoneyMoneyDbAccount {
+            mm_id,
+            name: name.into(),
+            iban: "DE89370400440532013000".into(),
+            account_number: String::new(),
+            currency: "EUR".into(),
+            bank_code: String::new(),
+            bank_name: String::new(),
+            owner: String::new(),
+            group_name: String::new(),
+            mm_bank_id: None,
+            is_portfolio: false,
+            suggested_kind: girocrab_core::AccountKind::Checking,
+            existing_account_id: existing,
+            existing_account_name: None,
+            target_needs_choice: needs_choice,
+            booking_count: 0,
+            pending_count: 0,
+            holding_count: 0,
+            value_history_count: 0,
+            notes_count: 0,
+            first_date: None,
+            last_date: None,
+            statement_count: 0,
+            computed_balance_cents: 0,
+            balance_source: String::new(),
+            closed: false,
+            reused_account_id: None,
+        }
+    }
+
+    #[test]
+    fn an_account_needing_a_target_choice_is_left_out_and_named() {
+        // #1993: no picker here, so neither the guess nor a new account
+        let (choices, left_out) = db_account_choices(&[
+            db_account(1, "Wallet EUR", Some(7), false),
+            db_account(2, "Wallet USD", None, true),
+        ]);
+        let sent: Vec<(i64, bool, Option<i64>)> = choices
+            .iter()
+            .map(|c| (c.mm_id, c.import, c.target_account_id))
+            .collect();
+        assert_eq!(sent, vec![(1, true, Some(7)), (2, false, None)]);
+        assert_eq!(left_out, vec!["Wallet USD".to_string()]);
+        assert_eq!(
+            db_left_out_text(&left_out),
+            " Nicht importiert, weil mehrere Konten zur IBAN passen: Wallet USD."
+        );
+        assert_eq!(db_left_out_text(&[]), "");
     }
 }

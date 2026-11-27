@@ -1844,19 +1844,9 @@ fn import_file(
             let preview = vault
                 .preview_moneymoney_database(location.clone(), pw.to_string(), None)
                 .map_err(e)?;
+            let (accounts, left_out) = settings_import::db_account_choices(&preview.accounts);
             let options = girocrab_core::importers::moneymoney_db::MoneyMoneyDbImportOptions {
-                accounts: preview
-                    .accounts
-                    .iter()
-                    .map(
-                        |a| girocrab_core::importers::moneymoney_db::MoneyMoneyDbAccountChoice {
-                            mm_id: a.mm_id,
-                            import: true,
-                            kind: a.suggested_kind,
-                            target_account_id: a.existing_account_id,
-                        },
-                    )
-                    .collect(),
+                accounts,
                 import_categories: true,
                 import_notes: true,
                 create_connections: false,
@@ -1870,8 +1860,12 @@ fn import_file(
                 .import_moneymoney_database(location, pw.to_string(), options)
                 .map_err(e)?;
             Ok(format!(
-                "Datenimport: {} neue Umsätze, {} Duplikate, {} Konten neu, {} zusammengeführt.",
-                r.bookings_new, r.bookings_duplicates, r.accounts_created, r.accounts_merged
+                "Datenimport: {} neue Umsätze, {} Duplikate, {} Konten neu, {} zusammengeführt.{}",
+                r.bookings_new,
+                r.bookings_duplicates,
+                r.accounts_created,
+                r.accounts_merged,
+                settings_import::db_left_out_text(&left_out)
             ))
         }
     }
