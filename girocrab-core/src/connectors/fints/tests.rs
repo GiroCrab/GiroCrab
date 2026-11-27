@@ -821,6 +821,45 @@ fn card_tx_prefers_hkkku_and_needs_bank_and_account() {
 }
 
 #[test]
+fn card_account_kind_keeps_debit_cards_as_checking() {
+    use super::{AccountKind, accounts::card_account_kind};
+    let checking = || AccountKind::Checking;
+    // #807: comdirect credit card with Kontoart 1 stays a credit card
+    assert_eq!(
+        card_account_kind(checking(), &["Visa", "Max Muster"]),
+        AccountKind::CreditCard
+    );
+    // #967: debit cards (product or account name) are no credit cards
+    for name in [
+        "Mastercard direkt",
+        "Mastercard Debit",
+        "Visa Debit",
+        "Debitkarte",
+    ] {
+        assert_eq!(
+            card_account_kind(checking(), &[name, "Max Muster"]),
+            AccountKind::Checking,
+            "{name}"
+        );
+        assert_eq!(
+            card_account_kind(checking(), &["", name]),
+            AccountKind::Checking,
+            "label {name}"
+        );
+    }
+    // a bank name containing "direkt" alone marks no debit card
+    assert_eq!(
+        card_account_kind(checking(), &["Visa", "1822direkt Visa"]),
+        AccountKind::CreditCard
+    );
+    // Kontoart 50–59 stays a credit card whatever the name says
+    assert_eq!(
+        card_account_kind(AccountKind::CreditCard, &["Visa Debit", ""]),
+        AccountKind::CreditCard
+    );
+}
+
+#[test]
 fn builds_dkkku_with_ktv_and_hkkku_with_kti() {
     let acc = sepa_acc("", "5232000011112222");
     assert_eq!(

@@ -38,6 +38,23 @@ pub(super) fn kind_from_code(code: u32) -> AccountKind {
     }
 }
 
+/// Kind of an account the bank serves through HKKKU/DKKKU. comdirect reports its
+/// credit cards with Kontoart 1 (#807), so a Kontokorrent becomes a credit card –
+/// unless a name marks a debit card ("Mastercard direkt", "Visa Debit",
+/// "Debitkarte"): its bookings leave the Girokonto right away, so it has no open
+/// amount of its own (#967).
+pub(super) fn card_account_kind(kind: AccountKind, names: &[&str]) -> AccountKind {
+    let debit = names.iter().any(|n| {
+        let n = n.to_lowercase();
+        n.contains("debit") || n.contains("mastercard direkt")
+    });
+    if kind == AccountKind::Checking && !debit {
+        AccountKind::CreditCard
+    } else {
+        kind
+    }
+}
+
 /// Accounts from the UPD (HIUPD) merged with the SEPA account list (HISPA), which adds
 /// BIC and IBAN. Returns (account, upd); HISPA accounts missing from the UPD follow
 /// with `None`. `blz` fills in a bank code the UPD leaves empty.

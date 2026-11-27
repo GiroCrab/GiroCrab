@@ -735,12 +735,12 @@ impl BankConnector for FinTsConnector {
             // included only when HIUPD permits it (or lists nothing); every request is
             // its own FinTS message, so a 9050 on one loan is just collected in `errors`.
             let mut txs = Vec::new();
-            // Credit cards the bank serves through HKKKU or DKKKU (explicitly allowed
-            // in HIUPD). comdirect reports its cards with Kontoart 1 (#807).
+            // Cards the bank serves through HKKKU or DKKKU (explicitly allowed in
+            // HIUPD). comdirect reports its credit cards with Kontoart 1 (#807);
+            // debit cards stay Kontokorrent (#967).
             if let Some(card_tx) = self.card_tx(upd.as_ref()) {
-                if kind == AccountKind::Checking {
-                    kind = AccountKind::CreditCard;
-                }
+                let product = upd.as_ref().map_or("", |u| u.product.as_str());
+                kind = accounts::card_account_kind(kind, &[product, label.as_str()]);
                 match self
                     .statements_card(ctx, card_tx, acc, label, &currency)
                     .await
