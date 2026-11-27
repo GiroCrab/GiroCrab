@@ -883,8 +883,10 @@ impl FinTsConnector {
             }
         }
         // The bank refuses our HKTAN as a wrong segment combination (#1641): another of its
-        // two-step functions, or the init without HKTAN, may be taken.
-        if sec != "999" && init_rejected_as_wrong_segments(&reply) {
+        // two-step functions, or the init without HKTAN, may be taken. Not when the same reply
+        // says the access is locked or the system ID is stale: no variant helps, and each one
+        // would send the PIN again.
+        if sec != "999" && init_rejected_as_wrong_segments(&reply) && !ends_hktan_retry(&reply) {
             // no function list from an earlier sync: the refusal may carry one (3920)
             if self.st.tan_functions.is_empty() {
                 self.learn_bpd(&reply);

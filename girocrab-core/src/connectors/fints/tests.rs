@@ -530,6 +530,26 @@ async fn dialog_init_9110_stops_at_a_9931_reply() {
 }
 
 #[tokio::test]
+async fn dialog_init_9110_with_a_locked_access_or_stale_system_id_is_not_retried() {
+    const LOCKED: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9050::Die Nachricht enthält Fehler.+9800::Dialog abgebrochen+9110::Falsche Segmentzusammenstellung:HKTAN:segvers=7:option=913'HIRMS:3:2:3+9930::Zugang gesperrt.'";
+    const STALE: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9050::Die Nachricht enthält Fehler.+9800::Dialog abgebrochen+9110::Falsche Segmentzusammenstellung:HKTAN:segvers=7:option=913'HIRMS:3:2:3+9931::Kundensystem-ID ungültig.'";
+    for (refusal, stale) in [(LOCKED, false), (STALE, true)] {
+        let (url, seen) = mock_bank(vec![refusal, ACCEPT]);
+        let mut state =
+            state_with_functions("913", &[("913", "chipTAN-QR"), ("911", "chipTAN optisch")]);
+        state["versions"] = serde_json::json!({"HKTAN": [6, 7]});
+        let mut c = two_step_connector(&url, state);
+        assert!(c.open_dialog(&test_ctx()).await.is_err());
+        // the PIN went out once: no other version, function or init without HKTAN
+        assert_eq!(seen.lock().unwrap().len(), 1, "{refusal}");
+        assert_eq!(c.st.sec_func, "913");
+        assert!(c.st.tan_function_versions.is_empty() && !c.st.init_without_hktan);
+        // a stale system ID is forgotten, so the next login syncs again
+        assert_eq!(c.st.system_id.is_empty(), stale, "{refusal}");
+    }
+}
+
+#[tokio::test]
 async fn dialog_init_9110_about_another_segment_is_not_retried() {
     const OTHER: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Dialog abgebrochen+9110::Falsche Segmentzusammenstellung (HKVVB)'";
     let (url, seen) = mock_bank(vec![OTHER]);
