@@ -215,7 +215,9 @@ class WealthBreakdownTest {
         val state = AppUiState(
             data = VaultSnapshot(
                 accounts = listOf(
-                    account("giro", AccountKind.Giro, 100_000),
+                    // The euro account has to carry the primary currency, otherwise the breakdown
+                    // would be built in USD and this test would prove nothing.
+                    account("giro", AccountKind.Giro, 2_000_000),
                     account("kredit", AccountKind.Loan, -500_000, currency = "USD"),
                 ),
                 loans = listOf(
@@ -242,12 +244,13 @@ class WealthBreakdownTest {
             ),
         )
         val breakdown = wealthBreakdown(state)
+        assertEquals("EUR", breakdown.currency)
         assertEquals(0L, breakdown.loans)
-        assertEquals(100_000L, breakdown.net)
+        assertEquals(2_000_000L, breakdown.net)
         assertTrue("the screen has to report the other currency", "USD" in breakdown.foreignCurrencies)
         val vm = AppViewModel()
         vm.adoptOwnVault(state.data)
-        assertEquals(100_000L, vm.netWorthCents("EUR"))
+        assertEquals(2_000_000L, vm.netWorthCents("EUR"))
     }
 
     /** A counted loan account carries the debt itself; its record must not be subtracted again. */
