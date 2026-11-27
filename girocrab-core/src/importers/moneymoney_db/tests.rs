@@ -4130,6 +4130,40 @@ fn a_wallet_in_another_currency_is_never_the_target() {
     assert!(err.to_string().contains("in EUR"), "{err}");
     assert!(booking_currencies(&v, usd).is_empty());
     assert_eq!(account_by_id(&v, usd).balance_cents, 777);
+    // the refused import is in the Abrufprotokoll, outside the dropped transaction
+    let log = v
+        .list_sync_log(crate::sync_log::SyncLogFilter {
+            connection_id: None,
+            only_errors: false,
+            search: None,
+            limit: 0,
+        })
+        .unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].outcome, crate::sync_log::SyncLogOutcome::Error);
+    assert!(log[0].message.contains("in EUR"), "{}", log[0].message);
+}
+
+#[test]
+fn a_finished_database_import_is_in_the_sync_log() {
+    let v = vault();
+    let path = wallets_db(false);
+    let p = v
+        .preview_moneymoney_database(path.clone(), String::new(), None)
+        .unwrap();
+    v.import_moneymoney_database(path, String::new(), options_from(&p, false))
+        .unwrap();
+    let log = v
+        .list_sync_log(crate::sync_log::SyncLogFilter {
+            connection_id: None,
+            only_errors: false,
+            search: None,
+            limit: 0,
+        })
+        .unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].outcome, crate::sync_log::SyncLogOutcome::Ok);
+    assert_eq!(log[0].imported, 5);
 }
 
 #[test]

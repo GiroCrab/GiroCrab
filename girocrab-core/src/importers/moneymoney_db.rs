@@ -60,6 +60,7 @@ use crate::i18n::{tr, trf};
 use crate::iban::{normalize_iban, validate_iban};
 use crate::models::{AccountKind, ConnectorKind, Holding};
 use crate::secret::SecretString;
+use crate::sync_log::{SyncLogOutcome, SyncLogSource};
 use crate::vault::Vault;
 
 mod templates;
@@ -4056,7 +4057,36 @@ impl Vault {
 }
 
 impl Vault {
+    /// Runs the import and notes it in the Abrufprotokoll, success or not (the entry is
+    /// written after the import's transaction, so a failed import keeps it).
     fn import_moneymoney(
+        &self,
+        path: String,
+        password: String,
+        options: MoneyMoneyDbImportOptions,
+        observer: Option<&dyn MoneyMoneyImportObserver>,
+    ) -> CoreResult<MoneyMoneyDbImportResult> {
+        let res = self.run_import_moneymoney(path, password, options, observer);
+        let (outcome, message, imported) = match &res {
+            Ok(r) => (
+                SyncLogOutcome::Ok,
+                trf(
+                    "Datenimport: {0} neue Buchungen, {1} Konten neu, {2} zusammengeführt",
+                    &[&r.bookings_new, &r.accounts_created, &r.accounts_merged],
+                ),
+                r.bookings_new,
+            ),
+            Err(e) if e.to_string() == cancelled().to_string() => {
+                (SyncLogOutcome::Cancelled, e.to_string(), 0)
+            }
+            Err(e) => (SyncLogOutcome::Error, e.to_string(), 0),
+        };
+        // best effort: the log must not turn a finished import into an error
+        let _ = self.log_sync(None, SyncLogSource::Manual, outcome, message, imported);
+        res
+    }
+
+    fn run_import_moneymoney(
         &self,
         path: String,
         password: String,
