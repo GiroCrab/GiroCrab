@@ -1756,6 +1756,9 @@ vault_methods! {
     set_connection_pin(connection_id, pin) connection_status(connection_id)
     clear_connection_session(connection_id) set_connection_session(connection_id, cookies)
     switch_comdirect_access(connection_id)
+    // full fetch of a login at its next sync (#1043)
+    request_full_history(connection_id, range) pending_full_history(connection_id)
+    cancel_full_history(connection_id)
     // Enable Banking application per login (#824)
     connection_enable_banking_app(connection_id) connection_enable_banking_key(connection_id)
     list_connection_enable_banking_apps()
@@ -1861,6 +1864,7 @@ vault_methods! {
     restore_refund(refund_id, refund_part, original_id, original_part, token)
     refund_links(transaction_id) refund_candidates(transaction_id, own_part, query, limit)
     refund_suggestions(transaction_id, own_part)
+    net_refunds_in_stats() set_net_refunds_in_stats(on)
     // Buchungsliste: Betragsfilter (#357, ListFilters.qml)
     list_categories_filtered_amount(date_from, date_to, account_ids, checked, direction, amount_min_cents, amount_max_cents, tag_ids, untagged_only)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
@@ -2416,6 +2420,19 @@ mod tests {
             "set_setting",
             json!({ "key": "merchants.online_logos", "value": "off" }),
         );
+    }
+
+    /// Erstattungen mit der Ursprungsbuchung verrechnen (#714, GeneralSettings.qml): off by default,
+    /// the switch round-trips.
+    #[test]
+    fn net_refunds_in_stats_round_trips() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(false));
+        call_ok("set_net_refunds_in_stats", json!({ "on": true }));
+        assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(true));
+        call_ok("set_net_refunds_in_stats", json!({ "on": false }));
+        assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(false));
     }
 
     /// AppModel.decodeLogo: PNG width, the largest image of an ICO, unknown formats.
@@ -4507,6 +4524,40 @@ mod tests {
         ))
         .unwrap();
         assert!(r.get("err").is_some(), "unknown account");
+    }
+
+    /// Zeitraum beim ersten Abruf (#1043): AddBankSheet and ConnectionEditSheet
+    /// request a full fetch, read it back and call it off with the JSON
+    /// AppModel.qml sends (`HistoryRange`: "Maximum" or {"Days":{"days":n}}).
+    #[test]
+    fn full_history_calls() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let id = call_ok("list_bank_connections", json!({}))[0]["id"].clone();
+        let pending = || {
+            call_ok(
+                "pending_full_history",
+                json!({ "connection_id": id.clone() }),
+            )
+        };
+        call_ok(
+            "request_full_history",
+            json!({ "connection_id": id, "range": "Maximum" }),
+        );
+        assert_eq!(pending(), json!("Maximum"));
+        call_ok(
+            "request_full_history",
+            json!({ "connection_id": id, "range": { "Days": { "days": 365 } } }),
+        );
+        assert_eq!(pending(), json!({ "Days": { "days": 365 } }));
+        call_ok("cancel_full_history", json!({ "connection_id": id }));
+        assert_eq!(pending(), Value::Null);
+        let r: Value = serde_json::from_str(&call_json(
+            "request_full_history",
+            &json!({ "connection_id": -1, "range": "Maximum" }).to_string(),
+        ))
+        .unwrap();
+        assert!(r.get("err").is_some(), "unknown login");
     }
 
     #[test]

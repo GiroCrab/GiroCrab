@@ -255,7 +255,8 @@ struct BookingStreamView: View {
                         DemoBanner()
                     }
                     #if os(iOS)
-                    Picker("Ansicht", selection: scope) {
+                    // writes through `selectScope` like the macOS toolbar picker: a chosen category ends
+                    Picker("Ansicht", selection: Binding(get: { scope.wrappedValue }, set: { model.selectScope($0) })) {
                         ForEach(BookingScope.ordered, id: \.self) { Text($0.shortTitle).tag($0) }
                     }
                     .pickerStyle(.segmented)
@@ -388,7 +389,7 @@ private struct BookingScopePicker: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Picker("Ansicht", selection: Binding(get: { model.scope }, set: { model.scope = $0 })) {
+        Picker("Ansicht", selection: Binding(get: { model.scope }, set: { model.selectScope($0) })) {
             ForEach(BookingScope.ordered, id: \.self) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)

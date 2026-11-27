@@ -316,3 +316,47 @@ test("failed backup restore refreshes the refund card", () => {
     assert.match(handler, /AppModel\.refundBooking = null/);
     assert.match(handler, /AppModel\.refundLinksRevision\+\+/);
 });
+
+test("a refund link change reloads the statistics only while refunds are left out of them", () => {
+    for (const excluded of [false, true]) {
+        const reloads = [];
+        let applied;
+        const s = {
+            refundEditing: false, isUnlocked: true, vaultLoaded: true, vaultGeneration: 1, refundLinksRevision: 0,
+            netRefundsInStats: excluded,
+            UndoManager: { phase: 0, branch: 0, register() {} },
+            core() { return "vault"; },
+            run(fn) { return fn(); },
+            qsTr(t) { return t; },
+            coreAsync(method, args, apply) { applied = apply; },
+            reloadBookings() { reloads.push("bookings"); },
+            reloadStatistics() { reloads.push("statistics"); },
+        };
+        vm.createContext(s);
+        vm.runInContext(`(function(pair, action, token) {${bodyAfter("function changeRefundLink(")}})({}, "link", null)`, s);
+        applied({ changed: true, token: null, changed_ms: null });
+        assert.deepEqual(reloads, [excluded ? "statistics" : "bookings"]);
+    }
+});
+
+test("the statistics setting reloads every sum after a successful write only", () => {
+    const calls = [];
+    const s = {
+        netRefundsInStats: false, fails: false,
+        run(fn) { try { return fn(); } catch (e) { return undefined; } },
+        core(method, args) { if (s.fails) throw new Error("locked"); calls.push([method, args]); },
+        reloadCategories() { calls.push("categories"); }, reloadBookings() { calls.push("bookings"); },
+        reloadPlanning() { calls.push("planning"); }, reloadDashboard() { calls.push("dashboard"); },
+    };
+    vm.createContext(s);
+    vm.runInContext(`function reloadStatistics() {${bodyAfter("function reloadStatistics()")}}`, s);
+    const set = on => vm.runInContext(`(function(on) {${bodyAfter("function setNetRefundsInStats(on)")}})(${on})`, s);
+    set(true);
+    assert.equal(s.netRefundsInStats, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [["set_net_refunds_in_stats", { on: true }], "categories", "bookings", "planning", "dashboard"]);
+    calls.length = 0;
+    s.fails = true;
+    set(false);
+    assert.equal(s.netRefundsInStats, true);
+    assert.deepEqual(calls, []);
+});

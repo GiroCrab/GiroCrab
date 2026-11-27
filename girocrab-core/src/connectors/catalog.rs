@@ -598,6 +598,15 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         issues: &[],
     },
     MatrixEntry {
+        name: "Consorsbank (Online-Archiv, inoffiziell)",
+        kind: None,
+        interface: Interface::WebPortal,
+        official: Some(false),
+        capabilities: &[Capability::Documents],
+        status: Status::Verified,
+        issues: &[],
+    },
+    MatrixEntry {
         name: "Miles & More Kreditkarte (Deutsche Bank)",
         kind: None,
         interface: Interface::Fints,
@@ -1262,6 +1271,43 @@ mod matrix_tests {
             assert!(
                 e.capabilities.contains(&Capability::Securities),
                 "{}: activities without positions",
+                e.name
+            );
+        }
+    }
+
+    /// Consorsbank documents come from the unofficial Online-Archiv (portal JSON API, own app
+    /// approval), not from FinTS: the official FinTS row must not claim them.
+    #[test]
+    fn consorsbank_documents_are_listed_as_unofficial_online_archive() {
+        let fints = BANK_MATRIX
+            .iter()
+            .find(|e| e.name == "Consorsbank")
+            .expect("Consorsbank FinTS row");
+        assert_eq!(fints.interface, Interface::Fints);
+        assert_eq!(fints.official, Some(true));
+        assert!(!fints.capabilities.contains(&Capability::Documents));
+
+        let archive = BANK_MATRIX
+            .iter()
+            .find(|e| e.name == "Consorsbank (Online-Archiv, inoffiziell)")
+            .expect("Consorsbank Online-Archiv row");
+        assert_eq!(archive.interface, Interface::WebPortal);
+        assert_eq!(archive.official, Some(false));
+        assert_eq!(archive.capabilities, &[Capability::Documents]);
+    }
+
+    /// Enable Banking syncs (`fetch_card`, accounts) deliver no documents. The document gates in
+    /// `persist.rs` match the matrix by kind only, so such a row must never list `Documents`.
+    #[test]
+    fn enable_banking_rows_list_no_documents() {
+        for e in BANK_MATRIX
+            .iter()
+            .filter(|e| e.interface == Interface::EnableBanking)
+        {
+            assert!(
+                !e.capabilities.contains(&Capability::Documents),
+                "{}: Enable Banking delivers no documents",
                 e.name
             );
         }

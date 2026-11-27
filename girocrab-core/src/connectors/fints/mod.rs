@@ -735,12 +735,12 @@ impl BankConnector for FinTsConnector {
             // included only when HIUPD permits it (or lists nothing); every request is
             // its own FinTS message, so a 9050 on one loan is just collected in `errors`.
             let mut txs = Vec::new();
-            // Credit cards the bank serves through HKKKU or DKKKU (explicitly allowed
-            // in HIUPD). comdirect reports its cards with Kontoart 1 (#807).
+            // Cards the bank serves through HKKKU or DKKKU (explicitly allowed in
+            // HIUPD). comdirect reports its credit cards with Kontoart 1 (#807);
+            // debit cards stay Kontokorrent (#967).
             if let Some(card_tx) = self.card_tx(upd.as_ref()) {
-                if kind == AccountKind::Checking {
-                    kind = AccountKind::CreditCard;
-                }
+                let product = upd.as_ref().map_or("", |u| u.product.as_str());
+                kind = accounts::card_account_kind(kind, &[product, label.as_str()]);
                 match self
                     .statements_card(ctx, card_tx, acc, label, &currency)
                     .await
@@ -763,6 +763,8 @@ impl BankConnector for FinTsConnector {
                         &[&label, &card_tx, &e],
                     )),
                 }
+                // a debit card adds nothing to the overview and the totals (#967)
+                balance = accounts::card_balance(kind, balance);
             } else {
                 let can_camt = self.bank_supports("HKCAZ")
                     && allowed("HKCAZ")
@@ -859,7 +861,18 @@ impl BankConnector for FinTsConnector {
             // approval just given. A decoupled (push) approval is handled by `request`.
             if kind == AccountKind::Checking && self.bank_supports("HKCDB") && allowed("HKCDB") {
                 match self.standing_orders(ctx, acc, label).await {
-                    Ok(orders) => {
+                    Ok((orders, unreadable)) => {
+                        // read: the warning below must not fail the sync (#1902)
+                        ok_any = true;
+                        // a list without them would look complete (#1902)
+                        if unreadable > 0 {
+                            let of = unreadable + orders.len();
+                            let what = trf(
+                                "{0} von {1} Aufträgen der Bank konnten nicht gelesen werden.",
+                                &[&unreadable, &of],
+                            );
+                            errors.push(trf("{0}: Daueraufträge – {1}", &[&label, &what]));
+                        }
                         result.standing_orders.extend(orders);
                         result.standing_orders_fetched.push(label.clone());
                     }

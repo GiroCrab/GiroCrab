@@ -301,8 +301,8 @@ struct ConnectionEditSheet: View {
     /// Logins whose stored secret is a password, not a PIN.
     private var usesPassword: Bool { [.easybank, .alteLeipziger, .uberspace, .fordMoney, .opelDirektbank, .hanseaticBank, .kontist, .monefit, .finpension, .goAndGrow].contains(connection.connector) }
     private var isTR: Bool { connection.connector == .tradeRepublic }
-    /// Amex and Amazon Visa: portal credentials are kept as vault secrets and
-    /// filled into the login form of the portal window.
+    /// Amex, Amazon Visa and Schwäbisch Hall: portal credentials are kept as vault
+    /// secrets and filled into the login form of the portal window.
     private var savesPortalLogin: Bool { AppModel.supportsStoredPortalLogin(connection.connector) }
     @State private var storePortalLogin = false
     @State private var portalUser = ""
@@ -358,7 +358,15 @@ struct ConnectionEditSheet: View {
                     }
                     if documentsSupported {
                         Toggle("Dokumente abrufen", isOn: $documentsFetch)
-                            .help("Belege, Kontoauszüge und Postbox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach.")
+                            .help(isFinTs
+                                ? Text("Aus: keine neuen Dokumente, bereits gespeicherte bleiben.")
+                                : Text("Belege, Kontoauszüge und Postbox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach."))
+                        // FinTS brings PDF statements only, per account (#1465)
+                        if isFinTs {
+                            Text("Per FinTS kommen nur PDF-Kontoauszüge, und nur wenn die Bank sie per FinTS anbietet: beim Sync für Konten, bei denen unter „Dokumente“ „Kontoauszüge automatisch beim Sync abrufen“ eingeschaltet ist, sonst über „Kontoauszüge abrufen“ an gleicher Stelle. Postbox-Dokumente wie Wertpapier- oder Ertragsabrechnungen ruft GiroCrab per FinTS nicht ab.")
+                                .appFont(.caption).foregroundStyle(Theme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     if connection.connector == .sharinbox {
                         Toggle("Nicht zugeteilte Aktienrechte abrufen", isOn: $rightsFetch)
@@ -455,6 +463,19 @@ struct ConnectionEditSheet: View {
                             model.webLoginConnection = model.connections.first { $0.id == connection.id } ?? connection
                         } label: { Label("Anmelden & Abrufen", systemImage: "safari") }
                             .buttonStyle(.borderedProminent)
+                        if connection.connector == .schwaebischHall && savesPortalLogin {
+                            Toggle("Anmeldedaten im Tresor speichern", isOn: $storePortalLogin)
+                            if storePortalLogin {
+                                TextField("Benutzername", text: $portalUser)
+                                    .autocorrectionDisabled()
+                                    .textContentType(.username)
+                                SecureField(status?.hasPin == true ? "Gespeichertes Passwort (leer = unverändert)" : "Passwort", text: $pin)
+                                    .textContentType(.password)
+                                Text("GiroCrab trägt beide verschlüsselt gespeichert ins Anmeldeformular ein. „Anmelden“ und den Bestätigungscode bestätigen Sie selbst.")
+                                    .appFont(.caption).foregroundStyle(Theme.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                         Button("Web-Sitzung (Cookies) löschen …", role: .destructive) { confirmClear = .portal }
                     } header: { Text("Direkt-Login (Web-Session)").appSectionHeader() }
                 }
@@ -1122,16 +1143,26 @@ final class TRWebCoordinator: NSObject, WKNavigationDelegate {
     let phone: String
     init(phone: String) { self.phone = phone }
 
+    // Same rule as the portal guard: https only in the main frame (the saved phone number
+    // is filled in only on Trade Republic's own host, see below).
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        let ok = !(navigationAction.targetFrame?.isMainFrame ?? true) || ConsentRedirect.allowsMainFrame(navigationAction.request.url)
+        decisionHandler(ok ? .allow : .cancel)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // The phone number goes into Trade Republic's own form only (https).
         guard !phone.isEmpty, webView.url?.scheme == "https",
               WebLoginSheet.isTradeRepublicHost(webView.url?.host) else { return }
-        let digits = phone.replacingOccurrences(of: "\"", with: "")
+        // a JSON string literal (as on Linux): quotes, backslashes and line breaks in the
+        // stored value cannot break the script
+        guard let literal = (try? JSONEncoder().encode(phone)).flatMap({ String(data: $0, encoding: .utf8) }) else { return }
         let js = """
         (function fill(tries) {
           var el = document.querySelector('input[type="tel"], input[autocomplete="tel"], input[name*="phone" i], input[id*="phone" i]');
           if (!el) { if (tries > 0) setTimeout(function(){ fill(tries - 1); }, 500); return; }
-          var v = "\(digits)";
+          var v = \(literal);
           if (el.maxLength > 0 && el.maxLength < v.length && v.startsWith("+49")) v = v.substring(3);
           var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
           setter.call(el, v);

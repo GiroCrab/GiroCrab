@@ -2230,6 +2230,143 @@ fn deleted_bookings_do_not_count_as_existing() {
     assert!(p.replaces_starter_categories);
 }
 
+/// #1992: an own category and rule in a vault without bookings keep the tree.
+#[test]
+fn own_categories_and_rules_keep_the_starter_tree() {
+    let v = vault();
+    v.seed_starter_categories().unwrap();
+    let hobby = v
+        .create_category("Hobby".into(), None, "tag".into(), "#808080".into())
+        .unwrap();
+    let kid = v
+        .create_category(
+            "Modellbau".into(),
+            Some(hobby),
+            "tag".into(),
+            "#808080".into(),
+        )
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO rules(name, category_id, pattern) VALUES ('Bastelbedarf', ?1, 'Bastel')",
+            [kid],
+        )
+        .unwrap();
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert!(!p.replaces_starter_categories);
+    v.import_moneymoney_database(path, PW.into(), options_from(&p, false))
+        .unwrap();
+    let db = v.db().unwrap();
+    let n = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(
+        n("SELECT count(*) FROM categories WHERE deleted_ms IS NOT NULL"),
+        0
+    );
+    assert_eq!(
+        n("SELECT count(*) FROM rules WHERE deleted_ms IS NOT NULL"),
+        0
+    );
+    assert_eq!(
+        n(
+            "SELECT count(*) FROM rules r JOIN categories c ON c.id = r.category_id
+           WHERE r.name = 'Bastelbedarf' AND c.name = 'Modellbau' AND c.deleted_ms IS NULL"
+        ),
+        1
+    );
+}
+
+/// #1992: only the untouched starter seed may be replaced; any edit of it,
+/// even one undone again, keeps the tree.
+#[test]
+fn edited_starter_data_is_not_replaced() {
+    fn untouched_after(edit: impl Fn(&Vault, i64)) -> bool {
+        let v = vault();
+        v.seed_starter_categories().unwrap();
+        let db = v.db().unwrap();
+        let sql = "SELECT id FROM categories WHERE name = 'Supermarkt'";
+        let id: i64 = db.query_row(sql, [], |r| r.get(0)).unwrap();
+        drop(db);
+        edit(&v, id);
+        let db = v.db().unwrap();
+        crate::demo::is_untouched_starter(&db).unwrap()
+    }
+    fn update(v: &Vault, id: i64, parent: bool, sym: &str, color: &str) {
+        let db = v.db().unwrap();
+        let sql = "SELECT parent_id FROM categories WHERE id = ?1";
+        let p: Option<i64> = db.query_row(sql, [id], |r| r.get(0)).unwrap();
+        drop(db);
+        let p = p.filter(|_| parent);
+        v.update_category(id, "Supermarkt".into(), p, sym.into(), color.into())
+            .unwrap();
+    }
+    assert!(untouched_after(|_, _| {}));
+    assert!(untouched_after(|v, id| update(
+        v, id, true, "cart", "#B5474F"
+    )));
+    let edits: [(&str, &dyn Fn(&Vault, i64)); 7] = [
+        ("icon", &|v, id| update(v, id, true, "tag", "#B5474F")),
+        ("color", &|v, id| update(v, id, true, "cart", "#000000")),
+        ("parent", &|v, id| update(v, id, false, "cart", "#B5474F")),
+        ("undone", &|v, id| {
+            update(v, id, true, "tag", "#B5474F");
+            update(v, id, true, "cart", "#B5474F");
+        }),
+        ("budget", &|v, id| {
+            v.set_category_budget(id, Some(100)).unwrap()
+        }),
+        ("deleted", &|v, id| v.delete_category(id).unwrap()),
+        ("rule", &|v, _| {
+            let sql = "UPDATE rules SET pattern = 'REWE' WHERE name = 'Supermärkte'";
+            v.db().unwrap().execute(sql, []).unwrap();
+        }),
+    ];
+    for (what, edit) in edits {
+        assert!(!untouched_after(edit), "{what}");
+    }
+}
+
+/// #1992: a second import of a source without bookings keeps the imported
+/// tree (same row and uuid) and the edits made in between.
+#[test]
+fn repeated_import_without_bookings_keeps_category_identity() {
+    let v = vault();
+    v.seed_starter_categories().unwrap();
+    let path = fake_db_with(false, "DELETE FROM transactions;");
+    let run = || {
+        let p = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        v.import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false))
+            .unwrap();
+        p.replaces_starter_categories
+    };
+    let haushalt = || -> (i64, Option<i64>, String, String) {
+        let sql = "SELECT id, parent_id, uuid, sf_symbol FROM categories
+                    WHERE name = 'Haushalt' AND deleted_ms IS NULL";
+        let db = v.db().unwrap();
+        db.query_row(sql, [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap()
+    };
+    assert!(run(), "untouched starter tree in a vault without bookings");
+    let (id, parent, uuid, _) = haushalt();
+    v.update_category(
+        id,
+        "Haushalt".into(),
+        parent,
+        "sofa".into(),
+        "#FF9500".into(),
+    )
+    .unwrap();
+    assert!(!run(), "the imported tree is kept");
+    assert_eq!(haushalt(), (id, parent, uuid, "sofa".to_string()));
+}
+
 #[test]
 fn directory_banks_map_to_fints_keys() {
     // (bank code, name) -> stored connector key
@@ -5048,8 +5185,8 @@ fn a_card_number_names_the_source_only_on_its_login_and_in_its_currency() {
 fn a_card_on_a_login_the_import_set_up_another_way_takes_its_sources_state() {
     // the import connected the card's bank through the comdirect FinTS alternative or Enable
     // Banking, and that login's fetch took the marked card over by its number: still a login
-    // the import links the bank to, so the closed card is archived. The user picks it as
-    // target (the preview proposes cards on the bank's own login only)
+    // the import links the bank to, so the preview proposes the card (#1935) and the closed
+    // card is archived
     let c24 = "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
                  VALUES (30, 'DE', '50024024', 'c24-login', '', 'GEHEIM-30', 'C24 Bank', 'SYS', 'LS');
                INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
@@ -5098,17 +5235,146 @@ fn a_card_on_a_login_the_import_set_up_another_way_takes_its_sources_state() {
             assert_eq!(adopted.unwrap(), Some(card.id), "{name}");
         }
         let closed = format!("{c24} UPDATE accounts SET refresh = 19 WHERE rowid = {mm_card};");
-        import_with(&v, &fake_db_with(false, &closed), |o| {
-            for c in o.accounts.iter_mut().filter(|c| c.mm_id == mm_card) {
-                c.target_account_id = Some(card.id);
-            }
-        });
+        let p = v
+            .preview_moneymoney_database(fake_db_with(false, &closed), PW.into(), None)
+            .unwrap();
+        let proposed = p.accounts.iter().find(|a| a.mm_id == mm_card).unwrap();
+        assert_eq!(proposed.existing_account_id, Some(card.id), "{name}");
+        import_with(&v, &fake_db_with(false, &closed), |_| {});
         assert_eq!(
             archive_state(&v, card.id),
             (Some(1_790_001_000), 1_790_001_000_125, false),
             "{name}"
         );
     }
+}
+
+#[test]
+fn preview_never_guesses_a_card_number_synced_on_two_linked_logins() {
+    // Hanseatic Bank's FinTS login and its Enable Banking login both sync a card with the number
+    // MoneyMoney shows: the import links the bank to both, so neither is proposed (#1935)
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
+           VALUES (40, 'DE', '12030000', 'hb-login', '', 'GEHEIM-40', 'Hanseatic Bank', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (41, 40, '5232 XXXX XXXX 4242', '12030000', 0, '', 'EUR', 'Hanseatic Kreditkarte', 'Max Mustermann', 0, 3, 41, 0, 0, 'GEHEIM');",
+    );
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let ways = &p
+        .banks
+        .iter()
+        .find(|b| b.mm_id == 40)
+        .unwrap()
+        .connection_options;
+    let way = |via| ways.iter().find(|o| o.via == via).unwrap().clone();
+    let own = way(MoneyMoneyDbConnectionVia::FinTs);
+    let psd2 = way(MoneyMoneyDbConnectionVia::EnableBanking);
+    let proposed = || {
+        let p = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        p.accounts
+            .iter()
+            .find(|a| a.mm_id == 41)
+            .unwrap()
+            .existing_account_id
+    };
+    let mut cards = Vec::new();
+    for (o, external_ref) in [(&psd2, "psd2-card"), (&own, "own-card")] {
+        let db = v.db().unwrap();
+        let (login, _) = Vault::add_bank_connection_keyed(
+            &db,
+            o.connector,
+            &o.key,
+            Some("12030000"),
+            "Hanseatic Bank".into(),
+            "hb-login".into(),
+        )
+        .unwrap();
+        let gid = Vault::ensure_group(&db, "Karten", "creditcard", 1).unwrap();
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, kind)
+             VALUES (?1, ?2, ?3, ?3, '5232000000004242', 'EUR', 'credit_card')",
+            params![login, gid, external_ref],
+        )
+        .unwrap();
+        cards.push(db.last_insert_rowid());
+        drop(db);
+        if cards.len() == 1 {
+            // one login: its card is proposed
+            assert_eq!(proposed(), Some(cards[0]));
+        }
+    }
+    assert_eq!(proposed(), None);
+}
+
+#[test]
+fn preview_proposes_a_card_only_without_iban_and_in_its_currency() {
+    // #1976: like `card_taken_over_from`, a card in another currency or with an IBAN is not the
+    // MoneyMoney card, not even for a tie, on a linked login (Enable Banking) as on the own one
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage)
+           VALUES (40, 'DE', '12030000', 'hb-login', '', 'GEHEIM-40', 'Hanseatic Bank', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred)
+           VALUES (41, 40, '5232 XXXX XXXX 4242', '12030000', 0, '', 'EUR', 'Hanseatic Kreditkarte', 'Max Mustermann', 0, 3, 41, 0, 0, 'GEHEIM');",
+    );
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let psd2 = p.banks.iter().find(|b| b.mm_id == 40).unwrap();
+    let psd2 = psd2
+        .connection_options
+        .iter()
+        .find(|o| o.via == MoneyMoneyDbConnectionVia::EnableBanking)
+        .unwrap();
+    let (login, gid) = {
+        let db = v.db().unwrap();
+        let (login, _) = Vault::add_bank_connection_keyed(
+            &db,
+            psd2.connector,
+            &psd2.key,
+            Some("12030000"),
+            "Hanseatic Bank".into(),
+            "hb-login".into(),
+        )
+        .unwrap();
+        (
+            login,
+            Vault::ensure_group(&db, "Karten", "creditcard", 1).unwrap(),
+        )
+    };
+    let card = |name: &str, currency: &str, iban: &str| -> i64 {
+        let db = v.db().unwrap();
+        db.execute(
+            "INSERT INTO accounts(connection_id, group_id, external_ref, name, account_number, currency, iban, kind)
+             VALUES (?1, ?2, ?3, ?3, '5232000000004242', ?4, ?5, 'credit_card')",
+            params![login, gid, name, currency, iban],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    };
+    card("usd-card", "usd", "");
+    card("iban-card", "EUR", "DE02 1203 0000 0000 4242 42");
+    let proposed = || {
+        let p = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        p.accounts
+            .iter()
+            .find(|a| a.mm_id == 41)
+            .unwrap()
+            .existing_account_id
+    };
+    assert_eq!(proposed(), None);
+    let eur = card("eur-card", "EUR", "");
+    // neither other card ties with it
+    assert_eq!(proposed(), Some(eur));
 }
 
 /// Device A imported the fixture and step 38 marked its Girokonto; device B has it from A by

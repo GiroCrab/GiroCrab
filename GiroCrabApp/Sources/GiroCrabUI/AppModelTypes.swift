@@ -636,6 +636,15 @@ extension Array where Element == CategoryNode {
         }
         return nil
     }
+
+    /// Only the nodes in `ids` and the parents leading to them (the categories of a booking filter).
+    func limited(to ids: Set<Int64>) -> [CategoryNode] {
+        compactMap { n in
+            let kids = n.children?.limited(to: ids)
+            guard ids.contains(n.id) || !(kids ?? []).isEmpty else { return nil }
+            return CategoryNode(category: n.category, children: (kids ?? []).isEmpty ? nil : kids)
+        }
+    }
 }
 
 /// Human-readable (localised) text for core errors (instead of

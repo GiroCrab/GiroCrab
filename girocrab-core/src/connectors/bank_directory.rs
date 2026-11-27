@@ -315,6 +315,8 @@ const FINTS_ALIASES: &[(&str, &str)] = &[
         "10130800",
         "vitrade biw bank flatexdegiro fur investments und wertpapiere",
     ),
+    // custodian of these brokers; their customers log in with the Baader Stammnummer
+    ("70033100", "traders place finanzen net zero"),
 ];
 
 fn fints_result(b: FinTsBankInfo) -> BankSearchResult {
@@ -829,6 +831,26 @@ mod tests {
             let r = search(q, vec![], 12);
             let c = r.iter().find(|b| b.blz == "50070439");
             assert!(c.is_some_and(|b| b.name.contains("Miles & More")), "{q}");
+        }
+    }
+
+    #[test]
+    fn baader_bank_is_found_by_its_brokers() {
+        for q in [
+            "baader",
+            "traders place",
+            "finanzen zero",
+            "finanzen.net zero",
+            "70033100",
+        ] {
+            let r = search(q, vec![], 12);
+            let b = r.iter().find(|b| b.blz == "70033100");
+            assert!(
+                b.is_some_and(
+                    |b| b.mode == BankAccessMode::FinTs && b.url == "https://fints.baaderbank.de"
+                ),
+                "{q}"
+            );
         }
     }
 

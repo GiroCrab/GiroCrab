@@ -10,6 +10,8 @@
 //! every schema bump and commit the new file. Never regenerate or edit an
 //! existing fixture: each one stands for vaults written by that version.
 use girocrab_core::loans::LoanSetup;
+use girocrab_core::models::AccountKind;
+use girocrab_core::offline::ManualBookingSetup;
 use girocrab_core::vault::Vault;
 use rusqlite::Connection;
 
@@ -42,6 +44,37 @@ fn main() {
             match_expr: String::new(),
         })
         .unwrap();
+        let offline = v
+            .create_offline_loan(
+                "Fixture-Offline-Darlehen".into(),
+                "EUR".into(),
+                100_000,
+                50_000,
+            )
+            .unwrap();
+        let cash = v
+            .create_offline_account(
+                "Fixture-Zahlungen".into(),
+                AccountKind::Cash,
+                "EUR".into(),
+                0,
+            )
+            .unwrap();
+        let source = v
+            .save_manual_booking(
+                cash,
+                None,
+                ManualBookingSetup {
+                    booking_date: "2025-02-01".into(),
+                    amount_cents: -1_000,
+                    counterparty: "Fixture-Bank".into(),
+                    purpose: String::new(),
+                    category_id: None,
+                    note: String::new(),
+                },
+            )
+            .unwrap();
+        v.mirror_offline_loan_payment(source, offline, 800).unwrap();
         // merchant recognition (#1373): an own merchant and a copy that replaces its original
         v.save_custom_merchant(
             None,

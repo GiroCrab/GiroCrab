@@ -38,6 +38,36 @@ pub(super) fn kind_from_code(code: u32) -> AccountKind {
     }
 }
 
+/// Kind of an account the bank serves through HKKKU/DKKKU. comdirect reports its
+/// credit cards with Kontoart 1 (#807), so a Kontokorrent becomes a credit card –
+/// unless a name marks a debit card ("Mastercard direkt", "Visa Debit",
+/// "Debitkarte"): its bookings leave the Girokonto right away, so it has no open
+/// amount of its own (#967).
+pub(super) fn card_account_kind(kind: AccountKind, names: &[&str]) -> AccountKind {
+    let debit = names.iter().any(|n| {
+        let n = n.to_lowercase();
+        n.contains("debit") || n.contains("mastercard direkt")
+    });
+    if kind == AccountKind::Checking && !debit {
+        AccountKind::CreditCard
+    } else {
+        kind
+    }
+}
+
+/// Balance of an account the bank serves through HKKKU/DKKKU, `kind` as
+/// [`card_account_kind`] returned it. A card that stays a Kontokorrent is a debit card:
+/// its bookings are already in the Girokonto's balance, so the amount the bank names for
+/// the card would count twice in the overview and the totals. It is 0, also when nothing
+/// was read (a balance stored while it was led as a credit card must not stay, #967).
+pub(super) fn card_balance(kind: AccountKind, bank: Option<i64>) -> Option<i64> {
+    if kind == AccountKind::Checking {
+        Some(0)
+    } else {
+        bank
+    }
+}
+
 /// Accounts from the UPD (HIUPD) merged with the SEPA account list (HISPA), which adds
 /// BIC and IBAN. Returns (account, upd); HISPA accounts missing from the UPD follow
 /// with `None`. `blz` fills in a bank code the UPD leaves empty.
@@ -175,9 +205,9 @@ impl FinTsConnector {
             }
         }
         let mut accounts = merge_upd_with_sepa(&self.upd, sepa, &self.blz);
-        // Postbank also serves accounts of other banks of the group (BIC DEUT…) behind
-        // the one login, so the login's server decides, not the account's BIC.
-        if is_postbank_server(&self.url) {
+        // Postbank (which also serves accounts of other banks of the group, BIC DEUT…, behind
+        // the one login) and norisbank: the login's server decides, not the account's BIC.
+        if needs_full_kti(&self.url) {
             for (acc, _) in &mut accounts {
                 acc.full_kti = true;
             }
@@ -356,10 +386,10 @@ impl FinTsConnector {
         if acc.blz == CONSORSBANK_BLZ && !acc.iban.is_empty() && !acc.account_number.is_empty() {
             return Self::kti_full(acc, &acc.account_number);
         }
-        // Postbank answers HKCAZ/HKCDB with 9210 "nationale Kontoverbindung erforderlich"
-        // for IBAN:BIC alone (#1702) and "Keine gültige Kontoverbindung" for the 10-digit
-        // number from the IBAN combined with its 3-digit sub-account. It accepts the
-        // account exactly as its HIUPD lists it (as HKKAZ already does through KTV).
+        // Postbank and norisbank answer HKCAZ/HKCDB with 9210 "nationale Kontoverbindung
+        // erforderlich" for IBAN:BIC alone (#1702); Postbank also rejects ("Keine gültige
+        // Kontoverbindung") the 10-digit number from the IBAN with its 3-digit sub-account.
+        // Both get the account exactly as HIUPD lists it (as HKKAZ already does through KTV).
         if acc.full_kti && !acc.iban.is_empty() && !acc.account_number.is_empty() {
             return Self::kti_full(acc, &acc.account_number);
         }
@@ -397,13 +427,24 @@ impl FinTsConnector {
     }
 }
 
-fn is_postbank_server(url: &str) -> bool {
-    url.to_ascii_lowercase().contains("hbci.postbank.de")
+/// Servers that identify an account for HKCAZ/HKCDB only with the national account (KTI
+/// with Konto:Unterkonto:280:BLZ): Postbank (#1702) and norisbank, which answers IBAN:BIC
+/// alone with the same 9210 "Angaben zur nationalen Kontoverbindung … erforderlich".
+fn needs_full_kti(url: &str) -> bool {
+    let url = url.to_ascii_lowercase();
+    url.contains("hbci.postbank.de") || url.contains("fints.norisbank.de")
 }
 
 #[cfg(test)]
 mod postbank_kti_tests {
     use super::*;
+
+    #[test]
+    fn postbank_and_norisbank_servers_need_the_national_account() {
+        assert!(needs_full_kti("https://hbci.postbank.de/banking/hbci.do"));
+        assert!(needs_full_kti("https://fints.norisbank.de/"));
+        assert!(!needs_full_kti("https://fints.dkb.de/fints"));
+    }
 
     #[test]
     fn postbank_kti_carries_the_upd_account_with_sub_account() {
@@ -418,6 +459,27 @@ mod postbank_kti_tests {
         assert_eq!(
             FinTsConnector::kti(&acc),
             "DE89100100100123456789:PBNKDEFFXXX:123456789:000:280:10010010"
+        );
+    }
+
+    #[test]
+    fn norisbank_kti_carries_the_national_account_only_with_the_flag() {
+        let mut acc = SepaAccount {
+            iban: "DE02100777770123456700".into(),
+            bic: "NORSDE51XXX".into(),
+            account_number: "1234567".into(),
+            sub_account: "00".into(),
+            blz: "10077777".into(),
+            full_kti: needs_full_kti("https://fints.norisbank.de/"),
+        };
+        assert_eq!(
+            FinTsConnector::kti(&acc),
+            "DE02100777770123456700:NORSDE51XXX:1234567:00:280:10077777"
+        );
+        acc.full_kti = false;
+        assert_eq!(
+            FinTsConnector::kti(&acc),
+            "DE02100777770123456700:NORSDE51XXX"
         );
     }
 }

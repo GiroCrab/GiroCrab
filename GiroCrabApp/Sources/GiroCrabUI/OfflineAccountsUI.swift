@@ -11,6 +11,7 @@ import GiroCrabCore
     var accountIDs: Set<Int64> = []
     /// "Neue Buchung …" / "Buchung bearbeiten …".
     var bookingRequest: ManualBookingRequest?
+    var loanPaymentRequest: OfflineLoanPaymentRequest?
     /// "Neues Offline-Konto …".
     var showNewAccount = false
     /// "Saldo korrigieren …".
@@ -24,6 +25,12 @@ struct ManualBookingRequest: Identifiable {
     let accountId: Int64
     /// `nil` = a new booking.
     var booking: Booking?
+}
+
+struct OfflineLoanPaymentRequest: Identifiable {
+    let id = UUID()
+    let booking: Booking
+    let account: Account
 }
 
 struct BalanceCorrectionRequest: Identifiable {
@@ -110,11 +117,18 @@ extension AppModel {
 
     /// "Neues Offline-Konto …": the account belongs in the own vault, not the demo (#487).
     func createOfflineAccount(name: String, note: String, openingCents: Int64,
-                              kind: AccountKind = .cash, currency: String = OfflineAccountOptions.defaultCurrency) {
+                              kind: AccountKind = .cash, currency: String = OfflineAccountOptions.defaultCurrency,
+                              originalLoanCents: Int64? = nil) {
         runInOwnVault { [self] in
             guard let vault else { return }
             do {
-                let id = try vault.createOfflineAccount(name: name, kind: kind, currency: currency, openingCents: openingCents)
+                let id: Int64
+                if let originalLoanCents {
+                    id = try vault.createOfflineLoan(name: name, currency: currency,
+                                                    originalCents: originalLoanCents, remainingCents: openingCents)
+                } else {
+                    id = try vault.createOfflineAccount(name: name, kind: kind, currency: currency, openingCents: openingCents)
+                }
                 offlineStore.accountIDs.insert(id)
                 // one reload for the account and its note
                 if !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -128,8 +142,12 @@ extension AppModel {
         }
     }
 
-    /// One-time copy of `booking` into `account` with the amount reversed and no category.
+    /// One-time copy of `booking` into `account`.
     func mirror(_ booking: Booking, to account: Account) {
+        if account.kind == .loan {
+            offlineStore.loanPaymentRequest = OfflineLoanPaymentRequest(booking: booking, account: account)
+            return
+        }
         guard let vault else { return }
         do {
             _ = try vault.mirrorBookingToOfflineAccount(bookingId: booking.id, accountId: account.id)
@@ -137,6 +155,20 @@ extension AppModel {
             errorMessage = describe(error)
             return
         }
+        finishMirror(to: account)
+    }
+
+    func mirrorLoanPayment(_ request: OfflineLoanPaymentRequest, principalCents: Int64) throws {
+        guard let vault, offlineStore.loanPaymentRequest?.id == request.id else {
+            throw CoreError.InvalidInput(message: String(localized: "Die Tilgungsübernahme ist nicht mehr aktiv."))
+        }
+        try vault.mirrorOfflineLoanPayment(bookingId: request.booking.id, accountId: request.account.id,
+                                           principalCents: principalCents)
+        offlineStore.loanPaymentRequest = nil
+        finishMirror(to: request.account)
+    }
+
+    private func finishMirror(to account: Account) {
         toast = String(localized: "Buchung in „\(account.name)“ gespiegelt")
         reloadAfterManualChange()
     }
@@ -169,7 +201,11 @@ struct OfflineBookingMenu: View {
             Button("Buchung bearbeiten …", systemImage: "square.and.pencil") { model.editManualBooking(booking) }
             Button("Buchung löschen …", systemImage: "trash", role: .destructive) { model.offlineStore.deleting = booking }
         }
-        let targets = model.offlineAccounts.filter { $0.id != booking.accountId }
+        let sourceCurrency = booking.currency.isEmpty ? model.account(for: booking.accountId)?.currency : booking.currency
+        let targets = model.offlineAccounts.filter { account in
+            account.id != booking.accountId && (account.kind != .loan ||
+                (booking.amountCents < 0 && sourceCurrency?.uppercased() == account.currency.uppercased()))
+        }
         if !targets.isEmpty {
             Menu("In Offline-Konto spiegeln", systemImage: "arrow.left.arrow.right") {
                 ForEach(targets, id: \.id) { account in
@@ -211,6 +247,9 @@ private struct OfflineAccountSheetsModifier: ViewModifier {
             .capturableSheet(isPresented: Binding(get: { model.offlineStore.showNewAccount }, set: { model.offlineStore.showNewAccount = $0 })) {
                 OfflineAccountSheet().environment(model)
             }
+            .capturableSheet(item: Binding(get: { model.offlineStore.loanPaymentRequest }, set: { model.offlineStore.loanPaymentRequest = $0 })) { request in
+                OfflineLoanPaymentSheet(request: request).environment(model)
+            }
             .capturableSheet(item: Binding(get: { model.offlineStore.correctionRequest }, set: { model.offlineStore.correctionRequest = $0 })) { request in
                 BalanceCorrectionSheet(request: request).environment(model)
             }
@@ -251,6 +290,7 @@ struct ManualBookingSheet: View {
     @State private var loaded = false
 
     private var isNew: Bool { request.booking == nil }
+    private var isLoan: Bool { model.account(for: accountId)?.kind == .loan }
 
     /// The typed amount with its sign, `nil` while it is not a usable number.
     private var amountCents: Int64? {
@@ -272,8 +312,8 @@ struct ManualBookingSheet: View {
                 }
                 DatePicker("Datum", selection: $date, displayedComponents: .date)
                 Picker("Art", selection: $flow) {
-                    Text("Ausgabe").tag(Flow.out)
-                    Text("Einnahme").tag(Flow.in)
+                    Text(isLoan ? "Schuld erhöhen" : "Ausgabe").tag(Flow.out)
+                    Text(isLoan ? "Tilgung" : "Einnahme").tag(Flow.in)
                 }
                 .pickerStyle(.segmented)
                 .disabled((request.booking?.splitCount ?? 0) > 0)
@@ -306,13 +346,19 @@ struct ManualBookingSheet: View {
         .padding(22)
         .macFrame(width: 460)
         .onAppear(perform: load)
+        .onChange(of: isLoan) { _, loan in
+            if isNew { flow = loan ? .in : .out }
+        }
     }
 
     private func load() {
         guard !loaded else { return }
         loaded = true
         accountId = request.accountId
-        guard let b = request.booking else { return }
+        guard let b = request.booking else {
+            flow = isLoan ? .in : .out
+            return
+        }
         date = DateText.date(b.bookingDate) ?? Date()
         flow = b.amountCents < 0 ? .out : .in
         amountText = Money.plain(abs(b.amountCents))
@@ -338,7 +384,7 @@ struct ManualBookingSheet: View {
 
 /// What "Neues Offline-Konto …" offers (#1049): the kinds that can be kept by hand and the currencies.
 enum OfflineAccountOptions {
-    static let kinds: [AccountKind] = [.cash, .savings, .timeDeposit]
+    static let kinds: [AccountKind] = [.cash, .savings, .timeDeposit, .loan]
     static let defaultCurrency = "EUR"
     /// ISO 4217 codes offered when creating an account; the first is the default.
     static let currencies = ["EUR", "USD", "CHF", "GBP", "SEK", "DKK", "NOK", "PLN", "CZK"]
@@ -362,6 +408,7 @@ enum OfflineAccountOptions {
         switch kind {
         case .savings: String(localized: "Sparkonto")
         case .timeDeposit: String(localized: "Festgeld")
+        case .loan: String(localized: "Darlehen / Kredit")
         default: String(localized: "Bargeld")
         }
     }
@@ -380,6 +427,8 @@ struct OfflineAccountSheet: View {
 
     @State private var name = ""
     @State private var balanceText = ""
+    @State private var loanOriginalText = ""
+    @State private var loanRemainingText = ""
     @State private var note = ""
     @State private var kind: AccountKind = .cash
     @State private var currency = OfflineAccountOptions.defaultCurrency
@@ -387,8 +436,21 @@ struct OfflineAccountSheet: View {
 
     /// An empty field is a starting balance of 0; a typo is not.
     private var openingCents: Int64? {
+        if kind == .loan {
+            guard let cents = Money.parseCents(loanRemainingText), cents >= 0 else { return nil }
+            return cents
+        }
         let t = balanceText.trimmingCharacters(in: .whitespaces)
         return t.isEmpty ? 0 : Money.parseCents(t)
+    }
+
+    private var originalLoanCents: Int64? {
+        guard kind == .loan, let cents = Money.parseCents(loanOriginalText), cents > 0 else { return nil }
+        return cents
+    }
+
+    private var canCreateAccount: Bool {
+        openingCents != nil && chosenCurrency != nil && (kind != .loan || originalLoanCents != nil)
     }
 
     private var chosenCurrency: String? {
@@ -416,9 +478,18 @@ struct OfflineAccountSheet: View {
                 if currency == OfflineAccountOptions.otherTag {
                     TextField("ISO-Code", text: $customCurrency, prompt: Text("JPY"))
                 }
-                TextField("Startsaldo", text: $balanceText, prompt: Text("0,00"))
-                    .multilineTextAlignment(.trailing)
-                    .sensitive(.amounts)
+                if kind == .loan {
+                    TextField("Ursprünglicher Kreditbetrag", text: $loanOriginalText)
+                        .multilineTextAlignment(.trailing)
+                        .sensitive(.amounts)
+                    TextField("Restschuld zum Start", text: $loanRemainingText)
+                        .multilineTextAlignment(.trailing)
+                        .sensitive(.amounts)
+                } else {
+                    TextField("Startsaldo", text: $balanceText, prompt: Text("0,00"))
+                        .multilineTextAlignment(.trailing)
+                        .sensitive(.amounts)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Konto-Notiz")
                     TextEditor(text: $note)
@@ -435,16 +506,74 @@ struct OfflineAccountSheet: View {
                     if let cents = openingCents, let code = chosenCurrency {
                         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                         model.createOfflineAccount(name: trimmed.isEmpty ? OfflineAccountOptions.title(kind) : name,
-                                                   note: note, openingCents: cents, kind: kind, currency: code)
+                                                   note: note, openingCents: cents, kind: kind, currency: code,
+                                                   originalLoanCents: originalLoanCents)
                         dismiss()
                     }
                 }
                 .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-                .disabled(openingCents == nil || chosenCurrency == nil)
+                .disabled(!canCreateAccount)
             }
         }
         .padding(22)
         .macFrame(width: 440)
+    }
+}
+
+/// Confirms the principal of a source payment before creating its counter-booking.
+private struct OfflineLoanPaymentSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let request: OfflineLoanPaymentRequest
+
+    @State private var amount = ""
+    @State private var saveError: String?
+
+    private var principalCents: Int64? {
+        guard let cents = Money.parseCents(amount), cents > 0,
+              UInt64(cents) <= request.booking.amountCents.magnitude else { return nil }
+        return cents
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Tilgung übernehmen").appFont(.title3, weight: .bold)
+            Form {
+                LabeledContent {
+                    Text(request.account.name).sensitive()
+                } label: { Text("Konto") }
+                LabeledContent {
+                    Text(Money.format(request.booking.amountCents, currency: request.account.currency)).sensitive(.amounts)
+                } label: { Text("Abbuchung") }
+                TextField("Tilgungsanteil", text: $amount)
+                    .multilineTextAlignment(.trailing)
+                    .sensitive(.amounts)
+            }
+            Text("Geben Sie den Anteil der Rate ein, der die Restschuld senkt.")
+                .appFont(.caption).foregroundStyle(Theme.secondary)
+            if let saveError {
+                Text(saveError).appFont(.caption).foregroundStyle(Theme.outflow)
+            }
+            HStack {
+                Spacer()
+                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Übernehmen") { save() }
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .disabled(principalCents == nil)
+            }
+        }
+        .padding(22)
+        .macFrame(width: 440)
+    }
+
+    private func save() {
+        guard let principalCents else { return }
+        do {
+            try model.mirrorLoanPayment(request, principalCents: principalCents)
+            dismiss()
+        } catch {
+            saveError = describe(error)
+        }
     }
 }
 
