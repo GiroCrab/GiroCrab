@@ -112,6 +112,8 @@ struct NewCryptoAccountSheet: View {
             Form {
                 TextField("Name", text: $name, prompt: Text("z. B. Hardware-Wallet")).sensitive().onSubmit(create)
             }
+            // create() works with the name it started with
+            .disabled(busy)
             Text("Ein Depot ohne Bank. Die Positionen tragen Sie selbst ein; die Kurse kommen auf Anforderung.")
                 .appFont(.caption).foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
