@@ -62,7 +62,7 @@ fn disambiguate_category_rows(mut rows: Vec<RawCategoryRow>) -> Vec<CategoryRow>
                             .insert((parent, format!("{folded} ({n})")))
                             .then(|| format!("{} ({n})", edit_name.trim()))
                     })
-                    .unwrap()
+                    .unwrap_or_else(|| edit_name.clone())
             };
             (id, parent, name, symbol, color, order, budget, edit_name)
         })
