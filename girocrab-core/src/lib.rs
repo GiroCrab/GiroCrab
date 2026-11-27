@@ -111,7 +111,7 @@ pub fn fints_builtin_product_id_available() -> bool {
 /// Generates 32 random bytes for a new SQLCipher master key.
 /// The Swift side stores it in the Keychain behind Face ID / Touch ID.
 pub fn generate_master_key() -> Vec<u8> {
-    use rand::RngCore;
+    use rand::Rng;
     let mut key = vec![0u8; 32];
     rand::rng().fill_bytes(&mut key);
     key
