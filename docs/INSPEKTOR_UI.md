@@ -27,4 +27,4 @@ Auf dem Mac öffnet ein Klick auf die Kategorie in der Buchungszeile eine scroll
 - Händlername, Kontoname, IBAN, Zweck, Notiz und Beträge sind sensibel. Auch der Sheet-Titel wird bei der Schwärzung berücksichtigt.
 - Änderungen mit Demo-Daten auf dem Mac und iPhone prüfen. Dazu gehören Hell- und Dunkelmodus, ein schmales Fenster, große Schrift und „Problem melden“ mit Schwärzung.
 
-Gestaltungsregeln stehen in [DESIGN.md](../DESIGN.md). Offene Befunde und Prüfschritte stehen im [UI-Audit des Buchungsinspektors](ui-audits/buchungs-inspektor.md).
+Gestaltungsregeln stehen in [DESIGN.md](../DESIGN.md). Offene Befunde und Prüfschritte stehen im [UI-Audit des Buchungsinspektors](ui-audits/buchungen.md#buchungsinspektor).
