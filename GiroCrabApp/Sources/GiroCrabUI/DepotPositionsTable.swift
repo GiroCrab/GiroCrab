@@ -54,6 +54,16 @@ struct DepotPositionsTable<RowMenu: View>: View {
         purchasePriceEdit != nil && !p.isOwnItem && !p.identifier.isEmpty && p.basis != .unknown
     }
 
+    /// Positions the user keeps by hand (crypto holdings, #1836): the pencil menu and the context
+    /// menu edit and delete them.
+    private var ownPositionEdit: (edit: (DepotPosition) -> Void, delete: (DepotPosition) -> Void)?
+
+    func ownPositions(edit: @escaping (DepotPosition) -> Void, delete: @escaping (DepotPosition) -> Void) -> Self {
+        var copy = self
+        copy.ownPositionEdit = (edit, delete)
+        return copy
+    }
+
     func depotLabel(_ label: @escaping (DepotPosition) -> String?) -> Self {
         var copy = self
         copy.depotLabelOf = label
@@ -392,6 +402,14 @@ struct DepotPositionsTable<RowMenu: View>: View {
                 .buttonStyle(.borderless)
                 .padding(.top, 2)
             }
+            if let ownPositionEdit {
+                HStack(spacing: 16) {
+                    Button { ownPositionEdit.edit(p) } label: { Label("Position bearbeiten", systemImage: "pencil") }
+                    Button(role: .destructive) { ownPositionEdit.delete(p) } label: { Label("Position löschen", systemImage: "trash") }
+                }
+                .buttonStyle(.borderless)
+                .padding(.top, 2)
+            }
             #endif
         }
         .appFont(.callout, monospacedDigit: true)
@@ -419,14 +437,21 @@ struct DepotPositionsTable<RowMenu: View>: View {
     /// Edits asset class and instrument; only where the position has a stable classification key.
     @ViewBuilder
     private func editButton(_ p: DepotPosition) -> some View {
-        if editsPurchasePrice(p), let purchasePriceEdit {
+        if editsPurchasePrice(p) || ownPositionEdit != nil {
             Menu {
+                if let ownPositionEdit {
+                    Button("Position bearbeiten …", systemImage: "pencil") { ownPositionEdit.edit(p) }
+                    Button("Position löschen …", systemImage: "trash", role: .destructive) { ownPositionEdit.delete(p) }
+                    Divider()
+                }
                 if p.asset.classification.securityKey != nil {
                     Button("Klassifizierung bearbeiten", systemImage: "pencil") {
                         onClassify(ClassificationEditRequest(name: p.holding.name, classification: p.asset.classification))
                     }
                 }
-                Button("Einstandskurs bearbeiten …", systemImage: "eurosign") { purchasePriceEdit(p) }
+                if editsPurchasePrice(p), let purchasePriceEdit {
+                    Button("Einstandskurs bearbeiten …", systemImage: "eurosign") { purchasePriceEdit(p) }
+                }
             } label: {
                 Image(systemName: "pencil").appFont(.caption).foregroundStyle(Theme.secondary).padding(4).contentShape(Rectangle())
             }
@@ -453,6 +478,10 @@ struct DepotPositionsTable<RowMenu: View>: View {
 
     @ViewBuilder
     private func menu(_ p: DepotPosition) -> some View {
+        if let ownPositionEdit {
+            Button("Position bearbeiten …", systemImage: "pencil") { ownPositionEdit.edit(p) }
+            Button("Position löschen …", systemImage: "trash", role: .destructive) { ownPositionEdit.delete(p) }
+        }
         if p.asset.classification.securityKey != nil {
             Button("Klassifizierung bearbeiten", systemImage: "pencil") {
                 onClassify(ClassificationEditRequest(name: p.holding.name, classification: p.asset.classification))

@@ -36,6 +36,12 @@ gleich anfühlen:
    Im Einzeldepot ist der Stift einer Wertpapierzeile ein Menü: „Klassifizierung bearbeiten“ und „Einstandskurs
    bearbeiten …“ (auch im Kontextmenü, #1987). Der Dialog (`PurchasePriceSheet`) setzt den Einstandskurs pro Stück in
    Kontowährung, bei Anleihen in Prozent des Nennwerts; ein leeres Feld entfernt ihn. Ein Abruf ohne Einstandskurs (FinTS) behält ihn (#1812), ein Kurs der Bank hat Vorrang.
+   Ein Crypto-Bestand (#1836, `CryptoHoldingsUI.swift`, angelegt über Ablage › „Neuer Crypto-Bestand …“) ist ein Depot
+   ohne Bank: über der Tabelle stehen „Position hinzufügen …“ und „Kurse aktualisieren“, der Stift und das Kontextmenü
+   jeder Zeile bieten „Position bearbeiten …“ und „Position löschen …“ (statt „Einstandskurs bearbeiten …“: der
+   Einstandskurs gehört zur Position). Vor dem Speichern wird der Euro-Kurs des Kürzels abgerufen
+   (`api.coinbase.com`, nur das Kürzel wird gesendet): ein unbekanntes Kürzel wird abgelehnt, ohne Netz wird die
+   Position ohne Kurs gespeichert und ein Hinweis erscheint. Kurse werden nie automatisch abgerufen.
 
 **Reihenfolge:** Kopf → Kennzahlen → Zusammensetzung → Tabelle gilt für Einzeldepot und Sachwerte-Konto. In `Vermögen › Wertpapiere / Sachwerte` steht die Zusammensetzung direkt unter dem Kopf, die Kennzahlen folgen darunter; bei Wertpapieren kommt vor der Tabelle die Depotübersicht (Karte „Wertpapiere“, jede Zeile öffnet das Depot, Chevron `›`). Im Kopf von `Wertpapiere` wählt ein Zeitraum-Picker den Zeitraum von Ausschüttungen sowie Gebühren & Steuern.
 

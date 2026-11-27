@@ -31,6 +31,8 @@ struct FileCommands: Commands {
                 .disabled(!model.isUnlocked)
             Button("Neues Sachwerte-Konto …") { model.createTangibleAccount() }
                 .disabled(!model.isUnlocked)
+            Button("Neuer Crypto-Bestand …") { model.runInOwnVault { model.cryptoStore.showNewAccount = true } }
+                .disabled(!model.isUnlocked)
             Button("Neues Offline-Konto …") { model.runInOwnVault { model.offlineStore.showNewAccount = true } }
                 .disabled(!model.isUnlocked)
             Button("Neue Hauptkategorie …") { model.newCategoryRequest = NewCategoryRequest(parent: nil) }

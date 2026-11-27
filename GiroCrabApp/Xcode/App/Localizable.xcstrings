@@ -9087,6 +9087,17 @@
         }
       }
     },
+    "Bitte eine Stückzahl größer als 0 eingeben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please enter a quantity greater than 0."
+          }
+        }
+      }
+    },
     "Bitte einen Betrag von 0 oder mehr eingeben." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12356,6 +12367,17 @@
         }
       }
     },
+    "Die Position wird aus dem Bestand entfernt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The position is removed from the holding."
+          }
+        }
+      }
+    },
     "Die Regel braucht eine Kategorie oder mindestens einen Tag." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13956,6 +13978,17 @@
         }
       }
     },
+    "Ein Depot ohne Bank. Die Positionen tragen Sie selbst ein; die Kurse kommen auf Anforderung." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A depot without a bank. You enter the positions yourself; prices are fetched on request."
+          }
+        }
+      }
+    },
     "Ein Depot zeigt seine Positionen oben. Käufe, Verkäufe und Sparpläne stehen als Buchungen im Verrechnungskonto." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14562,6 +14595,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Purchase price per unit (%@)"
+          }
+        }
+      }
+    },
+    "Einstandskurs pro Stück (EUR, optional)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purchase price per unit (EUR, optional)"
           }
         }
       }
@@ -17092,6 +17136,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Saved – enter again to replace"
+          }
+        }
+      }
+    },
+    "Gespeichert, aber der Kurs für %@ konnte nicht geladen werden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved, but the price for %@ could not be loaded."
           }
         }
       }
@@ -20713,6 +20768,17 @@
         }
       }
     },
+    "Kein Euro-Kurs für %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No euro price for %@"
+          }
+        }
+      }
+    },
     "Kein Gehalt erkannt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23034,6 +23100,50 @@
         }
       }
     },
+    "Kurse aktualisieren" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update prices"
+          }
+        }
+      }
+    },
+    "Kurse aktualisiert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prices updated"
+          }
+        }
+      }
+    },
+    "Kurse in Euro, nur auf Anforderung abgerufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prices in euros, fetched only on request"
+          }
+        }
+      }
+    },
+    "Kurse konnten nicht geladen werden: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prices could not be loaded: %@"
+          }
+        }
+      }
+    },
     "Kurseinheit" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23118,6 +23228,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Notice deadline %1$@ passed · ends %2$@"
+          }
+        }
+      }
+    },
+    "Kürzel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ticker"
           }
         }
       }
@@ -25736,6 +25857,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Create a new vault in this folder?"
+          }
+        }
+      }
+    },
+    "Neuer Crypto-Bestand" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New crypto holding"
+          }
+        }
+      }
+    },
+    "Neuer Crypto-Bestand …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New crypto holding …"
           }
         }
       }
@@ -28375,6 +28518,39 @@
         }
       }
     },
+    "Position bearbeiten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit position …"
+          }
+        }
+      }
+    },
+    "Position hinzufügen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add position"
+          }
+        }
+      }
+    },
+    "Position hinzufügen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add position …"
+          }
+        }
+      }
+    },
     "Position kopieren" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28382,6 +28558,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copy Position"
+          }
+        }
+      }
+    },
+    "Position löschen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete position"
+          }
+        }
+      }
+    },
+    "Position löschen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete position …"
+          }
+        }
+      }
+    },
+    "Position löschen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete position?"
           }
         }
       }
@@ -31944,6 +32153,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Denomination"
+          }
+        }
+      }
+    },
+    "Stückzahl" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quantity"
           }
         }
       }
@@ -38360,6 +38580,17 @@
         }
       }
     },
+    "z. B. 0,25" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. 0.25"
+          }
+        }
+      }
+    },
     "z. B. 10" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38367,6 +38598,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "e.g. 10"
+          }
+        }
+      }
+    },
+    "z. B. 30.000,00" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. 30,000.00"
           }
         }
       }
@@ -38415,6 +38657,17 @@
         }
       }
     },
+    "z. B. BTC" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. BTC"
+          }
+        }
+      }
+    },
     "z. B. DE98ZZZ09999999999" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38444,6 +38697,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "e.g. Gold bar 100 g"
+          }
+        }
+      }
+    },
+    "z. B. Hardware-Wallet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. hardware wallet"
           }
         }
       }
@@ -39513,6 +39777,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "“Maximum” goes back as far as the bank and the connection allow. Many banks require a TAN for more than 90 days. A period can be fetched again later in the connection’s settings."
+          }
+        }
+      }
+    },
+    "„Position hinzufügen …“ trägt Kürzel und Stückzahl ein." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“Add position …” enters the ticker and quantity."
           }
         }
       }

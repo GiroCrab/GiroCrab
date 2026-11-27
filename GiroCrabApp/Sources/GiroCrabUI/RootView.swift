@@ -756,6 +756,7 @@ struct MainSplitView: View {
         .manualLoanSheets(model)
         .openingBalanceSheet(model)
         .offlineAccountSheets(model)
+        .cryptoHoldingSheets(model)
         .tangibleAssetSheets(model)
         .modifier(AdvanziaBackgroundModifier())
         #if os(macOS)

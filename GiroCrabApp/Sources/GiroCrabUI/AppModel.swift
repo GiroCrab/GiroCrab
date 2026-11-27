@@ -42,6 +42,8 @@ public final class AppModel {
     @ObservationIgnored let loanStore = ManualLoanStore()
     /// Sachwerte (GitHub #87), see TangibleAssetsUI.swift.
     @ObservationIgnored let assetStore = AssetStore()
+    /// Crypto holdings (#1836), see CryptoHoldingsUI.swift.
+    @ObservationIgnored let cryptoStore = CryptoStore()
     /// Offline accounts and manual bookings (#679, #81), see OfflineAccountsUI.swift.
     @ObservationIgnored let offlineStore = OfflineStore()
     var vaultState: VaultState = .locked {

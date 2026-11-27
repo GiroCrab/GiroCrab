@@ -127,7 +127,7 @@ struct DepotDetailView: View {
     /// Anything that can change what the depot shows reloads it: the account's value, a sync, a
     /// classification, the vault itself.
     private var loadKey: String {
-        "\(account.id)-\(account.balanceCents)-\(account.balanceDate)-\(model.assetClassificationVersion)-\(syncStamp)-\(model.vaultRevision)-\(reloadToken)"
+        "\(account.id)-\(account.balanceCents)-\(account.balanceDate)-\(model.assetClassificationVersion)-\(syncStamp)-\(model.vaultRevision)-\(reloadToken)-\(model.cryptoStore.revision)"
     }
 
     var body: some View {
@@ -413,11 +413,15 @@ extension DepotDetailView {
     private func heldPositions(_ data: DepotData, wide: Bool) -> some View {
         let positions = DepotPosition.make(data.assets)
         let shown = shownPositions(data)
+        let crypto = model.isCrypto(account.id)
+        if crypto { CryptoHoldingBar(accountId: account.id) }
         if data.assets.isEmpty {
             ContentUnavailableView(
                 "Keine Positionen",
-                systemImage: "chart.line.uptrend.xyaxis",
-                description: Text("Positionen kommen mit dem nächsten Abruf. Wertpapiergeschäfte stehen unter „Aktivitäten“, Geldbewegungen als Buchungen im Verrechnungskonto.")
+                systemImage: crypto ? "bitcoinsign.circle" : "chart.line.uptrend.xyaxis",
+                description: crypto
+                    ? Text("„Position hinzufügen …“ trägt Kürzel und Stückzahl ein.")
+                    : Text("Positionen kommen mit dem nächsten Abruf. Wertpapiergeschäfte stehen unter „Aktivitäten“, Geldbewegungen als Buchungen im Verrechnungskonto.")
             )
             .padding(.top, 30)
         } else {
@@ -429,7 +433,7 @@ extension DepotDetailView {
                 )
                 .padding(.top, 20)
             } else {
-                DepotPositionsTable(positions: shown, totalCount: positions.count, sort: $sort, wide: wide,
+                let table = DepotPositionsTable(positions: shown, totalCount: positions.count, sort: $sort, wide: wide,
                                     currency: currency, onClassify: { editingClassification = $0 },
                                     copyAll: { copyToPasteboard(positions.map { HoldingFigures.clipboardLine($0.holding) }.joined(separator: "\n")) })
                     .valueHistory(available: { data.valuePosition($0) != nil },
@@ -437,11 +441,17 @@ extension DepotDetailView {
                                       guard let v = data.valuePosition(p) else { return }
                                       historyRequest = PositionHistoryRequest(accountId: account.id, position: v)
                                   })
-                    .purchasePrice { p in
+                if crypto {
+                    // the positions are kept by hand: their purchase price is part of the position
+                    table.ownPositions(edit: { model.cryptoStore.editor = .edit(accountId: account.id, $0) },
+                                       delete: { model.cryptoStore.deleting = .edit(accountId: account.id, $0) })
+                } else {
+                    table.purchasePrice { p in
                         purchaseRequest = PurchasePriceRequest(accountId: account.id, isin: p.holding.isin, wkn: p.holding.wkn,
                                                                name: p.displayName, currency: currency, basis: p.basis,
                                                                currentCents: p.holding.purchasePriceCents)
                     }
+                }
             }
         }
     }

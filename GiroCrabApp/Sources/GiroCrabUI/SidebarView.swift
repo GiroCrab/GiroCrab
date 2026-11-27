@@ -237,6 +237,7 @@ struct SidebarView: View {
                 Menu {
                     Button("Neues Konto …", systemImage: "building.columns") { model.showAddBank = true }
                     Button("Neues Offline-Konto …", systemImage: "banknote") { model.runInOwnVault { model.offlineStore.showNewAccount = true } }
+                    Button("Neuer Crypto-Bestand …", systemImage: "bitcoinsign.circle") { model.runInOwnVault { model.cryptoStore.showNewAccount = true } }
                     Button("Neue Kontengruppe …", systemImage: "folder.badge.plus") { model.groupDialog = .create() }
                     Divider()
                     Button("Neue Kategorie …", systemImage: "tag") { model.newCategoryRequest = NewCategoryRequest(parent: selectedCategoryID) }
