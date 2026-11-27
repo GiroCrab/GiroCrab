@@ -517,6 +517,10 @@ pub struct UserGroup {
     pub depth: u32,
     /// Sum of all EUR account balances in this group and its subgroups.
     pub balance_cents: i64,
+    /// The same sum per currency (#1844): other currencies alphabetically,
+    /// EUR last; only currencies of counted accounts (empty when none).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub balances: Vec<CurrencyAmount>,
     /// The group's own accounts (without those of its subgroups).
     pub accounts: Vec<Account>,
 }

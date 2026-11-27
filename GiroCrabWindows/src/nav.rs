@@ -884,6 +884,7 @@ mod tests {
             parent_uuid: None,
             depth: 0,
             balance_cents: 0,
+            balances: vec![],
             accounts: vec![],
         };
         let groups = [group("g1", "Privat", false), group("", "Ohne Gruppe", true)];
