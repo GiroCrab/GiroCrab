@@ -314,10 +314,24 @@ impl Vault {
     /// Einstellungen › Händler (#1373): master switch, the bundled merchants in match
     /// order with their switches, and the own merchants.
     pub fn merchant_recognition(&self) -> Result<MerchantRecognition, CoreError> {
-        let (enabled, disabled, custom) = {
+        let (enabled, disabled, custom, overrides) = {
             let db = self.db()?;
             let (enabled, disabled) = load_switches(&db)?;
-            (enabled, disabled, load_custom(&db)?)
+            (
+                enabled,
+                disabled,
+                load_custom(&db)?,
+                crate::insights::load_overrides(&db)?,
+            )
+        };
+        // the logo domain set by hand (per merchant key), as the bookings show it
+        let with_domain = |mut m: MerchantInfo| {
+            if let Some(d) = overrides.get(&m.key) {
+                m.domain = d.clone();
+                m.domain_candidates = vec![d.clone()];
+                m.domain_source = "override".into();
+            }
+            m
         };
         let builtin = entries()
             .iter()
@@ -328,13 +342,20 @@ impl Vault {
                 kind: e.kind,
                 enabled: !disabled.contains(e.key),
                 replaced: custom.iter().any(|c| c.based_on == e.key),
-                merchant: to_info(e),
+                merchant: with_domain(to_info(e)),
             })
             .collect();
         Ok(MerchantRecognition {
             enabled,
             builtin,
-            custom: custom.into_iter().map(custom_merchant).collect(),
+            custom: custom
+                .into_iter()
+                .map(|spec| {
+                    let mut c = custom_merchant(spec);
+                    c.merchant = with_domain(c.merchant);
+                    c
+                })
+                .collect(),
         })
     }
 

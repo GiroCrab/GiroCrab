@@ -652,3 +652,67 @@ fn receipts_match_by_the_bundled_name_not_an_own_one() {
     // the name the user gave the booking is on no receipt and links nothing
     assert_eq!(best("Eckladen Datum 03.10.2026"), None);
 }
+
+#[test]
+fn the_settings_list_shows_the_logo_domain_set_by_hand() {
+    let dir = TempDir::new("merchant-custom-domain");
+    let v = open(&dir, "v.db");
+    create(&v, "Muster Shop", &["muster shop"], None);
+    let own_key = v.merchant_recognition().unwrap().custom[0]
+        .merchant
+        .key
+        .clone();
+    v.set_merchant_domain("rewe".into(), Some("https://Rewe-Beispiel.de/".into()))
+        .unwrap();
+    v.set_merchant_domain(own_key.clone(), Some("muster-shop.de".into()))
+        .unwrap();
+
+    let r = v.merchant_recognition().unwrap();
+    let rewe = &r.builtin.iter().find(|m| m.key == "rewe").unwrap().merchant;
+    assert_eq!(rewe.domain, "rewe-beispiel.de");
+    assert_eq!(rewe.domain_candidates, ["rewe-beispiel.de"]);
+    assert_eq!(rewe.domain_source, "override");
+    let own = &r.custom[0].merchant;
+    assert_eq!(
+        (own.domain.as_str(), own.domain_source.as_str()),
+        ("muster-shop.de", "override")
+    );
+
+    v.set_merchant_domain("rewe".into(), None).unwrap();
+    let rewe = v.merchant_recognition().unwrap();
+    let rewe = &rewe
+        .builtin
+        .iter()
+        .find(|m| m.key == "rewe")
+        .unwrap()
+        .merchant;
+    assert_eq!(rewe.domain_source, "dictionary");
+}
+
+#[test]
+fn a_logo_domain_set_on_a_booking_of_an_own_merchant_sticks() {
+    let dir = TempDir::new("merchant-custom-domain-booking");
+    let v = open(&dir, "v.db");
+    create(&v, "Muster Shop", &["muster shop"], None);
+    // a copy keeps the bundled glyph; the app must still show the domain's logo (MerchantSignet)
+    create(&v, "Mein REWE", &["rewe"], Some("rewe"));
+    let own = book(
+        &v,
+        "Muster Shop GmbH",
+        "Einkauf",
+        SHOP_IBAN,
+        "2026-01-05",
+        -1_000,
+    );
+    let rewe = book(&v, "REWE Markt", "Einkauf", "", "2026-01-06", -2_000);
+    for id in [own, rewe] {
+        let m = booking(&v, id).merchant;
+        assert!(m.key.starts_with("u:"), "{id}: {}", m.key);
+        v.set_merchant_domain(m.key.clone(), Some(format!("shop{id}.de")))
+            .unwrap();
+        let m = booking(&v, id).merchant;
+        assert_eq!(m.domain, format!("shop{id}.de"));
+        assert_eq!(m.domain_candidates, [format!("shop{id}.de")]);
+        assert_eq!(m.domain_source, "override");
+    }
+}

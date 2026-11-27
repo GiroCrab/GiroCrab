@@ -32,9 +32,13 @@ struct MerchantSignet: View {
         let logo = model.cachedLogo(for: merchant) ?? (model.onlineLogos ? loaded : nil)
         let shape = RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
         let brand = Color(hex: merchant.colorHex)
-        let sharpLogo = logo.flatMap { $0.pixels >= 48 ? $0.image : nil }
+        // A domain set by hand beats the bundled glyph, small favicon or not: a copy of a bundled
+        // merchant keeps its glyph, which would otherwise hide the logo the user asked for.
+        let sharpLogo = logo.flatMap { $0.pixels >= 48 || merchant.domainSource == "override" ? $0.image : nil }
         ZStack {
-            if merchant.isPerson {
+            // a person shows initials, unless a logo domain was set by hand (the person
+            // guess also catches small firms with a contract)
+            if merchant.isPerson && (merchant.domainSource != "override" || sharpLogo == nil) {
                 // private person: calm circular initials, never a company logo
                 Circle().fill(Theme.personFill)
                 Text(merchant.monogram)

@@ -38,8 +38,8 @@ Ein eigener Reiter der Einstellungen (macOS: Fenster, iPhone/iPad: Blatt), von o
 | Händlererkennung | Hauptschalter „Händler erkennen“, darunter ein Satz, was aus bedeutet |
 | Händler-Logos | „Logos aus dem Internet laden“ und „Logo-Cache leeren“ (zogen aus „Allgemein“ hierher); aus, solange die Erkennung aus ist |
 | Suchfeld | Filtert beide Listen: eigene Händler nach Name und Suchwort, eingebaute nach Name, Schlüssel und Suchwort |
-| Eigene Händler | Je Zeile Zeichen, Name, Suchwörter und ggf. „Kopie von …“, rechts Bearbeiten und Löschen (beides auch im Kontextmenü); darunter „Eigenen Händler hinzufügen …“ |
-| Eingebaute Händler | Je Zeile Zeichen, Name, Suchwörter, Art, Bearbeiten und der Schalter. Ein von einer Kopie ersetzter Händler zeigt „Ersetzt durch eigenen Händler“, sein Schalter ist gesperrt. Ausgeschaltete und ersetzte stehen oben, sonst nach Name |
+| Eigene Händler | Je Zeile Zeichen, Name, Suchwörter, ggf. „Kopie von …“ und die Logo-Domain (`MerchantDomainRow`), rechts Bearbeiten und Löschen (beides auch im Kontextmenü); darunter „Eigenen Händler hinzufügen …“ |
+| Eingebaute Händler | Je Zeile Zeichen, Name, Suchwörter, Logo-Domain, Art, Bearbeiten und der Schalter. Ein von einer Kopie ersetzter Händler zeigt „Ersetzt durch eigenen Händler“, sein Schalter ist gesperrt. Ausgeschaltete und ersetzte stehen oben, sonst nach Name |
 
 Die beiden Listen sind ausgegraut, solange die Erkennung aus ist. Ein Schalter steht sofort in der neuen Stellung; die
 Änderung läuft im Hintergrund, nach den Änderungen davor (`settingsWriteTask`). Danach lädt alles, was Händlernamen
@@ -85,6 +85,9 @@ eingebauten Liste begrenzen Leerzeichen solche Wörter, die Kopie zeigt sie ohne
 - Namen und Suchwörter eigener Händler, das Suchfeld und die Felder des Editors tragen `.sensitive()`; das Zeichen eines
   eigenen Händlers zählt als unbekannt (`known = false`) und wird abgedeckt, das Logo einer Kopie nicht. Eingebaute
   Händler sind Marken und bleiben im Bild „Problem melden“ sichtbar.
-- Logo, Farbe und Art lassen sich hier noch nicht ändern; die Logo-Domain eines eigenen Händlers wird wie bei jedem
-  anderen im Inspektor gesetzt (sein Schlüssel `u:<uuid>` bleibt beim Umbenennen gleich).
+- Farbe und Art lassen sich hier noch nicht ändern. Die Logo-Domain zeigt und ändert jede Zeile mit derselben
+  Zeile wie der Buchungs-Inspektor (`MerchantDomainRow`): gespeichert wird sie je Händlerschlüssel
+  (`merchant_domain_overrides`), sie gilt also für alle Buchungen des Händlers, ob hier, im Buchungs-Inspektor oder bei
+  einem Abo gesetzt. `merchant_recognition()` liefert die Zeilen mit der gesetzten Domain. Der Schlüssel `u:<uuid>`
+  eines eigenen Händlers bleibt beim Umbenennen gleich, die Domain also auch.
 - Neue Regeln für das Erkennen gehören in den Kern (`MerchantRules`), damit Mac, iPhone und Linux dieselben Namen zeigen.
