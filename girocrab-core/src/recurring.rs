@@ -445,6 +445,21 @@ fn make_series(
     })
 }
 
+/// An amount cluster of one payee that looks like a series: sub key, bookings, interval.
+type Found<'a> = (String, Vec<&'a Booking>, RecurrenceInterval);
+
+/// Do two clusters run side by side (their date ranges overlap)? Then they are
+/// separate contracts of one payee, not one series (#2025). A price change
+/// (old cluster ends before the new one starts) does not overlap.
+fn concurrent(found: &[Found<'_>]) -> bool {
+    found.iter().enumerate().any(|(n, (_, a, _))| {
+        found[n + 1..].iter().any(|(_, b, _)| {
+            a[0].booking_date <= b[b.len() - 1].booking_date
+                && b[0].booking_date <= a[a.len() - 1].booking_date
+        })
+    })
+}
+
 /// Builds all series from bookings (any order) and the stored decisions.
 fn build_series(
     bookings: &[Booking],
@@ -476,7 +491,20 @@ fn build_series(
                 today,
             )),
             None => {
-                if let Some(i) = detect_group(&list) {
+                let found: Vec<Found<'_>> = amount_clusters(&list)
+                    .into_iter()
+                    .filter_map(|c| {
+                        let med = median(c.iter().map(|b| b.amount_cents.abs()).collect());
+                        let i = detect_group(&c)?;
+                        Some((format!("{key}#{med}"), c, i))
+                    })
+                    .collect();
+                let whole = if concurrent(&found) {
+                    None
+                } else {
+                    detect_group(&list)
+                };
+                if let Some(i) = whole {
                     out.extend(make_series(
                         key.clone(),
                         &key,
@@ -488,23 +516,19 @@ fn build_series(
                     ));
                     continue;
                 }
-                for cluster in amount_clusters(&list) {
-                    let med = median(cluster.iter().map(|b| b.amount_cents.abs()).collect());
-                    let sub = format!("{key}#{med}");
+                for (sub, cluster, i) in found {
                     if decision(stored, &sub).is_some_and(|s| s.ignored) {
                         continue;
                     }
-                    if let Some(i) = detect_group(&cluster) {
-                        out.extend(make_series(
-                            sub,
-                            &key,
-                            &cluster,
-                            i,
-                            Vec::new(),
-                            RecurringSource::Detected,
-                            today,
-                        ));
-                    }
+                    out.extend(make_series(
+                        sub,
+                        &key,
+                        &cluster,
+                        i,
+                        Vec::new(),
+                        RecurringSource::Detected,
+                        today,
+                    ));
                 }
             }
         }
@@ -1124,6 +1148,50 @@ mod tests {
             bk(3, "2026-10-05", -50_000, "DE44", "Shop"),
         ];
         assert!(build_series(&w, &HashMap::new(), today()).is_empty());
+    }
+
+    // #2025: two contracts of one payee with different amounts stay two series;
+    // a price change stays one.
+    #[test]
+    fn concurrent_contracts_of_one_payee_stay_separate() {
+        let iban = "DE02120300000000202051";
+        let mut b = Vec::new();
+        for (n, m) in ["2026-08", "2026-09", "2026-10", "2026-11"]
+            .iter()
+            .enumerate()
+        {
+            b.push(bk(
+                10 + n as i64,
+                &format!("{m}-05"),
+                -1250,
+                iban,
+                "Versicherung",
+            ));
+            b.push(bk(
+                20 + n as i64,
+                &format!("{m}-12"),
+                -8900,
+                iban,
+                "Versicherung",
+            ));
+        }
+        let s = build_series(&b, &HashMap::new(), today());
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s.iter().all(|x| x.amount_specific));
+    }
+
+    #[test]
+    fn price_change_stays_one_series() {
+        let iban = "DE02120300000000202051";
+        let b = vec![
+            bk(1, "2026-07-05", -999, iban, "Streaming"),
+            bk(2, "2026-08-05", -999, iban, "Streaming"),
+            bk(3, "2026-09-05", -1499, iban, "Streaming"),
+            bk(4, "2026-10-05", -1499, iban, "Streaming"),
+            bk(5, "2026-11-05", -1499, iban, "Streaming"),
+        ];
+        let s = build_series(&b, &HashMap::new(), today());
+        assert_eq!(s.len(), 1, "{s:?}");
     }
 
     #[test]
