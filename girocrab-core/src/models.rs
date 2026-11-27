@@ -526,7 +526,10 @@ pub struct UserGroup {
 pub struct Category {
     pub id: i64,
     pub parent_id: Option<i64>,
+    /// Localized display label, with a suffix for same-named siblings.
     pub name: String,
+    /// Localized name before any display suffix, for editing.
+    pub edit_name: String,
     pub sf_symbol: String,
     pub color_hex: String,
     pub sort_order: i32,

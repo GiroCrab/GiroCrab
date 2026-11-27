@@ -622,6 +622,7 @@ mod tests {
                 id: 10 + i as i64,
                 parent_id: None,
                 name: (*n).into(),
+                edit_name: (*n).into(),
                 sf_symbol: String::new(),
                 color_hex: String::new(),
                 sort_order: 0,
