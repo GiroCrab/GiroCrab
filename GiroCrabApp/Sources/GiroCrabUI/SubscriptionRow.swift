@@ -9,8 +9,12 @@ struct SubscriptionIcon: View {
     @Environment(\.textScale) private var textScale
 
     var body: some View {
-        if let b = model.subscriptionBookings[item.id]?.first {
+        // an own symbol (#2026) wins over the merchant signet
+        if item.details.symbol == nil, let b = model.subscriptionBookings[item.id]?.first {
             MerchantSignet(merchant: b.merchant, categorySymbol: b.categorySymbol, size: size)
+        } else if let m = item.manual?.logoMerchant {
+            // the symbol tile stands in while the logo loads or when none is found
+            MerchantSignet(merchant: m, categorySymbol: item.categorySymbol.isEmpty ? "repeat" : item.categorySymbol, size: size)
         } else {
             let side = size * textScale
             Image(systemName: item.categorySymbol.isEmpty ? "repeat" : item.categorySymbol)

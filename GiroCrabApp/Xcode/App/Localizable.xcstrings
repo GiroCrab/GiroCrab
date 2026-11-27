@@ -17294,6 +17294,17 @@
         }
       }
     },
+    "Gilt für alle Buchungen von „%@“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Applies to all bookings of “%@”."
+          }
+        }
+      }
+    },
     "Gilt nur für diesen Bankzugang. Eine andere Anwendung braucht beim nächsten Abruf eine neue Zustimmung bei der Bank." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18865,6 +18876,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Merchant History"
+          }
+        }
+      }
+    },
+    "Händler-Logo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Merchant Logo"
           }
         }
       }
@@ -23562,6 +23584,17 @@
         }
       }
     },
+    "Logo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Logo"
+          }
+        }
+      }
+    },
     "Logo laden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23591,6 +23624,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Clear Logo Cache"
+          }
+        }
+      }
+    },
+    "Logo-Domain" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Logo Domain"
           }
         }
       }
@@ -31636,6 +31680,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Statistics"
+          }
+        }
+      }
+    },
+    "Statt des Symbols wieder das Logo des Händlers zeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show the merchant's logo again instead of the icon"
           }
         }
       }

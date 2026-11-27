@@ -92,8 +92,20 @@ struct SubscriptionDetails: Codable, Equatable {
     var cancelledOn: String?
     /// ISO day a free trial ends; the payments start after it.
     var trialEnd: String?
+    /// Own name of a detected series (#2026); nil: the name the detection gives it. Manual entries keep
+    /// their name in `ManualSubscription`.
+    var name: String?
+    /// Own symbol of a detected series instead of the merchant signet; nil: the signet. Manual entries
+    /// keep theirs in `ManualSubscription`.
+    var symbol: String?
 
     init() {}
+
+    /// The own name when one is set, else `detected`.
+    func displayName(detected: String) -> String {
+        let own = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return own.isEmpty ? detected : own
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -105,10 +117,12 @@ struct SubscriptionDetails: Codable, Equatable {
         cancelled = try c.decodeIfPresent(Bool.self, forKey: .cancelled) ?? false
         cancelledOn = try c.decodeIfPresent(String.self, forKey: .cancelledOn)
         trialEnd = try c.decodeIfPresent(String.self, forKey: .trialEnd)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        symbol = try c.decodeIfPresent(String.self, forKey: .symbol)
     }
 
     private enum Keys: String, CodingKey {
-        case note, noticeValue, noticeUnit, contractEnd, renewalMonths, cancelled, cancelledOn, trialEnd
+        case note, noticeValue, noticeUnit, contractEnd, renewalMonths, cancelled, cancelledOn, trialEnd, name, symbol
     }
 }
 
@@ -126,8 +140,31 @@ struct ManualSubscription: Codable, Equatable, Identifiable {
     /// SF Symbol chosen for the tile; nil: the standard one.
     var symbol: String?
     var details = SubscriptionDetails()
+    /// Website whose logo the entry shows (#2026), as typed; nil: the symbol tile.
+    var domain: String?
 
     var subscriptionGroup: SubscriptionGroup { SubscriptionGroup(rawValue: group) ?? .monthly }
+
+    /// The typed domain the way the core stores one ("https://www.Example.de/x" → "example.de"); nil
+    /// unless it has a dot.
+    static func normalizedDomain(_ text: String?) -> String? {
+        var s = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let r = s.range(of: "://", options: .backwards) { s = String(s[r.upperBound...]) }
+        s = String(s.prefix { !"/?#".contains($0) })
+        if s.hasPrefix("www.") { s.removeFirst(4) }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return s.contains(".") ? s : nil
+    }
+
+    /// A merchant for `MerchantSignet` that loads the logo of `domain` (a manual entry has no bookings
+    /// and so no merchant of its own); nil without a domain.
+    var logoMerchant: MerchantInfo? {
+        guard let d = Self.normalizedDomain(domain) else { return nil }
+        return MerchantInfo(
+            key: "manual:" + id, name: name, domain: d, monogram: String(name.prefix(2)).uppercased(),
+            colorHex: "#5B6B7F", sfSymbol: "", kind: .unknown, known: false, isin: "", wkn: "", assetClass: "",
+            svgPath: "", iconSlug: "", domainCandidates: [d], domainSource: "override", isPerson: false)
+    }
 }
 
 struct SubscriptionData: Codable, Equatable {

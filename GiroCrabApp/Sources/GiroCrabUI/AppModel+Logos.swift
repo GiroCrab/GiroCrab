@@ -95,8 +95,9 @@ extension AppModel {
         logoVersion += 1
         reloadBookings()
         reloadMerchantStats()
-        // Einstellungen › Händler shows the domain too
+        // Einstellungen › Händler and the contracts show the domain too (#2026)
         merchantSettingsRevision += 1
+        if !subscriptionBookings.isEmpty { scheduleSubscriptionBookingsReload() }
     }
 
     static func image(from data: Data) -> Image? {
