@@ -159,6 +159,10 @@ fun wealthBreakdown(s: AppUiState): WealthBreakdown {
     val currency = d.primaryCurrency()
     val counted = visible.filter { it.currency.ifBlank { "EUR" } == currency }
     val countedIds = counted.map { it.id }.toSet()
+    // Same rule as `netWorthCents`: a loan's debt follows its account. Only a loan whose account is
+    // missing from the snapshot is counted from the record — an excluded or foreign-currency account
+    // keeps its debt out of this currency's sums, and nothing here converts.
+    val allAccountIds = d.accounts.map { it.id }.toSet()
     // A tangible asset sits in an account that already carries its value. That account steps out of
     // every bucket and the asset is counted once, as "Sachwerte" — for an account that is excluded
     // from the totals, its asset is excluded too.
@@ -177,7 +181,7 @@ fun wealthBreakdown(s: AppUiState): WealthBreakdown {
         tangibles = d.assets
             .filter { it.accountId.isBlank() || it.accountId in countedIds }
             .sumOf { it.valueCents },
-        loans = d.loans.filter { it.accountId !in countedIds }.sumOf { it.remainingCents } + abs(loanAccounts),
+        loans = d.loans.filter { it.accountId !in allAccountIds }.sumOf { it.remainingCents } + abs(loanAccounts),
         creditCards = if (cards < 0) -cards else 0L,
         currency = currency,
         foreignCurrencies = visible.map { it.currency.ifBlank { "EUR" } }.toSet() - currency,

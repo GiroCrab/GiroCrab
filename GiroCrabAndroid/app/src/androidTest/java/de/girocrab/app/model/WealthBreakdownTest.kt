@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.girocrab.app.ui.screens.wealthBreakdown
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -164,9 +165,12 @@ class WealthBreakdownTest {
         assertEquals(setOf("USD"), wealth.foreignCurrencies)
     }
 
-    /** A loan account whose balance is not in the totals must still show its debt — once. */
+    /**
+     * An account the user excluded keeps its debt out of the totals too: counting the loan record
+     * instead would overrule `includeInTotal` behind the user's back.
+     */
     @Test
-    fun loanOfAnExcludedAccountCountsExactlyOnce() {
+    fun loanOfAnExcludedAccountStaysOutOfEverySum() {
         fun loan(accountId: String, remaining: Long) = ManualLoan(
             accountId = accountId,
             name = "Autokredit",
@@ -197,13 +201,53 @@ class WealthBreakdownTest {
             ),
         )
         val breakdown = wealthBreakdown(state)
-        assertEquals("the debt is in the Kredite bucket", 500_000L, breakdown.loans)
+        assertEquals("the excluded account keeps its debt out of the bucket", 0L, breakdown.loans)
         assertEquals("and not in cash", 100_000L, breakdown.cash)
         val vm = AppViewModel()
         vm.adoptOwnVault(state.data)
-        assertEquals(
-            "net worth and the buckets must agree", breakdown.net, vm.netWorthCents("EUR"),
+        assertEquals("net worth and the buckets must agree", breakdown.net, vm.netWorthCents("EUR"))
+        assertEquals(100_000L, vm.netWorthCents("EUR"))
+    }
+
+    /** No conversion happens anywhere, so a USD debt must not be subtracted from a EUR total. */
+    @Test
+    fun foreignCurrencyLoanStaysOutOfTheEuroTotal() {
+        val state = AppUiState(
+            data = VaultSnapshot(
+                accounts = listOf(
+                    account("giro", AccountKind.Giro, 100_000),
+                    account("kredit", AccountKind.Loan, -500_000, currency = "USD"),
+                ),
+                loans = listOf(
+                    ManualLoan(
+                        accountId = "kredit",
+                        name = "Auto loan",
+                        originalCents = null,
+                        anchorDate = LocalDate.parse("2026-01-01"),
+                        anchorBalanceCents = 500_000,
+                        interestRatePpm = null,
+                        matchExpr = "",
+                        remainingCents = 500_000,
+                        asOfDate = null,
+                        paymentCount = 0,
+                        paidCents = 0,
+                        principalCents = 0,
+                        interestCents = 0,
+                        beforeAnchorCount = 0,
+                        lastPaymentCents = null,
+                        lastPaymentDate = null,
+                        monthsLeft = null,
+                    ),
+                ),
+            ),
         )
+        val breakdown = wealthBreakdown(state)
+        assertEquals(0L, breakdown.loans)
+        assertEquals(100_000L, breakdown.net)
+        assertTrue("the screen has to report the other currency", "USD" in breakdown.foreignCurrencies)
+        val vm = AppViewModel()
+        vm.adoptOwnVault(state.data)
+        assertEquals(100_000L, vm.netWorthCents("EUR"))
     }
 
     /** A counted loan account carries the debt itself; its record must not be subtracted again. */

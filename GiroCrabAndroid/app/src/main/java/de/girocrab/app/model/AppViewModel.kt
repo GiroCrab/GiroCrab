@@ -313,11 +313,11 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
         val allIds = d.accounts.map { it.id }.toSet()
         val looseAssets = d.assets.filter { it.accountId.isBlank() || it.accountId !in allIds }
         // A manual loan is an account whose balance already is the outstanding debt. Its record is
-        // the progress behind that figure, so it counts again only when that account is not part of
-        // the totals — hidden, excluded or in another currency. `countedIds`, not `allIds`: a loan
-        // account that stays out of the sum must not make its debt disappear (same rule as the
-        // Kredite bucket in wealthBreakdown).
-        val looseLoans = d.loans.filter { it.accountId !in countedIds }
+        // the progress behind that figure, so it counts only when that account is missing from the
+        // snapshot (`allIds`, not `countedIds`): a loan account the user excluded — hidden,
+        // includeInTotal = false, another currency — keeps its debt out of the total too, instead of
+        // sneaking it back in through the record. Same predicate as the Kredite bucket.
+        val looseLoans = d.loans.filter { it.accountId !in allIds }
         return counted.sumOf { it.balanceCents } + looseAssets.sumOf { it.valueCents } -
             looseLoans.sumOf { it.remainingCents }
     }
