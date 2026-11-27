@@ -14,8 +14,8 @@ WebLoginFlow {
     badgeSymbol: "checkmark.seal.fill"
     badgeColor: Theme.inflow
     busy: !found
-    // TRWebView: a plain web view without the portal's navigation guard
-    navigationGuard: false
+    // TRWebCoordinator: main frame https only, like the portal guard (WebLoginSheet)
+    navigationGuard: true
     readyToLoad: false
     property bool found: false
 

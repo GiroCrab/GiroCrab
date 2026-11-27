@@ -15,7 +15,10 @@ struct LoanProgressCard: View {
     private var initial: Int64? { account.initialBalanceCents.map { abs($0) }.flatMap { $0 > 0 ? $0 : nil } }
     private var repaid: Double? {
         guard let p = initial else { return nil }
-        return max(0, min(1, 1 - Double(abs(account.balanceCents)) / Double(p)))
+        let outstanding = model.isOffline(account.id)
+            ? max(0, -Double(account.balanceCents))
+            : Double(account.balanceCents.magnitude)
+        return max(0, min(1, 1 - outstanding / Double(p)))
     }
 
     /// Amount field with cancel (✕) and save (✓) as pictograms: words squeezed
@@ -89,7 +92,7 @@ struct LoanProgressCard: View {
         } else if editing {
             editor
         } else {
-            Button(initial == nil ? "Betrag eingeben" : "Ursprünglich: \(Money.format(initial!))") {
+            Button(initial == nil ? "Betrag eingeben" : "Ursprünglich: \(Money.format(initial!, currency: account.currency))") {
                 text = initial.map { Money.plain($0) } ?? ""
                 editing = true
             }

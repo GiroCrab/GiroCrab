@@ -12,6 +12,11 @@ name: Release
 #
 # Windows is the exception: its build is unsigned by design (docs/windows.md) and is attached to
 # the DRAFT release (portable zip, installer, SHA256SUMS), so the maintainer sees it before publishing.
+# The Windows build is stamped with the tag's version first (#1778): GiroCrabWindows/src/updates.rs reads
+# CARGO_PKG_VERSION, so a stale Cargo.toml would pick the wrong channel and offer itself as an update forever.
+# Tags are versioned (vX.Y.Z, -beta.N, -nightly.YYYYMMDD); tags with a suffix become pre-releases.
+# The installer is a release asset (updates.rs looks for .msi/.exe); SHA256SUMS.txt is checked by
+# scripts/verify-release-integrity.sh (docs/release-integrity.md).
 
 on:
   push:
@@ -32,10 +37,21 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Pre-release flag from the tag
+        id: kind
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+|-nightly\.[0-9]{8})?$ ]]; then
+            echo "error: tag must look like vX.Y.Z, vX.Y.Z-beta.N or vX.Y.Z-nightly.YYYYMMDD" >&2
+            exit 1
+          fi
+          if [[ "$TAG_NAME" == *-* ]]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
       - name: Create draft release (no binary)
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           draft: true
+          prerelease: ${{ steps.kind.outputs.prerelease == 'true' }}
           generate_release_notes: true
           body: |
             > **Hinweis zu Windows & Android (Frühes Alpha-Stadium):**
@@ -54,6 +70,11 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: GiroCrabWindows
+      - name: Stamp tag version into GiroCrabWindows (Cargo.toml + Cargo.lock)
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: scripts/set-windows-version.sh "$TAG_NAME"
       - name: Build
         run: cargo build --release --locked --manifest-path GiroCrabWindows/Cargo.toml
       - name: Package portable zip + installer

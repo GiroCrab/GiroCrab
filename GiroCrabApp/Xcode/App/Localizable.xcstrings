@@ -3073,6 +3073,17 @@
         }
       }
     },
+    "Abbuchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Debit"
+          }
+        }
+      }
+    },
     "Abgebrochen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6208,6 +6219,17 @@
         }
       }
     },
+    "Aus: keine neuen Dokumente, bereits gespeicherte bleiben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off: no new documents, stored ones stay."
+          }
+        }
+      }
+    },
     "Ausbildung" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6612,6 +6634,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Save selection"
+          }
+        }
+      }
+    },
+    "Auswertungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statistics"
           }
         }
       }
@@ -9054,6 +9087,17 @@
         }
       }
     },
+    "Bitte einen Betrag von 0 oder mehr eingeben." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please enter an amount of 0 or more."
+          }
+        }
+      }
+    },
     "Bitte einen Namen angeben." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10047,6 +10091,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Loan"
+          }
+        }
+      }
+    },
+    "Darlehen / Kredit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loan / Credit"
           }
         }
       }
@@ -11690,6 +11745,17 @@
         }
       }
     },
+    "Deutsche Bank: Als Anmeldename die Deutsche Bank ID verwenden. Wo GiroCrab nach der PIN fragt, das Kennwort der Deutsche Bank ID eingeben, nicht die Online Banking PIN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deutsche Bank: use the Deutsche Bank ID as login name. Wherever GiroCrab asks for the PIN, enter the password of the Deutsche Bank ID, not the online banking PIN."
+          }
+        }
+      }
+    },
     "Diagnose" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12114,6 +12180,17 @@
         }
       }
     },
+    "Die Erstattung wird in Auswertungen mit der Buchung verrechnet, wenn beide in den betrachteten Konten liegen. Buchungen und Kontostände bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The refund is netted against the booking in reports when both are in the accounts shown. Bookings and balances stay unchanged."
+          }
+        }
+      }
+    },
     "Die Gruppe ist leer." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12396,6 +12473,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The parts must add up to %@ before you can save."
+          }
+        }
+      }
+    },
+    "Die Tilgungsübernahme ist nicht mehr aktiv." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This principal payment request is no longer active."
           }
         }
       }
@@ -12737,6 +12825,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This group is inside a group that is excluded from the overall total, so its accounts don’t count either."
+          }
+        }
+      }
+    },
+    "Diese Kategorien gehören zu „%@“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These categories belong to “%@”."
           }
         }
       }
@@ -14143,6 +14242,17 @@
         }
       }
     },
+    "Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A linked refund no longer counts as income in totals, budgets and charts; it reduces the amount of its original booking instead, also retroactively in that booking's month. This applies when the refund and the original booking are in the accounts shown. Bookings, the list and balances stay unchanged."
+          }
+        }
+      }
+    },
     "Einfügen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14408,6 +14518,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cost price"
+          }
+        }
+      }
+    },
+    "Einstandskurs bearbeiten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit purchase price"
+          }
+        }
+      }
+    },
+    "Einstandskurs bearbeiten …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit purchase price …"
+          }
+        }
+      }
+    },
+    "Einstandskurs in Prozent des Nennwerts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purchase price in percent of nominal value"
+          }
+        }
+      }
+    },
+    "Einstandskurs pro Stück (%@)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Purchase price per unit (%@)"
           }
         }
       }
@@ -15182,6 +15336,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Refunds"
+          }
+        }
+      }
+    },
+    "Erstattungen mit der Ursprungsbuchung verrechnen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Net refunds against their original booking"
           }
         }
       }
@@ -16490,6 +16655,17 @@
         }
       }
     },
+    "Geben Sie den Anteil der Rate ein, der die Restschuld senkt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter the part of the payment that reduces the outstanding balance."
+          }
+        }
+      }
+    },
     "Gebucht" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17125,6 +17301,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Applies to this bank login only. A different application needs a new consent at the bank on the next fetch."
+          }
+        }
+      }
+    },
+    "Gilt, solange die Bank keinen eigenen Einstandskurs liefert. Ein leeres Feld entfernt den Wert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Applies as long as the bank does not report its own purchase price. An empty field removes the value."
           }
         }
       }
@@ -27968,6 +28155,17 @@
         }
       }
     },
+    "Per FinTS kommen nur PDF-Kontoauszüge, und nur wenn die Bank sie per FinTS anbietet: beim Sync für Konten, bei denen unter „Dokumente“ „Kontoauszüge automatisch beim Sync abrufen“ eingeschaltet ist, sonst über „Kontoauszüge abrufen“ an gleicher Stelle. Postbox-Dokumente wie Wertpapier- oder Ertragsabrechnungen ruft GiroCrab per FinTS nicht ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Over FinTS, only PDF statements are fetched, and only if the bank offers them over FinTS: during sync for accounts that have “Fetch statements automatically when syncing” switched on under “Documents”, otherwise with “Fetch statements” in the same place. GiroCrab does not fetch Postbox documents such as securities or income statements over FinTS."
+          }
+        }
+      }
+    },
     "Perk" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -28140,6 +28338,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Position %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Position bearbeiten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit position"
           }
         }
       }
@@ -29423,6 +29632,17 @@
         }
       }
     },
+    "Restschuld zum Start" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening outstanding balance"
+          }
+        }
+      }
+    },
     "Rhythmus" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30205,6 +30425,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Step %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Schuld erhöhen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Increase debt"
           }
         }
       }
@@ -32884,6 +33115,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Repayment"
+          }
+        }
+      }
+    },
+    "Tilgung übernehmen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record principal payment"
+          }
+        }
+      }
+    },
+    "Tilgungsanteil" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Principal portion"
           }
         }
       }
