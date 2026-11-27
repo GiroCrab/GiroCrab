@@ -623,9 +623,9 @@ fn an_edit_against_a_newer_deletion_ends_the_same_on_both_devices() {
         .unwrap();
     c.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
         .unwrap();
-    for (v, acc) in [(&a, acc), (&c, cacc)] {
+    for (v, id) in [(&a, acc), (&c, cacc)] {
         let p: Vec<String> = v
-            .list_crypto_positions(acc)
+            .list_crypto_positions(id)
             .unwrap()
             .into_iter()
             .map(|p| p.symbol)
@@ -660,5 +660,22 @@ fn a_held_position_without_a_value_is_not_closed_and_zero_cost_means_unknown() {
         last_observed(&v, acc, "BTC"),
         80_000_00,
         "no closing 0: still held"
+    );
+}
+
+#[test]
+fn a_partial_balance_is_not_carried_back_in_the_balance_history() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    v.save_crypto_position(acc, None, "ETH".into(), 1.0, None)
+        .unwrap();
+    price(&v, "BTC", 80_000.0);
+    v.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    assert_eq!(balance(&v, acc), 80_000_00);
+    let h = v.balance_history(vec![acc], 30).unwrap();
+    assert!(
+        h.iter().all(|d| d.balance_cents == 0),
+        "no value of earlier days from a partial balance"
     );
 }

@@ -666,17 +666,27 @@ impl Vault {
         // Securities depots with a valuation history (`depot_values`) take their course from it;
         // the walk back over bookings is only for the other accounts, so nothing counts twice.
         let depot_series = crate::depot_values::series(&*self.db()?, &ids, start, today)?;
+        // a crypto holding (#1836) has no bookings: its course is its value history only, and
+        // without one its balance (maybe a partial sum) is no value of the days before
+        let crypto: Vec<i64> = {
+            let db = self.db()?;
+            ids.iter()
+                .copied()
+                .filter(|id| crate::crypto::is_crypto(&db, *id).unwrap_or(false))
+                .collect()
+        };
         let book_ids: Vec<i64> = ids
             .iter()
             .copied()
             .filter(|id| {
-                depot_series
-                    .as_ref()
-                    .is_none_or(|s| s.firsts.iter().all(|f| f.0 != *id))
+                !crypto.contains(id)
+                    && depot_series
+                        .as_ref()
+                        .is_none_or(|s| s.firsts.iter().all(|f| f.0 != *id))
             })
             .collect();
         // the depots with a history enter with their values of each day, not with today's balance
-        if depot_series.is_some() {
+        if depot_series.is_some() || !crypto.is_empty() {
             balance = chosen
                 .iter()
                 .filter(|a| book_ids.contains(&a.id))

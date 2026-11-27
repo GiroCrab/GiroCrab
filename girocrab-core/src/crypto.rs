@@ -68,8 +68,10 @@ pub struct CryptoPosition {
     pub quantity: f64,
     /// Per unit in EUR cents; `None` = unknown.
     pub purchase_price_cents: Option<i64>,
-    /// EUR per unit; `None` = never fetched.
+    /// EUR per unit; `None` = no usable price: never fetched, or one the
+    /// position cannot be valued with (beyond [`MAX_VALUE_CENTS`]).
     pub price_eur: Option<f64>,
+    /// When the stored price was fetched, also when it is not usable.
     pub price_fetched_ms: Option<i64>,
     /// Quantity × price in EUR cents; 0 without a price.
     pub value_cents: i64,
