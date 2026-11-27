@@ -86,11 +86,11 @@ private struct CryptoHoldingSheetsModifier: ViewModifier {
             } message: {
                 Text("Die Position wird aus dem Bestand entfernt.")
             }
-            // the requests name accounts of this vault: another vault (demo / own) closes them
+            // the requests name accounts of this vault: another vault (demo / own) closes them. The
+            // new-holding sheet names none and stays: `runInOwnVault` switches the vault, then opens it.
             .onChange(of: model.vaultRevision) {
                 model.cryptoStore.editor = nil
                 model.cryptoStore.deleting = nil
-                model.cryptoStore.showNewAccount = false
             }
     }
 }
@@ -139,6 +139,8 @@ struct CryptoPositionSheet: View {
     let request: CryptoPositionRequest
     @State private var symbol = ""
     @State private var quantityText = ""
+    /// The quantity as prefilled: unchanged, the stored (unrounded) quantity is saved.
+    @State private var prefilledQuantity = ""
     @State private var purchaseText = ""
     @State private var busy = false
     @State private var error: String?
@@ -146,7 +148,10 @@ struct CryptoPositionSheet: View {
     @State private var pin: VaultPin?
 
     private var ticker: String { symbol.trimmingCharacters(in: .whitespaces).uppercased() }
-    private var quantity: Double? { NumberText.double(quantityText).flatMap { $0 > 0 ? $0 : nil } }
+    private var quantity: Double? {
+        if request.quantity > 0, quantityText == prefilledQuantity { return request.quantity }
+        return NumberText.double(quantityText).flatMap { $0 > 0 ? $0 : nil }
+    }
     /// `.some(nil)` = no purchase price; nil = not a valid amount.
     private var purchase: Int64?? {
         let t = purchaseText.trimmingCharacters(in: .whitespaces)
@@ -168,6 +173,8 @@ struct CryptoPositionSheet: View {
                     .sensitive(.amounts)
                     .onSubmit(save)
             }
+            // save() works with the values it started with: no edits while it runs
+            .disabled(busy)
             if !quantityText.isEmpty, quantity == nil {
                 Text("Bitte eine Stückzahl größer als 0 eingeben.").foregroundStyle(Theme.negative).appFont(.caption)
             }
@@ -187,7 +194,10 @@ struct CryptoPositionSheet: View {
         .interactiveDismissDisabled(busy)
         .onAppear {
             symbol = request.previousSymbol ?? ""
-            if request.quantity > 0 { quantityText = NumberText.format(request.quantity, digits: 8) }
+            if request.quantity > 0 {
+                quantityText = NumberText.format(request.quantity, digits: 8)
+                prefilledQuantity = quantityText
+            }
             if let c = request.purchaseCents { purchaseText = Money.plain(c) }
             pin = model.pinVault()
         }
