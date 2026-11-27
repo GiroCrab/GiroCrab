@@ -62,6 +62,7 @@ impl Vault {
         let before = tx.total_changes();
         crate::refunds::merge_attached(&tx, &booking_map)?;
         st.refund_links_updated = u32::try_from(tx.total_changes() - before).unwrap_or(u32::MAX);
+        crate::offline::loan_payments::merge_attached(&tx, &booking_map)?;
         crate::loans::merge_attached(&tx, &acc_map)?;
         crate::opening_balance::merge_attached(&tx, &acc_map)?;
         crate::assets::merge_attached(&tx, &acc_map)?;

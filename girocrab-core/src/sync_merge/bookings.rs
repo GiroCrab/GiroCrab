@@ -161,15 +161,19 @@ struct OtherBooking {
 }
 
 // includes soft-deleted rows: deleted bookings travel as tombstones
-const OTHER_BOOKINGS: &str = "SELECT id, account_id, external_id, import_fp,
+fn other_bookings_sql() -> String {
+    format!("SELECT id, account_id, external_id, import_fp,
         booking_date, value_date, amount_cents, currency, counterparty_iban, booking_text,
         imported_unix, purpose_code, gvc, salary_flag,
         category_id, category_source, rule_id, category_ms, note, note_ms, checked, checked_ms,
         counterparty, purpose, text_ms, splits_ms, deleted_ms,
         end_to_end_id, mandate_id, creditor_id, item_refs, tags_ms,
-        external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM other.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan')),
+        external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM other.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND {offline_kind}),
         date_ms
-     FROM other.transactions ORDER BY account_id, external_id";
+     FROM other.transactions ORDER BY account_id, external_id",
+        offline_kind = crate::offline::OFFLINE_KIND_SQL,
+    )
+}
 
 /// The id both sides keep for one booking known under two ids: the bank's
 /// (not a MoneyMoney `mm-` id), else the smaller. A card hold „Abrufweg
@@ -262,14 +266,15 @@ pub(crate) fn merge_bookings(
     let mut id_map = HashMap::new();
     let mut pending_splits = HashMap::new();
     {
-        let mut st = conn.prepare(
+        let mut st = conn.prepare(&format!(
             // includes soft-deleted rows
             "SELECT id, account_id, external_id, import_fp, category_id, category_source,
                     category_ms, note, note_ms, checked, checked_ms, counterparty, purpose,
                     text_ms, splits_ms, deleted_ms, booking_date, amount_cents, counterparty_iban,
-                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND a.kind NOT IN ('brokerage','loan')), value_date, date_ms
+                    tags_ms, external_id LIKE 'manual-%' AND EXISTS(SELECT 1 FROM main.accounts a WHERE a.id=transactions.account_id AND a.connection_id IS NULL AND {offline_kind}), value_date, date_ms
              FROM main.transactions ORDER BY id",
-        )?;
+            offline_kind = crate::offline::OFFLINE_KIND_SQL,
+        ))?;
         let mut rows = st.query([])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
@@ -277,15 +282,18 @@ pub(crate) fn merge_bookings(
             let acc: i64 = r.get(1)?;
             let ext: String = r.get(2)?;
             by_key.insert((acc, ext.clone()), id);
-            let fp = match_fingerprint(
-                r.get(3)?,
-                &r.get::<_, String>(16)?,
-                r.get(17)?,
-                &r.get::<_, String>(18)?,
-                &r.get::<_, String>(11)?,
-                &r.get::<_, String>(12)?,
-            );
-            fp_rows.push(((acc, fp, is_hold_id(&ext)), (ext, id)));
+            // Mirrored loan payments match by source links, not by similar payment text.
+            if !crate::offline::loan_payments::is_payment_key(&ext) {
+                let fp = match_fingerprint(
+                    r.get(3)?,
+                    &r.get::<_, String>(16)?,
+                    r.get(17)?,
+                    &r.get::<_, String>(18)?,
+                    &r.get::<_, String>(11)?,
+                    &r.get::<_, String>(12)?,
+                );
+                fp_rows.push(((acc, fp, is_hold_id(&ext)), (ext, id)));
+            }
             let source: String = r.get(5)?;
             let manual = if source == "manual" { r.get(4)? } else { None };
             local.insert(
@@ -317,7 +325,7 @@ pub(crate) fn merge_bookings(
 
     let mut other_splits = load_splits(conn, "other", other_uuid)?;
     let others: Vec<OtherBooking> = conn
-        .prepare(OTHER_BOOKINGS)?
+        .prepare(&other_bookings_sql())?
         .query_map([], |r| {
             let id: i64 = r.get(0)?;
             let source: String = r.get(15)?;
@@ -426,6 +434,7 @@ pub(crate) fn merge_bookings(
         o.fields.tags = other_tags.remove(&o.id).unwrap_or_default();
         let existing = match by_key.get(&(acc, o.external_id.clone())) {
             Some(&id) => Some((id, false)),
+            None if crate::offline::loan_payments::is_payment_key(&o.external_id) => None,
             None => match by_fp.get_mut(&(acc, o.match_fp.clone(), is_hold_id(&o.external_id))) {
                 Some(bucket) if !bucket.is_empty() => {
                     let (ext, id) = bucket.remove(0);

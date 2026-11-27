@@ -3073,6 +3073,17 @@
         }
       }
     },
+    "Abbuchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Debit"
+          }
+        }
+      }
+    },
     "Abgebrochen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10084,6 +10095,17 @@
         }
       }
     },
+    "Darlehen / Kredit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loan / Credit"
+          }
+        }
+      }
+    },
     "Darlehen anlegen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11723,6 +11745,17 @@
         }
       }
     },
+    "Deutsche Bank: Als Anmeldename die Deutsche Bank ID verwenden. Wo GiroCrab nach der PIN fragt, das Kennwort der Deutsche Bank ID eingeben, nicht die Online Banking PIN." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Deutsche Bank: use the Deutsche Bank ID as login name. Wherever GiroCrab asks for the PIN, enter the password of the Deutsche Bank ID, not the online banking PIN."
+          }
+        }
+      }
+    },
     "Diagnose" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12444,6 +12477,17 @@
         }
       }
     },
+    "Die Tilgungsübernahme ist nicht mehr aktiv." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This principal payment request is no longer active."
+          }
+        }
+      }
+    },
     "Die Untergruppen bleiben erhalten und rücken auf die oberste Ebene." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12781,6 +12825,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This group is inside a group that is excluded from the overall total, so its accounts don’t count either."
+          }
+        }
+      }
+    },
+    "Diese Kategorien gehören zu „%@“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These categories belong to “%@”."
           }
         }
       }
@@ -16596,6 +16651,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Garden"
+          }
+        }
+      }
+    },
+    "Geben Sie den Anteil der Rate ein, der die Restschuld senkt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter the part of the payment that reduces the outstanding balance."
           }
         }
       }
@@ -20658,6 +20724,17 @@
         }
       }
     },
+    "Kein Klartext – Hinweis ausgeblendet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notice hidden"
+          }
+        }
+      }
+    },
     "Kein Konto zum Einziehen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20797,6 +20874,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not a valid date: %@"
+          }
+        }
+      }
+    },
+    "Kein passender Umsatz gefunden – beim Konto „%@“ abgelegt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching transaction found – filed under the account “%@”"
           }
         }
       }
@@ -29566,6 +29654,17 @@
         }
       }
     },
+    "Restschuld zum Start" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening outstanding balance"
+          }
+        }
+      }
+    },
     "Rhythmus" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30348,6 +30447,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Step %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Schuld erhöhen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Increase debt"
           }
         }
       }
@@ -33027,6 +33137,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Repayment"
+          }
+        }
+      }
+    },
+    "Tilgung übernehmen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record principal payment"
+          }
+        }
+      }
+    },
+    "Tilgungsanteil" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Principal portion"
           }
         }
       }

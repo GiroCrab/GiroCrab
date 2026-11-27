@@ -273,6 +273,85 @@ async fn dialog_init_9010_with_stale_system_id_does_not_fall_back() {
     assert!(c.st.system_id.is_empty());
 }
 
+/// The bank's answer to a refused login; `extra` adds codes of the same reply. It
+/// carries a dialog ID: nothing may end that dialog with an HKEND (it carries the PIN).
+fn login_refused_reply(extra: &str) -> String {
+    format!(
+        "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+9800::Dialoginitialisierung abgebrochen.'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.{extra}'"
+    )
+}
+
+fn assert_login_refused(result: CoreResult<impl std::fmt::Debug>) {
+    let Err(CoreError::Bank { code, message }) = result else {
+        panic!("expected a bank error, got {result:?}");
+    };
+    assert_eq!(code, "9040");
+    assert!(
+        message.contains("PIN") && message.contains("sperrt"),
+        "{message}"
+    );
+    assert!(message.contains("Anmeldung fehlgeschlagen"), "{message}");
+}
+
+#[tokio::test]
+async fn dialog_init_9040_explains_the_refused_login_and_is_not_retried() {
+    // alone, with a "malformed" 9010 (one-step retry) and with 9110 (other TAN
+    // functions): a refused login must not be sent again, every attempt counts
+    // towards the lock
+    for extra in [
+        "",
+        "+9010::Fehler.",
+        "+9110::Falsche Segmentzusammenstellung (HKTAN)",
+    ] {
+        let reply: &'static str = login_refused_reply(extra).leak();
+        let (url, seen) = mock_bank(vec![reply, ACCEPT]);
+        let state =
+            state_with_functions("913", &[("913", "chipTAN QR"), ("911", "chipTAN optisch")]);
+        let mut c = two_step_connector(&url, state);
+        assert_login_refused(c.open_dialog(&test_ctx()).await);
+        // the sync session calls `finish` after every failed login
+        c.finish(&test_ctx()).await;
+        assert_eq!(seen.lock().unwrap().len(), 1, "{extra}");
+    }
+}
+
+#[tokio::test]
+async fn dialog_init_9040_in_a_fallback_answer_ends_the_login() {
+    // the bank refuses the login only in the answer to a fallback: no further
+    // request (no HKEND either, it carries the PIN)
+    const REFUSED_IN_DIALOG: &str =
+        "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMS:3:2:2+9040::Anmeldung fehlgeschlagen.'";
+    let refused: &'static str = login_refused_reply("").leak();
+    let medium_refused = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9050::Fehler.'HIRMS:3:2:3+9210::TAN-Medium unbekannt.'";
+    let functions = [("913", "chipTAN QR"), ("911", "chipTAN optisch")];
+    for (first, then, medium) in [
+        (REJECT_9010, refused, ""),              // one-step retry
+        (REJECT_9110, REFUSED_IN_DIALOG, ""),    // another TAN function
+        (medium_refused, refused, "Mein Gerät"), // TAN medium as "SO:<name>"
+    ] {
+        let (url, seen) = mock_bank(vec![first, then, ACCEPT, ACCEPT]);
+        let mut state = state_with_functions("913", &functions);
+        state["tan_medium"] = medium.into();
+        let mut c = two_step_connector(&url, state);
+        assert_login_refused(c.open_dialog(&test_ctx()).await);
+        c.finish(&test_ctx()).await;
+        assert_eq!(seen.lock().unwrap().len(), 2, "{first}");
+        assert!(!has_so_prefix(&c.st.tan_medium), "{}", c.st.tan_medium);
+    }
+}
+
+#[tokio::test]
+async fn sync_dialog_9040_explains_the_refused_login() {
+    // a new login has no system ID yet: the sync dialog is the bank's first contact
+    let reply: &'static str = login_refused_reply("").leak();
+    let (url, seen) = mock_bank(vec![reply, ACCEPT]);
+    let state = serde_json::json!({"system_id": "", "sec_func": "", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    assert_login_refused(c.sync_dialog(&test_ctx()).await);
+    c.finish(&test_ctx()).await;
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
 #[tokio::test]
 async fn failed_single_step_retry_is_not_remembered() {
     let (url, seen) = mock_bank(vec![REJECT_9010]);
@@ -1875,6 +1954,61 @@ async fn a_balance_the_bank_did_not_send_is_unknown_not_zero() {
     .await;
     assert_eq!(r.accounts[0].balance_cents, 123_456);
     assert!(r.balances_unknown.is_empty());
+}
+
+#[tokio::test]
+async fn unreadable_standing_orders_are_reported_not_left_out_silently() {
+    // #1902: one HICDB with a schedule the client cannot read. The readable order is
+    // kept, the other one is missing from the list and the sync says so – also when
+    // the bank offers no balance or bookings (the warning must not fail the sync).
+    let pain = r#"<Document><CstmrCdtTrfInitn><PmtInf><CdtTrfTxInf><Amt><InstdAmt Ccy="EUR">850.00</InstdAmt></Amt><Cdtr><Nm>Hausverwaltung</Nm></Cdtr><CdtrAcct><Id><IBAN>DE75512108001245126199</IBAN></Id></CdtrAcct></CdtTrfTxInf></PmtInf></CstmrCdtTrfInitn></Document>"#;
+    let hicdb = |n: u32, details: &str| {
+        format!(
+            "HICDB:{n}:1:3+DE02120300000000202051:BYLADEM1001:::280:12030000+urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.001.001.03+@{}@{pain}+O{n}+{details}++J+N+J'",
+            pain.len()
+        )
+    };
+    let reply: &'static str = Box::leak(
+        format!(
+            "{ACCEPT}{}{}",
+            hicdb(4, "20260101:M:1:1"),
+            hicdb(5, "20260101:Q:1:1")
+        )
+        .into_boxed_str(),
+    );
+    let (url, seen) = mock_bank(vec![reply]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKCDB": [1]}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    // HKSAL lists the account (`merge_upd_with_sepa`), but the BPD offers only HKCDB
+    c.upd = vec![upd_acc(
+        "0532013000",
+        "",
+        IBAN_A,
+        "Girokonto",
+        &["HKSAL", "HKCDB"],
+    )];
+
+    let r = c.fetch(&test_ctx()).await.unwrap();
+
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|ids| ids.iter().any(|i| i == "HKCDB"))
+    );
+    assert_eq!(r.standing_orders.len(), 1);
+    assert_eq!(r.standing_orders[0].order_id, "O4");
+    assert_eq!(r.standing_orders_fetched, vec![IBAN_A.to_string()]);
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+    assert!(r.warnings[0].starts_with(IBAN_A), "{:?}", r.warnings);
+    assert!(r.warnings[0].contains("1 von 2"), "{:?}", r.warnings);
+    // a count, never the order's data
+    assert!(
+        !r.warnings[0].contains("Hausverwaltung"),
+        "{:?}",
+        r.warnings
+    );
+    assert!(!r.warnings[0].contains("DE75512108"), "{:?}", r.warnings);
 }
 
 #[test]
