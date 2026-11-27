@@ -113,49 +113,153 @@ struct AddFormFooter: View {
     }
 }
 
-/// Add form for a bank reached through Enable Banking: the bank is fixed by the
-/// search result; the Enable Banking credentials are asked for right after adding.
+/// Selects the key before proceeding to the first bank consent.
 struct Psd2AddForm: View {
     @Environment(AppModel.self) private var model
     let bank: BankSearchResult
-    var onAdded: () -> Void = {}
-    var submit: AddBankSubmit? = nil
+    let onAdded: () -> Void
+    let submit: AddBankSubmit
     @State private var label = ""
+    @State private var useOtherKey = false
+    @State private var values: [String: String] = [:]
+    @State private var starting = false
+    @State private var finishing = false
+    @State private var consent: Consent?
+    @State private var addedConnection: (pin: VaultPin, id: Int64)?
+    @State private var failure: String?
 
-    private func commit() {
-        model.addEnableBankingConnection(aspsp: bank.aspsp, country: bank.country, name: bank.name, label: label)
-        label = ""
-        onAdded()
+    private struct Consent: Identifiable {
+        let id = UUID()
+        let browser: ConsentBrowser
     }
 
-    private var missing: [String] {
-        AppModel.userRequiredKeys(bankCatalog().first { $0.kind == .enableBanking }?.requiredSettings ?? [])
-            .filter { key in !(model.settings.first { $0.key == key }?.hasValue ?? false) }
+    private let idKey = "enablebanking.application_id"
+    private let pemKey = "enablebanking.private_key_pem"
+    private var hasSavedKey: Bool {
+        model.settingEntry(idKey)?.hasValue == true && model.settingEntry(pemKey)?.hasValue == true
+    }
+    private var needsFile: Bool { !hasSavedKey || useOtherKey }
+    private var demoLogin: Bool { model.demoActive && AppModel.isMagicDemoLogin(label) }
+    private var canAdd: Bool {
+        !starting && (demoLogin || !needsFile ||
+            (!(values[idKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+             !(values[pemKey] ?? "").isEmpty))
+    }
+
+    private func commit() {
+        guard canAdd else { return }
+        if demoLogin {
+            model.addEnableBankingConnection(aspsp: bank.aspsp, country: bank.country, name: bank.name, label: label)
+            onAdded()
+            return
+        }
+        failure = nil
+        starting = true
+    }
+
+    private func startConsent() async {
+        defer { starting = false }
+        do {
+            let (pin, enrollment) = try await model.beginPsd2Enrollment(
+                bank: bank, label: label,
+                applicationID: needsFile ? values[idKey] : nil,
+                pem: needsFile ? values[pemKey] : nil)
+            guard !Task.isCancelled, model.isCurrent(pin) else { return }
+            guard let url = URL(string: enrollment.authorizationUrl()), url.scheme == "https" else {
+                throw CoreError.SessionClosed
+            }
+            let browser = ConsentBrowser(url: url, redirect: enrollment.redirectUrl()) { callback in
+                guard consent != nil, !finishing, model.isCurrent(pin) else { return }
+                finishing = true
+                Task {
+                    defer { finishing = false; consent = nil }
+                    do {
+                        let id = try await enrollment.finish(callback: callback.absoluteString)
+                        if model.isCurrent(pin) { addedConnection = (pin, id) }
+                    } catch {
+                        failure = describe(error)
+                    }
+                }
+            }
+            consent = Consent(browser: browser)
+        } catch {
+            if !Task.isCancelled { failure = describe(error) }
+        }
     }
 
     var body: some View {
         Section {
             LabeledContent("Land", value: Locale.current.localizedString(forRegionCode: bank.country) ?? bank.country)
             LabeledContent("Verfahren", value: String(localized: "PSD2 über Enable Banking"))
-            TextField("Bezeichnung", text: $label, prompt: Text("Optional"))
+            TextField("Bezeichnung (optional)", text: $label, prompt: Text("z. B. Privatkonto"))
+                .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
-                .onAppear { submit?.update(true, commit) }
-            if submit == nil {
-                Button("Bank hinzufügen") { commit() }
-                    .keyboardShortcut(.defaultAction)
-            }
+                .disabled(starting)
         } header: {
             Text("Zugang").appSectionHeader()
+        }
+        Section {
+            if hasSavedKey {
+                Picker("Enable-Banking-Schlüssel", selection: $useOtherKey) {
+                    Text("Vorhandenen Schlüssel verwenden").tag(false)
+                    Text("Andere PEM-Datei verwenden").tag(true)
+                }
+                #if os(macOS)
+                .pickerStyle(.radioGroup)
+                #else
+                .pickerStyle(.inline)
+                #endif
+                .labelsHidden()
+                .disabled(starting)
+                if !useOtherKey, let id = model.settingEntry(idKey)?.value, !id.isEmpty {
+                    LabeledContent("Application-ID", value: "…\(id.suffix(8))")
+                        .sensitive()
+                }
+            }
+            if needsFile && !demoLogin {
+                EnableBankingSetupSection(values: $values, showGuide: !hasSavedKey, collapsibleGuide: true)
+                    .disabled(starting)
+            }
+            if let failure {
+                Label(failure, systemImage: "exclamationmark.circle")
+                    .appFont(.callout)
+                    .foregroundStyle(Theme.negative)
+            }
+            if starting { ProgressView() }
+        } header: {
+            Text("Enable-Banking-Schlüssel").appSectionHeader()
         } footer: {
             VStack(alignment: .leading, spacing: 8) {
-                // in the footer, not as a row: no box in a box (HIG)
+                if !bank.tested.isEmpty {
+                    Text(bank.tested).appFont(.caption).foregroundStyle(.secondary)
+                }
                 if model.demoActive { DemoHintBanner(style: .credentials) { label = "demo" } }
-                AddFormFooter(lines: [
-                    bank.tested,
-                    String(localized: "Sie melden sich in einem GiroCrab-Fenster direkt bei Ihrer Bank an. Dafür brauchen Sie eine kostenlose eigene Anwendung auf enablebanking.com – die Einrichtung führt Sie Schritt für Schritt hindurch."),
-                ] + (missing.isEmpty || submit != nil ? [] :
-                    [String(localized: "Wird nach dem Hinzufügen abgefragt: \(missing.map { settingLabels[$0] ?? $0 }.joined(separator: ", "))")]))
             }
         }
+        .onChange(of: canAdd, initial: true) { _, ready in submit.update(ready, commit) }
+        .task(id: starting) {
+            if starting { await startConsent() }
+        }
+        .capturableSheet(item: $consent, onDismiss: didDismissConsent) { pending in
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Zugriff bei der Bank freigeben").appSectionHeader()
+                ConsentWebView(browser: pending.browser)
+                    .desktopFrame(minWidth: 820, idealWidth: 880, minHeight: 420, idealHeight: 620, maxHeight: .infinity)
+                HStack {
+                    Button("Abbrechen") { consent = nil }
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(finishing)
+                    if finishing { ProgressView() }
+                }
+            }
+            .padding(20)
+            .interactiveDismissDisabled(finishing)
+        }
+    }
+
+    private func didDismissConsent() {
+        guard let addedConnection, model.isCurrent(addedConnection.pin) else { return }
+        onAdded()
+        model.finishAddingPsd2Connection(addedConnection.id)
     }
 }

@@ -47,6 +47,8 @@ enum EnableBankingKeyFile {
 struct EnableBankingSetupSection: View {
     @Environment(AppModel.self) private var model
     @Binding var values: [String: String]
+    var showGuide = true
+    var collapsibleGuide = false
     @State private var importing = false
     /// Result of reading the key file: success, or what went wrong.
     @State private var keyNote: (ok: Bool, text: String)?
@@ -66,8 +68,10 @@ struct EnableBankingSetupSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            guide
-            Divider()
+            if showGuide && !collapsibleGuide {
+                guide
+                Divider()
+            }
             HStack(spacing: 10) {
                 Button { importing = true } label: { Label("Schlüsseldatei (.pem) wählen …", systemImage: "key") }
                 if let keyNote {
@@ -92,13 +96,16 @@ struct EnableBankingSetupSection: View {
                 if checking { ProgressView().controlSize(.small) }
             }
             checkResult
+            if showGuide && collapsibleGuide {
+                DisclosureGroup("Hinweise zur Schlüsseldatei") { guide }
+            }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.data, .text, .plainText]) { result in
             guard case .success(let url) = result else { return }
             do {
                 let key = try EnableBankingKeyFile.read(url)
                 values[pemKey] = key.pem
-                if let id = key.applicationID { values[idKey] = id }
+                values[idKey] = key.applicationID ?? ""
                 keyNote = (true, key.applicationID != nil
                     ? String(localized: "Schlüssel und Application-ID übernommen")
                     : String(localized: "Schlüssel übernommen – Application-ID bitte eintragen"))

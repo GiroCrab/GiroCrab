@@ -1865,6 +1865,95 @@ pub(crate) fn evaluate_application(v: &Value, redirect: &str) -> EnableBankingAp
 
 #[uniffi::export(async_runtime = "tokio")]
 impl Vault {
+    /// Starts the first PSD2 consent without creating a bank connection.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn begin_enable_banking_enrollment(
+        self: Arc<Self>,
+        aspsp: String,
+        country: String,
+        display_name: String,
+        label: String,
+        application_id: Option<String>,
+        private_key_pem: Option<String>,
+        history_range: Option<super::HistoryRange>,
+    ) -> Result<Arc<EnableBankingEnrollment>, CoreError> {
+        use crate::models::ConnectorKind;
+        use crate::vault::enable_banking_apps::{APP_ID_KEY, PEM_KEY};
+
+        let aspsp = aspsp.trim();
+        let country = country.trim().to_uppercase();
+        let key = ConnectorKind::enable_banking_key(&country, aspsp);
+        if aspsp.is_empty() || ConnectorKind::enable_banking_target(&key).is_none() {
+            return Err(CoreError::invalid(tr("Bank oder Ländercode ungültig.")));
+        }
+        crate::banking_gate::check_connector(&key)?;
+        let label = if label.trim().is_empty() {
+            aspsp.to_string()
+        } else {
+            label
+        };
+        let kind = ConnectorKind::EnableBanking;
+        let label = crate::vault::connections::normalize_login(kind, &label);
+        let (app_id, pem, redirect) = {
+            let db = self.db()?;
+            let mut rows = db.prepare(
+                "SELECT login_name FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL",
+            )?;
+            for login in rows.query_map([&key], |row| row.get::<_, String>(0))? {
+                if crate::vault::connections::normalize_login(kind, &login?)
+                    .eq_ignore_ascii_case(&label)
+                {
+                    return Err(enrollment_label_in_use());
+                }
+            }
+            let app = match (application_id, private_key_pem) {
+                (Some(id), Some(pem)) => (id, pem),
+                (None, None) => (
+                    Self::setting_inner(&db, APP_ID_KEY)?.unwrap_or_default(),
+                    Self::setting_inner(&db, PEM_KEY)?.unwrap_or_default(),
+                ),
+                _ => {
+                    return Err(CoreError::invalid(tr(
+                        "Application-ID und privater Schlüssel gehören zusammen: bitte beide angeben.",
+                    )));
+                }
+            };
+            let redirect = Self::setting_inner(&db, "enablebanking.redirect_url")?
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "https://localhost/girocrab/callback".into());
+            (app.0, SecretString::new(app.1), redirect)
+        };
+        if app_id.trim().is_empty() || pem.expose().trim().is_empty() {
+            return Err(CoreError::invalid(tr(
+                "Application-ID und privater Schlüssel gehören zusammen: bitte beide angeben.",
+            )));
+        }
+        let ctx = ConnectContext {
+            login_name: label,
+            settings: HashMap::from([
+                (APP_ID_KEY.into(), app_id.trim().into()),
+                (PEM_KEY.into(), pem),
+                ("enablebanking.redirect_url".into(), redirect.clone().into()),
+            ]),
+            ..Default::default()
+        };
+        let mut connector = EnableBankingConnector::for_aspsp(aspsp, &country);
+        let Phase::Challenge(challenge) = connector.begin(&ctx).await? else {
+            return Err(CoreError::SessionClosed);
+        };
+        let url = challenge.redirect_url.ok_or(CoreError::SessionClosed)?;
+        Ok(Arc::new(EnableBankingEnrollment {
+            vault: self,
+            key,
+            display_name,
+            ctx,
+            url,
+            redirect,
+            history_range,
+            connector: tokio::sync::Mutex::new(Some(connector)),
+        }))
+    }
+
     /// Checks an Enable Banking application before it is saved / used: the
     /// key and ID must belong together, and the application must be active,
     /// in production and allow `redirect_url`.
@@ -1896,9 +1985,164 @@ impl Vault {
     }
 }
 
+fn enrollment_label_in_use() -> CoreError {
+    CoreError::invalid(tr(
+        "Diese Bezeichnung wird für diese Bank bereits verwendet. Bitte eine andere Bezeichnung eingeben.",
+    ))
+}
+
+/// First consent for an unsaved bank connection. Dropping it leaves the vault alone.
+#[derive(uniffi::Object)]
+pub struct EnableBankingEnrollment {
+    vault: Arc<Vault>,
+    key: String,
+    display_name: String,
+    ctx: ConnectContext,
+    url: String,
+    redirect: String,
+    history_range: Option<super::HistoryRange>,
+    connector: tokio::sync::Mutex<Option<EnableBankingConnector>>,
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl EnableBankingEnrollment {
+    pub fn authorization_url(&self) -> String {
+        self.url.clone()
+    }
+
+    pub fn redirect_url(&self) -> String {
+        self.redirect.clone()
+    }
+
+    pub async fn finish(&self, callback: String) -> Result<i64, CoreError> {
+        // A bare code would bypass the state check used for redirect URLs.
+        if reqwest::Url::parse(&callback).is_err() {
+            return Err(CoreError::SessionClosed);
+        }
+        crate::banking_gate::check_connector(&self.key)?;
+        let mut connector = self
+            .connector
+            .lock()
+            .await
+            .take()
+            .ok_or(CoreError::SessionClosed)?;
+        let phase = connector
+            .respond(&self.ctx, ChallengeResponse::Code(callback.into()))
+            .await?;
+        if !matches!(phase, Phase::Ready) || connector.st.session_id.is_empty() {
+            return Err(CoreError::SessionClosed);
+        }
+        self.store(&SecretJson::encode(&connector.st)?)
+    }
+}
+
+impl EnableBankingEnrollment {
+    fn store(&self, state: &SecretJson) -> CoreResult<i64> {
+        use crate::models::ConnectorKind;
+        use crate::vault::enable_banking_apps::{APP_ID_KEY, PEM_KEY, own_keys};
+
+        let app_id = self.ctx.setting(APP_ID_KEY)?;
+        let pem = self.ctx.setting(PEM_KEY)?;
+        let db = self.vault.db()?;
+        let tx = db.unchecked_transaction()?;
+        let (id, created) = Vault::add_bank_connection_keyed(
+            &tx,
+            ConnectorKind::EnableBanking,
+            &self.key,
+            None,
+            self.display_name.clone(),
+            self.ctx.login_name.clone(),
+        )?;
+        if !created {
+            return Err(enrollment_label_in_use());
+        }
+        let [id_key, pem_key] = own_keys(id);
+        Vault::set_setting_inner(&tx, &id_key, app_id)?;
+        Vault::set_setting_inner(&tx, &pem_key, pem)?;
+        // The first successful enrollment also makes its key available to bank search.
+        if Vault::setting_inner(&tx, APP_ID_KEY)?
+            .unwrap_or_default()
+            .is_empty()
+            || Vault::setting_inner(&tx, PEM_KEY)?
+                .unwrap_or_default()
+                .is_empty()
+        {
+            Vault::set_setting_inner(&tx, APP_ID_KEY, app_id)?;
+            Vault::set_setting_inner(&tx, PEM_KEY, pem)?;
+        }
+        if Vault::setting_inner(&tx, "enablebanking.redirect_url")?
+            .unwrap_or_default()
+            .is_empty()
+        {
+            Vault::set_setting_inner(&tx, "enablebanking.redirect_url", &self.redirect)?;
+        }
+        crate::vault::connections::store_state(&tx, id, state)?;
+        super::history::request_first_fetch(&tx, id, self.history_range)?;
+        tx.commit()?;
+        Ok(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enrollment_stores_only_the_approved_connection_and_its_selected_key() {
+        use crate::vault::enable_banking_apps::{APP_ID_KEY, PEM_KEY};
+
+        let dir = crate::test_support::TempDir::new("girocrab-psd2-enrollment");
+        let vault = Vault::open(
+            dir.join("vault").to_string_lossy().into_owned(),
+            vec![4; 32],
+        )
+        .unwrap();
+        let enrollment = |label: &str, key: &str| EnableBankingEnrollment {
+            vault: vault.clone(),
+            key: "enablebanking:DE:DKB".into(),
+            display_name: "DKB".into(),
+            ctx: ConnectContext {
+                login_name: label.into(),
+                settings: HashMap::from([
+                    (APP_ID_KEY.into(), key.into()),
+                    (PEM_KEY.into(), key.into()),
+                ]),
+                ..Default::default()
+            },
+            url: String::new(),
+            redirect: "https://localhost/girocrab/callback".into(),
+            history_range: Some(super::super::HistoryRange::Days { days: 30 }),
+            connector: tokio::sync::Mutex::new(None),
+        };
+        drop(enrollment("Cancelled", "unused-key"));
+        assert!(vault.list_bank_connections().unwrap().is_empty());
+        assert!(vault.get_setting(APP_ID_KEY.into()).unwrap().is_none());
+
+        let state = SecretJson::encode(&json!({"session_id": "test-session"})).unwrap();
+        let first = enrollment("DKB", "key-a").store(&state).unwrap();
+        let second = enrollment("DKB 2", "key-b").store(&state).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            vault.pending_full_history(second).unwrap(),
+            Some(super::super::HistoryRange::Days { days: 30 })
+        );
+        assert!(enrollment("DKB", "wrong-key").store(&state).is_err());
+        assert_eq!(vault.list_bank_connections().unwrap().len(), 2);
+        assert_eq!(
+            vault.get_setting(APP_ID_KEY.into()).unwrap().as_deref(),
+            Some("key-a")
+        );
+        for (id, expected) in [(first, "key-a"), (second, "key-b")] {
+            assert_eq!(
+                vault
+                    .connection_enable_banking_app(id)
+                    .unwrap()
+                    .unwrap()
+                    .application_id,
+                expected
+            );
+        }
+    }
 
     #[test]
     fn application_check_explains_what_is_missing() {

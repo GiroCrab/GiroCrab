@@ -176,6 +176,33 @@ extension AppModel {
         }
     }
 
+    func beginPsd2Enrollment(bank: BankSearchResult, label: String, applicationID: String?, pem: String?) async throws -> (VaultPin, EnableBankingEnrollment) {
+        guard !demoActive, let pin = pinVault() else {
+            throw CoreError.InvalidInput(message: String(localized: "Öffnen Sie Ihren eigenen Tresor, um einen PSD2-Bankzugang einzurichten."))
+        }
+        let historyRange = newLoginHistory.map { HistoryRange(setting: $0) }
+        if bankingPolicy.isEnabled { await bankingPolicy.refresh() }
+        try Task.checkCancellation()
+        guard isCurrent(pin) else { throw CoreError.SessionClosed }
+        let pending = try await pin.runAsync {
+            try await $0.beginEnableBankingEnrollment(
+                aspsp: bank.aspsp, country: bank.country, displayName: bank.name, label: label,
+                applicationId: applicationID, privateKeyPem: pem, historyRange: historyRange)
+        }
+        return (pin, pending)
+    }
+
+    func finishAddingPsd2Connection(_ id: Int64) {
+        let hadDefaultKey = settingEntry("enablebanking.private_key_pem")?.hasValue == true
+        reloadSettings()
+        if !hadDefaultKey { enableBankingSettingSaved("enablebanking.private_key_pem") }
+        reloadAccounts()
+        if let connection = connections.first(where: { $0.id == id }) {
+            syncEnableBankingLogins(.force(id))
+            requestSync(connection)
+        }
+    }
+
     /// Adds a login at a bank reached via Enable Banking (PSD2), then starts the
     /// setup (Enable Banking credentials, if missing) and the consent redirect.
     func addEnableBankingConnection(aspsp: String, country: String, name: String, label: String) {
