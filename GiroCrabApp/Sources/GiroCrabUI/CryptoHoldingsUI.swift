@@ -226,7 +226,12 @@ struct CryptoPositionSheet: View {
                                               quantity: quantity, purchasePriceCents: purchase)
                 }
                 busy = false
-                guard model.isCurrent(pin) else { dismiss(); return }
+                guard model.isCurrent(pin) else {
+                    // saved in the vault the sheet was opened for, which is no longer shown
+                    model.toast = String(localized: "Die Position wurde im zuvor geöffneten Tresor gespeichert.")
+                    dismiss()
+                    return
+                }
                 model.cryptoChanged()
                 if priceMissing {
                     model.toast = String(localized: "Gespeichert, aber der Kurs für \(ticker) konnte nicht geladen werden.")

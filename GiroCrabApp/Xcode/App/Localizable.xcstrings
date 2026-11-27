@@ -12378,6 +12378,17 @@
         }
       }
     },
+    "Die Position wurde im zuvor geöffneten Tresor gespeichert." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The position was saved in the vault that was open before."
+          }
+        }
+      }
+    },
     "Die Regel braucht eine Kategorie oder mindestens einen Tag." : {
       "extractionState" : "manual",
       "localizations" : {

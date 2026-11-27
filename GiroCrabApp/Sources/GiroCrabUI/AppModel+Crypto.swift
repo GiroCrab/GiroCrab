@@ -56,7 +56,11 @@ extension AppModel {
 
     func deleteCryptoPosition(_ request: CryptoPositionRequest) {
         guard let symbol = request.previousSymbol, let vault else { return }
-        runCore { try vault.deleteCryptoPosition(accountId: request.accountId, symbol: symbol) }
-        cryptoChanged()
+        do {
+            try vault.deleteCryptoPosition(accountId: request.accountId, symbol: symbol)
+            cryptoChanged()
+        } catch {
+            errorMessage = describe(error)
+        }
     }
 }
