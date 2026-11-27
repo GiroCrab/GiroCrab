@@ -12802,7 +12802,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This bank requires an approval in the banking app for every fetch, which a background fetch cannot give. GiroCrab therefore retries the automatic fetch of this connection at most once a day; approve a fetch you started yourself in the app."
+            "value" : "This bank requires an approval in the banking app for the fetch, which a background fetch cannot give. GiroCrab therefore retries the automatic fetch of this connection at most once a day; approve a fetch you started yourself in the app."
           }
         }
       }
