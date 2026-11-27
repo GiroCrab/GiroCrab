@@ -1414,7 +1414,7 @@ fn seeded_role_follows_the_parent_that_wins_the_merge() {
                     )
                     .unwrap();
             }
-            // a: stale, still at the top level with the role step 44 seeded there
+            // a: stale, still at the top level with the role step 46 seeded there
             a.db()
                 .unwrap()
                 .execute(

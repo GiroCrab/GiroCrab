@@ -156,6 +156,8 @@ extension AppModel {
                     self.categories = r.categories
                     self.uncategorizedFilteredCount = r.uncategorized
                     self.categoryTree = Self.buildTree(r.categories)
+                    // the edit may have put a booking of the filter into another category
+                    self.loadScopeCategories()
                 }
                 self.applyAccountGroups(r.groups, r.userGroups)
             } catch {

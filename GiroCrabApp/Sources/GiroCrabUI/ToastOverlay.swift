@@ -27,8 +27,20 @@ final class ToastHosts {
     func remove(_ id: UUID) { order.removeAll { $0 == id } }
 }
 
+/// What the toast shows. It is a plain string drawn over the window and may name an
+/// account, a merchant or a file, so `.sensitive()` cannot cover it: like `WindowTitle`,
+/// a bug report capture or privacy mode shows a neutral notice instead.
+enum ToastText {
+    static func shown(_ toast: String, redaction: ReportRedaction) -> String {
+        redaction.isDisjoint(with: [.personal, .labels])
+            ? toast
+            : String(localized: "Kein Klartext – Hinweis ausgeblendet")
+    }
+}
+
 private struct ToastOverlay: ViewModifier {
     @Environment(AppModel.self) private var model
+    @Environment(\.reportRedaction) private var redaction
     #if os(macOS)
     @State private var id = UUID()
     @Environment(\.controlActiveState) private var activeState
@@ -41,7 +53,7 @@ private struct ToastOverlay: ViewModifier {
         content
             .overlay(alignment: .bottom) {
                 if isHost, let toast = model.toast {
-                    Label(toast, systemImage: "checkmark.circle.fill")
+                    Label(ToastText.shown(toast, redaction: redaction), systemImage: "checkmark.circle.fill")
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .background(.regularMaterial, in: Capsule())
                         .shadow(color: .black.opacity(0.08), radius: 8, y: 2)

@@ -365,7 +365,7 @@ impl Vault {
     /// A new access token for external tools, shown once: only its hash is
     /// stored, and it replaces (revokes) the previous one.
     pub fn create_local_api_token(&self) -> Result<String, CoreError> {
-        use rand::RngCore;
+        use rand::Rng;
         let mut raw = [0u8; 32];
         rand::rng().fill_bytes(&mut raw);
         let token = format!("gcapi_{}", hex::encode(raw));

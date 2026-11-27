@@ -314,6 +314,8 @@ Sheet {
             property string url: prefill ? prefill.url : ""
             property string bankName: prefill ? prefill.name : ""
             property var found: null
+            // name of the chosen preset; the directory's name replaces it like on macOS/iOS
+            property string presetName: ""
             property string autoURL: url
             property bool urlEdited: false
             readonly property bool blzValid: /^[0-9]{8}$/.test(blz)
@@ -328,12 +330,14 @@ Sheet {
             readonly property bool canAdd: blzValid && urlValid && login.text.trim() !== ""
             function lookup() {
                 const info = blzValid ? AppModel.core("lookup_fints_bank_by_blz", { blz: blz }) : null
+                // a name the directory filled in follows the BLZ, so no hint or name of the previous bank stays
+                const filled = found !== null && bankName === found.name
                 if (!info) {
-                    if (found) { found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
+                    if (found) { if (filled) bankName = ""; found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
                     return
                 }
                 found = info
-                if (bankName === "") bankName = info.name
+                if (bankName === "" || filled || (presetName !== "" && bankName === presetName)) bankName = info.name
                 if (!urlEdited || url === "") { autoURL = info.url; url = info.url; urlEdited = false }
             }
             function commit() {
@@ -355,8 +359,12 @@ Sheet {
                     visible: !ff.known && ff.presets.length > 1
                     Layout.fillWidth: true
                     model: ff.presets.map(p => p.name)
-                    onActivated: i => { const p = ff.presets[i]; ff.bankName = p.id === "custom" ? "" : p.name; ff.urlEdited = false
-                                        ff.autoURL = p.url; ff.url = p.url; ff.blz = p.blz; blzField.text = p.blz; urlField.text = p.url }
+                    onActivated: i => { const p = ff.presets[i]; ff.presetName = p.id === "custom" ? "" : p.name
+                                        // the directory hit belongs to the previous BLZ: the preset's name is not its name
+                                        ff.found = null; ff.bankName = ff.presetName; ff.urlEdited = false
+                                        ff.autoURL = p.url; ff.url = p.url; ff.blz = p.blz; blzField.text = p.blz; urlField.text = p.url
+                                        // also when the BLZ is unchanged (no onBlzChanged): the directory's name applies in any order
+                                        ff.lookup() }
                 }
                 Text { visible: !ff.known; text: qsTr("Bankleitzahl"); color: Theme.text }
                 TextField {

@@ -343,7 +343,7 @@ fn uuid_backfill_v7_takes_path_keys_and_never_reuses_one() {
     assert_eq!(uuid(1), category_uuid_for_path(&["Hobby"]));
     assert_eq!(uuid(2), category_uuid_for_path(&["Hobby", "Modellbau"]));
 
-    // same-named starter siblings (allowed since v45) and a custom row already
+    // same-named starter siblings (allowed since v47) and a custom row already
     // holding the key of a later starter row's path
     db.execute_batch(&format!(
         "INSERT INTO categories(id, parent_id, name, builtin_role) VALUES
@@ -3129,8 +3129,8 @@ fn booking_on_deleted_category_ends_uncategorised() {
 
 /// Review of #1833, finding 1, decided: a redirect from an older build's snapshot is followed
 /// like any other, so every device converges; this vault's own bookings move to the survivor.
-/// Builds before v45 still combine same-named categories by themselves. An older build refuses
-/// v45 snapshots (`SchemaTooNew`), so it only gets a same-named pair to combine from another
+/// Builds before v47 still combine same-named categories by themselves. An older build refuses
+/// v47 snapshots (`SchemaTooNew`), so it only gets a same-named pair to combine from another
 /// device that is also still on the old version: with three or more devices on mixed
 /// versions, an automatic combination can still reach updated devices until all are updated.
 #[test]
@@ -3146,13 +3146,13 @@ fn older_snapshot_redirect_is_followed() {
          INSERT INTO transactions(id, account_id, external_id, booking_date, amount_cents, category_id, category_ms)
              VALUES (1, 1, 'e1', '2026-01-01', -500, 101, 100);",
     );
-    // b, written by a v44 build that combined `u-x` into `u-y`
+    // b, written by a v46 build that combined `u-x` into `u-y`
     exec(
         &b,
         "INSERT INTO categories(id, name, uuid, name_ms) VALUES (102, 'Sparen', 'u-y', 1);
          INSERT INTO categories(id, name, uuid, name_ms, deleted_ms, merged_into)
              VALUES (101, 'Sparen', 'u-x', 1, 5, 'u-y');
-         PRAGMA user_version = 44;",
+         PRAGMA user_version = 46;",
     );
     merge(&a, &b);
     assert_eq!(
@@ -5247,6 +5247,273 @@ fn booking(v: &Vault, account: i64, ext: &str, fp: &str) {
             params![account, ext, fp],
         )
         .unwrap();
+}
+
+#[test]
+fn offline_loan_source_links_follow_a_folded_moneymoney_account() {
+    let dir = temp_dir("loan-payment-folded-twin");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let twin = wallet(&a, None, "moneymoney-db:25:ba5a6b58", FINOM_IBAN, "EUR");
+    booking(&a, twin, "mm-rate-1", "rate-1");
+    let loan = a
+        .create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+        .unwrap();
+    let source = n(
+        &a,
+        "SELECT id FROM transactions WHERE external_id = 'mm-rate-1'",
+    );
+    a.mirror_offline_loan_payment(source, loan, 80).unwrap();
+    merge(&b, &a);
+
+    let c = comdirect(&a);
+    let bank = wallet(&a, Some(c), FINOM_IBAN, FINOM_IBAN, "EUR");
+    booking(&a, bank, "bank-rate-1", "rate-1");
+    let new_source = n(
+        &a,
+        "SELECT id FROM transactions WHERE external_id = 'bank-rate-1'",
+    );
+    a.mirror_offline_loan_payment(new_source, loan, 80).unwrap();
+    assert_eq!(super::twins::fold_twins(&a.db().unwrap()).unwrap(), 1);
+    assert!(a.mirror_offline_loan_payment(new_source, loan, 80).is_err());
+
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        let loan = n(v, "SELECT id FROM accounts WHERE kind = 'loan'");
+        assert_eq!(
+            n(
+                v,
+                &format!("SELECT balance_cents FROM accounts WHERE id = {loan}")
+            ),
+            -420
+        );
+        assert_eq!(
+            n(
+                v,
+                &format!(
+                    "SELECT count(*) FROM transactions WHERE account_id = {loan} AND deleted_ms IS NULL"
+                )
+            ),
+            1
+        );
+        let source = n(
+            v,
+            "SELECT id FROM transactions WHERE external_id = 'bank-rate-1' AND deleted_ms IS NULL",
+        );
+        assert!(v.mirror_offline_loan_payment(source, loan, 80).is_err());
+    }
+}
+
+#[test]
+fn offline_loan_converges_when_two_devices_fold_the_same_rate_into_different_bank_accounts() {
+    for reverse in [false, true] {
+        let dir = temp_dir("loan-payment-competing-folds");
+        let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+        let imported = wallet(&a, None, "moneymoney-db:25:ba5a6b58", FINOM_IBAN, "EUR");
+        booking(&a, imported, "mm-rate-1", "rate-1");
+        a.create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+            .unwrap();
+        merge(&b, &a);
+
+        // Two real login identities keep the bank bookings distinct on merge.
+        // The same imported booking is the explicit match on each device.
+        for (vault, suffix) in [(&a, "a"), (&b, "b")] {
+            let connection = vault
+                .add_bank_connection(
+                    ConnectorKind::Comdirect,
+                    String::new(),
+                    format!("login-{suffix}"),
+                )
+                .unwrap();
+            let bank = wallet(
+                vault,
+                Some(connection),
+                &format!("bank-{suffix}"),
+                FINOM_IBAN,
+                "EUR",
+            );
+            booking(vault, bank, &format!("rate-{suffix}"), "rate-1");
+            assert_eq!(super::twins::fold_twins(&vault.db().unwrap()).unwrap(), 1);
+            let source = n(
+                vault,
+                &format!("SELECT id FROM transactions WHERE external_id='rate-{suffix}'"),
+            );
+            let loan = n(vault, "SELECT id FROM accounts WHERE kind='loan'");
+            vault.mirror_offline_loan_payment(source, loan, 80).unwrap();
+        }
+
+        if reverse {
+            both_ways(&b, &a);
+        } else {
+            both_ways(&a, &b);
+        }
+        for vault in [&a, &b] {
+            assert_eq!(
+                n(
+                    vault,
+                    "SELECT balance_cents FROM accounts WHERE kind='loan'"
+                ),
+                -420
+            );
+            assert_eq!(
+                n(
+                    vault,
+                    "SELECT COUNT(DISTINCT source_id) FROM offline_loan_payments"
+                ),
+                1
+            );
+            assert_eq!(
+                text(
+                    vault,
+                    "SELECT DISTINCT t.external_id FROM offline_loan_payments p JOIN transactions t ON t.id=p.source_id"
+                ),
+                "rate-a"
+            );
+            let loan = n(vault, "SELECT id FROM accounts WHERE kind='loan'");
+            for external_id in ["rate-a", "rate-b"] {
+                let source = n(
+                    vault,
+                    &format!("SELECT id FROM transactions WHERE external_id='{external_id}'"),
+                );
+                assert!(vault.mirror_offline_loan_payment(source, loan, 80).is_err());
+            }
+        }
+
+        // The active copy of the source changes if the first bank booking is removed.
+        // Keep a second loan with no mirrored copy under the fallback source's key.
+        let single_copy = a
+            .create_offline_loan("Single copy".into(), "EUR".into(), 1000, 500)
+            .unwrap();
+        let preferred = n(&a, "SELECT id FROM transactions WHERE external_id='rate-a'");
+        a.mirror_offline_loan_payment(preferred, single_copy, 80)
+            .unwrap();
+        exec(
+            &a,
+            "UPDATE transactions SET deleted_ms=1 WHERE external_id='rate-a'",
+        );
+        let fallback = n(&a, "SELECT id FROM transactions WHERE external_id='rate-b'");
+        assert!(
+            a.mirror_offline_loan_payment(fallback, single_copy, 80)
+                .is_err()
+        );
+        both_ways(&a, &b);
+        for vault in [&a, &b] {
+            assert_eq!(
+                text(
+                    vault,
+                    "SELECT DISTINCT t.external_id FROM offline_loan_payments p JOIN transactions t ON t.id=p.source_id"
+                ),
+                "rate-b"
+            );
+            assert_eq!(
+                n(
+                    vault,
+                    "SELECT COUNT(*) FROM accounts WHERE kind='loan' AND balance_cents=-420"
+                ),
+                2
+            );
+        }
+    }
+}
+
+#[test]
+fn physical_account_dedup_preserves_loan_sources_and_incoming_aliases() {
+    for (retained_deleted, retained_was_alias) in [(false, false), (true, false), (true, true)] {
+        let dir = temp_dir("physical-dedup-loan-sources");
+        let (local, stale) = (open(&dir, "local.db"), open(&dir, "stale.db"));
+        let imported = wallet(&local, None, "imported", "", "EUR");
+        booking(&local, imported, "mm-rate", "rate");
+        let loan = local
+            .create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+            .unwrap();
+        let original_sql = "SELECT id FROM transactions WHERE external_id='mm-rate'";
+        let original = n(&local, original_sql);
+        merge(&stale, &local);
+        let stale_loan = n(&stale, "SELECT id FROM accounts WHERE kind='loan'");
+        stale
+            .mirror_offline_loan_payment(n(&stale, original_sql), stale_loan, 80)
+            .unwrap();
+
+        let keep_login = comdirect(&local);
+        exec(
+            &local,
+            &format!(
+            "INSERT INTO bank_connections(connector, display_name, login_name)
+             SELECT connector, display_name, login_name FROM bank_connections WHERE id={keep_login}"
+        ),
+        );
+        let duplicate_login = n(&local, "SELECT MAX(id) FROM bank_connections");
+        let add_source = |connection| {
+            let account = wallet(&local, Some(connection), "bank-account", "", "EUR");
+            booking(&local, account, "bank-rate", "rate");
+            n(
+                &local,
+                &format!("SELECT id FROM transactions WHERE account_id={account}"),
+            )
+        };
+        let retained = add_source(keep_login);
+        let duplicate = add_source(duplicate_login);
+        if retained_deleted {
+            exec(
+                &local,
+                &format!("UPDATE transactions SET deleted_ms=3 WHERE id={retained}"),
+            );
+        }
+        {
+            let db = local.db().unwrap();
+            crate::offline::loan_payments::move_source(&db, original, duplicate).unwrap();
+            if retained_was_alias {
+                crate::offline::loan_payments::move_source(&db, retained, duplicate).unwrap();
+            }
+        }
+        exec(
+            &local,
+            &format!("UPDATE transactions SET deleted_ms=2 WHERE id={original}"),
+        );
+        let payment = local
+            .mirror_offline_loan_payment(duplicate, loan, 80)
+            .unwrap();
+
+        assert_eq!(local.deduplicate_bank_connections().unwrap(), 1);
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT COUNT(*) FROM transactions WHERE id={duplicate}")
+            ),
+            0
+        );
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT source_id FROM offline_loan_payments WHERE payment_id={payment}")
+            ),
+            retained
+        );
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT new_id FROM offline_loan_source_moves WHERE old_id={original}")
+            ),
+            retained
+        );
+
+        // The stale peer supplies a separate mirrored copy using the old ID.
+        merge(&local, &stale);
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT balance_cents FROM accounts WHERE id={loan}")
+            ),
+            -420
+        );
+        assert_eq!(n(&local, "SELECT COUNT(*) FROM offline_loan_payments"), 2);
+        assert_eq!(
+            n(
+                &local,
+                "SELECT COUNT(DISTINCT source_id) FROM offline_loan_payments"
+            ),
+            1
+        );
+    }
 }
 
 /// A login set up after the MoneyMoney import (Enable Banking) took over an

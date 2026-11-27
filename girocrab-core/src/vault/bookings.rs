@@ -953,6 +953,45 @@ impl Vault {
         self.list_page(filter, true)
     }
 
+    /// Ids of the categories that hold bookings of the booking `scope`, matched like
+    /// `category_match_sql`: an unsplit booking by its own category, a split booking only by
+    /// the categories of its parts (its own category then holds none of it). The sidebar shows
+    /// them while the filter is on, so no category is picked blind and ends in "Keine Buchungen".
+    /// Reads every booking once: call it off the main thread, on scope changes and category reloads.
+    pub fn categories_in_scope(&self, scope: BookingScope) -> Result<Vec<i64>, CoreError> {
+        let page = self.list_transactions(BookingFilter {
+            scope,
+            ..Default::default()
+        })?;
+        let booking_ids: Vec<i64> = page.transactions.iter().map(|t| t.id).collect();
+        let mut ids: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+        let mut split: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let db = self.db()?;
+        for chunk in booking_ids.chunks(500) {
+            let mut st = db.prepare(&format!(
+                "SELECT sp.transaction_id, sp.category_id FROM transaction_splits sp
+                  WHERE sp.transaction_id IN ({})",
+                vec!["?"; chunk.len()].join(",")
+            ))?;
+            let rows = st.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+            })?;
+            for row in rows {
+                let (booking, category) = row?;
+                split.insert(booking);
+                if let Some(c) = category {
+                    ids.insert(c);
+                }
+            }
+        }
+        for t in &page.transactions {
+            if let Some(c) = t.category_id.filter(|_| !split.contains(&t.id)) {
+                ids.insert(c);
+            }
+        }
+        Ok(ids.into_iter().collect())
+    }
+
     /// `flow_other_currencies` for the plain selection of `selection_flow`: accounts and period.
     /// `respect_in_total`: in a totals context (#337) only the effective total
     /// set contributes — the same rule as the EUR sums this figure supplements.
@@ -2295,6 +2334,84 @@ mod own_transfer_tests {
         assert_eq!(
             v.selection_flow(vec![], None, None).unwrap().invested_cents,
             200_00
+        );
+    }
+
+    #[test]
+    fn categories_in_scope_lists_only_the_categories_of_that_filter() {
+        let (_d, v, ids) = vault_with(&[
+            (
+                "Depot",
+                -100_00,
+                "Sparplan MSCI World",
+                Some("Anlage/Sparplan"),
+            ),
+            ("Kino", -40_00, "Film", Some("Freizeit")),
+            ("Mama", 20_00, "Geschenk", None),
+        ]);
+        let cat = |i: usize| {
+            v.list_transactions(BookingFilter::default())
+                .unwrap()
+                .transactions
+                .into_iter()
+                .find(|t| t.id == ids[i])
+                .unwrap()
+                .category_id
+        };
+        let (savings, leisure) = (cat(0).unwrap(), cat(1).unwrap());
+        assert_eq!(
+            v.categories_in_scope(BookingScope::Investments).unwrap(),
+            vec![savings]
+        );
+        assert_eq!(
+            v.categories_in_scope(BookingScope::Everyday).unwrap(),
+            vec![leisure]
+        );
+        let mut all = v.categories_in_scope(BookingScope::All).unwrap();
+        all.sort();
+        assert_eq!(all, vec![savings.min(leisure), savings.max(leisure)]);
+    }
+
+    #[test]
+    fn categories_in_scope_counts_a_split_booking_only_by_its_parts() {
+        let (_d, v, ids) = vault_with(&[
+            ("Kino", -40_00, "Film", Some("Freizeit")),
+            ("Markt", -30_00, "Einkauf", Some("Lebensmittel")),
+        ]);
+        let cat = |i: usize| {
+            v.list_transactions(BookingFilter::default())
+                .unwrap()
+                .transactions
+                .into_iter()
+                .find(|t| t.id == ids[i])
+                .unwrap()
+                .category_id
+        };
+        let (leisure, groceries) = (cat(0).unwrap(), cat(1).unwrap());
+        // the cinema booking is split: one part groceries, one part without category
+        {
+            let db = v.db().unwrap();
+            for (position, (category, cents)) in [(Some(groceries), -25_00_i64), (None, -15_00)]
+                .into_iter()
+                .enumerate()
+            {
+                db.execute(
+                    "INSERT INTO transaction_splits (transaction_id, category_id, amount_cents, uuid, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![ids[0], category, cents, format!("part-{position}"), position as i64],
+                )
+                .unwrap();
+            }
+        }
+        // its own category holds none of it, the part's category does; no part adds `None`
+        assert_eq!(
+            v.categories_in_scope(BookingScope::Everyday).unwrap(),
+            vec![groceries]
+        );
+        assert!(
+            !v.categories_in_scope(BookingScope::All)
+                .unwrap()
+                .contains(&leisure)
         );
     }
 

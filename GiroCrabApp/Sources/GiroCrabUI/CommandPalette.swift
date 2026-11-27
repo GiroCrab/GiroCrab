@@ -40,7 +40,7 @@ struct CommandPaletteView: View {
             break
         case .bookings:
             for s in BookingScope.ordered {
-                out.append(Item(title: s.title, subtitle: String(localized: "Ansicht"), symbol: "rectangle.split.3x1") { model.scope = s })
+                out.append(Item(title: s.title, subtitle: String(localized: "Ansicht"), symbol: "rectangle.split.3x1") { model.selectScope(s) })
             }
         }
         if model.canTransfer {

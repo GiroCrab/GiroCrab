@@ -336,6 +336,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Bank lieferte die Daueraufträge nicht vollständig (zu viele Seiten)." => {
             "The bank did not return the standing orders completely (too many pages)."
         }
+        "{0} von {1} Aufträgen der Bank konnten nicht gelesen werden." => {
+            "{0} of {1} orders from the bank could not be read."
+        }
         "Der Betrag ist größer als SEPA erlaubt (999.999.999,99 €)." => {
             "The amount exceeds what SEPA allows (999,999,999.99 EUR)."
         }
@@ -849,6 +852,22 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Eine Buchung lässt sich nicht in ihr eigenes Konto spiegeln." => {
             "A booking cannot be mirrored into its own account."
+        }
+        "Darlehen / Kredit" => "Loan / credit",
+        "Der ursprüngliche Kreditbetrag muss größer als 0 sein." => {
+            "The original loan amount must be greater than 0."
+        }
+        "Buchung und Darlehenskonto müssen dieselbe Währung haben." => {
+            "The booking and the loan account must use the same currency."
+        }
+        "Der Tilgungsanteil muss größer als 0 und höchstens so hoch wie die Abbuchung sein." => {
+            "The principal must be greater than 0 and cannot exceed the debit."
+        }
+        "Beim Spiegeln auf ein Darlehenskonto bitte den Tilgungsanteil angeben." => {
+            "Enter the principal when mirroring a booking to a loan account."
+        }
+        "Für diese Rate wurde bereits eine Tilgung auf dieses Darlehenskonto übernommen." => {
+            "A principal payment for this instalment has already been recorded in this loan account."
         }
         "Saldokorrektur" => "Balance correction",
         // ------------------------------------------------------ user_groups.rs
@@ -1763,6 +1782,12 @@ fn english(de: &str) -> Option<&'static str> {
         "Ford Money: Die Anfrage wurde abgelehnt." => "Ford Money: The request was rejected.",
         "Ford Money: Kundennummer und Passwort erforderlich." => {
             "Ford Money: Customer number and password required."
+        }
+        "Ford Money: Der Kontostand von Konto {0} konnte nicht gelesen werden, das Konto wurde nicht abgerufen." => {
+            "Ford Money: The balance of account {0} could not be read, the account was not synced."
+        }
+        "Ford Money: Die Umsätze von Konto {0} konnten nicht gelesen werden, übernommen wurde nur der Kontostand." => {
+            "Ford Money: The transactions of account {0} could not be read, only the balance was imported."
         }
         "Kundennummer" => "Customer number",
         // ------------------------------------------------------------ connectors/ffb.rs

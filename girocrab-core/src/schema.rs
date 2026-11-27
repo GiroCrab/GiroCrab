@@ -69,14 +69,18 @@
 //!   none; the login's `last_sync_unix` still counts for every account).
 //! - 43: settled scheduled orders (#1900): `planned_transfers.settled_ms` (NULL = open), date
 //!   index over `(execution_date, settled_ms)`.
-//! - 44: explicit category financial roles (#931): `categories.role` (NULL = inherit from
+//! - 44: compatibility fence for offline loans (#1970). Earlier builds cannot
+//!   merge manual loan booking edits or recompute their opening balances.
+//! - 45: the source links of mirrored offline-loan payments (#1970), mapped through
+//!   booking merges and MoneyMoney twin folding.
+//! - 46: explicit category financial roles (#931): `categories.role` (NULL = inherit from
 //!   parent, root default `consumption`) and its sync stamp `categories.role_ms`, seeded
 //!   from `categories.builtin_role` with stamp 0 so user edits win on sync
 //!   ([`category_roles`]): `investment`, `loan` and `neutral` only where `builtin_role`
 //!   decided the classification before; `income` and `salary` as defaults that change no
 //!   classification yet. Exception: categories 32 or more levels deep, where the old walk
 //!   stopped after 32 categories.
-//! - 45: sibling category names may repeat. The schema version prevents older clients
+//! - 47: sibling category names may repeat. The schema version prevents older clients
 //!   from reading snapshots that can hold separate categories with the same name.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
@@ -137,8 +141,10 @@ const STEPS: &[Step] = &[
     Step::Hook(manual_date_stamp),                             // 41 (#714)
     Step::Hook(account_last_fetch),                            // 42 (#1716)
     Step::Hook(crate::planned::planned_settled),               // 43 (#1900)
-    Step::Hook(category_roles),                                // 44 (#931)
-    Step::Sql(CATEGORY_SIBLING_LOOKUP),                        // 45
+    Step::Sql(""), // 44: offline-loan compatibility fence
+    Step::Hook(crate::offline::loan_payments::migrate), // 45: mirrored payments retain their source
+    Step::Hook(category_roles), // 46 (#931)
+    Step::Sql(CATEGORY_SIBLING_LOOKUP), // 47
 ];
 
 const CATEGORY_SIBLING_LOOKUP: &str = "
@@ -147,7 +153,7 @@ CREATE INDEX IF NOT EXISTS categories_sibling_name
     ON categories(parent_id, name COLLATE NOCASE) WHERE deleted_ms IS NULL;
 ";
 
-/// Step 44 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
+/// Step 46 (#931): user-editable financial role on categories (`categories.role`, NULL = inherit
 /// from parent) and its sync stamp `role_ms`. Seeded from `builtin_role` with stamp 0 so any
 /// explicit user choice on another device wins on sync. Idempotent.
 ///
@@ -1323,7 +1329,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 45);
+        assert_eq!(SCHEMA_VERSION, 47);
     }
 
     /// #1716: a vault at version 41 gets the fetch time of step 42.
@@ -1387,7 +1393,7 @@ mod tests {
         assert_eq!(choice, (None, 55));
     }
 
-    /// #931: step 44 adds `categories.role` and `categories.role_ms` and seeds built-in
+    /// #931: step 46 adds `categories.role` and `categories.role_ms` and seeds built-in
     /// categories from `builtin_role` with stamp 0, leaving custom categories `NULL`.
     #[test]
     fn category_roles_backfill_from_builtin_role() {
@@ -1438,9 +1444,9 @@ mod tests {
         assert_eq!(read(7), (Some("salary".into()), 0));
         assert_eq!(read(8), (None, 0));
         assert_eq!(read(9), (None, 0));
-        // Promoted to root before v44: preserves legacy investment classification.
+        // Promoted to root before v46: preserves legacy investment classification.
         assert_eq!(read(10), (Some("investment".into()), 0));
-        // Rearranged before v44: `Gehalt` under `Umbuchungen` stays inheriting
+        // Rearranged before v46: `Gehalt` under `Umbuchungen` stays inheriting
         // (`Neutral`), non-root `Sparen`/`Kredite` keep legacy root-only behaviour,
         // and nested `Umbuchungen` stays `Neutral`.
         assert_eq!(read(11), (None, 0));
@@ -1678,7 +1684,7 @@ mod tests {
         assert_eq!(n, 0);
     }
 
-    /// A duplicate that a v41 sync combined into another category gets no role from step 44
+    /// A duplicate that a v41 sync combined into another category gets no role from step 46
     /// (#931): when reading, its role would count for the survivor, and `Sparen & Investieren`
     /// moved under a custom folder would become an investment.
     #[test]
@@ -1705,7 +1711,7 @@ mod tests {
         assert_eq!(roles[&2], crate::models::CategoryRole::Consumption);
     }
 
-    /// The deliberate exception of step 44 (#931): the old walk looked at 32 categories and
+    /// The deliberate exception of step 46 (#931): the old walk looked at 32 categories and
     /// never reached an `Umbuchungen` root 32 levels up; the role resolver does, so the
     /// category at depth 32 resolves to `Neutral`. At depths 31 and 33, both agree.
     #[test]
@@ -1731,7 +1737,7 @@ mod tests {
         assert_eq!(roles[&34], crate::models::CategoryRole::Consumption);
     }
 
-    /// Step 44 (#931) keeps the v41 classification of every category, checked on random
+    /// Step 46 (#931) keeps the v41 classification of every category, checked on random
     /// v41 trees: built-ins (every starter name and `import:transfers`) at random places,
     /// custom categories and deleted ones, also between live ones. The v41 side is a copy of the
     /// old `category_flows` walk plus how `classify_by_kind`/`BookingFinisher::finish` used
@@ -1874,7 +1880,7 @@ mod tests {
                 assert_eq!(
                     after.get(id),
                     Some(effect),
-                    "tree {tree}, category {id}: v41 {effect:?}, after step 44 {:?}\n{}",
+                    "tree {tree}, category {id}: v41 {effect:?}, after step 46 {:?}\n{}",
                     after.get(id),
                     rows.join("\n")
                 );

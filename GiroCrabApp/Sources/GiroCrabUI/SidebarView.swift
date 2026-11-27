@@ -175,26 +175,45 @@ struct SidebarView: View {
                     .listRowInsets(Self.rowInsets)
                     .selectionDisabled()
             }
+            if !model.categoriesCollapsed, model.scope != .all {
+                Text("Diese Kategorien gehören zu „\(model.scope.title)“.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, DisclosureChevron.iconInset)
+                    .listRowInsets(Self.rowInsets)
+                    .selectionDisabled()
+            }
             if !model.categoriesCollapsed {
                 Group {
-                    HStack(spacing: DisclosureChevron.gap) {
-                        SidebarLeadingSlot()
-                        HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
-                            Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                            Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
-                            Spacer()
+                    // with a booking filter on, only that filter's categories are listed (no "Ohne Kategorie")
+                    if model.scope == .all {
+                        HStack(spacing: DisclosureChevron.gap) {
+                            SidebarLeadingSlot()
+                            HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
+                                Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                                Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                                Spacer()
+                            }
                         }
-                    }
-                    .contextMenu {
-                        Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
-                        if !model.uncategorizedName.isEmpty {
-                            Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                        .contextMenu {
+                            Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
+                            if !model.uncategorizedName.isEmpty {
+                                Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                            }
                         }
+                        .badge(model.uncategorizedCount)
+                        .tag(SidebarItem.uncategorized)
+                        .listRowInsets(Self.rowInsets)
                     }
-                    .badge(model.uncategorizedCount)
-                    .tag(SidebarItem.uncategorized)
-            .listRowInsets(Self.rowInsets)
-                    categoryRows(model.categoryTree, depth: 0)
+                    // Only `.all` shows the full tree. With a filter on, a missing set (still loading or
+                    // the load failed) must not fall back to every category, so the list stays empty.
+                    categoryRows(
+                        model.scope == .all
+                            ? model.categoryTree
+                            : (model.scopeCategoryIDs.map { model.categoryTree.limited(to: $0) } ?? []),
+                        depth: 0
+                    )
                 }
             }
         }
@@ -566,9 +585,10 @@ struct SidebarView: View {
                 .padding(.leading, indent)
                 .listRowInsets(Self.rowInsets)
                 #if os(macOS)
-                // only leaves take dragged bookings, as only leaves are assigned;
-                // a dragged category goes above or below, or into a main category (#977)
-                .modifier(categoryDropSlot(node, indent: indent, takesBookings: true))
+                // only leaves of the full tree take dragged bookings, as only those are assigned;
+                // a booking filter may hide the children of a parent, which must not make it a leaf here.
+                // A dragged category goes above or below, or into a main category (#977)
+                .modifier(categoryDropSlot(node, indent: indent, takesBookings: model.categoryTree.node(node.id)?.children == nil))
                 #endif
                 .tag(SidebarItem.category(node.id))
                 .contextMenu { categoryMenu(node.category) }
@@ -788,7 +808,7 @@ struct AccountRow: View {
 
     private var repaid: Double? {
         guard account.kind == .loan, let p = account.initialBalanceCents, p > 0 else { return nil }
-        return max(0, min(1, 1 - Double(-account.balanceCents) / Double(p)))
+        return max(0, min(1, 1 - -Double(account.balanceCents) / Double(p)))
     }
 
     private var signetSize: CGFloat { density == .compact ? 20 : 24 }

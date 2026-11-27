@@ -88,11 +88,12 @@ extension AppModel {
         }
     }
 
-    /// Amex: statement PDFs of the card the portal shows, the ones not stored yet, downloaded
-    /// in the signed-in page: at most 24 from the last two years, or with `all` every one the
-    /// portal offers. Returns how many were added and how many could not be fetched or
-    /// stored (`failed` > 0 also when the statement list itself could not be read).
-    func importAmexStatements(_ c: BankConnection, browser: PortalBrowser, all: Bool = false)
+    /// Amex / Amazon Visa: statement PDFs of the card the portal shows, the ones not stored
+    /// yet, downloaded in the signed-in page: at most 24 from the last two years, or with
+    /// `all` every one the portal offers. Returns how many were added and how many could
+    /// not be fetched or stored (`failed` > 0 also when the statement list itself could
+    /// not be read).
+    func importPortalStatementPDFs(_ c: BankConnection, browser: PortalBrowser, all: Bool = false)
         async -> (added: Int, failed: Int) {
         // one vault for the whole job: a vault switched meanwhile gets nothing
         guard let pin = pinVault() else { return (0, 0) }
@@ -103,7 +104,9 @@ extension AppModel {
             (try? await pin.run { try $0.portalStatementDates(connectionId: id, cardKey: card, cardNumber: number) })
                 .map(Set.init)
         }
-        let fetched = await browser.amexStatements(known: known, since: since, limit: all ? Int.max : 24)
+        let fetched = c.connector == .americanExpress
+            ? await browser.amexStatements(known: known, since: since, limit: all ? .max : 24)
+            : await browser.visaStatements(known: known, since: since, limit: all ? .max : 24)
         AppModel.debugLog("portal statements: listed=\(fetched.listed) new=\(fetched.statements.count) failed=\(fetched.failed)")
         guard !fetched.statements.isEmpty else { return (0, fetched.failed) }
         let card = fetched.card, number = fetched.number, statements = fetched.statements
@@ -246,18 +249,22 @@ func clearPortalSession(_ kind: ConnectorKind) async {
 /// (`kunden.openbankpay.com` matches `openbankpay.com`, `openbankpay.com.evil.io` does not).
 struct PortalDomains: Sendable {
     let domains: [String]
+    /// The portal kind behind the domains, when derived from a connection:
+    /// gates the portal's own statement handling (Amex / Amazon Visa).
+    let kind: ConnectorKind?
 
-    init(_ hosts: [String], includeBaseDomains: Bool = true) {
+    init(_ hosts: [String], includeBaseDomains: Bool = true, kind: ConnectorKind? = nil) {
         var all = Set<String>()
         for h in hosts.map({ $0.lowercased() }) where !h.isEmpty {
             all.insert(h)
             if includeBaseDomains { all.insert(Self.baseDomain(h)) }
         }
         domains = all.sorted()
+        self.kind = kind
     }
 
     init(kind: ConnectorKind) {
-        self.init(kind.portalHosts + [kind.portalURL?.host].compactMap { $0 })
+        self.init(kind.portalHosts + [kind.portalURL?.host].compactMap { $0 }, kind: kind)
     }
 
     /// Last two labels ("portal.fnz.de" -> "fnz.de"); enough for the portals' TLDs.
@@ -301,7 +308,7 @@ private final class PortalNavigationGuard: NSObject, WKNavigationDelegate {
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard navigationAction.targetFrame?.isMainFrame ?? true else { decisionHandler(.allow); return }
         let url = navigationAction.request.url
-        if url?.absoluteString == "about:blank" || url?.scheme?.lowercased() == "https" {
+        if ConsentRedirect.allowsMainFrame(url) {
             browser?.blockedHost = nil
             decisionHandler(.allow)
             return
@@ -450,17 +457,30 @@ final class PortalBrowser {
     }
 
     /// Amex: the latest statement list (`documents/info/statements`) and the card token of
-    /// its request; kept in memory only, for `amexStatements`.
-    @ObservationIgnored private(set) var statementList: (body: String, token: String)?
+    /// its request; Amazon Visa: the last captured response that is a readable
+    /// statement list and whose URL names a statement (its list page loads it;
+    /// schema-agnostic, `parsePortalStatementListing`). The URL is kept because
+    /// the Visa list names its PDFs only by document id: their requests go to
+    /// the same API host (`documents/:id/versions/:version`). All kept in
+    /// memory only, for the statement download while the session is open.
+    @ObservationIgnored private(set) var statementList: (body: String, url: String, token: String)?
 
     func captured(_ body: String, url: String, card: String = "") {
-        if url.lowercased().contains("documents/info/statements") {
-            statementList = (body, card)
+        let lower = url.lowercased()
+        if lower.contains("documents/info/statements") {
+            statementList = (body, url, card)
+        } else if domains.kind == .amazonVisa,
+                  lower.contains("statement") || lower.contains("abrechnung"), !Self.isBookingList(url) {
+            // only a readable statements list replaces the capture (also an
+            // empty one): a later response that merely has "statement" in
+            // its URL must not shove the list aside
+            if parsePortalStatementListing(body: body).readable {
+                statementList = (body, url, card)
+            }
         }
         let path = Self.maskedPath(url)
         seenPaths.append(path)
         if seenPaths.count > 200 { seenPaths.removeFirst(seenPaths.count - 200) }
-        let lower = url.lowercased()
         guard Self.relevantURLWords.contains(where: lower.contains),
               !Self.privateURLWords.contains(where: lower.contains) else { return }
         let key = Self.cardKey(card)
@@ -522,7 +542,11 @@ final class PortalBrowser {
         return list
     }
 
-    /// Types user name and password into the visible login form (empty fields only).
+    /// Types user name and password into the visible login form, each into an empty field
+    /// only: what the user typed stays. The password value never leaves the script (only its
+    /// emptiness is tested, the result is a Bool; `scripts/lint-webview-security.sh`).
+    /// True also when the form already holds another user name (someone else signs in):
+    /// nothing is written and the autofill ends instead of retrying on every poll.
     /// An empty password only fills the user name — two-step logins (e-mail first,
     /// password on the next page) have no visible password field there. Otherwise a
     /// visible password field is required. Runs in an isolated script world, so the
@@ -564,13 +588,16 @@ final class PortalBrowser {
         var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
         var set = function(el, v) {
-          if (el.value) return;
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
           el.dispatchEvent(new Event('input', {bubbles: true}));
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
-        if (u) set(u, user);
-        if (pw && password) set(pw, password);
+        // another user name is typed in: someone else signs in, write nothing and end
+        // the autofill (false would retry this page on every poll)
+        if (u && u.value && u.value !== user) return true;
+        if (u && !u.value) set(u, user);
+        // a password the user already typed stays; only its emptiness is checked
+        if (pw && password && pw.value === '') set(pw, password);
         return pw ? true : !!u;
         """
         return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password,
@@ -687,6 +714,197 @@ final class PortalBrowser {
             out.append(PortalStatement(date: s.date, bytes: data))
         }
         return (card, number, out, items.count, failed)
+    }
+
+    /// The statements tab of the Open-Bank portal (Amazon Visa), live-checked at
+    /// the real portal: the statements list sits under
+    /// `…/amazon/card-settings/card-statements` (logged-in browsing).
+    static let visaStatementsPageJS =
+        "location.href = location.origin + '/amazon/card-settings/card-statements'; return true;"
+
+    /// PDF links of the visible page with a closing date from their row (`href`
+    /// resolved against the document, the date out of the link's or its list
+    /// entry's text). Rows where the closing date stays ambiguous (several
+    /// dates, none marked as period end) come back without a date.
+    static let pdfLinksJS = """
+    (function(){
+      var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      var norm = function(s) {
+        // ISO or DD.MM.YYYY, only a day that exists in its month (the core
+        // checks too; 29.02.2024 passes, 29.02.2025 has no date)
+        var iso = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/), de = s.match(/^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})$/);
+        if (!iso && !de) return '';
+        var y = iso ? iso[1] * 1 : de[3] * 1, mo = (iso ? iso[2] : de[2]) * 1, d = (iso ? iso[3] : de[1]) * 1;
+        var t = new Date(Date.UTC(y, mo - 1, d));
+        if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) return '';
+        return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      };
+      var date = function(t) {
+        var re = /(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4})/g, ms = [], m;
+        while ((m = re.exec(t || ''))) {
+          var d = norm(m[1]);
+          if (d && ms.indexOf(d) < 0) ms.push(d);
+        }
+        if (!ms.length) return '';
+        if (ms.length === 1) return ms[0];
+        // several dates: only an adjacent pair ("A – B") names the period – its
+        // end closes the statement, anything else stays ambiguous
+        var pair = t.match(/(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4})\\s*(?:–|—|-|bis)\\s*(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\.\\d{1,2}\\.\\d{4})/i);
+        return pair ? norm(pair[2]) : '';
+      };
+      var out = [];
+      document.querySelectorAll('a[href]').forEach(function(a) {
+        var href = a.href || '';
+        if (/\\.pdf(\\?|#|$)/i.test(href) === false || !vis(a)) return;
+        var scope = a.closest('tr, li, article') || a;
+        // the row's closing date decides (its text contains the anchor's) —
+        // only a link without a row of its own reads its anchor's date; an
+        // unclear row stays undated, the anchor's date must not overwrite it
+        out.push({ href: href, date: scope !== a ? date(scope.innerText || '') : date(a.innerText || '') });
+      });
+      return JSON.stringify(out);
+    })()
+    """
+
+    /// Amazon Visa (Open Bank): statement PDFs of the signed-in portal. The list is
+    /// schema-agnostic — a captured response whose URL names a statement (its
+    /// entries either carry a PDF link or, as live-checked at the real portal,
+    /// a `documentId` whose PDF answers a second request), or the visible PDF
+    /// links of the page; the closing date decides, the portal's own ids change
+    /// with every login. Statements that cannot be reached (foreign host, no
+    /// date) are failures, like for Amex. `failed` counts them, plus 1 per lost
+    /// remainder when the browser signs out meanwhile or the captured response is
+    /// no readable list; only a verifiably empty statements list is no failure.
+    func visaStatements(known: (String, String) async -> Set<String>?, since: String, limit: Int)
+        async -> (card: String, number: String, statements: [PortalStatement], listed: Int, failed: Int) {
+        guard onPortal, !onLoginPage else { return ("", "", [], 0, 0) }
+        // the captured response parsed: its entries — PDF links, or document
+        // ids whose PDF the download resolves in a second request — whether
+        // it is a statement list at all (also an empty one) and how many
+        // entries carry a PDF without a usable date — anything else (a
+        // balance summary that only carries "statement" in its URL) is
+        // unreadable, a failure
+        func listItems() -> (entries: [(date: String, path: String, ref: PortalStatementRef?)],
+                             readable: Bool, rejected: Int) {
+            guard let list = statementList else { return ([], false, 0) }
+            let parsed = parsePortalStatementListing(body: list.body)
+            var entries = parsed.items.map { (date: $0.date, path: $0.path, ref: nil as PortalStatementRef?) }
+            entries += parsePortalStatementRefs(body: list.body).map { (date: $0.date, path: "", ref: $0) }
+            return (entries, parsed.readable, Int(parsed.rejected))
+        }
+        var parsed = listItems()
+        var items = parsed.entries
+        var readable = parsed.readable
+        var rejected = parsed.rejected
+        if items.isEmpty {
+            // the statements tab loads its list (and its PDF links) — a captured
+            // response that yields no entries (and is no real, empty list) does
+            // not stand in for the tab's own list; even a readable empty list
+            // waits for the tab's own list to arrive
+            _ = try? await webView.callAsyncJavaScript(Self.visaStatementsPageJS, contentWorld: .page)
+            for _ in 0..<40 where items.isEmpty {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                parsed = listItems()
+                items = parsed.entries
+                readable = parsed.readable
+                rejected = parsed.rejected
+            }
+        }
+        if items.isEmpty {
+            let rows = (try? await webView.callAsyncJavaScript(Self.pdfLinksJS, contentWorld: .page) as? String) ?? "[]"
+            items = (try? JSONSerialization.jsonObject(with: Data(rows.utf8)) as? [[String: Any]] ?? [])?
+                .compactMap { r in
+                    guard let path = r["href"] as? String, let date = r["date"] as? String else { return nil }
+                    return (date, path, nil as PortalStatementRef?)
+                } ?? []
+        }
+        // signed out while discovering (redirect to the login): the rest is lost
+        guard onPortal, !onLoginPage else { return ("", "", [], items.count, 1) }
+        // only a verifiably empty statement list counts as "nothing new"; neither
+        // a captured response nor visible PDF links (like Amex, a failure) is one
+        guard readable || !items.isEmpty else { return ("", "", [], 0, 1) }
+        let card = Self.cardKey(statementList?.token ?? "")
+        // visible links without a usable closing date, and captured entries
+        // whose PDF has none (the parser's `rejected`): each a statement that
+        // exists but cannot be identified — a failure, while known or older
+        // ones count fine
+        let undated = items.filter { $0.date.count != 10 }.count + rejected
+        guard let knownDates = await known(card, "") else { return (card, "", [], items.count, 1 + undated) }
+        let wanted = items
+            .filter { $0.date.count == 10 && $0.date >= since && !knownDates.contains($0.date) }
+            .map { (date: $0.date, path: $0.path, ref: $0.ref) }
+            .sorted { $0.date > $1.date }
+        let todo = Array(wanted.prefix(limit))
+        guard !todo.isEmpty, onPortal, !onLoginPage, let keyHost = currentURL?.host else {
+            return (card, "", [], items.count, undated)
+        }
+        let download = """
+        try {
+          if (location.protocol !== 'https:' || location.host !== host) return '';
+          var u = new URL(path, document.baseURI);
+          if (u.host !== host) return '';
+          var r = await fetch(u.toString(), {credentials: 'include'});
+          if (!r.ok) return '';
+          var blob = await r.blob();
+          return await new Promise(function(done) {
+            var f = new FileReader();
+            f.onload = function() { done(String(f.result).split(',')[1] || ''); };
+            f.onerror = function() { done(''); };
+            f.readAsDataURL(blob);
+          });
+        } catch (e) { return ''; }
+        """
+        // Open Bank: the entry names its PDF by document id — the first request
+        // (same API host as the statements list) answers `documentUri`, the
+        // second fetches the PDF itself (a signed URL, another host allowed)
+        let downloadByDocumentId = """
+        try {
+          if (location.protocol !== 'https:') return '';
+          var r = await fetch(api + '/mb-api-documents/v2/documents/' + encodeURIComponent(id) + '/versions/' + encodeURIComponent(ver), {credentials: 'include'});
+          if (!r.ok) return '';
+          var j = await r.json();
+          var uri = j && typeof j.documentUri === 'string' ? j.documentUri : '';
+          if (!uri || uri.indexOf('https:') !== 0) return '';
+          var r2 = await fetch(uri, {credentials: 'include'});
+          if (!r2.ok) return '';
+          var blob = await r2.blob();
+          return await new Promise(function(done) {
+            var f = new FileReader();
+            f.onload = function() { done(String(f.result).split(',')[1] || ''); };
+            f.onerror = function() { done(''); };
+            f.readAsDataURL(blob);
+          });
+        } catch (e) { return ''; }
+        """
+        // the API host the statements list came from — the document requests
+        // go to the same host (live-checked at the real portal)
+        let apiBase = statementList.flatMap { URL(string: $0.url) }.map { api -> String in
+            "\(api.scheme ?? "https")://\(api.host ?? "")"
+        } ?? ""
+        var out: [PortalStatement] = []
+        var failed = undated
+        for (n, s) in todo.enumerated() {
+            guard onPortal, !onLoginPage, currentURL?.host == keyHost else {
+                failed += todo.count - n
+                break
+            }
+            var b64 = ""
+            if let ref = s.ref, !apiBase.isEmpty {
+                b64 = (try? await webView.callAsyncJavaScript(downloadByDocumentId,
+                                                              arguments: ["api": apiBase, "id": ref.documentId,
+                                                                          "ver": ref.version.isEmpty ? "1" : ref.version],
+                                                              contentWorld: .page) as? String) ?? ""
+            } else {
+                b64 = (try? await webView.callAsyncJavaScript(download, arguments: ["path": s.path, "host": keyHost],
+                                                              contentWorld: .page) as? String) ?? ""
+            }
+            guard let data = Data(base64Encoded: b64), data.starts(with: Array("%PDF".utf8)) else {
+                failed += 1
+                continue
+            }
+            out.append(PortalStatement(date: s.date, bytes: data))
+        }
+        return (card, "", out, items.count, failed)
     }
 
     /// Edenred: the transaction history page of the current card, from the card list the
@@ -961,7 +1179,8 @@ struct PortalWebSheet: View {
                     .help("Lässt dieses Fenster offen, damit Sie im Portal frühere Abrechnungszeiträume öffnen können.")
                 }
                 Button { importing = true } label: { Label("CSV- oder PDF-Kontoauszug importieren …", systemImage: "doc.badge.plus") }
-                if connection.connector == .americanExpress, !browser.onLoginPage, browser.onPortal {
+                if connection.connector == .americanExpress || connection.connector == .amazonVisa,
+                   !browser.onLoginPage, browser.onPortal {
                     Button {
                         statementsLoadedByHand = true
                         Task { await loadStatements(all: true) }
@@ -1121,11 +1340,11 @@ struct PortalWebSheet: View {
         return true
     }
 
-    /// Amex: downloads the new statement PDFs while the portal session is open; `all`
-    /// without the two-year limit (button), else the recent ones before closing. A download
-    /// already running is waited for, so closing never cuts it off.
+    /// Amex / Amazon Visa: downloads the new statement PDFs while the portal session is
+    /// open; `all` without the two-year limit (button), else the recent ones before
+    /// closing. A download already running is waited for, so closing never cuts it off.
     private func loadStatements(all: Bool = false) async {
-        guard connection.connector == .americanExpress else { return }
+        guard connection.connector == .americanExpress || connection.connector == .amazonVisa else { return }
         guard !loadingStatements else {
             while loadingStatements {
                 // the sheet went away: stop waiting
@@ -1135,7 +1354,7 @@ struct PortalWebSheet: View {
         }
         loadingStatements = true
         defer { loadingStatements = false }
-        let r = await model.importAmexStatements(connection, browser: browser, all: all)
+        let r = await model.importPortalStatementPDFs(connection, browser: browser, all: all)
         var notes: [String] = []
         if r.added > 0 { notes.append(String(localized: "\(r.added) neue Kontoauszüge")) }
         if r.failed > 0 { notes.append(String(localized: "\(r.failed) Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.")) }
@@ -1149,7 +1368,8 @@ struct PortalWebSheet: View {
     private func requestClose() {
         guard openHolds.isEmpty else { confirmDiscard = true; return }
         // a running statement download finishes first
-        if loadingStatements || (importedCount > 0 && connection.connector == .americanExpress) {
+        let cardPortal = connection.connector == .americanExpress || connection.connector == .amazonVisa
+        if loadingStatements || (importedCount > 0 && cardPortal) {
             Task { await loadStatements(); close() }
         } else {
             close()
@@ -1196,8 +1416,9 @@ struct PortalWebSheet: View {
     }
 
     /// Fills the stored user name and password into the portal's login form. True once
-    /// done, or when nothing is stored; false while the form is not there yet, the vault
-    /// has not answered, or privacy mode / a bug-report capture hides personal data.
+    /// done (filled, or the form holds another user's login), or when nothing is stored;
+    /// false while the form is not there yet, the vault has not answered, or privacy
+    /// mode / a bug-report capture hides personal data.
     private func fillStoredLogin() async -> Bool {
         // privacy mode or a running bug-report capture: nothing is read or typed now;
         // the poll goes on and fills once the redaction ends (a transient state must
@@ -1255,7 +1476,7 @@ struct PortalWebSheet: View {
             return false
         case let .fill(user, password):
             let filled = await browser.fillLogin(user: user, password: password)
-            if filled { AppModel.debugLog("portal: stored login filled in (password \(password.isEmpty ? "no" : "yes"))") }
+            if filled { AppModel.debugLog("portal: stored login autofill finished (password \(password.isEmpty ? "no" : "yes"))") }
             return filled
         }
     }

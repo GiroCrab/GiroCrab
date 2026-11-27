@@ -231,6 +231,35 @@ fn count(path: &str, sql: &str) -> i64 {
 }
 
 #[test]
+fn migration_recovers_the_source_of_a_version_44_loan_payment() {
+    let tmp = Tmp::new("loan-payment-v44");
+    let path = tmp.path("v44.girocrab");
+    std::fs::copy(fixtures().join("vault-v44.girocrab"), &path).unwrap();
+    let vault = Vault::open(path.clone(), KEY.to_vec()).unwrap();
+    let db = raw(&path, &KEY);
+    let (source, loan): (i64, i64) = db
+        .query_row(
+            "SELECT l.source_id, p.account_id FROM offline_loan_payments l
+          JOIN transactions p ON p.id = l.payment_id
+          JOIN transactions s ON s.id = l.source_id
+          WHERE s.counterparty = 'Fixture-Bank'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE transactions SET external_id='canonical-fixture-rate' WHERE id=?1",
+        [source],
+    )
+    .unwrap();
+    assert!(
+        vault
+            .mirror_offline_loan_payment(source, loan, 800)
+            .is_err()
+    );
+}
+
+#[test]
 fn fixture_vaults_open_and_match_a_fresh_vault() {
     let files = fixture_files();
     assert!(!files.is_empty(), "no fixture vaults in tests/fixtures");

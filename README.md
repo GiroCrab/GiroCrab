@@ -58,6 +58,12 @@ zu Ihren Banken per **FinTS 3.0 / HBCI** und **PSD2 (Enable Banking)** – ohne 
 
 GiroCrab ist eine freie, quelloffene Banking-App (GPLv3) für macOS, Linux (Qt 6 / QML) und – derzeit als Beta über TestFlight – für iPhone und iPad. Alle Daten liegen verschlüsselt auf deinem Gerät. GiroCrab ist ein junges Community-Projekt: Die Bankenabdeckung wächst noch (siehe Bank-Tabelle), und PSD2-Zugänge laufen über einen eigenen, kostenlosen Enable-Banking-Zugang.
 
+### ✨ Neu in v0.9.0
+
+- **MoneyMoney-Import stabilisiert:** Eigene Kategorien und Regeln bleiben beim Datenbank-Import erhalten (`#1992`), namenlose Buchungen gleichen Betrags am selben Tag gehen beim CSV-Import nicht mehr verloren (`#1995`).
+- **Debitkarten & FinTS/Konnektoren:** Karten mit Kartenumsatz-Abruf wie *Mastercard direkt* werden als Debitkarte behandelt (`#967`), Festgeld-Konten bei FordMoney sauber erfasst (`#1766`) und Zeitstempel/Fehlerkontext bei der VW Bank verbessert (`#1081`).
+- **Android-Snapshot:** Mandate und Daueraufträge aus dem Rust-Core werden in den Android-Snapshot übernommen (`#1429`).
+
 ### ✨ Neu in v0.8.8
 
 - 🔐 **Enable Banking & iCloud-Schlüsselbund (#962, #1590):** Eigene Enable-Banking-Anwendung pro Bankzugang über den iCloud-Schlüsselbund synchronisieren, Konflikte beim Speichern gezielt auflösen und zuverlässiges Zurücksetzen/Sperren ohne Datenverlust.
@@ -311,7 +317,7 @@ Die Demo enthält fiktive Konten und erfundene Buchungen – keine echten Daten.
 ### 📦 Download (macOS)
 
 Das fertige Disk-Image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) gibt es unter [GitHub Releases](../../releases) – ohne Rust oder Xcode.
-Aktuelle Version: **v0.8.8**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
+Aktuelle Version: **v0.9.0**. DMG öffnen und `GiroCrab.app` nach `/Programme` ziehen – die App ist **von Apple notarisiert** und aktualisiert sich per Sparkle selbst.
 **iPhone / iPad:** [TestFlight-Beta beitreten](https://testflight.apple.com/join/KBmvKVpT).
 
 **Intel-Macs:** Die offiziellen Binaries sind nur für Apple Silicon (`arm64`). Auf Intel-Macs lässt sich GiroCrab mit Swift/Xcode selbst aus dem Quellcode bauen (siehe [Schnellstart](#schnellstart)).
@@ -346,6 +352,12 @@ recognition, savings-plan view, loan repayment progress and direct connections t
 ### Who is GiroCrab for?
 
 GiroCrab is a free, open-source banking app (GPLv3) for macOS, Linux (Qt 6 / QML) and – currently in beta via TestFlight – for iPhone and iPad. All data stays encrypted on your device. GiroCrab is a young community project: bank coverage is still growing (see the bank table), and PSD2 access works through your own free Enable Banking account.
+
+### ✨ What's new in v0.9.0
+
+- **Safer MoneyMoney imports:** Custom categories and rules are preserved during database imports (`#1992`), and unnamed transactions with identical amounts on the same day are no longer dropped during CSV import (`#1995`).
+- **Debit cards & connectors:** Card accounts with statement/card-turnover feeds such as *Mastercard direkt* are handled as debit cards (`#967`), FordMoney fixed-term accounts are supported (`#1766`), and Volkswagen Bank timestamps/error context are refined (`#1081`).
+- **Android snapshot:** Core mandates and standing orders are mapped into the Android snapshot (`#1429`).
 
 ### ✨ What's new in v0.8.8
 
@@ -566,7 +578,7 @@ Adding a bank usually takes under 100 lines – start from
 ### Download (macOS)
 
 The pre-built disk image [`GiroCrab-macOS-arm64.dmg`](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-macOS-arm64.dmg) (Apple Silicon, macOS 14+) is available under
-[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.8.8**.
+[GitHub Releases](../../releases) – no Rust or Xcode required. Current version: **v0.9.0**.
 
 > 🧪 **Windows & Android (Early Alpha):** Experimental preview installers for [Windows (`x86_64-setup.exe`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/girocrab-windows-x86_64-setup.exe) and [Android (`.apk`)](https://github.com/GiroCrab/GiroCrab/releases/latest/download/GiroCrab-Android-alpha.apk) are available for early testing (best tried in demo mode). Open the DMG and drag `GiroCrab.app` to `/Applications` – the app is **notarized by Apple** and updates itself via Sparkle.
 **iPhone / iPad:** [join the TestFlight beta](https://testflight.apple.com/join/KBmvKVpT).

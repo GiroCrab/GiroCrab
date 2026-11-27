@@ -36,7 +36,7 @@ impl Cat {
         // UUID. Preserve custom provenance so its name remains literal.
         merge_category_role(&mut self.builtin_role, o.builtin_role);
         if self.role_ms == 0 && o.role_ms == 0 {
-            // Nobody chose a role (stamp 0): each side holds the default schema step 44 or
+            // Nobody chose a role (stamp 0): each side holds the default schema step 46 or
             // an import derived from where the category was then. It goes with the parent
             // that wins, so a stale snapshot's default never lands on a newer position
             // (`Some` would otherwise beat `None` at the equal stamp). Same order as
@@ -197,7 +197,7 @@ pub(crate) struct RoleEntry<'a> {
 /// The role that counts for each live category (#931): the newest of its own and the
 /// chosen ones (`role_ms > 0`) of categories with an existing redirect (`merged_into`,
 /// followed like the bookings, [`survivor`]), with the tie-break of [`take_newer`]. A role
-/// nobody chose (stamp 0, seeded by schema step 44 or an import) described the duplicate's own
+/// nobody chose (stamp 0, seeded by schema step 46 or an import) described the duplicate's own
 /// place and stays there. Resolved when reading, not written into the survivor on merge: a
 /// written role would stay where an earlier merge put it, and the result would depend on
 /// the order of syncs. Ordinary deletions count for nobody.
@@ -297,7 +297,7 @@ pub(crate) fn merge_categories(
 
     // whatever points at a deleted category follows its survivor or becomes
     // uncategorised (as a deletion does); derived, no stamps. Redirects from
-    // builds before v45, which combined same-named categories by themselves, are
+    // builds before v47, which combined same-named categories by themselves, are
     // followed too (#1833: edge case of mixed versions on three or more devices,
     // see `older_snapshot_redirect_is_followed`).
     for c in state.values().filter(|c| c.deleted_ms.is_some()) {

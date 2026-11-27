@@ -369,7 +369,7 @@ struct DocumentsView: View {
             unseenOnly = false
             typeFilter = nil
             yearFilter = nil
-            return model.dropAnywhere(urls)
+            return model.dropAnywhere(urls, account: model.documentsAccountFilter)
         } isTargeted: { targeted = $0 }
         .fileImporter(isPresented: $exporting, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportAllDocuments(to: url, ids: exportIDs, subfolder: exportSubfolder) }
@@ -382,18 +382,21 @@ struct DocumentsView: View {
                     switch result {
                     case .success(let urls):
                         guard !urls.isEmpty else { return }
-                        // An unmatched upload has no account. Make it visible even when
-                        // the dialog was opened from Postbox or a filtered account.
+                        // An unmatched upload stays on the chosen account (#1967), else it has
+                        // none. Make it visible even when the dialog was opened from Postbox.
+                        let account = model.documentsAccountFilter
                         model.documentsScope = .receipts
-                        model.documentsAccountFilter = nil
-                        model.documentsConnectionFilter = nil
+                        if account == nil || account == AppModel.documentsWithoutAccount {
+                            model.documentsAccountFilter = nil
+                            model.documentsConnectionFilter = nil
+                        }
                         search = ""
                         unlinkedOnly = false
                         // a new receipt is stored as read, with today's type and year: no filter may hide it
                         unseenOnly = false
                         typeFilter = nil
                         yearFilter = nil
-                        model.dropAnywhere(urls)
+                        model.dropAnywhere(urls, account: account)
                     case .failure(let error):
                         guard (error as NSError).code != NSUserCancelledError else { return }
                         model.showError(String(localized: "Beleg konnte nicht importiert werden"), error.localizedDescription)

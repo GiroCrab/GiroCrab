@@ -2819,8 +2819,12 @@ fn unique<T>(mut it: impl Iterator<Item = T>) -> Option<T> {
     it.next().is_none().then_some(first)
 }
 
-/// Replace the starter tree only while no booking uses it and no live category
-/// carries an explicit GiroCrab role choice, including a reset to inherit.
+/// MoneyMoney's tree replaces the starter categories only in a vault without
+/// bookings whose categories and rules are still the untouched starter seed
+/// (#1992): nothing can be assigned to them yet and nothing of the user's is
+/// lost. Any own or edited category or rule keeps the tree.
+/// An explicit GiroCrab role choice on a live category (including a reset to
+/// inherit) keeps the tree too.
 fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bool> {
     if src.categories.order.is_empty() {
         return Ok(false);
@@ -2830,7 +2834,7 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
         [],
         |r| r.get(0),
     )?;
-    if bookings != 0 {
+    if bookings != 0 || !crate::demo::is_untouched_starter(conn)? {
         return Ok(false);
     }
     Ok(!Vault::explicit_roles(conn)?
