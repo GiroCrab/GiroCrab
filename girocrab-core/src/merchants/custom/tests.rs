@@ -678,6 +678,12 @@ fn the_settings_list_shows_the_logo_domain_set_by_hand() {
         ("muster-shop.de", "override")
     );
 
+    // recognition off: no logo domain, like the bookings
+    v.set_merchant_recognition_enabled(false).unwrap();
+    let off = v.merchant_recognition().unwrap();
+    assert_eq!(off.custom[0].merchant.domain_source, "");
+    v.set_merchant_recognition_enabled(true).unwrap();
+
     v.set_merchant_domain("rewe".into(), None).unwrap();
     let rewe = v.merchant_recognition().unwrap();
     let rewe = &rewe

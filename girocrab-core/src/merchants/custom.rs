@@ -324,9 +324,10 @@ impl Vault {
                 crate::insights::load_overrides(&db)?,
             )
         };
-        // the logo domain set by hand (per merchant key), as the bookings show it
+        // the logo domain set by hand (per merchant key), as the bookings show it: not while
+        // the recognition (and with it every logo) is off
         let with_domain = |mut m: MerchantInfo| {
-            if let Some(d) = overrides.get(&m.key) {
+            if let Some(d) = overrides.get(&m.key).filter(|_| enabled) {
                 m.domain = d.clone();
                 m.domain_candidates = vec![d.clone()];
                 m.domain_source = "override".into();

@@ -88,6 +88,8 @@ eingebauten Liste begrenzen Leerzeichen solche Wörter, die Kopie zeigt sie ohne
 - Farbe und Art lassen sich hier noch nicht ändern. Die Logo-Domain zeigt und ändert jede Zeile mit derselben
   Zeile wie der Buchungs-Inspektor (`MerchantDomainRow`): gespeichert wird sie je Händlerschlüssel
   (`merchant_domain_overrides`), sie gilt also für alle Buchungen des Händlers, ob hier, im Buchungs-Inspektor oder bei
-  einem Abo gesetzt. `merchant_recognition()` liefert die Zeilen mit der gesetzten Domain. Der Schlüssel `u:<uuid>`
+  einem Abo gesetzt. `merchant_recognition()` liefert die Zeilen mit der gesetzten Domain (nicht bei ausgeschalteter
+  Erkennung, wie bei den Buchungen). Ein durch eine Kopie ersetzter eingebauter Händler zeigt keine Domain-Zeile: seine
+  Buchungen tragen den Schlüssel der Kopie, deren Zeile die Domain setzt. Der Schlüssel `u:<uuid>`
   eines eigenen Händlers bleibt beim Umbenennen gleich, die Domain also auch.
 - Neue Regeln für das Erkennen gehören in den Kern (`MerchantRules`), damit Mac, iPhone und Linux dieselben Namen zeigen.

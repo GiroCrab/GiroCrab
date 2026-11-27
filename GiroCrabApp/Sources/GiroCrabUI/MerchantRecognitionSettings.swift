@@ -224,8 +224,10 @@ struct MerchantRecognitionSettings: View {
                     .appFont(.caption).foregroundStyle(Theme.secondary).lineLimit(2)
                 if m.replaced {
                     Text("Ersetzt durch eigenen Händler").appFont(.caption2).foregroundStyle(Theme.tertiary)
+                } else {
+                    // a replaced one has no bookings of its own: its copy's row sets the domain
+                    MerchantDomainRow(merchant: m.merchant)
                 }
-                MerchantDomainRow(merchant: m.merchant)
             }
             Spacer()
             Text(m.kind.title)
