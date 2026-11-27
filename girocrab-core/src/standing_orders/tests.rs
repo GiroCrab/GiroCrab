@@ -127,6 +127,15 @@ fn stored_orders_are_replaced_per_account_and_listed() {
     assert_eq!(n, 1);
     let rows = planned_executions(&db, d("2026-11-15"), Some(d("2027-01-31")), &[]).unwrap();
     assert_eq!(rows.len(), 2); // 1 Dec and 1 Jan; the 1 Nov run is already past
+    // The Android mapper links a run to its order by parsing `standing-<order id>-<date>`
+    // (GiroCrabAndroid/.../model/VaultSnapshotMapper.kt). That format is a contract with the
+    // phone: pin it here so a change on this side cannot break the app silently.
+    let order_id: i64 = db
+        .query_row("SELECT id FROM standing_orders", [], |r| r.get(0))
+        .unwrap();
+    for p in &rows {
+        assert_eq!(p.id, format!("standing-{order_id}-{}", p.date));
+    }
     assert!(rows.iter().all(|p| p.amount_cents == -90_000));
     assert_eq!(rows[0].date, "2026-12-01");
     assert_eq!(rows[0].rhythm_unit, "M");

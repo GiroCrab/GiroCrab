@@ -125,7 +125,8 @@ fun expandStandingOrders(
     val byId = orders.associateBy { it.id }
     return runs.mapNotNull { run ->
         val o = byId[run.orderId] ?: return@mapNotNull null
-        if (run.date > end) return@mapNotNull null
+        // A snapshot taken before midnight can still carry yesterday's run: it is history, not planned.
+        if (run.date < today || run.date > end) return@mapNotNull null
         PlannedPayment(
             id = "so-${o.id}-${run.date}",
             accountId = o.accountId,

@@ -213,13 +213,13 @@ data class StandingOrder(
 }
 
 /**
- * What the card may claim when the core reported no run for this order (#1429, 3.2b): ended once the
- * bank's last reported execution is today or earlier. An open order without a run in the window is
- * not ended — it just has no execution inside those days.
+ * What the card may claim when the core reported no run for this order (#1429, 3.2b): ended only
+ * once the bank's last reported execution lies strictly before today. An order that ran today, or an
+ * open one without a run in the window, is not called ended — the card says the window is empty.
  */
 fun StandingOrder.noNextRunNote(today: LocalDate): String? = when {
     nextDate != null -> null
-    lastDate != null && !lastDate.isAfter(today) -> "keine (beendet)"
+    lastDate != null && lastDate.isBefore(today) -> "keine (beendet)"
     else -> "kein Termin im Zeitfenster"
 }
 
