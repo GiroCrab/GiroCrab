@@ -47,6 +47,14 @@ fn test_ctx() -> ConnectContext {
 fn mock_bank(
     replies: Vec<&'static str>,
 ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>) {
+    mock_bank_with(replies, |x| x.id().to_string())
+}
+
+/// `mock_bank` that records each segment as `label` names it (e.g. with its version).
+fn mock_bank_with(
+    replies: Vec<&'static str>,
+    label: fn(&syntax::Segment) -> String,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>) {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!(
@@ -82,7 +90,7 @@ fn mock_bank(
                 .decode(body.trim())
                 .unwrap_or_default();
             let ids = syntax::parse_response(&raw)
-                .map(|v| v.iter().map(|x| x.id().to_string()).collect())
+                .map(|v| v.iter().map(label).collect())
                 .unwrap_or_default();
             seen2.lock().unwrap().push(ids);
             let reply = replies[n.min(replies.len() - 1)];
@@ -98,8 +106,8 @@ fn mock_bank(
 }
 
 const REJECT_9010: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9800::Der Dialog wurde abgebrochen.'HIRMS:3:2:3+9010::Ungültiger Signaturaufbau: Fehler im Segmentaufbau.'";
-/// Sparkasse's answer to the login's HKTAN (#1641).
-const REJECT_9110: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9050::Die Nachricht enthält Fehler.+9800::Dialog abgebrochen+9110::Falsche Segmentzusammenstellung (HKTAN, segvers=7, option=913)'";
+/// Sparkasse's answer to the login's HKTAN (#1641): the segment is named in the parameters.
+const REJECT_9110: &str = "HNHBK:1:3+000000000000+300+0+1'HIRMG:2:2+9050::Die Nachricht enthält Fehler.+9800::Dialog abgebrochen+9110::Falsche Segmentzusammenstellung:HKTAN:segvers=7:option=913'";
 const ACCEPT: &str =
     "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'";
 /// Booked balance 1234,56 EUR (HKSAL).
@@ -588,6 +596,97 @@ fn chiptan_functions_prefer_qr_then_manual() {
         .map(|(code, _)| code)
         .collect();
     assert_eq!(codes, ["910", "911", "912"]);
+}
+
+/// Sparkasse Münsterland Ost's TAN parameters (#1641): the chipTAN functions only in HITANS v6,
+/// v7 describes nothing but pushTAN 2.0 (923), which this user is not allowed.
+const SPARKASSE_HITANS: &str = "HITANS:20:6:4+1+1+1+J:N:0:910:2:HHD1.3.0:::chipTAN manuell:6:1:TAN-Nummer:3:J:2:N:0:0:N:N:00:0:N:1:911:2:HHD1.3.2OPT:HHDOPT1:1.3.2:chipTAN optisch:6:1:TAN-Nummer:3:J:2:N:0:0:N:N:00:0:N:1:912:2:HHD1.3.2USB:HHDUSB1:1.3.2:chipTAN-USB:6:1:TAN-Nummer:3:J:2:N:0:0:N:N:00:0:N:1:913:2:Q1S:Secoder_UC:1.2.0:chipTAN-QR:6:1:TAN-Nummer:3:J:2:N:0:0:N:N:00:0:N:1'HITANS:21:7:4+1+1+1+N:N:0:923:2:pushTAN-cas:Decoupled::pushTAN 2.0:::Aufforderung:2048:J:2:N:0:0:N:N:00:2:N:5:180:1:1:J:J'HIRMS:22:2:4+3920::Zugelassene Zwei-Schritt-Verfahren:913:912:911:910'";
+
+#[test]
+fn hktan_goes_out_in_the_hitans_version_that_describes_the_function() {
+    let mut c = FinTsConnector::new("40050150");
+    c.learn_bpd(&reply(SPARKASSE_HITANS.as_bytes()));
+    assert_eq!(c.st.sec_func, "913");
+    assert_eq!(c.version("HKTAN"), 7, "the bank's highest version");
+    // login, TAN and app approval alike: v7 with 913 is refused with 9110
+    for seg in [
+        c.hktan_process4(5, "HKIDN"),
+        c.hktan_with_tan(3, "task"),
+        c.hktan_status(3, "task"),
+    ] {
+        let text = String::from_utf8_lossy(&seg);
+        let head: Vec<&str> = text.split('+').next().unwrap().split(':').collect();
+        assert_eq!((head[0], head[2]), ("HKTAN", "6"), "{text}");
+    }
+}
+
+/// `mock_bank` label: segment with its version.
+fn id_and_version(s: &syntax::Segment) -> String {
+    format!("{}:{}", s.id(), s.version())
+}
+
+#[tokio::test]
+async fn dialog_init_9110_retries_the_function_with_the_other_hktan_version_and_persists() {
+    let (url, seen) = mock_bank_with(vec![REJECT_9110, ACCEPT], id_and_version);
+    // saved before the HITANS versions were kept: HKTAN went out in the bank's highest one
+    let mut state =
+        state_with_functions("913", &[("913", "chipTAN-QR"), ("911", "chipTAN optisch")]);
+    state["versions"] = serde_json::json!({"HKTAN": [6, 7]});
+    let mut c = two_step_connector(&url, state);
+    assert!(matches!(
+        c.open_dialog(&test_ctx()).await.unwrap(),
+        Phase::Ready
+    ));
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[0].contains(&"HKTAN:7".to_string()), "{seen:?}");
+        assert!(seen[1].contains(&"HKTAN:6".to_string()), "{seen:?}");
+    }
+    assert_eq!(c.sec(), "913", "the same function");
+    assert!(!c.st.init_without_hktan);
+
+    let persisted = serde_json::to_value(&c.st).unwrap();
+    let (url2, seen2) = mock_bank_with(vec![ACCEPT], id_and_version);
+    let mut c2 = two_step_connector(&url2, persisted);
+    c2.open_dialog(&test_ctx()).await.unwrap();
+    let seen2 = seen2.lock().unwrap();
+    assert_eq!(seen2.len(), 1);
+    assert!(seen2[0].contains(&"HKTAN:6".to_string()), "{seen2:?}");
+}
+
+#[tokio::test]
+async fn dialog_init_9110_with_a_known_hktan_version_goes_on_to_another_function() {
+    let (url, seen) = mock_bank_with(vec![REJECT_9110, ACCEPT], id_and_version);
+    let mut state =
+        state_with_functions("913", &[("913", "chipTAN-QR"), ("911", "chipTAN optisch")]);
+    state["versions"] = serde_json::json!({"HKTAN": [6, 7]});
+    state["tan_function_versions"] = serde_json::json!({"913": 6, "911": 6});
+    let mut c = two_step_connector(&url, state);
+    assert!(matches!(
+        c.open_dialog(&test_ctx()).await.unwrap(),
+        Phase::Ready
+    ));
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(
+        seen.iter().all(|s| s.contains(&"HKTAN:6".to_string())),
+        "{seen:?}"
+    );
+    assert_eq!(c.sec(), "911");
+}
+
+#[tokio::test]
+async fn failed_hktan_version_retry_is_not_remembered() {
+    let (url, seen) = mock_bank(vec![REJECT_9110]);
+    let mut state = state_with_functions("913", &[("913", "chipTAN-QR")]);
+    state["versions"] = serde_json::json!({"HKTAN": [6, 7]});
+    let mut c = two_step_connector(&url, state);
+    assert!(c.open_dialog(&test_ctx()).await.is_err());
+    // v7, v6, then without HKTAN
+    assert_eq!(seen.lock().unwrap().len(), 3);
+    assert!(c.st.tan_function_versions.is_empty());
+    assert!(!c.st.init_without_hktan);
 }
 
 /// biw Bank (#1876): 906 iTAN-Card has process variant 1 (no HKTAN process 4), 907 variant 2.

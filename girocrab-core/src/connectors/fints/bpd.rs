@@ -181,14 +181,19 @@ fn trace_tan_parameters(reply: &BankReply) {
     }
 }
 
+/// Versions of `tx` this client implements.
+fn implemented(tx: &str) -> &'static [u32] {
+    IMPLEMENTED
+        .iter()
+        .find(|(k, _)| *k == tx)
+        .map(|(_, v)| *v)
+        .unwrap_or(&[])
+}
+
 impl FinTsConnector {
     /// Highest version of `tx` that both the bank (BPD) and this client support.
     fn negotiated(&self, tx: &str) -> Option<u32> {
-        let ours = IMPLEMENTED
-            .iter()
-            .find(|(k, _)| *k == tx)
-            .map(|(_, v)| *v)
-            .unwrap_or(&[]);
+        let ours = implemented(tx);
         self.st
             .versions
             .get(tx)
@@ -232,6 +237,35 @@ impl FinTsConnector {
 
     pub(super) fn bank_supports(&self, tx: &str) -> bool {
         self.negotiated(tx).is_some()
+    }
+
+    /// HKTAN version for the chosen two-step function: the HITANS version that describes it,
+    /// else the highest both sides support (#1641).
+    pub(super) fn hktan_version(&self) -> u32 {
+        self.st
+            .tan_function_versions
+            .get(&self.st.sec_func)
+            .copied()
+            .unwrap_or_else(|| self.version("HKTAN"))
+    }
+
+    /// HKTAN versions both sides support other than the one in use, highest first.
+    pub(super) fn other_hktan_versions(&self) -> Vec<u32> {
+        let current = self.hktan_version();
+        let ours = implemented("HKTAN");
+        let mut out: Vec<u32> = self
+            .st
+            .versions
+            .get("HKTAN")
+            .map(|vs| {
+                vs.iter()
+                    .copied()
+                    .filter(|v| *v != current && ours.contains(v))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort_unstable_by(|a, b| b.cmp(a));
+        out
     }
 
     /// The bank's two-step functions other than `refused` with their names, best first
@@ -497,6 +531,11 @@ impl FinTsConnector {
                 self.st.system_id = id.to_string();
             }
         }
+        // The HITANS version that describes each two-step function (#1641).
+        let described = Self::tan_function_versions(reply);
+        if !described.is_empty() {
+            self.st.tan_function_versions = described;
+        }
         // Allowed TAN methods for this user.
         if let Some(c) = reply.code("3920") {
             let allowed: Vec<String> =
@@ -561,6 +600,27 @@ impl FinTsConnector {
                 for i in 0..t.len().saturating_sub(1) {
                     if t[i].len() == 3 && t[i].starts_with('9') && t[i + 1] == "1" {
                         out.insert(t[i].to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// code -> the highest HITANS version describing it, among the HKTAN versions we build.
+    fn tan_function_versions(reply: &BankReply) -> HashMap<String, u32> {
+        let ours = implemented("HKTAN");
+        let mut out: HashMap<String, u32> = HashMap::new();
+        for s in reply.all("HITANS").filter(|s| ours.contains(&s.version())) {
+            if let Some(el) = s.elements.get(4) {
+                let t: Vec<&str> = el.iter().map(|v| v.text()).collect();
+                for i in 0..t.len().saturating_sub(1) {
+                    if t[i].len() == 3
+                        && t[i].starts_with('9')
+                        && (t[i + 1] == "1" || t[i + 1] == "2")
+                    {
+                        let v = out.entry(t[i].to_string()).or_default();
+                        *v = (*v).max(s.version());
                     }
                 }
             }
