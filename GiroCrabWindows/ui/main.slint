@@ -1358,9 +1358,10 @@ export component MainWindow inherits Window {
             Button { text: first-run ? "Tresor anlegen" : "Entsperren"; primary: true; clicked => { root.unlock(); } }
             Button { text: "Demo-Modus"; clicked => { root.demo(); } }
         }
-        // What this client actually does, said on the locked window. The macOS client says the same
-        // on an empty vault (Onboarding.swift › EmptyVaultCard); here as four columns, because the
-        // locked window has no vault to hang buttons on.
+        // What this client actually does, said on the locked window. The macOS client has no
+        // counterpart: its empty-vault card (Onboarding.swift › EmptyVaultCard) offers setup steps
+        // and buttons, not a list of features. So this overview is a Windows addition — as four
+        // columns, because the locked window has no vault to hang buttons on.
         Rectangle { width: 640px; height: 1px; background: Theme.border; }
         Text { text: "Was dieser Client kann"; font-size: 13px; font-weight: 600; color: Theme.text; horizontal-alignment: center; }
         Text {
