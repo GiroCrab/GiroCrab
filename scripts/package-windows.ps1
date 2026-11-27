@@ -48,11 +48,15 @@ if ($env:GITHUB_SHA -and $env:GITHUB_SHA.Length -ge 8) {
     $commit = (git rev-parse --short=8 HEAD 2>$null)
 }
 if (-not $commit) { $commit = "unbekannt" }
+# Bei pull_request ist GITHUB_SHA der Zusammenführungs-Commit (refs/pull/N/merge); die Referenz
+# macht ihn auffindbar, statt eine Nummer zu nennen, die in keinem Zweig steht.
+$ref = if ($env:GITHUB_REF) { $env:GITHUB_REF } else { "lokal" }
 @(
     "GiroCrab für Windows"
     ""
     "Version: $VersionLabel"
     "Commit:  $commit"
+    "Ref:     $ref"
     "Gebaut:  $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm")) UTC"
     ""
     "Protokoll: %LOCALAPPDATA%\GiroCrab\girocrab.log"
