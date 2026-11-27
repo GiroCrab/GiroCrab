@@ -262,11 +262,25 @@ Rectangle {
                                  Accessible.name: qsTr("Nicht in der Gesamtsumme")
                                  HoverHandler { id: eyeHover }
                                  ToolTip.visible: eyeHover.hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Nicht in der Gesamtsumme") }
-                        // same size as in SectionHeader (#602)
-                        Text { text: Fmt.money(g.balance_cents); font.pixelSize: Theme.caption; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
-                               opacity: g.in_total ? 1 : 0.6
-                               color: selected ? Theme.text : (g.balance_cents < 0 ? Theme.negative : Theme.secondary)
-                               Sensitive { amounts: true } }
+                        // one sum per currency, EUR last, like „Alle Konten“ (#1844);
+                        // stacked, so several currencies never widen the row
+                        ColumnLayout {
+                            spacing: 1
+                            Repeater {
+                                model: g.balances && g.balances.length > 0
+                                       ? g.balances : [{ currency: "EUR", cents: g.balance_cents }]
+                                // same size as in SectionHeader (#602)
+                                delegate: Text {
+                                    required property var modelData
+                                    Layout.alignment: Qt.AlignRight
+                                    text: Fmt.money(modelData.cents, modelData.currency)
+                                    font.pixelSize: Theme.caption; font.weight: Font.DemiBold; font.features: { "tnum": 1 }
+                                    opacity: g.in_total ? 1 : 0.6
+                                    color: selected ? Theme.text : (modelData.cents < 0 ? Theme.negative : Theme.secondary)
+                                    Sensitive { amounts: true }
+                                }
+                            }
+                        }
                     }
                     // an account goes to the top of this group; a group above it
                     // (upper half) or into it as a subgroup (lower half)

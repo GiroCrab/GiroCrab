@@ -449,16 +449,31 @@ fn build_with(
             };
             let is_folded = head.fold == 2;
             // group figures are overall money sums (#337): only effectively
-            // included accounts count; every account row stays visible
-            let eur: Vec<i64> = members
+            // included accounts count; every account row stays visible.
+            // One sum per currency, other currencies alphabetically, EUR last,
+            // like the core's group balances (#1844)
+            let mut sums: std::collections::BTreeMap<String, i64> =
+                std::collections::BTreeMap::new();
+            for a in members
                 .iter()
-                .filter(|a| a.currency == "EUR" && a.in_total)
-                .map(|a| a.balance_cents)
+                .filter(|a| a.in_total && !a.currency.is_empty())
+            {
+                *sums.entry(a.currency.clone()).or_insert(0) += a.balance_cents;
+            }
+            let eur = sums.remove("EUR");
+            let totals: Vec<(String, i64)> = sums
+                .into_iter()
+                .chain(eur.map(|cents| ("EUR".to_string(), cents)))
                 .collect();
-            if !eur.is_empty() {
-                let sum: i64 = eur.iter().sum();
-                head.amount = hide(money(sum, "EUR"));
-                head.negative = sum < 0 && !input.privacy;
+            if !totals.is_empty() {
+                let text = totals
+                    .iter()
+                    .map(|(currency, cents)| money(*cents, currency))
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                head.amount = hide(text);
+                // red only when every sum is negative, never in privacy mode
+                head.negative = totals.iter().all(|(_, cents)| *cents < 0) && !input.privacy;
             }
             head.icon = group_icon(label.trim()).into();
             rows.push(head);
