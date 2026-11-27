@@ -11,6 +11,8 @@ struct PinSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.reportRedaction) private var redaction
     @Environment(\.dismiss) private var dismiss
+    /// Shown inside the sync window: dismiss() would aim at that window.
+    @Environment(\.inSyncRunWindow) private var inSyncRunWindow
     let connection: BankConnection
     @State private var login = ""
     @State private var secret = ""
@@ -75,7 +77,7 @@ struct PinSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
                         saveLoginIfChanged()
-                        dismiss()
+                        if !inSyncRunWindow { dismiss() }
                         model.pendingLogin = nil
                         model.webLoginConnection = currentConnection
                     } label: {
@@ -92,7 +94,7 @@ struct PinSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
                         saveLoginIfChanged()
-                        dismiss()
+                        if !inSyncRunWindow { dismiss() }
                         model.pendingLogin = nil
                         model.webLoginConnection = currentConnection
                     } label: {

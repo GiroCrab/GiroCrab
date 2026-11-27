@@ -72,7 +72,7 @@ final class BankingPolicySyncTests: XCTestCase {
         return logins.indices.filter { i in keys.filter { $0 == keys[i] }.count == 1 }
     }
 
-    func testLockedLoginIsLeftOutAndNamedAtTheEnd() async throws {
+    func testLockedLoginIsLeftOutAndShownAsSkipped() async throws {
         let logins = batch
         let candidates = uniquelyKeyed(logins).filter { $0 > 0 }
         try XCTSkipIf(logins.count < 3 || candidates.isEmpty, "demo vault needs three logins, one with its own key")
@@ -83,14 +83,15 @@ final class BankingPolicySyncTests: XCTestCase {
 
         model.requestSyncAll()
         let rest = logins.enumerated().filter { $0.offset != lockedIndex }.map(\.element)
-        for (i, c) in rest.enumerated() {
+        for c in rest {
             try await waitForChallenge(of: c)
-            XCTAssertEqual(model.syncBatchProgress?.current, i + 1)
-            XCTAssertEqual(model.syncBatchProgress?.total, rest.count)
+            // the sync window lists the locked login too, already skipped
+            XCTAssertEqual(model.syncBatchProgress?.total, logins.count)
+            XCTAssertEqual(model.syncRun?.status(of: locked.id), .skipped(reason: AppModel.skippedByLock))
             model.skipCurrentSync()
         }
-        try await waitUntil("closing notice") { model.toast?.contains("Sicherheitssperre") == true }
-        XCTAssertTrue(model.toast?.contains("\(locked.displayName) (Sicherheitssperre)") == true, model.toast ?? "")
+        try await waitUntil("run over") { model.syncRun?.isFinished == true }
+        XCTAssertEqual(model.syncRun?.status(of: locked.id), .skipped(reason: AppModel.skippedByLock))
         XCTAssertNil(model.syncBatchProgress)
         XCTAssertNil(model.errorMessage)
     }
@@ -120,13 +121,14 @@ final class BankingPolicySyncTests: XCTestCase {
             try await waitForChallenge(of: c)
             model.skipCurrentSync()
         }
-        try await waitUntil("closing notice") { model.toast?.contains("Sicherheitssperre") == true }
-        XCTAssertTrue(model.toast?.contains("\(locked.displayName) (Sicherheitssperre)") == true, model.toast ?? "")
+        try await waitUntil("run over") { model.syncRun?.isFinished == true }
+        XCTAssertEqual(model.syncRun?.status(of: locked.id), .skipped(reason: AppModel.skippedByLock))
         XCTAssertNil(model.syncBatchProgress)
         XCTAssertFalse(model.canSkipInSyncBatch)
     }
 
-    func testFullLockDuringTheBatchEndsItWithAnError() async throws {
+    /// A lock of all logins mid-run skips every login still to come; the window says why.
+    func testFullLockDuringTheBatchSkipsTheRest() async throws {
         let logins = batch
         try XCTSkipIf(logins.count < 3, "demo vault needs three logins")
         model.requestSyncAll()
@@ -134,8 +136,10 @@ final class BankingPolicySyncTests: XCTestCase {
         try await publish(blocking: [])
         model.skipCurrentSync()
 
-        try await waitUntil("lock error") { model.errorMessage != nil }
-        XCTAssertEqual(model.errorTitle, String(localized: "Bankverbindungen gesperrt"))
+        try await waitUntil("run over") { model.syncRun?.isFinished == true }
+        XCTAssertNil(model.errorMessage)
+        let reason = String(localized: "Übersprungen: \(String(localized: "Bankverbindungen gesperrt"))")
+        for c in logins.dropFirst() { XCTAssertEqual(model.syncRun?.status(of: c.id), .skipped(reason: reason)) }
         XCTAssertNil(model.syncBatchProgress)
         XCTAssertFalse(model.canSkipInSyncBatch)
         try await Task.sleep(for: .milliseconds(300))
