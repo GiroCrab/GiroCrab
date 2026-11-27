@@ -142,6 +142,9 @@ struct Entry {
     remittance: Vec<String>,
     debtor: String,
     creditor: String,
+    /// `RltdPties/UltmtDbtr/…/Nm` and `UltmtCdtr` (abweichender Auftraggeber / Zahlungsempfänger).
+    ultimate_debtor: String,
+    ultimate_creditor: String,
     debtor_iban: String,
     creditor_iban: String,
     /// `TxDtls/Purp/Cd` (SEPA purpose code, e.g. SALA).
@@ -361,7 +364,15 @@ fn parse_doc(
                 } else if has(&stack, "RltdPties")
                     && stack.last().map(|s| s == "Nm").unwrap_or(false)
                 {
-                    if has(&stack, "Dbtr") && e.debtor.is_empty() {
+                    if has(&stack, "UltmtDbtr") {
+                        if e.ultimate_debtor.is_empty() {
+                            e.ultimate_debtor = text;
+                        }
+                    } else if has(&stack, "UltmtCdtr") {
+                        if e.ultimate_creditor.is_empty() {
+                            e.ultimate_creditor = text;
+                        }
+                    } else if has(&stack, "Dbtr") && e.debtor.is_empty() {
                         e.debtor = text;
                     } else if has(&stack, "Cdtr") && e.creditor.is_empty() {
                         e.creditor = text;
@@ -395,6 +406,16 @@ fn parse_doc(
         } else {
             (e.debtor.clone(), e.debtor_iban.clone())
         };
+        // The ultimate party (the merchant behind a processing bank) is shown and
+        // matched instead of `Cdtr`/`Dbtr`. It is set after the id is derived, so
+        // ids of bookings synced before stay the same. The delivered name stays
+        // in `original_counterparty`.
+        let ultimate = if debit {
+            e.ultimate_creditor.trim()
+        } else {
+            e.ultimate_debtor.trim()
+        }
+        .to_string();
         let ustrd = e.remittance.join(" ");
         let mut purpose = String::new();
         if !e.end_to_end.is_empty() && e.end_to_end != "NOTPROVIDED" {
@@ -461,6 +482,9 @@ fn parse_doc(
                 t.booking_date =
                     card_timestamp_date(&t.purpose).unwrap_or_else(crate::connectors::today);
             }
+            if !ultimate.is_empty() {
+                t.original_counterparty = std::mem::replace(&mut t.counterparty, ultimate);
+            }
             report.pending.push(t);
             continue;
         }
@@ -479,6 +503,9 @@ fn parse_doc(
             t.content_id(*n)
         };
         *n += 1;
+        if !ultimate.is_empty() {
+            t.original_counterparty = std::mem::replace(&mut t.counterparty, ultimate);
+        }
         out.push(t);
     }
     (out, report)
@@ -637,6 +664,32 @@ mod tests {
         assert_eq!(txs[0].gvc, "106");
         assert_eq!(txs[0].purpose_code, "");
         assert_eq!(txs[1].purpose_code, "SALA");
+    }
+
+    #[test]
+    fn ultimate_party_replaces_the_counterparty_by_direction() {
+        let entry = |ind: &str, parties: &str| {
+            format!(
+                r#"<Document><BkToCstmrAcctRpt><Rpt><Ntry><Amt Ccy="EUR">9.99</Amt><CdtDbtInd>{ind}</CdtDbtInd><Sts>BOOK</Sts>
+<BookgDt><Dt>2026-11-07</Dt></BookgDt><NtryDtls><TxDtls><RltdPties>{parties}</RltdPties></TxDtls></NtryDtls></Ntry></Rpt></BkToCstmrAcctRpt></Document>"#
+            )
+        };
+        let debit = "<Cdtr><Pty><Nm>Beispielbank AG</Nm></Pty></Cdtr>\
+<UltmtCdtr><Pty><Nm>Muster Versand GmbH</Nm></Pty></UltmtCdtr>";
+        let credit =
+            "<Dbtr><Nm>Beispielbank AG</Nm></Dbtr><UltmtDbtr><Nm>Muster Shop</Nm></UltmtDbtr>";
+        let cp = |xml: String| parse(&xml, "acc").0[0].counterparty.clone();
+        assert_eq!(cp(entry("DBIT", debit)), "Muster Versand GmbH");
+        assert_eq!(cp(entry("CRDT", credit)), "Muster Shop");
+        // the other direction's ultimate party is ignored
+        assert_eq!(cp(entry("CRDT", debit)), "");
+        // an empty ultimate party falls back to Cdtr
+        let blank = "<Cdtr><Nm>Beispielbank AG</Nm></Cdtr><UltmtCdtr><Nm> </Nm></UltmtCdtr>";
+        assert_eq!(cp(entry("DBIT", blank)), "Beispielbank AG");
+        // ids of already synced bookings stay the same
+        let id = |xml: String| parse(&xml, "acc").0[0].external_id.clone();
+        let bare = "<Cdtr><Pty><Nm>Beispielbank AG</Nm></Pty></Cdtr>";
+        assert_eq!(id(entry("DBIT", debit)), id(entry("DBIT", bare)));
     }
 
     #[test]

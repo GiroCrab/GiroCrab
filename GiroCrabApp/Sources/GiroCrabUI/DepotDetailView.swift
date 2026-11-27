@@ -106,6 +106,7 @@ struct DepotDetailView: View {
     @State private var compositionFilter: Set<String>?
     @State private var editingClassification: ClassificationEditRequest?
     @State private var historyRequest: PositionHistoryRequest?
+    @State private var purchaseRequest: PurchasePriceRequest?
     @State private var demoSheetShown = false
     @State private var csvDocument = CSVFileDocument(data: Data())
     @State private var csvFilename = "GiroCrab-Depot"
@@ -146,6 +147,9 @@ struct DepotDetailView: View {
         )
         .capturableSheet(item: $editingClassification) { AssetClassificationSheet(request: $0).environment(model) }
         .capturableSheet(item: $historyRequest) { PositionHistorySheet(request: $0).environment(model) }
+        .capturableSheet(item: $purchaseRequest) { PurchasePriceSheet(request: $0) { reloadToken += 1 }.environment(model) }
+        // the request names a position of this vault: another vault (demo / own) closes the sheet
+        .onChange(of: model.vaultRevision) { purchaseRequest = nil }
         .task(id: loadKey) { await reload() }
         .onChange(of: account.id) { activityYear = nil; planPage = 0 }
         // the year menu offers only the years of the period: a new period drops a year it no longer holds
@@ -433,6 +437,11 @@ extension DepotDetailView {
                                       guard let v = data.valuePosition(p) else { return }
                                       historyRequest = PositionHistoryRequest(accountId: account.id, position: v)
                                   })
+                    .purchasePrice { p in
+                        purchaseRequest = PurchasePriceRequest(accountId: account.id, isin: p.holding.isin, wkn: p.holding.wkn,
+                                                               name: p.displayName, currency: currency, basis: p.basis,
+                                                               currentCents: p.holding.purchasePriceCents)
+                    }
             }
         }
     }

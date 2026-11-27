@@ -151,6 +151,8 @@ extension AppModel {
         vault != nil && !isDemo && syncingConnectionID == nil && activeChallenge == nil
             && !transferBusy && pendingLogin == nil && webLoginConnection == nil
             && setupRequest == nil && syncQueue.isEmpty
+            // a sync asked for in the closing Einstellungen sheet comes first (#1831)
+            && afterSettingsDismiss == nil
     }
 
     private func isScheduledSyncDue(_ connection: BankConnection, now: Date) -> Bool {

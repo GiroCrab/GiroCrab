@@ -11,6 +11,26 @@ extension View {
         #endif
     }
 
+    /// A checkbox on the Mac; iOS has none and keeps its switch.
+    @ViewBuilder
+    func macCheckbox() -> some View {
+        #if os(macOS)
+        toggleStyle(.checkbox)
+        #else
+        self
+        #endif
+    }
+
+    /// A link on the Mac; iOS has no link style and shows a borderless button (a destructive one in red).
+    @ViewBuilder
+    func macLinkButton() -> some View {
+        #if os(macOS)
+        buttonStyle(.link)
+        #else
+        buttonStyle(.borderless)
+        #endif
+    }
+
     /// Fixed/min sizes are for macOS windows & sheets only; on iOS the sheet fills the screen.
     /// They grow with the text size (#343), like the text in them.
     @ViewBuilder

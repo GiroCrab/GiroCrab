@@ -55,7 +55,8 @@ extension AppModel {
         switch presentation {
         case .securities: if let tab = DepotTab.allCases[safe: index] { depotTab = tab }
         case .tangible: break
-        case .bookings: scope = newScope
+        // like the pickers: a chosen category ends with the scope change
+        case .bookings: selectScope(newScope)
         }
     }
 }
