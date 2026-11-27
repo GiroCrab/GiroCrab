@@ -191,7 +191,9 @@ struct SidebarView: View {
                         HStack(spacing: DisclosureChevron.gap) {
                             SidebarLeadingSlot()
                             HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
-                                Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                                Image(systemName: "questionmark.folder")
+                                    .foregroundStyle(Theme.warning)
+                                    .modifier(SidebarIconColumn())
                                 Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
                                 Spacer()
                             }
@@ -775,7 +777,7 @@ struct SectionHeader: View {
             Image(systemName: sfSymbol)
                 .appFont(.body, weight: .semibold)
                 .foregroundStyle(.secondary)
-                .frame(width: 20)
+                .modifier(SidebarIconColumn())
                 .accessibilityHidden(true)
             Text(name)
                 .sensitive(nameRedaction)
@@ -794,17 +796,23 @@ struct SectionHeader: View {
     }
 }
 
-/// Expands to the symbol’s intrinsic width when Dynamic Type outgrows the icon column.
 struct SidebarNavigationIcon: View {
-    @Environment(\.textScale) private var textScale
     let systemName: String
 
     var body: some View {
         Image(systemName: systemName)
             .foregroundStyle(Theme.secondary)
-            .fixedSize()
-            .frame(minWidth: 20 * textScale)
+            .modifier(SidebarIconColumn())
             .accessibilityHidden(true)
+    }
+}
+
+/// Reserves at least the symbol’s intrinsic width when text scaling outgrows the column.
+struct SidebarIconColumn: ViewModifier {
+    @Environment(\.textScale) private var textScale
+
+    func body(content: Content) -> some View {
+        content.fixedSize().frame(minWidth: 20 * textScale)
     }
 }
 
@@ -848,10 +856,16 @@ struct AccountRow: View {
                 if usesLargeText {
                     VStack(alignment: .leading, spacing: 2) {
                         accountName
-                        HStack(spacing: 4) {
-                            indicators(line2)
-                            Spacer(minLength: 0)
-                            accountBalance
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 4) {
+                                indicators(line2)
+                                Spacer(minLength: 0)
+                                accountBalance
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 4) { indicators(line2) }
+                                accountBalance.frame(maxWidth: .infinity, alignment: .trailing)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1054,7 +1068,7 @@ struct CategoryRow: View {
         HStack(spacing: Self.symbolGap) {
             Image(systemName: category.sfSymbol)
                 .foregroundStyle(Color.readable(hex: category.colorHex).opacity(0.85))
-                .frame(width: 20)
+                .modifier(SidebarIconColumn())
             Text(category.name).lineLimit(1).appDefaultFont().sensitive(.labels)
             Spacer(minLength: 4)
             if category.totalCents != 0 || !other.isEmpty {
