@@ -473,10 +473,14 @@ private fun PlannedTab(state: AppUiState, today: LocalDate, masked: Boolean) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(if (masked) "••••••" else p.counterparty, fontWeight = FontWeight.Medium, maxLines = 1)
-                            Text(
-                                if (masked) accName else listOf(p.purpose, accName).filter { it.isNotBlank() }.joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                            )
+                            // Purpose and account name are data like the counterparty: while the app is
+                            // masked the line disappears entirely, as in the standing-order card.
+                            if (!masked) {
+                                Text(
+                                    listOf(p.purpose, accName).filter { it.isNotBlank() }.joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                                )
+                            }
                             Text(p.kindText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                         }
                         Column(horizontalAlignment = Alignment.End) {
