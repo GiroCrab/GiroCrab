@@ -230,7 +230,9 @@ object DemoData {
                     name = "Autokredit",
                     originalCents = 1_800_000,
                     anchorDate = today.minusMonths(6).withDayOfMonth(1),
-                    anchorBalanceCents = 1_174_000,
+                    // Stand am Anker minus Tilgung ergibt den Rest: 1_332_000 - 212_000 = 1_120_000,
+                    // und 231_000 gezahlt = 212_000 Tilgung + 19_000 Zins.
+                    anchorBalanceCents = 1_332_000,
                     interestRatePpm = 39_000,
                     matchExpr = "",
                     remainingCents = 1_120_000,

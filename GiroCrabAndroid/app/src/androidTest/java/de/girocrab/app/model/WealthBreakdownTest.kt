@@ -1,6 +1,7 @@
 package de.girocrab.app.model
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.girocrab.app.security.OwnVault
 import de.girocrab.app.ui.screens.wealthBreakdown
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
@@ -15,6 +16,17 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class WealthBreakdownTest {
+
+    /**
+     * Answers the demo load with the fixture. `AppViewModel.init` loads demo data in the background;
+     * with the real demo that load can land after the test adopted its own snapshot and overwrite it.
+     */
+    private class FixtureBridge(private val snapshot: VaultSnapshot) : CoreBridge {
+        // No native library in the test process: the fixture is the only data source.
+        override val nativeAvailable: Boolean get() = false
+        override fun openOwnVault(path: String, key: ByteArray): OwnVault? = null
+        override fun demoSnapshot(): VaultSnapshot = snapshot
+    }
 
     private fun account(
         id: String,
@@ -203,7 +215,7 @@ class WealthBreakdownTest {
         val breakdown = wealthBreakdown(state)
         assertEquals("the excluded account keeps its debt out of the bucket", 0L, breakdown.loans)
         assertEquals("and not in cash", 100_000L, breakdown.cash)
-        val vm = AppViewModel()
+        val vm = AppViewModel(FixtureBridge(state.data))
         vm.adoptOwnVault(state.data)
         assertEquals("net worth and the buckets must agree", breakdown.net, vm.netWorthCents("EUR"))
         assertEquals(100_000L, vm.netWorthCents("EUR"))
@@ -248,7 +260,7 @@ class WealthBreakdownTest {
         assertEquals(0L, breakdown.loans)
         assertEquals(2_000_000L, breakdown.net)
         assertTrue("the screen has to report the other currency", "USD" in breakdown.foreignCurrencies)
-        val vm = AppViewModel()
+        val vm = AppViewModel(FixtureBridge(state.data))
         vm.adoptOwnVault(state.data)
         assertEquals(2_000_000L, vm.netWorthCents("EUR"))
     }
@@ -288,7 +300,7 @@ class WealthBreakdownTest {
         val breakdown = wealthBreakdown(state)
         assertEquals(500_000L, breakdown.loans)
         assertEquals(500_000L, breakdown.net)
-        val vm = AppViewModel()
+        val vm = AppViewModel(FixtureBridge(state.data))
         vm.adoptOwnVault(state.data)
         assertEquals(500_000L, vm.netWorthCents("EUR"))
     }
