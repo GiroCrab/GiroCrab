@@ -10,7 +10,7 @@
 | ID | Priorität | Kriterium | Plattform | Beobachtung | Weg | Status |
 |---|---|---|---|---|---|---|
 | BEL-1 | P1 | Adaptivität | iPhone | Filter und Aktionen verdeckten bei „Accessibility XL“ die Liste. Die Filter scrollen jetzt mit den Dokumenten | Fix | `fixed` |
-| BEL-2 | P2 | Lesbarkeit | iPhone | Bei „Accessibility XL“ brechen Datumsangaben mitten im Jahr um. Mehrere Bankdokumente lassen sich am gekürzten Titel kaum unterscheiden | Issue | `open` |
+| BEL-2 | P2 | Lesbarkeit | iPhone | Bei „Accessibility XL“ brechen Datumsangaben mitten im Jahr um. Mehrere Bankdokumente lassen sich am gekürzten Titel kaum unterscheiden | Fix | `fixed` |
 
 ## Impeccable-Bewertung
 
@@ -34,3 +34,5 @@
 - **Beobachtung:** Beim Musterbank-Kontoauszug am iPhone bei „Accessibility XL“ steht „20.11.202“ über „6“. Neben dem Datum endet der Titel bei „bank –…“.
 - **Vorschlag:** Das Datum bei Platzmangel in die Metadatenzeile verschieben und dem Titel mehr Breite geben.
 - **Prüfung:** Wie bei BEL-1 in die Liste scrollen. Datum und Titel sind zusammenhängend lesbar. Mehrere Musterbank-Dokumente lassen sich unterscheiden.
+
+- **Nachprüfung:** 27.11.2026, iPhone 18 Pro (Simulator, iOS 27.0), Deutsch, hell, „Accessibility XL“. Vollständige App vor (`068fde32`) und nach dem Fix (`bfdd9434`), mit Demodaten. Titel und Datum des Musterbank-Kontoauszugs sind nachher vollständig lesbar. Bildpaar in [#2021](https://github.com/GiroCrab/GiroCrab/pull/2021).
