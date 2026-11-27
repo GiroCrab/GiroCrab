@@ -8,7 +8,7 @@ fn temp_vault() -> (Arc<Vault>, std::path::PathBuf) {
     (v, p)
 }
 
-/// A fetched price (the Coinbase request comes with the next step of #1836).
+/// A fetched price, written directly (no network in tests).
 fn price(v: &Vault, symbol: &str, eur: f64) {
     v.db()
         .unwrap()

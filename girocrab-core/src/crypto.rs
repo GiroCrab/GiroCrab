@@ -532,5 +532,7 @@ impl Vault {
     }
 }
 
+pub mod prices;
+
 #[cfg(test)]
 mod tests;
