@@ -695,6 +695,56 @@ fn is_placeholder_ref(r: &str) -> bool {
     r.trim().chars().all(|c| c == '0')
 }
 
+/// The payee of a pending card authorisation without a payee name: some banks put a time
+/// stamp first ("MM-DD hh:mm:ss MERCHANT TOWN CC") and repeat the merchant alone in a last
+/// line. That last line, else the text without the leading stamp, names the booking and
+/// feeds the merchant recognition. `None` keeps what `map_transaction` chose.
+fn hold_counterparty(t: &Value, amount_cents: i64) -> Option<String> {
+    let party = if amount_cents < 0 {
+        &t["creditor"]
+    } else {
+        &t["debtor"]
+    };
+    if party["name"].as_str().is_some_and(|n| !n.trim().is_empty()) {
+        return None;
+    }
+    let lines: Vec<&str> = t["remittance_information"]
+        .as_array()?
+        .iter()
+        .filter_map(|x| x.as_str())
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .collect();
+    if let [_, .., last] = lines.as_slice() {
+        let name = strip_leading_time_stamp(last);
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    let rest: Vec<&str> = strip_leading_time_stamp(lines.first()?)
+        .split_whitespace()
+        .take(4)
+        .collect();
+    (!rest.is_empty()).then(|| rest.join(" "))
+}
+
+/// `text` without leading date or time tokens such as "11-26" or "21:53:56".
+fn strip_leading_time_stamp(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    while let Some(token) = rest.split_whitespace().next() {
+        let stamp = token.chars().any(|c| c.is_ascii_digit())
+            && token
+                .chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, '-' | ':' | '.' | '/'))
+            && token.chars().any(|c| matches!(c, '-' | ':' | '.' | '/'));
+        if !stamp {
+            break;
+        }
+        rest = rest[token.len()..].trim_start();
+    }
+    rest
+}
+
 /// Pending card authorisations (`PDNG` / `HOLD`) of a card in generic mode: kept as
 /// bookings with the hold prefix, so the vault shows them and removes them once the bank
 /// no longer lists them (`hold_prefix`). A missing or placeholder `entry_reference` gets
@@ -713,6 +763,9 @@ fn card_pending_holds(
         let Some(mut rt) = map_transaction(t, account_ref) else {
             continue;
         };
+        if let Some(name) = hold_counterparty(t, rt.amount_cents) {
+            rt.counterparty = name;
+        }
         if is_placeholder_ref(&rt.external_id) {
             rt.external_id = ids.next(&rt);
         }
@@ -2511,6 +2564,39 @@ mod tests {
         let held = card_pending_holds(&real, "CARD-REF", &mut super::super::ContentIds::default());
         assert_eq!(held[0].external_id, format!("{HOLD_PREFIX}A-9"));
         assert!(is_placeholder_ref("0") && is_placeholder_ref("000") && is_placeholder_ref(" "));
+        // without a payee name: the last remittance line, else the text without its time stamp
+        let named = |lines: Vec<&str>, creditor: &str| {
+            json!({"entry_reference": "0", "status": "PDNG",
+                   "transaction_amount": {"amount": "4.50", "currency": "EUR"},
+                   "credit_debit_indicator": "DBIT", "transaction_date": "2026-03-14",
+                   "creditor": {"name": creditor}, "remittance_information": lines})
+        };
+        let payee = |t: Value| {
+            card_pending_holds(&[t], "CARD-REF", &mut super::super::ContentIds::default())[0]
+                .clone()
+        };
+        let two = payee(named(
+            vec!["03-14 18:02:11 MUSTERKINO BEISPIELSTADT XX", "MUSTERKINO"],
+            "",
+        ));
+        assert_eq!(two.counterparty, "MUSTERKINO");
+        assert_eq!(
+            two.purpose,
+            "03-14 18:02:11 MUSTERKINO BEISPIELSTADT XX MUSTERKINO"
+        );
+        let one = payee(named(vec!["03-14 09:15:00 TESTCAFE MUSTERORT XX"], ""));
+        assert_eq!(one.counterparty, "TESTCAFE MUSTERORT XX");
+        // the row title (merchant name) carries no time stamp
+        for (hold, word) in [(&two, "musterkino"), (&one, "testcafe")] {
+            let title =
+                crate::merchants::MerchantResolver::resolve(&hold.counterparty, &hold.purpose).name;
+            assert!(title.to_lowercase().contains(word), "{title}");
+            assert!(!title.starts_with(|c: char| c.is_ascii_digit()), "{title}");
+        }
+        let kept = payee(named(vec!["03-14 09:15:00 TESTCAFE"], "Testcafe GmbH"));
+        assert_eq!(kept.counterparty, "Testcafe GmbH");
+        assert_eq!(strip_leading_time_stamp("14.03. 10:00 Laden 3"), "Laden 3");
+        assert_eq!(strip_leading_time_stamp("Laden 03-14"), "Laden 03-14");
         assert!(!is_placeholder_ref("10") && !is_placeholder_ref("A0"));
     }
 
