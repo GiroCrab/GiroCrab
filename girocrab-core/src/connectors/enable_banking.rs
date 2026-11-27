@@ -1086,6 +1086,10 @@ impl EnableBankingConnector {
             balance_date: ref_date.unwrap_or_else(super::today),
         });
         out.transactions.extend(txs);
+        if !complete {
+            // holds on the pages not read must not be removed
+            out.holds_incomplete.push(acc.ext_ref.clone());
+        }
         Ok(complete)
     }
 
@@ -1673,10 +1677,12 @@ impl EnableBankingConnector {
             // pending authorisations become bookings too, like on bank accounts.
             let generic = !self.card_mode();
             // A later page failing keeps the earlier ones (logged by `list_transactions`).
-            let booked = self
+            let listed = self
                 .list_transactions(&uid, &format!("date_from={since}"), TX_MAX_PAGES)
-                .await?
-                .items;
+                .await?;
+            let booked = listed.items;
+            // a cut-off listing may lack pending entries of its later pages
+            let listed_complete = listed.stopped.is_none();
             // pending authorisations the default listing already carries (generic mode)
             let mut listed_pending: Vec<Value> = Vec::new();
             for t in &booked {
@@ -1772,17 +1778,21 @@ impl EnableBankingConnector {
             let mut pending_sum = 0i64;
             let mut pending_n = 0u32;
             // Optional: without them the balance only lacks the pending part.
-            let pending = if generic && !listed_pending.is_empty() {
+            let pending = if generic && listed_complete && !listed_pending.is_empty() {
                 listed_pending
             } else {
-                self.list_transactions(
-                    &uid,
-                    &format!("date_from={since}&transaction_status=PDNG"),
-                    PENDING_MAX_PAGES,
-                )
-                .await
-                .map(|p| p.items)
-                .unwrap_or_default()
+                let res = self
+                    .list_transactions(
+                        &uid,
+                        &format!("date_from={since}&transaction_status=PDNG"),
+                        PENDING_MAX_PAGES,
+                    )
+                    .await;
+                // Generic mode: an incomplete listing must not remove the stored holds.
+                if generic && !res.as_ref().is_ok_and(|p| p.stopped.is_none()) {
+                    out.holds_incomplete.push(external_ref.clone());
+                }
+                res.map(|p| p.items).unwrap_or_default()
             };
             if generic {
                 out.transactions

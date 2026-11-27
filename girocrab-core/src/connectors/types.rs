@@ -653,6 +653,9 @@ pub struct FetchResult {
     /// external_id prefix of provisional bookings (card holds) this fetch
     /// lists completely: stored ones missing from it are removed.
     pub hold_prefix: Option<String>,
+    /// Accounts (external refs) whose holds this fetch could not list completely
+    /// (a failed or cut-off request): their stored holds stay.
+    pub holds_incomplete: Vec<String>,
     /// `(account external ref, external_id)` of entries the bank lists that move
     /// no money (e.g. PayPal's internal offsetting pairs): not stored, and a
     /// stored one is removed (soft delete, stays deleted).
@@ -698,6 +701,7 @@ impl FetchResult {
         self.holdings_fetched.retain(|r| keep(r));
         self.balances_unknown.retain(|r| keep(r));
         self.balances_reported.retain(|r| keep(r));
+        self.holds_incomplete.retain(|r| keep(r));
         self.security_transactions.retain(|t| keep(&t.account_ref));
         self.standing_orders.retain(|o| keep(&o.account_ref));
         self.standing_orders_fetched.retain(|r| keep(r));

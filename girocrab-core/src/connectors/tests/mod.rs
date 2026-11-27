@@ -1041,6 +1041,14 @@ fn card_holds_are_replaced_on_each_sync() {
     // Hold 1 cleared (booked elsewhere), hold 2 still open.
     store_fetch(&v, ConnectorKind::Bunq, conn, fetch(vec![hold("2", -7_10)])).unwrap();
     assert_eq!(holds(), vec!["pending-hold-bunq-2"]);
+    // The hold list of the account could not be read completely: hold 2 stays.
+    let mut partial = fetch(Vec::new());
+    partial.holds_incomplete = vec!["bunq:1".into()];
+    store_fetch(&v, ConnectorKind::Bunq, conn, partial).unwrap();
+    assert_eq!(holds(), vec!["pending-hold-bunq-2"]);
+    // The next complete list removes it.
+    store_fetch(&v, ConnectorKind::Bunq, conn, fetch(Vec::new())).unwrap();
+    assert!(holds().is_empty());
     std::fs::remove_file(path).ok();
 }
 

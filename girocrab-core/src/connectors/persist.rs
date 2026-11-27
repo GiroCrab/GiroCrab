@@ -1022,7 +1022,10 @@ pub(crate) fn store_fetch(
                 .map(|t| t.external_id.as_str())
                 .collect();
             let like = format!("{}%", prefix.replace('%', "").replace('_', "\\_"));
-            for acc_id in account_ids.values() {
+            for (acc_ref, acc_id) in &account_ids {
+                if data.holds_incomplete.contains(acc_ref) {
+                    continue;
+                }
                 let stale: Vec<(i64, String)> = {
                     let mut q = tx.prepare(
                         "SELECT id, external_id FROM transactions
