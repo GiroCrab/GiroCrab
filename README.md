@@ -60,7 +60,7 @@ GiroCrab ist eine freie, quelloffene Banking-App (GPLv3) für macOS, Linux (Qt 6
 
 ### ✨ Neu in v0.9.0
 
-- **MoneyMoney-Import stabilisiert:** Eigene Kategorien und Regeln bleiben beim Datenbank-Import erhalten (`#1992`), namenlose Buchungen gleichen Betrags am selben Tag gehen beim CSV-Import nicht mehr verloren (`#1995`).
+- **Datenbank-Import stabilisiert:** Eigene Kategorien und Regeln bleiben beim Datenbank-Import erhalten (`#1992`), namenlose Buchungen gleichen Betrags am selben Tag gehen beim CSV-Import nicht mehr verloren (`#1995`).
 - **Debitkarten & FinTS/Konnektoren:** Karten mit Kartenumsatz-Abruf wie *Mastercard direkt* werden als Debitkarte behandelt (`#967`), Festgeld-Konten bei FordMoney sauber erfasst (`#1766`) und Zeitstempel/Fehlerkontext bei der VW Bank verbessert (`#1081`).
 - **Android-Snapshot:** Mandate und Daueraufträge aus dem Rust-Core werden in den Android-Snapshot übernommen (`#1429`).
 
@@ -355,7 +355,7 @@ GiroCrab is a free, open-source banking app (GPLv3) for macOS, Linux (Qt 6 / QML
 
 ### ✨ What's new in v0.9.0
 
-- **Safer MoneyMoney imports:** Custom categories and rules are preserved during database imports (`#1992`), and unnamed transactions with identical amounts on the same day are no longer dropped during CSV import (`#1995`).
+- **Safer database imports:** Custom categories and rules are preserved during database imports (`#1992`), and unnamed transactions with identical amounts on the same day are no longer dropped during CSV import (`#1995`).
 - **Debit cards & connectors:** Card accounts with statement/card-turnover feeds such as *Mastercard direkt* are handled as debit cards (`#967`), FordMoney fixed-term accounts are supported (`#1766`), and Volkswagen Bank timestamps/error context are refined (`#1081`).
 - **Android snapshot:** Core mandates and standing orders are mapped into the Android snapshot (`#1429`).
 
