@@ -1787,6 +1787,10 @@ impl EnableBankingConnector {
                 // Generic mode: an incomplete listing must not remove the stored holds.
                 if generic && !res.as_ref().is_ok_and(|p| p.stopped.is_none()) {
                     out.holds_incomplete.push(external_ref.clone());
+                    out.warnings.push(trf(
+                        "{0}: Die Vormerkungen konnten nicht vollständig abgerufen werden. Bereits gespeicherte Vormerkungen bleiben bis zum nächsten Abruf stehen.",
+                        &[&external_ref],
+                    ));
                 }
                 res.map(|p| p.items).unwrap_or_default()
             };
