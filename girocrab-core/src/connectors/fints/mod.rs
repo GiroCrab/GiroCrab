@@ -101,6 +101,10 @@ struct FinTsState {
     /// the two-step signature; orders still carry HKTAN (#1641).
     #[serde(default)]
     init_without_hktan: bool,
+    /// Two-step function -> the HITANS version that describes it: HKTAN goes out in that
+    /// version (Sparkasse: chipTAN only in v6, v7 only pushTAN; v7 with 913 is 9110, #1641).
+    #[serde(default)]
+    tan_function_versions: HashMap<String, u32>,
     /// Supported versions per business transaction (from BPD "...S" segments).
     versions: HashMap<String, Vec<u32>>,
     /// HKxxx -> TAN required (HIPINS).
