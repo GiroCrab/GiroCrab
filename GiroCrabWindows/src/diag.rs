@@ -9,6 +9,10 @@
 //!
 //! Stufenfilter: `GIROCRAB_LOG=error|warn|info|debug` (Standard `info`).
 //!
+//! Konsole und Datei bedient ein eigener Faden; `error`/`warn`/`info`/`debug` legen die Zeile nur
+//! in dessen Warteschlange und kehren sofort zurück. Eine stockende Platte hält damit weder die
+//! Oberfläche noch einen Arbeitsfaden an.
+//!
 //! Der Client ist ein Konsolen-Programm (`PE Subsystem 3`), deshalb fängt
 //! `girocrab.exe 2>&1 | Tee-Object -FilePath …` jede Zeile mit. Ein Start über eine Verknüpfung
 //! zeigt kein stderr — dafür ist die Datei da. Ein Panic in einem Arbeitsfaden hätte sonst gar
@@ -16,11 +20,18 @@
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{OnceLock, RwLock};
 
 use girocrab_core::report_sanitizer::sanitize_report_text;
 
 static LOG: OnceLock<Log> = OnceLock::new();
+/// Zeilen gehen über diesen Kanal an einen eigenen Faden. Kein Aufrufer wartet auf die Platte:
+/// eine stockende Datei oder Konsole darf die Oberfläche nicht anhalten (#2032 review).
+static WRITER: OnceLock<SyncSender<String>> = OnceLock::new();
+/// Obergrenze des Kanals. Ist er voll, fällt die Zeile weg — ein Protokoll, das den Speicher
+/// volllaufen lässt, wäre der schlechtere Tausch.
+const WRITER_QUEUE: usize = 1024;
 /// Was maskiert wird, sobald der Tresor offen ist (Kontonamen, Inhaber, IBANs, Kennungen).
 static TERMS: RwLock<Vec<String>> = RwLock::new(Vec::new());
 static THRESHOLD: OnceLock<Level> = OnceLock::new();
@@ -102,8 +113,19 @@ impl Log {
 /// Richtet das Protokoll einmalig ein (erster Aufruf gewinnt) und setzt den Panic-Hook.
 pub fn init(path: impl Into<PathBuf>) -> &'static Log {
     LOG.get_or_init(|| {
-        let log = Log::new(path);
+        let path = path.into();
+        let log = Log::new(path.clone());
         log.install_panic_hook();
+        let (tx, rx) = sync_channel::<String>(WRITER_QUEUE);
+        let sink = Log::new(path);
+        std::thread::spawn(move || {
+            while let Ok(line) = rx.recv() {
+                // Konsole zuerst: sie ist der Weg, der auch ohne Datei sofort etwas zeigt.
+                eprintln!("{line}");
+                sink.write_line(&line);
+            }
+        });
+        let _ = WRITER.set(tx);
         log
     })
 }
@@ -158,10 +180,13 @@ fn emit(level: Level, category: &str, message: &str) {
     }
     let terms = TERMS.read().map(|t| t.clone()).unwrap_or_default();
     let text = format_line(level, category, message, &terms);
-    // Konsole zuerst: sie ist der Weg, der auch ohne Datei sofort etwas zeigt.
-    eprintln!("{text}");
-    if let Some(log) = LOG.get() {
-        log.write_line(&text);
+    match WRITER.get() {
+        // Voll oder Faden weg: die Zeile fällt weg, der Aufrufer läuft weiter.
+        Some(tx) => {
+            let _ = tx.try_send(text);
+        }
+        // Vor `init` gibt es keine Datei; dann bleibt die Konsole.
+        None => eprintln!("{text}"),
     }
 }
 
@@ -287,6 +312,34 @@ mod tests {
         assert_eq!(Level::from_name("laut"), None);
         // Standard ist info: debug fällt raus, error bleibt.
         assert!(Level::Debug > Level::Info && Level::Error <= Level::Info);
+    }
+
+    /// Der Weg der Zeile: Aufruf, Warteschlange, eigener Faden, Datei.
+    #[test]
+    fn a_line_reaches_the_file_through_the_writer_thread() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-diag-writer-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        init(path.clone());
+        info("bank-add", "worker start");
+        let mut seen = String::new();
+        for _ in 0..100 {
+            seen = std::fs::read_to_string(&path).unwrap_or_default();
+            if seen.contains("worker start") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            seen.contains("INFO  bank-add: worker start"),
+            "unerwartet: {seen}"
+        );
     }
 
     #[test]
