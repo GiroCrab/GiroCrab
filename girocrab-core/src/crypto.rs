@@ -226,7 +226,15 @@ fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
 /// position no longer held gets its closing 0. A position without a price
 /// shows with value 0; while there is one, the history records the priced
 /// positions but no total (it would be too low).
-pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> {
+///
+/// `fresh` (after a price refresh): only these tickers got a new price. The
+/// history then records only their positions, and a total only when every
+/// position is among them: a cached price is no observation of today.
+pub(crate) fn materialize(
+    conn: &Connection,
+    account_id: i64,
+    fresh: Option<&HashSet<String>>,
+) -> CoreResult<()> {
     if !is_crypto(conn, account_id)? {
         return Ok(());
     }
@@ -267,7 +275,6 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
             [conn.last_insert_rowid()],
         )?;
     }
-    let all_priced = positions.iter().all(|p| p.price_eur.is_some());
     let total = positions
         .iter()
         .try_fold(0i64, |sum, p| sum.checked_add(p.value_cents))
@@ -276,12 +283,21 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
         "UPDATE accounts SET balance_cents = ?1, balance_date = ?2 WHERE id = ?3",
         params![total, today_iso(), account_id],
     )?;
+    let observed_now =
+        |p: &CryptoPosition| p.price_eur.is_some() && fresh.is_none_or(|f| f.contains(&p.symbol));
     let priced: Vec<&Holding> = holdings
         .iter()
         .zip(&positions)
-        .filter(|(_, p)| p.price_eur.is_some())
+        .filter(|(_, p)| observed_now(p))
         .map(|(h, _)| h)
         .collect();
+    let all_observed = positions.iter().all(observed_now);
+    // a refresh sells nothing: a position left out of `priced` is not closed
+    let previous = if fresh.is_some() {
+        Vec::new()
+    } else {
+        previous
+    };
     // each state its own observation, also for two changes within one millisecond
     let last: Option<i64> = conn.query_row(
         "SELECT MAX(observed_ms) FROM depot_observations WHERE account_id = ?1",
@@ -294,7 +310,7 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
         account_id,
         Some(priced.as_slice()),
         &previous,
-        all_priced,
+        all_observed,
         observed,
     )
 }
@@ -362,7 +378,7 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
     touched.extend(holders_of(conn, &changed_symbols)?);
     for id in crypto_account_ids(conn)? {
         if touched.contains(&id) {
-            materialize(conn, id)?;
+            materialize(conn, id, None)?;
         }
     }
     Ok(())
@@ -509,7 +525,7 @@ impl Vault {
                 params![uuid::Uuid::new_v4().to_string(), account_id, symbol, quantity, purchase_price_cents, now_ms()],
             )?,
         };
-        materialize(&tx, account_id)?;
+        materialize(&tx, account_id, None)?;
         tx.commit()?;
         Ok(())
     }
@@ -526,7 +542,7 @@ impl Vault {
             "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = MAX(?1, changed_ms + 1) WHERE id = ?2",
             params![now_ms(), id],
         )?;
-        materialize(&tx, account_id)?;
+        materialize(&tx, account_id, None)?;
         tx.commit()?;
         Ok(())
     }
