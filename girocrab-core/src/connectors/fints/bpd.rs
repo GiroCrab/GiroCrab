@@ -533,10 +533,11 @@ impl FinTsConnector {
             }
         }
         // The HITANS version that describes each two-step function (#1641); further replies
-        // of the same BPD version only add (cleared with HIBPA above)
-        self.st
-            .tan_function_versions
-            .extend(Self::tan_function_versions(reply));
+        // of the same BPD version only add, the highest version wins (cleared with HIBPA above)
+        for (code, version) in Self::tan_function_versions(reply) {
+            let known = self.st.tan_function_versions.entry(code).or_default();
+            *known = (*known).max(version);
+        }
         // Allowed TAN methods for this user.
         if let Some(c) = reply.code("3920") {
             let allowed: Vec<String> =

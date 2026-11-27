@@ -648,6 +648,19 @@ fn hitans_versions_are_kept_within_a_bpd_version_and_replaced_by_a_new_one() {
     assert_eq!(c.st.tan_function_versions.get("910"), None);
 }
 
+#[test]
+fn hitans_versions_of_one_bpd_version_keep_the_highest_in_either_order() {
+    let v6 = "HIBPA:5:3:3+6+280:40050150+Sparkasse+1'HITANS:20:6:4+1+1+1+J:N:0:923:2:pushTAN-cas:Decoupled::pushTAN 2.0:6:1:x'";
+    let v7 = "HIBPA:5:3:3+6+280:40050150+Sparkasse+1'HITANS:21:7:4+1+1+1+N:N:0:923:2:pushTAN-cas:Decoupled::pushTAN 2.0:::x'";
+    for order in [[v7, v6], [v6, v7]] {
+        let mut c = FinTsConnector::new("40050150");
+        for raw in order {
+            c.learn_bpd(&reply(raw.as_bytes()));
+        }
+        assert_eq!(c.st.tan_function_versions.get("923"), Some(&7), "{order:?}");
+    }
+}
+
 /// `mock_bank` label: segment with its version.
 fn id_and_version(s: &syntax::Segment) -> String {
     format!("{}:{}", s.id(), s.version())
