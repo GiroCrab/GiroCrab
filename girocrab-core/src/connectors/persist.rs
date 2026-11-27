@@ -122,22 +122,25 @@ const CAMT_ID_PREFIX: &str = "camt:";
 /// A FinTS account can deliver the same booking via MT940 (content id `c…`)
 /// and later via camt (`camt:<ref>`), or the other way round (#1715). A stored
 /// row of the other source with the same content takes the new id instead of
-/// being imported a second time. Rows whose id this fetch delivers itself are
-/// skipped, so every stored row is taken at most once and two real, identical
-/// bookings stay two rows (n-th against n-th). Same-source ids are never
-/// adopted. The caller checks that no row holds the new id yet.
-fn adopt_switched_source_id(
+/// being imported a second time. This lists those rows for one fetched
+/// booking, best first, with their current id. Rows whose id the same account
+/// delivers in this fetch are skipped (`fetched` holds `(account id, external
+/// id)`; content ids do not include the account), so two real, identical
+/// bookings stay two rows. Same-source ids are never candidates.
+/// `store_fetch` pairs the lists one-to-one ([`assign_one_to_one`]) and checks
+/// that no row holds the new id yet.
+fn switched_source_candidates(
     tx: &rusqlite::Connection,
     account_id: i64,
     t: &RemoteTransaction,
-    fetched: &HashSet<&str>,
-) -> CoreResult<bool> {
+    fetched: &HashSet<(i64, &str)>,
+) -> CoreResult<Vec<(i64, String)>> {
     let other = if is_content_id(&t.external_id, CONTENT_ID_PREFIX) {
         format!("{CAMT_ID_PREFIX}*")
     } else if t.external_id.starts_with(CAMT_ID_PREFIX) {
         format!("{CONTENT_ID_PREFIX}{}", "[0-9a-f]".repeat(16))
     } else {
-        return Ok(false);
+        return Ok(Vec::new());
     };
     let mut candidates = tx.prepare_cached(
         "SELECT id, external_id FROM transactions
@@ -160,20 +163,121 @@ fn adopt_switched_source_id(
         ],
         |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
     )?;
-    let mut found = None;
+    let mut found = Vec::new();
     for row in rows {
         let (id, external_id) = row?;
-        if !fetched.contains(external_id.as_str()) {
-            found = Some(id);
-            break;
+        if !fetched.contains(&(account_id, external_id.as_str())) {
+            found.push((id, external_id));
         }
     }
-    let Some(id) = found else {
+    Ok(found)
+}
+
+/// Gives the stored row `(id, id when paired)` that was paired with a fetched
+/// booking that booking's id. False when there is no row or it changed its id
+/// since the pairing (e.g. taken by a legacy content id first).
+fn take_switched_row(
+    tx: &rusqlite::Connection,
+    row: Option<&(i64, String)>,
+    external_id: &str,
+) -> CoreResult<bool> {
+    let Some((id, old)) = row else {
         return Ok(false);
     };
-    tx.prepare_cached("UPDATE transactions SET external_id = ?1 WHERE id = ?2")?
-        .execute(params![t.external_id, id])?;
-    Ok(true)
+    let n = tx
+        .prepare_cached(
+            "UPDATE transactions SET external_id = ?1 WHERE id = ?2 AND external_id = ?3",
+        )?
+        .execute(params![external_id, *id, old.as_str()])?;
+    Ok(n > 0)
+}
+
+/// Single-booking form for the unit tests below: the best free candidate of
+/// one booking, `fetched` being ids of the same account.
+#[cfg(test)]
+fn adopt_switched_source_id(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+    fetched: &HashSet<&str>,
+) -> CoreResult<bool> {
+    let fetched: HashSet<(i64, &str)> = fetched.iter().map(|id| (account_id, *id)).collect();
+    let rows = switched_source_candidates(tx, account_id, t, &fetched)?;
+    take_switched_row(tx, rows.first(), &t.external_id)
+}
+
+/// Pairs fetched bookings with stored rows one-to-one (#1715): `candidates[i]`
+/// lists the rows booking `i` may take, best first. An augmenting path moves an
+/// earlier booking to its next row when a later one has no other choice, so
+/// every booking gets a row whenever the lists allow it; otherwise earlier
+/// bookings keep their better row.
+fn assign_one_to_one(candidates: &[Vec<i64>]) -> Vec<Option<i64>> {
+    fn augment(
+        i: usize,
+        candidates: &[Vec<i64>],
+        owner: &mut std::collections::HashMap<i64, usize>,
+        seen: &mut HashSet<i64>,
+    ) -> bool {
+        for &row in &candidates[i] {
+            if !seen.insert(row) {
+                continue;
+            }
+            let free = match owner.get(&row).copied() {
+                None => true,
+                Some(j) => augment(j, candidates, owner, seen),
+            };
+            if free {
+                owner.insert(row, i);
+                return true;
+            }
+        }
+        false
+    }
+    let mut owner = std::collections::HashMap::new();
+    for i in 0..candidates.len() {
+        augment(i, candidates, &mut owner, &mut HashSet::new());
+    }
+    let mut assigned = vec![None; candidates.len()];
+    for (row, i) in owner {
+        assigned[i] = Some(row);
+    }
+    assigned
+}
+
+#[cfg(test)]
+mod switch_pairing_tests {
+    use super::assign_one_to_one;
+
+    /// Stored rows A (1) and B (2) with equal content: R1 may take both (A
+    /// first via its original counterparty), R2 only A. Both bookings get a
+    /// row of their own, whichever comes first in the fetch.
+    #[test]
+    fn crossed_counterparties_pair_regardless_of_fetch_order() {
+        assert_eq!(
+            assign_one_to_one(&[vec![1, 2], vec![1]]),
+            [Some(2), Some(1)]
+        );
+        assert_eq!(
+            assign_one_to_one(&[vec![1], vec![1, 2]]),
+            [Some(1), Some(2)]
+        );
+    }
+
+    #[test]
+    fn ranking_decides_when_rows_are_free() {
+        assert_eq!(
+            assign_one_to_one(&[vec![1, 2], vec![2, 1]]),
+            [Some(1), Some(2)]
+        );
+    }
+
+    #[test]
+    fn a_row_is_taken_at_most_once() {
+        assert_eq!(
+            assign_one_to_one(&[vec![7], vec![7], vec![]]),
+            [Some(7), None, None]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -972,12 +1076,43 @@ pub(crate) fn store_fetch(
                          end_to_end_id, mandate_id, creditor_id, item_refs)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             )?;
-            let fetched: HashSet<&str> = data
+            // (account, id) pairs this fetch delivers: a stored row under such an
+            // id stays with its own booking. Per account, as content ids do not
+            // include the account.
+            let fetched: HashSet<(i64, &str)> = data
                 .transactions
                 .iter()
-                .map(|t| t.external_id.as_str())
+                .filter_map(|t| Some((*account_ids.get(&t.account_ref)?, t.external_id.as_str())))
                 .collect();
-            for t in &data.transactions {
+            // Stored rows of the other source (MT940 <-> camt, #1715), paired
+            // one-to-one across the whole fetch before any id changes; sorted so
+            // the fetch order does not decide which booking gets which row.
+            let mut open: Vec<((i64, &str), usize, Vec<i64>)> = Vec::new();
+            let mut old_ids = std::collections::HashMap::new();
+            for (i, t) in data.transactions.iter().enumerate() {
+                let Some(&acc_id) = account_ids.get(&t.account_ref) else {
+                    continue;
+                };
+                let rows = switched_source_candidates(&tx, acc_id, t, &fetched)?;
+                if rows.is_empty() || Stored::read(&tx, acc_id, &t.external_id)?.is_some() {
+                    continue;
+                }
+                let ids = rows.iter().map(|(id, _)| *id).collect();
+                old_ids.extend(rows);
+                open.push(((acc_id, t.external_id.as_str()), i, ids));
+            }
+            open.sort_by(|a, b| a.0.cmp(&b.0));
+            let (order, lists): (Vec<usize>, Vec<Vec<i64>>) =
+                open.into_iter().map(|(_, i, ids)| (i, ids)).unzip();
+            let switched: std::collections::HashMap<usize, (i64, String)> = order
+                .into_iter()
+                .zip(assign_one_to_one(&lists))
+                .filter_map(|(i, row)| {
+                    let row = row?;
+                    Some((i, (row, old_ids.get(&row)?.clone())))
+                })
+                .collect();
+            for (i, t) in data.transactions.iter().enumerate() {
                 let Some(acc_id) = account_ids.get(&t.account_ref) else {
                     if let Some(id) = archived_ids.get(&t.account_ref)
                         && !deleted_refs.contains(&t.account_ref)
@@ -989,7 +1124,7 @@ pub(crate) fn store_fetch(
                 };
                 let stored = match Stored::read(&tx, *acc_id, &t.external_id)? {
                     None if adopt_legacy_content_id(&tx, *acc_id, t)?
-                        || adopt_switched_source_id(&tx, *acc_id, t, &fetched)? =>
+                        || take_switched_row(&tx, switched.get(&i), &t.external_id)? =>
                     {
                         Stored::read(&tx, *acc_id, &t.external_id)?
                     }
