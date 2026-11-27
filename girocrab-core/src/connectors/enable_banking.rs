@@ -1473,7 +1473,7 @@ impl BankConnector for EnableBankingConnector {
                     name: display_name(&a),
                     ..a.clone()
                 };
-                self.fetch_card(ctx, &mut out, &named).await.map(|()| true)
+                self.fetch_card(ctx, &mut out, &named).await
             } else {
                 self.fetch_bank_account(ctx, &a, &mut out).await
             };
@@ -1537,7 +1537,7 @@ impl EnableBankingConnector {
         ctx: &ConnectContext,
         out: &mut FetchResult,
         acc: &EbAccount,
-    ) -> CoreResult<()> {
+    ) -> CoreResult<bool> {
         let uid = acc.uid.clone();
         let name = acc.name.clone();
         let iban = acc.iban.clone();
@@ -1595,10 +1595,17 @@ impl EnableBankingConnector {
             let mut skipped_unreadable = 0u32;
             let mut ids = super::ContentIds::default();
             // A later page failing keeps the earlier ones (logged by `list_transactions`).
-            let booked = self
-                .list_transactions(&uid, &format!("date_from={since}"), TX_MAX_PAGES)
-                .await?
-                .items;
+            let booked_since = ctx
+                .bounded_history_from
+                .as_deref()
+                .map_or(since.as_str(), |floor| {
+                    ctx.since_for(&external_ref).max(floor)
+                });
+            let listed = self
+                .list_transactions(&uid, &format!("date_from={booked_since}"), TX_MAX_PAGES)
+                .await?;
+            let complete = listed.stopped.is_none();
+            let booked = listed.items;
             for t in &booked {
                 if t["status"].as_str().map(|s| s != "BOOK").unwrap_or(false) {
                     skipped_non_book += 1;
@@ -1720,13 +1727,13 @@ impl EnableBankingConnector {
             }
             out.accounts[acct_idx].balance_cents = balance_cents;
             crate::depot_debug::log(&format!(
-                "amex transactions: since={since} raw={} skipped_non_book={skipped_non_book} skipped_unreadable={skipped_unreadable} booked_kept={n} pending={pending_n} pending_sign={} final_balance_sign={}",
+                "amex transactions: since={booked_since} raw={} skipped_non_book={skipped_non_book} skipped_unreadable={skipped_unreadable} booked_kept={n} pending={pending_n} pending_sign={} final_balance_sign={}",
                 booked.len(),
                 pending_sum.signum(),
                 balance_cents.signum()
             ));
+            Ok(complete)
         }
-        Ok(())
     }
 }
 
