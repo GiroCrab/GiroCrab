@@ -163,4 +163,96 @@ class WealthBreakdownTest {
         assertEquals("EUR", wealth.currency)
         assertEquals(setOf("USD"), wealth.foreignCurrencies)
     }
+
+    /** A loan account whose balance is not in the totals must still show its debt — once. */
+    @Test
+    fun loanOfAnExcludedAccountCountsExactlyOnce() {
+        fun loan(accountId: String, remaining: Long) = ManualLoan(
+            accountId = accountId,
+            name = "Autokredit",
+            originalCents = 1_800_000,
+            anchorDate = LocalDate.parse("2026-01-01"),
+            anchorBalanceCents = remaining,
+            interestRatePpm = 39_000,
+            matchExpr = "",
+            remainingCents = remaining,
+            asOfDate = null,
+            paymentCount = 0,
+            paidCents = 0,
+            principalCents = 0,
+            interestCents = 0,
+            beforeAnchorCount = 0,
+            lastPaymentCents = null,
+            lastPaymentDate = null,
+            monthsLeft = null,
+        )
+        val state = AppUiState(
+            data = VaultSnapshot(
+                accounts = listOf(
+                    account("giro", AccountKind.Giro, 100_000),
+                    // Excluded from every total: the debt has to come from the loan record now.
+                    account("kredit", AccountKind.Loan, -500_000, includeInTotal = false),
+                ),
+                loans = listOf(loan("kredit", 500_000)),
+            ),
+        )
+        val breakdown = wealthBreakdown(state)
+        assertEquals("the debt is in the Kredite bucket", 500_000L, breakdown.loans)
+        assertEquals("and not in cash", 100_000L, breakdown.cash)
+        val vm = AppViewModel()
+        vm.adoptOwnVault(state.data)
+        assertEquals(
+            "net worth and the buckets must agree", breakdown.net, vm.netWorthCents("EUR"),
+        )
+    }
+
+    /** A counted loan account carries the debt itself; its record must not be subtracted again. */
+    @Test
+    fun loanOfACountedAccountIsNotCountedTwice() {
+        val state = AppUiState(
+            data = VaultSnapshot(
+                accounts = listOf(
+                    account("giro", AccountKind.Giro, 1_000_000),
+                    account("kredit", AccountKind.Loan, -500_000),
+                ),
+                loans = listOf(
+                    ManualLoan(
+                        accountId = "kredit",
+                        name = "Autokredit",
+                        originalCents = null,
+                        anchorDate = LocalDate.parse("2026-01-01"),
+                        anchorBalanceCents = 500_000,
+                        interestRatePpm = null,
+                        matchExpr = "",
+                        remainingCents = 500_000,
+                        asOfDate = null,
+                        paymentCount = 0,
+                        paidCents = 0,
+                        principalCents = 0,
+                        interestCents = 0,
+                        beforeAnchorCount = 0,
+                        lastPaymentCents = null,
+                        lastPaymentDate = null,
+                        monthsLeft = null,
+                    ),
+                ),
+            ),
+        )
+        val breakdown = wealthBreakdown(state)
+        assertEquals(500_000L, breakdown.loans)
+        assertEquals(500_000L, breakdown.net)
+        val vm = AppViewModel()
+        vm.adoptOwnVault(state.data)
+        assertEquals(500_000L, vm.netWorthCents("EUR"))
+    }
+
+    /** The demo's loan account carries exactly the debt of its record — no gap, no double count. */
+    @Test
+    fun theDemoLoanAccountCarriesExactlyItsDebt() {
+        val d = DemoData.build()
+        val loan = d.loans.single()
+        val acc = d.accounts.single { it.kind == AccountKind.Loan }
+        assertEquals(loan.accountId, acc.id)
+        assertEquals(-loan.remainingCents, acc.balanceCents)
+    }
 }
