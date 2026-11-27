@@ -132,8 +132,11 @@ extension AppModel {
             // one candidate, and no other orphaned entry claims it
             guard near.count == 1, let target = near.first, claimed[target.seriesKey] == 1,
                   var moved = data.entries[key] else { continue }
+            // earlier siblings stay excluded, also those not visible right now; the current ones are added
+            let history = moved.siblingKeys ?? []
             moved.siblingKeys = nil
             remember(target, in: &moved)
+            moved.siblingKeys = history + (moved.siblingKeys ?? []).filter { !history.contains($0) }
             data.entries[key] = nil
             data.entries[target.seriesKey] = moved
             if selectedSubscriptionID == key { selectedSubscriptionID = target.seriesKey }

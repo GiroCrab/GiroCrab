@@ -383,6 +383,32 @@ final class SubscriptionsTests: XCTestCase {
     }
 
     @MainActor
+    func testAbsentSiblingStaysExcludedAfterTheEntryMoved() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        var a = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        let others = model.recurring.filter { $0.baseKey != a.baseKey }
+        a.amountCents = -1000; a.seriesKey = a.baseKey + "#1000"
+        var b = a
+        b.amountCents = -1300; b.seriesKey = a.baseKey + "#1300"
+        model.recurring = others + [a, b]
+        model.setSubscription(a, marked: true)
+
+        // the marked series gets more expensive while the sibling is not there
+        var risen = a
+        risen.amountCents = -1100; risen.seriesKey = a.baseKey + "#1100"
+        model.recurring = others + [risen]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[risen.seriesKey])
+
+        // the sibling is back and the marked contract ends
+        model.recurring = others + [b]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[risen.seriesKey], "kept for when it is back")
+        XCTAssertNil(model.subscriptionData.entries[b.seriesKey])
+    }
+
+    @MainActor
     func testTargetClaimedByTwoEntriesGoesToNeither() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         model.refreshRecurring()
@@ -394,6 +420,10 @@ final class SubscriptionsTests: XCTestCase {
         model.recurring = others + [a, b]
         model.setSubscription(a, marked: true)
         model.setSubscription(b, marked: true)
+
+        // no sibling history: both entries would take the series on their own, only the shared claim stops them
+        model.subscriptionData.entries[a.seriesKey]?.siblingKeys = []
+        model.subscriptionData.entries[b.seriesKey]?.siblingKeys = []
 
         // both keys vanish at once, one series in between remains
         var c = a
