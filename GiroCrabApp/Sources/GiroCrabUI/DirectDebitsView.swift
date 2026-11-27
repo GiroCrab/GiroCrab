@@ -7,6 +7,7 @@ import GiroCrabCore
 struct DirectDebitsView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var listFocused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var creditorText = ""
     @State private var showImporter = false
     @State private var deleting: Mandate?
@@ -19,39 +20,22 @@ struct DirectDebitsView: View {
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Lastschriften").appFont(.title2, weight: .semibold)
-                Text("Mandate verwalten und Einzüge als SEPA-Lastschrift-Datei (pain.008) vorbereiten. Dateien lassen sich hierher ziehen.")
-                    .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 20)
             if model.debitAccounts.isEmpty {
+                overview
                 ContentUnavailableView(
                     "Kein Konto zum Einziehen",
                     systemImage: "building.columns",
                     description: Text("Lastschriften ziehst du von einem Girokonto mit IBAN ein."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                controls.padding(.horizontal, 20)
-                if let error = model.mandateError {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .appFont(.callout).foregroundStyle(Theme.negative)
-                        .padding(.horizontal, 20)
-                } else if let note = model.mandateNote {
-                    Label(note, systemImage: "checkmark.circle")
-                        .appFont(.callout).foregroundStyle(Theme.secondary)
-                        .padding(.horizontal, 20)
+            } else if model.mandates.isEmpty, typeSize.isAccessibilitySize {
+                ScrollView {
+                    overview
+                    emptyMandates
                 }
+            } else {
+                if !typeSize.isAccessibilitySize { overview }
                 if model.mandates.isEmpty {
-                    ContentUnavailableView {
-                        Label("Keine Mandate", systemImage: "doc.text")
-                    } description: {
-                        Text("Lege ein Mandat an oder importiere eine Mitgliederliste (CSV) oder eine SEPA-Lastschriftdatei.")
-                    } actions: {
-                        Button("Mandat hinzufügen") { model.newMandate() }
-                        Button("Importieren …") { showImporter = true }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    emptyMandates.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     list
                 }
@@ -86,42 +70,86 @@ struct DirectDebitsView: View {
         }
     }
 
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Lastschriften").appFont(.title2, weight: .semibold)
+                Text("Mandate verwalten und Einzüge als SEPA-Lastschrift-Datei (pain.008) vorbereiten. Dateien lassen sich hierher ziehen.")
+                    .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if !model.debitAccounts.isEmpty {
+                controls
+                if let error = model.mandateError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .appFont(.callout).foregroundStyle(Theme.negative)
+                } else if let note = model.mandateNote {
+                    Label(note, systemImage: "checkmark.circle")
+                        .appFont(.callout).foregroundStyle(Theme.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+    }
+
+    private var emptyMandates: some View {
+        ContentUnavailableView {
+            Label("Keine Mandate", systemImage: "doc.text")
+        } description: {
+            Text("Lege ein Mandat an oder importiere eine Mitgliederliste (CSV) oder eine SEPA-Lastschriftdatei.")
+        } actions: {
+            Button("Mandat hinzufügen") { model.newMandate() }
+            Button("Importieren …") { showImporter = true }
+        }
+    }
+
     // MARK: controls
 
     private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let creditorLayout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 8))
+        return VStack(alignment: .leading, spacing: 10) {
             // One row when it fits; a narrow column (iPhone, half an iPad or an unfolded
             // iPhone Duo next to the detail column) stacks the account and the actions.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
-                    accountPicker
-                    Spacer(minLength: 0)
-                    importButton
-                    exportButton
-                    addButton
-                    collectButton
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    accountPicker
+            if typeSize.isAccessibilitySize {
+                accountPicker
+                importButton
+                exportButton
+                addButton
+                collectButton
+            } else {
+                ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
+                        accountPicker
+                        Spacer(minLength: 0)
                         importButton
                         exportButton
-                        Spacer(minLength: 0)
+                        addButton
+                        collectButton
                     }
-                    ViewThatFits(in: .horizontal) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        accountPicker
                         HStack(spacing: 12) {
-                            addButton
+                            importButton
+                            exportButton
                             Spacer(minLength: 0)
-                            collectButton
                         }
-                        VStack(alignment: .leading, spacing: 10) {
-                            addButton
-                            collectButton
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) {
+                                addButton
+                                Spacer(minLength: 0)
+                                collectButton
+                            }
+                            VStack(alignment: .leading, spacing: 10) {
+                                addButton
+                                collectButton
+                            }
                         }
                     }
                 }
             }
-            HStack(spacing: 8) {
+            creditorLayout {
                 Text("Gläubiger-ID").appFont(.callout).foregroundStyle(Theme.secondary)
                 TextField("z. B. DE98ZZZ09999999999", text: $creditorText)
                     .textFieldStyle(.roundedBorder)
@@ -138,23 +166,45 @@ struct DirectDebitsView: View {
                     }
                     .sensitive()
                 }
-                Spacer(minLength: 0)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
             }
         }
     }
 
-    private var accountPicker: some View {
-        Picker("Gläubigerkonto", selection: Binding(
+    private var accountSelection: Binding<Int64?> {
+        Binding(
             get: { model.effectiveMandateAccount?.id },
-            set: { model.mandateAccountID = $0; model.mandateError = nil; model.mandateNote = nil })) {
-            ForEach(model.debitAccounts) { a in
-                Label(a.name, systemImage: a.sfSymbol).tag(Int64?.some(a.id))
-            }
+            set: { model.mandateAccountID = $0; model.mandateError = nil; model.mandateNote = nil })
+    }
+
+    private var accountOptions: some View {
+        ForEach(model.debitAccounts) { account in
+            Label(account.name, systemImage: account.sfSymbol).tag(Int64?.some(account.id))
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .sensitive(.labels)
-        .frame(minWidth: 150, maxWidth: 260)
+    }
+
+    @ViewBuilder private var accountPicker: some View {
+        if typeSize.isAccessibilitySize, let account = model.effectiveMandateAccount {
+            Menu {
+                Picker("Gläubigerkonto", selection: accountSelection) { accountOptions }
+                    .pickerStyle(.inline)
+            } label: {
+                Label {
+                    Text(account.name).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: account.sfSymbol)
+                }
+                .appFont(.body)
+                .multilineTextAlignment(.leading)
+            }
+            .sensitive(.labels)
+        } else {
+            Picker("Gläubigerkonto", selection: accountSelection) { accountOptions }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .sensitive(.labels)
+                .frame(minWidth: 150, maxWidth: 260)
+        }
     }
 
     private var importButton: some View {
@@ -183,6 +233,7 @@ struct DirectDebitsView: View {
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
+                if typeSize.isAccessibilitySize { overview.padding(.bottom, 12) }
                 LazyVStack(spacing: 0) {
                     header
                     ForEach(Array(model.mandates.enumerated()), id: \.element.id) { index, m in

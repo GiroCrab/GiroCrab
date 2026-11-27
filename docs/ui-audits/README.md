@@ -15,9 +15,9 @@ beschreibt den Ablauf.
 | [Kontoübersicht und Kennzahlen](buchungen.md#kontoübersicht-und-kennzahlen) | KON-1 bis KON-3 offen. Beträge und Achsenwerte bei großer Schrift prüfen. |
 | [Neue Umsätze](buchungen.md#neue-umsätze) | NEU-1 offen. Kontogruppen bei großer Schrift unterscheidbar machen. |
 | [Belege & Postbox](belege-und-postbox.md#belege--postbox) | BEL-1 nach [#1895](https://github.com/GiroCrab/GiroCrab/pull/1895) als `fixed` bestätigt. BEL-2 zu Titel und Datum in den Dokumentzeilen ist in [#2021](https://github.com/GiroCrab/GiroCrab/pull/2021) behoben und nachgeprüft. |
-| [Geplant](zahlungen-und-vertraege.md#geplant) | GPL-1 und GPL-2 offen. Filter, Summen und Detailtitel auf dem iPhone prüfen. |
-| [Lastschriften](zahlungen-und-vertraege.md#lastschriften) | LAS-1 offen. Mandatsliste bei großer Schrift erreichbar halten. Der Detailtitel ist in GPL-2 erfasst. |
-| [Abos & Verträge](zahlungen-und-vertraege.md#abos--verträge) | ABO-1 und ABO-2 offen. iPhone-Breite und Öffnen des Vertragsdetails prüfen. |
+| [Geplant](zahlungen-und-vertraege.md#geplant) | GPL-1 und GPL-2 auf dem iPhone behoben und nachgeprüft. |
+| [Lastschriften](zahlungen-und-vertraege.md#lastschriften) | LAS-1 auf dem iPhone behoben und bei großer Schrift nachgeprüft. Der Detailtitel ist in GPL-2 erfasst. |
+| [Abos & Verträge](zahlungen-und-vertraege.md#abos--verträge) | ABO-1 und ABO-2 auf dem iPhone behoben und nachgeprüft. |
 | [Vermögen](vermoegen-und-anlagen.md#vermögen) | VER-1 bis VER-4 über [#1861](https://github.com/GiroCrab/GiroCrab/pull/1861) behoben. VER-5 und VER-6 offen. Ringsumme und Legende bei großer Schrift prüfen. |
 | [Sparpläne & Perks](vermoegen-und-anlagen.md#sparpläne--perks) | SPA-1 offen. Planraster bei großer Schrift lesbar halten. Für Saveback und Round up fehlt ein Demo-Fall. |
 | [Einzeldepot](vermoegen-und-anlagen.md#einzeldepot) | DEP-1 offen. Kopf und Wertverlauf bei großer Schrift zusammen mit SAC-1 prüfen. |
