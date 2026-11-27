@@ -8,7 +8,7 @@
 //! IBAN, else merchant). Detection looks at the gaps between the bookings of
 //! a group; user decisions live in `recurring_series`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::RangeInclusive;
 
 use jiff::civil::Date;
@@ -448,15 +448,24 @@ fn make_series(
 /// An amount cluster of one payee that looks like a series: sub key, bookings, interval.
 type Found<'a> = (String, Vec<&'a Booking>, RecurrenceInterval);
 
-/// Do two clusters run side by side (their date ranges overlap)? Then they are
-/// separate contracts of one payee, not one series (#2025). A price change
-/// (old cluster ends before the new one starts) does not overlap.
+/// Calendar months (`YYYY-MM`) with a booking of the cluster.
+fn booked_months<'a>(cluster: &[&'a Booking]) -> HashSet<&'a str> {
+    cluster
+        .iter()
+        .filter_map(|b| b.booking_date.get(..7))
+        .collect()
+}
+
+/// Do two clusters run side by side (both booked in at least two of the same
+/// months)? Then they are separate contracts of one payee, not one series (#2025).
+/// A price change, even back to an earlier amount, never charges both amounts in
+/// the same months, so it stays one series.
 fn concurrent(found: &[Found<'_>]) -> bool {
-    found.iter().enumerate().any(|(n, (_, a, _))| {
-        found[n + 1..].iter().any(|(_, b, _)| {
-            a[0].booking_date <= b[b.len() - 1].booking_date
-                && b[0].booking_date <= a[a.len() - 1].booking_date
-        })
+    let months: Vec<HashSet<&str>> = found.iter().map(|(_, c, _)| booked_months(c)).collect();
+    months.iter().enumerate().any(|(n, a)| {
+        months[n + 1..]
+            .iter()
+            .any(|b| a.intersection(b).nth(1).is_some())
     })
 }
 
@@ -612,8 +621,23 @@ fn month_items(
         .iter()
         .filter(|b| b.booking_date.starts_with(&prefix))
         .collect();
+    // A booking that matches several series of one payee (their amount ranges
+    // overlap) counts once: for the series with the closest amount.
+    let owner: HashMap<i64, &str> = in_month
+        .iter()
+        .filter_map(|b| {
+            series
+                .iter()
+                .filter(|s| series_matches(s, b))
+                .min_by_key(|s| (i128::from(b.amount_cents) - i128::from(s.amount_cents)).abs())
+                .map(|s| (b.id, s.series_key.as_str()))
+        })
+        .collect();
     for s in series {
-        let booked: Vec<&&Booking> = in_month.iter().filter(|b| series_matches(s, b)).collect();
+        let booked: Vec<&&Booking> = in_month
+            .iter()
+            .filter(|b| owner.get(&b.id).is_some_and(|k| *k == s.series_key))
+            .collect();
         if !booked.is_empty() {
             for b in booked {
                 ov.items.push(RecurringMonthItem {
@@ -1186,12 +1210,62 @@ mod tests {
         let b = vec![
             bk(1, "2026-07-05", -999, iban, "Streaming"),
             bk(2, "2026-08-05", -999, iban, "Streaming"),
-            bk(3, "2026-09-05", -1499, iban, "Streaming"),
-            bk(4, "2026-10-05", -1499, iban, "Streaming"),
-            bk(5, "2026-11-05", -1499, iban, "Streaming"),
+            bk(3, "2026-09-05", -1199, iban, "Streaming"),
+            bk(4, "2026-10-05", -1199, iban, "Streaming"),
+            bk(5, "2026-11-05", -1199, iban, "Streaming"),
         ];
         let s = build_series(&b, &HashMap::new(), today());
         assert_eq!(s.len(), 1, "{s:?}");
+        assert!(!s[0].amount_specific, "{s:?}");
+        assert_eq!(s[0].occurrences, 5, "{s:?}");
+    }
+
+    /// A price that goes back to an earlier amount: the old amount's cluster
+    /// encloses the new one in time, but no month carries both, so it stays one series.
+    #[test]
+    fn price_returning_to_an_earlier_amount_stays_one_series() {
+        let iban = "DE02120300000000202051";
+        let mut b = Vec::new();
+        for (n, m) in (1..=11).enumerate() {
+            let cents = if (6..=10).contains(&m) { -1200 } else { -1000 };
+            b.push(bk(
+                n as i64,
+                &format!("2026-{m:02}-05"),
+                cents,
+                iban,
+                "Versicherung",
+            ));
+        }
+        let s = build_series(&b, &HashMap::new(), today());
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert!(!s[0].amount_specific, "{s:?}");
+        assert_eq!(s[0].occurrences, 11, "{s:?}");
+        assert_eq!(s[0].next_due, "2026-12-05");
+    }
+
+    /// Two contracts on the same day whose amounts lie within each other's ±15 %:
+    /// two series, but each booking counts once in the month overview.
+    #[test]
+    fn concurrent_contracts_count_each_booking_once() {
+        let iban = "DE02120300000000202051";
+        let mut b = Vec::new();
+        for (n, m) in ["2026-08", "2026-09", "2026-10", "2026-11"]
+            .iter()
+            .enumerate()
+        {
+            b.push(bk(1 + n as i64, &format!("{m}-05"), -1000, iban, "Verein"));
+            b.push(bk(11 + n as i64, &format!("{m}-05"), -1120, iban, "Verein"));
+        }
+        let s = build_series(&b, &HashMap::new(), today());
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s.iter().all(|x| x.amount_specific && x.occurrences == 4));
+        let ov = month_items(&s, &b, 2026, 11);
+        assert_eq!(ov.booked_expense_cents, 2_120);
+        assert_eq!(ov.items.len(), 2);
+        assert!(ov.items.iter().all(|i| i.booked));
+        let mut ids: Vec<i64> = ov.items.iter().filter_map(|i| i.booking_id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![4, 14]);
     }
 
     #[test]
