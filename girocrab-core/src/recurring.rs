@@ -460,12 +460,13 @@ fn booked_months<'a>(cluster: &[&'a Booking]) -> HashSet<&'a str> {
 /// months)? Then they are separate contracts of one payee, not one series (#2025).
 /// A price change, even back to an earlier amount, never charges both amounts in
 /// the same months, so it stays one series.
-fn concurrent(found: &[Found<'_>]) -> bool {
+/// Only pairs with at least one live cluster count (`live[n]` for `found[n]`):
+/// two ended clusters expire anyway and must not hide an ongoing recurrence.
+fn concurrent(found: &[Found<'_>], live: &[bool]) -> bool {
     let months: Vec<HashSet<&str>> = found.iter().map(|(_, c, _)| booked_months(c)).collect();
-    months.iter().enumerate().any(|(n, a)| {
-        months[n + 1..]
-            .iter()
-            .any(|b| a.intersection(b).nth(1).is_some())
+    (0..months.len()).any(|n| {
+        (n + 1..months.len())
+            .any(|m| (live[n] || live[m]) && months[n].intersection(&months[m]).nth(1).is_some())
     })
 }
 
@@ -508,7 +509,22 @@ fn build_series(
                         Some((format!("{key}#{med}"), c, i))
                     })
                     .collect();
-                let whole = if concurrent(&found) {
+                let live: Vec<bool> = found
+                    .iter()
+                    .map(|(sub, c, i)| {
+                        make_series(
+                            sub.clone(),
+                            &key,
+                            c,
+                            *i,
+                            Vec::new(),
+                            RecurringSource::Detected,
+                            today,
+                        )
+                        .is_some()
+                    })
+                    .collect();
+                let whole = if concurrent(&found, &live) {
                     None
                 } else {
                     detect_group(&list)
@@ -636,7 +652,9 @@ fn month_items(
     for s in series {
         let booked: Vec<&&Booking> = in_month
             .iter()
-            .filter(|b| owner.get(&b.id).is_some_and(|k| *k == s.series_key))
+            .filter(|b| {
+                owner.get(&b.id).is_some_and(|k| *k == s.series_key) && series_matches(s, b)
+            })
             .collect();
         if !booked.is_empty() {
             for b in booked {
