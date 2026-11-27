@@ -347,9 +347,11 @@ async fn one_failed_account_keeps_the_others() {
         .iter()
         .find(|w| w.contains("ayvens:7654321"))
         .unwrap();
-    // a later sync does not always reach back far enough: no promise to catch up
+    // a later sync does not always reach back far enough: no promise to catch up,
+    // but the way to ask for the period again
     assert!(
         failed.contains("nicht geladen") && !failed.contains("holt"),
         "{failed}"
     );
+    assert!(failed.contains("„Beim nächsten Abruf“"), "{failed}");
 }

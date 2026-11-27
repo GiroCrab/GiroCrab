@@ -50,7 +50,8 @@ JSON-Schnittstelle, mit der das Online-Banking unter `https://sparen.ayvensbank.
   ohne lesbares Datum oder ohne lesbaren Betrag enthält, verwirft die Umsätze dieses Kontos: Saldo und
   andere Konten bleiben, eine Warnung nennt das Konto. Ein späterer Abruf holt die fehlenden Umsätze nicht in
   jedem Fall nach: nach dem vollständigen Abruf und bei einem Konto ohne gespeicherte Umsätze beginnt er
-  später. Die Warnung verspricht das deshalb nicht.
+  später. Die Warnung verspricht das deshalb nicht, sondern verweist auf „Umsätze“ › „Beim nächsten Abruf“ in
+  den Einstellungen des Zugangs (macOS, iOS und Linux).
 * Bei mehreren Konten meldet eine leere Liste je Konto eine Warnung, statt das Konto still ohne Umsätze
   zu führen.
 * Jeder Abruf fragt den SMS-Code ab: zwischen zwei Abrufen bleibt keine Sitzung gespeichert.

@@ -405,7 +405,8 @@ impl BankConnector for AyvensConnector {
             };
             // one account's failed list must not cost the others theirs; the balance
             // stays. No promise that a later sync catches up: after the full fetch, or for
-            // an account without stored bookings, its start date lies later
+            // an account without stored bookings, its start date lies later; the period
+            // setting of the login (macOS, iOS and Linux) asks for it again
             match self.bookings(&path, &account_ref, &since).await {
                 Ok((bookings, 0)) if several => {
                     debug_assert!(bookings.is_empty());
@@ -417,7 +418,7 @@ impl BankConnector for AyvensConnector {
                 Ok((bookings, _)) => out.transactions.extend(bookings),
                 Err(e @ CoreError::Authentication { .. }) => return Err(e),
                 Err(e) => out.warnings.push(trf(
-                    "Ayvens Bank: Die Umsätze von Konto {0} konnten nicht geladen werden ({1}). Bitte den Abruf erneut starten.",
+                    "Ayvens Bank: Die Umsätze von Konto {0} konnten nicht geladen werden ({1}). Sie lassen sich in den Einstellungen des Zugangs unter „Umsätze“ › „Beim nächsten Abruf“ erneut abrufen.",
                     &[&account_ref, &e],
                 )),
             }
