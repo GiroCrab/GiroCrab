@@ -564,7 +564,10 @@ ColumnLayout {
                                 model: {
                                     const list = rowItem.c.undecided ? [{ undecided: true, text: qsTr("Bitte wählen") }] : []
                                     list.push({ id: null, text: qsTr("Neues Konto") })
-                                    for (const acc of AppModel.allAccounts)
+                                    // another known currency is refused by the import (#1993); the chosen or suggested one stays
+                                    const cur = x => (x || "").trim().toUpperCase()
+                                    for (const acc of AppModel.allAccounts.filter(x => cur(x.currency) === "" || cur(x.currency) === cur(a.currency)
+                                                                                    || x.id === rowItem.c.target || x.id === a.existing_account_id))
                                         list.push({ id: acc.id, text: acc.id === a.existing_account_id ? qsTr("%1 (gleiche IBAN)").arg(acc.name) : acc.name })
                                     if (a.existing_account_id !== null && !AppModel.allAccounts.some(x => x.id === a.existing_account_id))
                                         list.push({ id: a.existing_account_id, text: a.existing_account_name || qsTr("Vorhandenes Konto") })

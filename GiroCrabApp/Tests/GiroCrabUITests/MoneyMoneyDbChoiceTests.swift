@@ -36,5 +36,11 @@ final class MoneyMoneyDbChoiceTests: XCTestCase {
         XCTAssertTrue(Choice.ready([ready, open]))
         XCTAssertFalse(Choice.ready([Choice]()))
     }
+
+    func testThePickerOffersOnlyAccountsInTheSourcesCurrencyOrWithoutOne() {
+        XCTAssertTrue(MoneyMoneyDatabaseImportView.currencyFits(" eur ", source: "EUR"))
+        XCTAssertTrue(MoneyMoneyDatabaseImportView.currencyFits("", source: "USD"))
+        XCTAssertFalse(MoneyMoneyDatabaseImportView.currencyFits("USD", source: "EUR"))
+    }
 }
 #endif

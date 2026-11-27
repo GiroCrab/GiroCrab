@@ -51,6 +51,13 @@ struct MoneyMoneyDatabaseImportView: View {
     /// The value of the "Ziel" picker.
     enum Target: Hashable { case undecided, new, account(Int64) }
 
+    /// Whether an account in `currency` can take the bookings of one in `source`: the import
+    /// refuses another known currency (#1993), so the picker leaves it out.
+    static func currencyFits(_ currency: String, source: String) -> Bool {
+        let c = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return c.isEmpty || c == source.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
     /// One table row.
     struct AccountRow: Identifiable {
         let a: MoneyMoneyDbAccount
@@ -405,7 +412,10 @@ struct MoneyMoneyDatabaseImportView: View {
                 Text("Bitte wählen").tag(Target.undecided)
             }
             Text("Neues Konto").tag(Target.new)
-            ForEach(model.allAccounts) { acc in
+            // the chosen or suggested one stays, so the choice is visible
+            ForEach(model.allAccounts.filter {
+                Self.currencyFits($0.currency, source: a.currency) || $0.id == choice.wrappedValue.target || $0.id == a.existingAccountId
+            }) { acc in
                 Text(acc.id == a.existingAccountId ? String(localized: "\(acc.name) (gleiche IBAN)") : acc.name).tag(Target.account(acc.id))
             }
             if let id = a.existingAccountId, !model.allAccounts.contains(where: { $0.id == id }) {
