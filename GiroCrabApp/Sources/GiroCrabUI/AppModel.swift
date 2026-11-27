@@ -688,7 +688,10 @@ public final class AppModel {
     // Opening commands also raise an editor that is already open.
     var ruleEditorRequest = 0
     #endif
+    /// iOS: Einstellungen as a sheet over the main view (macOS opens its own window, `openSettings`).
     var showSettings = false
+    /// A sync started in the Einstellungen sheet, run once the sheet is gone (#1831).
+    @ObservationIgnored var afterSettingsDismiss: (@MainActor () -> Void)?
     var showCommandPalette = false
     /// macOS: the "Problem melden" window is open. Greys out its menu item
     /// (a second report would silently discard the markings of this one).
@@ -1969,6 +1972,8 @@ public final class AppModel {
         payeeCheck = nil
         pendingLogin = nil
         setupRequest = nil
+        // the sheet may go without its onDismiss: a stale wait would block scheduled syncs (#1831)
+        afterSettingsDismiss = nil
         webLoginConnection = nil
         syncingConnectionID = nil
         historyIncomplete = [:]
