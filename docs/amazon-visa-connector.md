@@ -1,14 +1,18 @@
 # Amazon-Visa-Anbindung (OpenBank-Portal)
 
 <!-- sync:connector-note:start -->
-> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter OpenBank bzw. Amazon. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
-> This connector is an independent community project and is not affiliated with OpenBank or Amazon. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Amazon Visa. Schnittstelle: offiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Amazon Visa. Interface: official. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
 
-Status: **Rückmeldungen mit echten Verträgen erwünscht** – `ConnectorKind::AmazonVisa`
-(Schlüssel `amazonvisa`), Anmeldung im Browserfenster, Auswertung der
-Abrechnungsliste in `girocrab-core/src/importers/portal_statements.rs`,
-Portal-Logik in `GiroCrabApp/Sources/GiroCrabUI/PortalUI.swift`.
+Status: **Verified** – `ConnectorKind::AmazonVisa` (Schlüssel `amazonvisa`).
+In der [Bankenmatrix](../README.md) als **EnableBanking, offiziell, Verified**
+geführt: Der laufende Umsatzabruf läuft über EnableBanking, den Abruf der
+Kontoauszugs-PDFs aus dem Kundenportal hat
+[#1925](https://github.com/GiroCrab/GiroCrab/pull/1925) ergänzt. Anmeldung im
+Browserfenster, Auswertung der Abrechnungsliste in
+`girocrab-core/src/importers/portal_statements.rs`, Portal-Logik in
+`GiroCrabApp/Sources/GiroCrabUI/PortalUI.swift`.
 Issues: [#1500](https://github.com/GiroCrab/GiroCrab/issues/1500) (Implementierung),
 [#1924](https://github.com/GiroCrab/GiroCrab/pull/1924) (Zugangscode-Speicherung),
 [#1925](https://github.com/GiroCrab/GiroCrab/pull/1925) (PDF-Abruf).
@@ -43,9 +47,10 @@ Regeln, keine echten Werte.
 
 * Die SPA lädt die Kontoauszugs-Liste von der Portal-API. Jeder Eintrag enthält
   das Abrechnungs-Datum und die `documentId` des zugehörigen PDFs.
-* Einträge ohne eigenes Abrechnungs-Datum werden ihrer Einschreibung bzw. ihrem
-  umgebenden Eintrag zugeordnet; Anhang-Dateien (z. B. im `files`-Array) gelten
-  nicht als separate Abrechnung.
+* Einträge ohne nutzbares Schlussdatum werden **nicht** einem umgebenden Eintrag
+  zugeordnet, sondern als Fehlschlag gezählt (`rejected` bzw. undatierte
+  sichtbare Links) — ebenso Anhang-Dateien im `files`-Array, die nicht als
+  separate Abrechnung gelten.
 
 ## PDF-Abruf (zweistufig)
 
