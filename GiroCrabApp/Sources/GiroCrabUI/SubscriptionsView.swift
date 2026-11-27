@@ -115,8 +115,7 @@ struct SubscriptionsView: View {
 
     // MARK: controls
 
-    /// One row when it fits, else search and button above, the menus below (the column is narrow
-    /// next to the sidebar and the inspector).
+    /// Use one row when it fits, then split search and add from the menus, then stack each control.
     private var controls: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {

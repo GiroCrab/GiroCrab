@@ -197,12 +197,12 @@ struct DirectDebitsView: View {
                 .appFont(.body)
                 .multilineTextAlignment(.leading)
             }
-            .sensitive(.labels)
+            .sensitive([.personal, .labels])
         } else {
             Picker("Gläubigerkonto", selection: accountSelection) { accountOptions }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .sensitive(.labels)
+                .sensitive([.personal, .labels])
                 .frame(minWidth: 150, maxWidth: 260)
         }
     }
