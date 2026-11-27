@@ -8,7 +8,7 @@ use rusqlite::{Connection, params};
 
 use std::collections::HashSet;
 
-use super::{NEWEST_OF_TICKER, holders_of, materialize, normalize_symbol};
+use super::{NEWEST_OF_TICKER, holders_of, materialize, normalize_symbol, valid_price};
 use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -16,8 +16,6 @@ use crate::sync_log::{SyncLogOutcome, SyncLogSource};
 use crate::vault::Vault;
 
 const SPOT_URL: &str = "https://api.coinbase.com/v2/prices";
-/// Prices above this cannot be held in cents per unit (the vault merge applies the same bound).
-const MAX_PRICE_EUR: f64 = 1e15;
 
 /// What [`Vault::refresh_crypto_prices`] did.
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
@@ -35,10 +33,6 @@ pub struct CryptoPriceRefresh {
 enum Spot {
     Price(f64),
     Unknown,
-}
-
-fn valid_price(eur: f64) -> bool {
-    eur.is_finite() && eur > 0.0 && eur < MAX_PRICE_EUR
 }
 
 /// `{"data":{"amount":"56537.74","base":"BTC","currency":"EUR"}}` → 56537.74.
@@ -175,9 +169,7 @@ impl Vault {
             Ok(_) => {
                 self.log_price_fetch(SyncLogOutcome::Ok, tr("Crypto-Kurs abgerufen").into(), 1)
             }
-            Err(e) => {
-                self.log_price_fetch(SyncLogOutcome::Error, refresh_message(&e.to_string()), 0)
-            }
+            Err(e) => self.log_price_fetch(SyncLogOutcome::Error, refresh_message(&log_text(e)), 0),
         }
         result
     }
@@ -208,6 +200,15 @@ impl Vault {
         store_prices(&tx, &[(symbol, price, received_ms)])?;
         tx.commit()?;
         Ok(price)
+    }
+}
+
+/// A failed single fetch for the Abrufprotokoll: an unknown ticker is said
+/// without naming it (the message for the user does).
+fn log_text(e: &CoreError) -> String {
+    match e {
+        CoreError::InvalidInput { .. } => tr("kein Euro-Kurs für das abgefragte Kürzel").into(),
+        e => e.to_string(),
     }
 }
 
@@ -422,5 +423,17 @@ mod tests {
         .unwrap();
         assert_eq!((stored("BTC"), stored("ETH")), (60_000.0, 3_000.0));
         assert_eq!(store_prices(&db, &[("XRP".into(), 1e100, 8)]).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_unknown_ticker_is_logged_without_its_name() {
+        let e = CoreError::invalid(trf(
+            "Für das Kürzel {0} gibt es keinen Euro-Kurs. Bitte das Kürzel prüfen.",
+            &[&"XYZQQ"],
+        ));
+        let text = refresh_message(&log_text(&e));
+        assert!(!text.contains("XYZQQ"), "{text}");
+        // a price beyond what one unit may be worth is not taken
+        assert!(!valid_price(1e14) && valid_price(60_000.0));
     }
 }

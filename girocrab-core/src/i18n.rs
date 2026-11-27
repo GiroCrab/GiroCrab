@@ -281,6 +281,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Wert des Bestands ist zu groß." => "The value of the holding is too large.",
         "„{0}“ ist als Kürzel nicht möglich." => "“{0}” cannot be used as a ticker.",
         "Crypto-Kurs abgerufen" => "Crypto price fetched",
+        "kein Euro-Kurs für das abgefragte Kürzel" => "no euro price for the requested ticker",
         "Crypto-Kurse: {0}" => "Crypto prices: {0}",
         "Crypto-Kurse: {0} aktualisiert" => "Crypto prices: {0} updated",
         ", {0} ohne Euro-Kurs" => ", {0} without a euro price",
