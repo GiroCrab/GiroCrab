@@ -1498,8 +1498,8 @@ impl BankConnector for EnableBankingConnector {
             // A provider can return transactions outside the requested window.
             out.transactions
                 .retain(|tx| tx.booking_date.as_str() >= from);
-            out.history_incomplete = stopped_early || listed.values().any(|complete| !complete);
         }
+        out.history_incomplete = history_is_incomplete(ctx, &listed, stopped_early);
         // The vault uses the fetched name when inserting a new account.
         if let Some(label) =
             paypal_account_label(&self.aspsp_default, self.st.accounts.len(), &ctx.login_name)
@@ -1734,6 +1734,17 @@ fn booked_history_start<'a>(ctx: &'a ConnectContext, ordinary_since: &'a str) ->
     ctx.bounded_history_from
         .as_deref()
         .unwrap_or(ordinary_since)
+}
+
+fn history_is_incomplete(
+    ctx: &ConnectContext,
+    listed: &HashMap<String, bool>,
+    stopped_early: bool,
+) -> bool {
+    // Include explicit Maximum requests and finite requests still pending
+    // during a normal sync.
+    (ctx.full_fetch || ctx.bounded_history_from.is_some())
+        && (stopped_early || listed.values().any(|complete| !complete))
 }
 
 /// Records whose booking history is complete after a fetch (`listed`: uid →
@@ -2166,6 +2177,30 @@ mod tests {
         assert_eq!(booked_history_start(&ctx, "2025-10-01"), "2025-11-12");
         ctx.bounded_history_from = None;
         assert_eq!(booked_history_start(&ctx, "2026-10-31"), "2026-10-31");
+    }
+
+    #[test]
+    fn reports_partial_history_for_requested_windows() {
+        for (full_fetch, bounded_from, reports_partial) in [
+            (true, None, true),                // Maximum
+            (true, Some("2025-11-12"), true),  // Requested dates
+            (false, Some("2025-11-12"), true), // Pending dates on a regular sync
+            (false, None, false),              // Regular incremental sync
+        ] {
+            let ctx = ConnectContext {
+                full_fetch,
+                bounded_history_from: bounded_from.map(str::to_owned),
+                ..Default::default()
+            };
+            for (account_complete, stopped_early) in [(true, false), (false, false), (true, true)] {
+                let listed = HashMap::from([("account".to_owned(), account_complete)]);
+                assert_eq!(
+                    history_is_incomplete(&ctx, &listed, stopped_early),
+                    reports_partial && (!account_complete || stopped_early),
+                    "full_fetch={full_fetch}, from={bounded_from:?}, complete={account_complete}, stopped={stopped_early}",
+                );
+            }
+        }
     }
 
     #[test]
