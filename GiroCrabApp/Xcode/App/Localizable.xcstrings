@@ -12796,6 +12796,17 @@
         }
       }
     },
+    "Diese Kategorien gehören zu „%@“." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These categories belong to “%@”."
+          }
+        }
+      }
+    },
     "Diese Konten sind in der Zustimmung nicht mehr enthalten. Buchungen bleiben erhalten; Konto bei Bedarf selbst löschen." : {
       "extractionState" : "manual",
       "localizations" : {
