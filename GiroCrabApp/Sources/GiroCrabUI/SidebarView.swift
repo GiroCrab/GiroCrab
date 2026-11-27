@@ -175,26 +175,45 @@ struct SidebarView: View {
                     .listRowInsets(Self.rowInsets)
                     .selectionDisabled()
             }
+            if !model.categoriesCollapsed, model.scope != .all {
+                Text("Diese Kategorien gehören zu „\(model.scope.title)“.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, DisclosureChevron.iconInset)
+                    .listRowInsets(Self.rowInsets)
+                    .selectionDisabled()
+            }
             if !model.categoriesCollapsed {
                 Group {
-                    HStack(spacing: DisclosureChevron.gap) {
-                        SidebarLeadingSlot()
-                        HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
-                            Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                            Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
-                            Spacer()
+                    // with a booking filter on, only that filter's categories are listed (no "Ohne Kategorie")
+                    if model.scope == .all {
+                        HStack(spacing: DisclosureChevron.gap) {
+                            SidebarLeadingSlot()
+                            HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
+                                Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
+                                Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                                Spacer()
+                            }
                         }
-                    }
-                    .contextMenu {
-                        Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
-                        if !model.uncategorizedName.isEmpty {
-                            Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                        .contextMenu {
+                            Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
+                            if !model.uncategorizedName.isEmpty {
+                                Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                            }
                         }
+                        .badge(model.uncategorizedCount)
+                        .tag(SidebarItem.uncategorized)
+                        .listRowInsets(Self.rowInsets)
                     }
-                    .badge(model.uncategorizedCount)
-                    .tag(SidebarItem.uncategorized)
-            .listRowInsets(Self.rowInsets)
-                    categoryRows(model.categoryTree, depth: 0)
+                    // Only `.all` shows the full tree. With a filter on, a missing set (still loading or
+                    // the load failed) must not fall back to every category, so the list stays empty.
+                    categoryRows(
+                        model.scope == .all
+                            ? model.categoryTree
+                            : (model.scopeCategoryIDs.map { model.categoryTree.limited(to: $0) } ?? []),
+                        depth: 0
+                    )
                 }
             }
         }
@@ -566,9 +585,10 @@ struct SidebarView: View {
                 .padding(.leading, indent)
                 .listRowInsets(Self.rowInsets)
                 #if os(macOS)
-                // only leaves take dragged bookings, as only leaves are assigned;
-                // a dragged category goes above or below, or into a main category (#977)
-                .modifier(categoryDropSlot(node, indent: indent, takesBookings: true))
+                // only leaves of the full tree take dragged bookings, as only those are assigned;
+                // a booking filter may hide the children of a parent, which must not make it a leaf here.
+                // A dragged category goes above or below, or into a main category (#977)
+                .modifier(categoryDropSlot(node, indent: indent, takesBookings: model.categoryTree.node(node.id)?.children == nil))
                 #endif
                 .tag(SidebarItem.category(node.id))
                 .contextMenu { categoryMenu(node.category) }
@@ -657,6 +677,9 @@ private struct AccountRowHeight: ViewModifier {
 /// so they stay as they are and only the selection highlight moves.
 private struct SidebarSelectionList<Content: View>: View {
     @Environment(AppModel.self) private var model
+    #if os(macOS)
+    @FocusState private var focused: Bool
+    #endif
     @Environment(\.textScale) private var textScale
     let density: SidebarDensity
     let content: Content
@@ -678,6 +701,10 @@ private struct SidebarSelectionList<Content: View>: View {
             content.listRowSeparator(.hidden)
         }
         .contentMargins(.top, 14, for: .scrollContent)
+        .focused($focused)
+        .onChange(of: focused) { _, focused in model.sidebarHasKeyboardFocus = focused }
+        // locked: the state goes with the view, without a change
+        .onDisappear { model.sidebarHasKeyboardFocus = false }
         if density.usesTighterAccountSpacing {
             // The macOS sidebar style has its own minimum height.
             list.listStyle(.inset)
@@ -912,7 +939,7 @@ struct AccountRow: View {
             .help("Archiviert – wird nicht mehr abgerufen")
     }
 
-    /// Bank, note or search hit below the name. Only the plain bank name stays
+    /// Bank, account distinction or search hit below the name. Only the plain bank name stays
     /// visible in reports: owner / IBAN hits and the user's own bank label are personal.
     private func subtitle(_ text: String) -> some View {
         Text(text)
@@ -941,15 +968,11 @@ struct AccountRow: View {
         return !(model.accountDistinction(account) == account.owner && text.contains(account.owner))
     }
 
-    /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
-    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
-        let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
-        // the owner tells accounts of the same name apart
-        let owner = model.accountDistinction(account)
-        return [account.sidebarBankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        account.sidebarSubtitle(distinction: model.accountDistinction(account))
     }
 
+    /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
     private var searchAwareSubtitle: String {
         guard model.isSidebarAccountSearching else { return baseSubtitle }
         let q = model.sidebarAccountSearch.trimmingCharacters(in: .whitespacesAndNewlines)

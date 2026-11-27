@@ -2378,6 +2378,112 @@ fn amounts_above_the_sepa_limit_are_rejected_before_the_tan() {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn savings_transfer_only_goes_to_an_own_active_checking_account() {
+    let (v, path) = demo_vault();
+    let accounts = v.list_accounts().unwrap();
+    let savings = accounts
+        .iter()
+        .find(|a| a.name == "Tagesgeld Plus" && a.connection_id.is_some())
+        .unwrap();
+    assert_eq!(savings.kind, AccountKind::Savings);
+    let own = accounts
+        .iter()
+        .find(|a| a.name == "Musterbank Girokonto" && a.connection_id.is_some())
+        .unwrap();
+    let send = |iban: &str| {
+        v.clone().begin_transfer(
+            SepaTransferRequest {
+                account_id: savings.id,
+                recipient_name: "Müller GmbH".into(),
+                recipient_iban: iban.into(),
+                recipient_bic: None,
+                amount_cents: 100,
+                purpose: "Test".into(),
+                instant: false,
+                execution_date: None,
+            },
+            "pin".into(),
+            true,
+        )
+    };
+    // Third party and another savings account are refused.
+    assert!(matches!(
+        send("DE02120300000000202051"),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    let other_savings = accounts
+        .iter()
+        .find(|a| a.name == "Tagesgeld Familie")
+        .unwrap();
+    assert!(matches!(
+        send(&other_savings.iban),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    // Own checking account (spaces and case ignored) is accepted.
+    let spaced = own
+        .iban
+        .as_bytes()
+        .chunks(4)
+        .map(|c| std::str::from_utf8(c).unwrap().to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(send(&spaced).is_ok());
+    // An archived target no longer counts as own.
+    v.set_account_archived(own.id, true).unwrap();
+    assert!(matches!(
+        send(&own.iban),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn savings_batch_transfer_only_goes_to_own_active_checking_accounts() {
+    use crate::models::{BatchPaymentInput, BatchTransferRequest};
+    let (v, path) = demo_vault();
+    let accounts = v.list_accounts().unwrap();
+    let savings = accounts
+        .iter()
+        .find(|a| a.name == "Tagesgeld Plus" && a.connection_id.is_some())
+        .unwrap();
+    let own = accounts
+        .iter()
+        .find(|a| a.name == "Musterbank Girokonto" && a.connection_id.is_some())
+        .unwrap();
+    let payment = |iban: &str| BatchPaymentInput {
+        name: "Müller GmbH".into(),
+        iban: iban.into(),
+        bic: None,
+        amount_cents: 100,
+        purpose: "Test".into(),
+    };
+    let send = |ibans: &[&str]| {
+        v.clone().begin_batch_transfer(
+            BatchTransferRequest {
+                account_id: savings.id,
+                payments: ibans.iter().map(|i| payment(i)).collect(),
+                batch_booking: true,
+                execution_date: None,
+            },
+            "pin".into(),
+            true,
+        )
+    };
+    // A third party is refused, even when it is only one payment of the batch.
+    assert!(matches!(
+        send(&["DE02120300000000202051"]),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    let err = send(&[own.iban.as_str(), "DE02120300000000202051"]).err();
+    assert!(matches!(err, Some(CoreError::InvalidInput { .. })));
+    // The error names the rejected payment (one-based position).
+    assert!(err.unwrap().to_string().contains("Zahlung 2:"));
+    // Only own active checking accounts pass.
+    assert!(send(&[own.iban.as_str()]).is_ok());
+    let _ = std::fs::remove_file(path);
+}
+
 #[tokio::test(start_paused = true)]
 async fn demo_transfer_flow_adds_pending_booking_and_suggests_recipient() {
     let (v, path) = demo_vault();

@@ -148,7 +148,7 @@ struct BudgetProgressCard: View {
     private var totalPercent: Double { totalBudget > 0 ? Double(totalSpent) / Double(totalBudget) * 100 : 0 }
 
     private var token: String {
-        model.categories.map { "\($0.id):\($0.budgetCents ?? 0):\($0.totalCents)" }.joined(separator: ",") + "#\(model.bookings.count)"
+        model.categories.map { "\($0.id):\($0.budgetCents ?? 0):\($0.totalCents)" }.joined(separator: ",") + "#\(model.bookings.count)#\(model.totalsVersion)"
     }
 
     var body: some View {

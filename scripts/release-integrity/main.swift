@@ -11,6 +11,8 @@
 //   * banking-policy.json (+ .sig), published at a fixed address
 //     (raw.githubusercontent.com/<repo>/main/policy): reachable, signature
 //     against BankingPolicy.publicKeys, `sequence` never lower than the last run's.
+//   * SHA256SUMS.txt of the latest stable release (Windows): every listed
+//     .exe/.msi/.zip exists and matches its SHA-256.
 // A part is skipped while its key is not configured (placeholder).
 // Exit 0 = all fine, 1 = findings (written to --report), 2 = usage.
 import CryptoKit
@@ -141,6 +143,7 @@ struct State: Codable {
     var policySequence: UInt64?
     var appcastSeen: Bool?
     var policySeen: Bool?
+    var windowsSeen: Bool?
 }
 var state = State()
 if let statePath, let d = FileManager.default.contents(atPath: statePath),
@@ -195,6 +198,59 @@ if sparkleKeys.isEmpty {
             }
         }
     }
+}
+
+// MARK: - Windows assets (#1778)
+
+// The Windows package is not signed (no Authenticode, no Sparkle): the release carries SHA256SUMS.txt next to it.
+// That catches a replaced or corrupted file but not an attacker who replaces both – see docs/release-integrity.md.
+// "latest/download" is resolved per request: a release published in between would mix manifest and assets
+// of two releases. Resolve the tag once and use its fixed download base (--base keeps its own meaning).
+var windowsBase = latestBase
+if base == nil {
+    if case .ok(let json) = fetch("https://api.github.com/repos/\(repo)/releases/latest"),
+       let object = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+       let tag = object["tag_name"] as? String,
+       tag.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil {
+        windowsBase = assetPrefix + tag
+    } else {
+        note("latest release tag could not be resolved – Windows check uses latest/download (manifest and assets may come from two releases if one was published meanwhile)")
+    }
+}
+switch fetch(windowsBase + "/SHA256SUMS.txt") {
+case .notFound:
+    if state.windowsSeen == true {
+        finding("SHA256SUMS.txt is not reachable any more at \(windowsBase)/SHA256SUMS.txt (404) – Windows assets unchecked")
+    } else {
+        note("SHA256SUMS.txt not published yet (no Windows release so far) – Windows asset check skipped")
+    }
+case .failed(let why):
+    finding("SHA256SUMS.txt could not be downloaded: \(why)")
+case .ok(let sums):
+    state.windowsSeen = true
+    var checked = 0
+    // package-windows.ps1 writes CRLF on Windows; "\r\n" is a single Character, so split on any newline.
+    for line in String(decoding: sums, as: UTF8.self).split(whereSeparator: \.isNewline) {
+        let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+        guard parts.count == 2 else { finding("SHA256SUMS.txt: malformed line '\(line)'"); continue }
+        let (hash, name) = (parts[0].lowercased(), String(parts[1]).trimmingCharacters(in: CharacterSet(charactersIn: "*")))
+        guard name.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil,
+              hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+            finding("SHA256SUMS.txt: unexpected entry '\(line)'"); continue
+        }
+        guard name.hasSuffix(".exe") || name.hasSuffix(".msi") || name.hasSuffix(".zip") else {
+            finding("SHA256SUMS.txt lists an unexpected file type: \(name)"); continue
+        }
+        switch fetch(windowsBase + "/" + name) {
+        case .notFound: finding("SHA256SUMS.txt lists \(name), but the release has no such asset")
+        case .failed(let why): finding("\(name) could not be downloaded: \(why)")
+        case .ok(let data):
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            if digest == hash { checked += 1; print("ok: \(name) SHA-256") }
+            else { finding("\(name): SHA-256 differs from SHA256SUMS.txt") }
+        }
+    }
+    if checked == 0 { finding("SHA256SUMS.txt lists no checkable Windows asset") }
 }
 
 // MARK: - Banking policy

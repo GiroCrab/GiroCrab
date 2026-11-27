@@ -93,6 +93,8 @@ extension AppModel {
             let sums = categorySumFilter
             categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
             categoryTree = Self.buildTree(categories)
+            // also clears a set left from another scope or vault
+            loadScopeCategories()
             uncategorizedFilteredCount = Int(try vault.countTransactions(filter: uncategorizedCountFilter(sums)))
         }
     }
@@ -139,6 +141,33 @@ extension AppModel {
                 self.dashboard = d
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError), let self else { return }
+                self.errorMessage = describe(error)
+            }
+        }
+    }
+
+    /// The categories of the booking filter for the sidebar (`scopeCategoryIDs`); the core reads
+    /// every booking for it, so it runs off the main thread. Scope changes and edit refreshes call
+    /// it always, the background selection load after a sync or merge and when the set of category
+    /// ids changed: a category assigned meanwhile must not stay hidden, but a plain period or
+    /// account change (only the amounts differ) must not scan every booking again.
+    /// A failed load keeps the list empty (no fallback to every category) and reports the error.
+    func loadScopeCategories() {
+        scopeCategoryTask?.cancel()
+        let scope = scope
+        guard scope != .all, let vault else {
+            if scopeCategoryIDs != nil { scopeCategoryIDs = nil }
+            return
+        }
+        scopeCategoryTask = Task { [weak self] in
+            do {
+                let ids = try await Self.offMain { try vault.categoriesInScope(scope: scope) }
+                guard !Task.isCancelled, let self, self.vault === vault, self.scope == scope else { return }
+                let next = Set(ids)
+                if self.scopeCategoryIDs != next { self.scopeCategoryIDs = next }
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), let self,
+                      self.vault === vault, self.scope == scope else { return }
                 self.errorMessage = describe(error)
             }
         }
@@ -945,6 +974,7 @@ extension AppModel {
             settings = try vault.listSettings()
             logoProvider = try vault.onlineLogoProvider()
             merchantRecognitionEnabled = try vault.merchantRecognitionEnabled()
+            netRefundsInStats = try vault.netRefundsInStats()
         }
         reloadProductIDState(vault)
     }
