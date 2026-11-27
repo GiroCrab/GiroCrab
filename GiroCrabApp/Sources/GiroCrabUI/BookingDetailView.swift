@@ -525,48 +525,124 @@ struct FlowBadge: View {
 struct MerchantHistoryCard: View {
     @Environment(AppModel.self) private var model
     let booking: Booking
+    #if os(macOS)
+    @Environment(\.textScale) private var textScale
+    @State private var showsDetails = false
+    #endif
+
+    private var stats: MerchantStats? {
+        guard let stats = model.merchantStats, stats.key == booking.merchant.key else { return nil }
+        return stats
+    }
+
+    private var accountStats: MerchantStats? {
+        guard let stats, let own = model.merchantAccountStats,
+              own.accountId == booking.accountId, own.stats.key == stats.key, own.stats.count < stats.count
+        else { return nil }
+        return own.stats
+    }
+
+    private var hasSecurityDetails: Bool {
+        !booking.merchant.isin.isEmpty || !booking.merchant.assetClass.isEmpty
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // The heading opens the list of this merchant's bookings (#495).
-            Button { model.focusMerchant(of: booking) } label: {
-                HStack(spacing: 4) {
-                    Text("Händler-Historie").appFont(.subheadline, weight: .semibold)
-                    Image(systemName: "chevron.right")
-                        .appFont(.caption, weight: .semibold)
-                        .foregroundStyle(Theme.secondary)
-                }
-                .contentShape(Rectangle())
+            #if os(macOS)
+            HStack {
+                historyLink
+                Spacer(minLength: 0)
+                detailsButton
             }
-            .buttonStyle(.plain)
-            .disabled(booking.merchant.key.isEmpty)
-            .help("Alle Buchungen dieses Händlers im gewählten Zeitraum anzeigen")
-            .accessibilityHint("Alle Buchungen dieses Händlers im gewählten Zeitraum anzeigen")
-            if let s = model.merchantStats, s.key == booking.merchant.key {
-                // The merchant also occurs on other accounts (#299): show the
-                // total and the booking's own account side by side.
-                if let own = model.merchantAccountStats, own.accountId == booking.accountId,
-                   own.stats.key == s.key, own.stats.count < s.count {
-                    statsRow(label: "Alle Konten", s)
-                    statsRow(label: "Dieses Konto", accountName: booking.accountName, own.stats)
+            // Keep the first row and the date in place while the new merchant loads (#492).
+            statsRow(label: nil, stats, reservesPeriod: true)
+            #else
+            historyLink
+            if let stats {
+                if let accountStats {
+                    statsRow(label: "Alle Konten", stats)
+                    statsRow(label: "Dieses Konto", accountName: booking.accountName, accountStats)
                 } else {
-                    statsRow(label: nil, s)
+                    statsRow(label: nil, stats)
                 }
             }
-            if !booking.merchant.isin.isEmpty || !booking.merchant.assetClass.isEmpty {
+            if hasSecurityDetails {
                 Divider()
-                HStack(spacing: 14) {
-                    if !booking.merchant.assetClass.isEmpty { labeled("Anlage", booking.merchant.assetClass) }
-                    if !booking.merchant.isin.isEmpty { labeled("ISIN", booking.merchant.isin) }
-                    if !booking.merchant.wkn.isEmpty { labeled("WKN", booking.merchant.wkn) }
-                }
+                securityDetails
             }
+            #endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .flatSection()
+        #if os(macOS)
+        .onChange(of: booking.id) { showsDetails = false }
+        #endif
     }
 
-    private func statsRow(label: LocalizedStringKey?, accountName: String? = nil, _ s: MerchantStats) -> some View {
+    private var historyLink: some View {
+        // The heading opens the list of this merchant's bookings (#495).
+        Button { model.focusMerchant(of: booking) } label: {
+            HStack(spacing: 4) {
+                Text("Händler-Historie").appFont(.subheadline, weight: .semibold)
+                Image(systemName: "chevron.right")
+                    .appFont(.caption, weight: .semibold)
+                    .foregroundStyle(Theme.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(booking.merchant.key.isEmpty)
+        .help("Alle Buchungen dieses Händlers im gewählten Zeitraum anzeigen")
+        .accessibilityHint("Alle Buchungen dieses Händlers im gewählten Zeitraum anzeigen")
+    }
+
+    #if os(macOS)
+    private var detailsButton: some View {
+        let spansAccounts = accountStats != nil
+        let available = spansAccounts || hasSecurityDetails
+        return Button { showsDetails = true } label: {
+            HStack(spacing: 4) {
+                if spansAccounts {
+                    Text("Alle Konten").appFont(.caption).foregroundStyle(Theme.secondary)
+                }
+                Label("Details", systemImage: "info.circle")
+                    .labelStyle(.iconOnly)
+                    .appFont(.subheadline)
+            }
+        }
+        .buttonStyle(.plain)
+        .help("Details")
+        .disabled(!available)
+        .opacity(available ? 1 : 0)
+        .accessibilityHidden(!available)
+        .capturablePopover(isPresented: $showsDetails, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let stats, let accountStats {
+                    statsRow(label: "Alle Konten", stats)
+                    statsRow(label: "Dieses Konto", accountName: booking.accountName, accountStats)
+                }
+                if hasSecurityDetails {
+                    if accountStats != nil { Divider() }
+                    securityDetails
+                }
+            }
+            .padding(12)
+            .frame(width: 280 * textScale, alignment: .leading)
+        }
+    }
+    #endif
+
+    private var securityDetails: some View {
+        HStack(spacing: 14) {
+            if !booking.merchant.assetClass.isEmpty { labeled("Anlage", booking.merchant.assetClass) }
+            if !booking.merchant.isin.isEmpty { labeled("ISIN", booking.merchant.isin) }
+            if !booking.merchant.wkn.isEmpty { labeled("WKN", booking.merchant.wkn) }
+        }
+    }
+
+    private func statsRow(
+        label: LocalizedStringKey?, accountName: String? = nil, _ stats: MerchantStats?, reservesPeriod: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if let label {
                 HStack(spacing: 4) {
@@ -576,13 +652,28 @@ struct MerchantHistoryCard: View {
                 .appFont(.caption, weight: .medium).foregroundStyle(Theme.secondary).lineLimit(1)
             }
             HStack(spacing: 10) {
-                stat("Buchungen", "\(s.count)×")
-                stat("Summe", Money.format(s.totalCents), sensitive: true)
-                stat("Ø Betrag", Money.format(s.averageCents), sensitive: true)
+                stat("Buchungen", stats.map { "\($0.count)×" } ?? "–")
+                stat("Summe", stats.map { Money.format($0.totalCents) } ?? "–", sensitive: true)
+                stat("Ø Betrag", stats.map { Money.format($0.averageCents) } ?? "–", sensitive: true)
             }
-            if !s.firstDate.isEmpty {
-                Text("Seit \(DateText.medium(s.firstDate)) · zuletzt \(DateText.medium(s.lastDate))")
-                    .appFont(.caption2).foregroundStyle(Theme.tertiary)
+            let hasPeriod = stats.map { !$0.firstDate.isEmpty } ?? false
+            if hasPeriod || reservesPeriod {
+                let period = if let stats, hasPeriod {
+                    Text("Seit \(DateText.medium(stats.firstDate)) · zuletzt \(DateText.medium(stats.lastDate))")
+                } else {
+                    Text(verbatim: "–")
+                }
+                Group {
+                    if reservesPeriod {
+                        period.lineLimit(2, reservesSpace: true)
+                    } else {
+                        period
+                    }
+                }
+                .appFont(.caption2)
+                .foregroundStyle(Theme.tertiary)
+                .opacity(hasPeriod ? 1 : 0)
+                .accessibilityHidden(!hasPeriod)
             }
         }
     }
@@ -599,7 +690,7 @@ struct MerchantHistoryCard: View {
     private func labeled(_ title: LocalizedStringKey, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title).appFont(.caption2).foregroundStyle(Theme.secondary)
-            Text(value).appFont(.caption, design: .monospaced).textSelection(.enabled)
+            Text(value).appFont(.caption, design: .monospaced).textSelection(.enabled).sensitive(.labels)
         }
     }
 }
@@ -646,11 +737,11 @@ struct CategoryGridCard: View {
                 Spacer()
                 Text(booking.categoryPath.isEmpty ? model.uncategorizedLabel : booking.categoryPath)
                     .appFont(.caption).foregroundStyle(Theme.secondary).lineLimit(1)
+                    .sensitive(.labels)
             }
-            if let s = model.categorySuggestion, s.bookingId == booking.id,
-               let category = model.categories.first(where: { $0.id == s.categoryId }) {
-                CategorySuggestionBox(booking: booking, suggestion: s, category: category)
-            }
+            #if !os(macOS)
+            suggestionBox
+            #endif
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104 * textScale), spacing: 6)], spacing: 6) {
                 ForEach(model.categoryTree) { node in
                     CategoryChip(category: node.category, selected: node.id == path.first, usesSystemSurface: true) {
@@ -686,9 +777,20 @@ struct CategoryGridCard: View {
             .controlSize(.large)
             Text("In der Liste: C kategorisieren · R Regel erstellen")
                 .appFont(.caption2).foregroundStyle(Theme.tertiary)
+            #if os(macOS)
+            // A late suggestion must not move the category grid under the pointer.
+            suggestionBox
+            #endif
         }
         .flatSection()
         .onChange(of: booking.id) { _, _ in openPath = nil }
+    }
+
+    @ViewBuilder private var suggestionBox: some View {
+        if let suggestion = model.categorySuggestion, suggestion.bookingId == booking.id,
+           let category = model.categories.first(where: { $0.id == suggestion.categoryId }) {
+            CategorySuggestionBox(booking: booking, suggestion: suggestion, category: category)
+        }
     }
 }
 
