@@ -47,10 +47,12 @@ Regeln, keine echten Werte.
 
 * Die SPA lädt die Kontoauszugs-Liste von der Portal-API. Jeder Eintrag enthält
   das Abrechnungs-Datum und die `documentId` des zugehörigen PDFs.
-* Einträge ohne nutzbares Schlussdatum werden **nicht** einem umgebenden Eintrag
-  zugeordnet, sondern als Fehlschlag gezählt (`rejected` bzw. undatierte
-  sichtbare Links) — ebenso Anhang-Dateien im `files`-Array, die nicht als
-  separate Abrechnung gelten.
+* Ein Listeneintrag ohne nutzbares Schlussdatum zählt als Fehlschlag
+  (`rejected`, wie undatierte sichtbare Links).
+* Anhang-Dateien (z. B. im `files`-Array) sind keine separaten Abrechnungen:
+  Ein Datei-Objekt wird nie zum eigenen Eintrag, sein PDF gehört zum Datum des
+  umgebenden Eintrags — auch wenn das Datum des Datei-Objekts selbst (etwa ein
+  `created`) unbrauchbar ist.
 
 ## PDF-Abruf (zweistufig)
 
@@ -74,6 +76,7 @@ werden; Einträge ohne nutzbares Schlussdatum gelten als Fehlschlag.
   Der Abruf erfolgt daher immer frisch über `documentId` → `documentUri` → Download.
 * Portal-Benutzername und Portal-Passwort (PIN) können im Tresor gespeichert
   werden — nur, wenn die Speicherung beim Anlegen der Verbindung eingeschaltet
-  ist (Option „Passwort/PIN im Tresor speichern“). Gespeichert werden
-*niemals* die Signed-URLs oder Session-Cookies; nur die abgerufenen
-  PDF-Abrechnungen landen wie andere Belege in der Belege-Verwaltung.
+  ist (Option „Passwort/PIN im Tresor speichern“). Im Klartext werden
+  Zugangsdaten nie abgelegt; **nie** gespeichert werden auch die Signed-URLs
+  oder Session-Cookies. Nur die abgerufenen PDF-Abrechnungen landen wie andere
+  Belege in der Belege-Verwaltung.
