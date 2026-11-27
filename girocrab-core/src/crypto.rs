@@ -161,19 +161,22 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
     let previous: Vec<String> = crate::depot_values::positions::held_keys(conn, account_id)?
         .into_iter()
         .collect();
-    conn.execute("DELETE FROM holdings WHERE account_id = ?1", [account_id])?;
+    // built before the old holdings go: an error leaves them as they were
     let holdings: Vec<Holding> = positions
         .iter()
-        .map(|p| Holding {
-            wkn: p.symbol.clone(),
-            name: p.symbol.clone(),
-            quantity: p.quantity,
-            current_price_cents: p.price_eur.map_or(0, |e| (e * 100.0).round() as i64),
-            purchase_price_cents: p.purchase_price_cents.unwrap_or(0),
-            value_cents: p.value_cents,
-            ..Default::default()
+        .map(|p| {
+            Ok(Holding {
+                wkn: p.symbol.clone(),
+                name: p.symbol.clone(),
+                quantity: p.quantity,
+                current_price_cents: p.price_eur.map_or(Ok(0), |e| value_cents(1.0, e))?,
+                purchase_price_cents: p.purchase_price_cents.unwrap_or(0),
+                value_cents: p.value_cents,
+                ..Default::default()
+            })
         })
-        .collect();
+        .collect::<CoreResult<_>>()?;
+    conn.execute("DELETE FROM holdings WHERE account_id = ?1", [account_id])?;
     for h in &holdings {
         conn.execute(
             "INSERT INTO holdings(account_id, isin, wkn, name, quantity, current_price_cents, purchase_price_cents, value_cents)
@@ -220,11 +223,13 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
 /// Two devices that each added the same ticker to an account hold two live
 /// positions after a merge: the newest edit stays (on equal stamps the larger
 /// uuid, so every device keeps the same one), the others become tombstones
-/// that a later merge carries along.
+/// that a later merge carries along. A tombstone keeps its edit stamp: on an
+/// equal stamp a deletion wins the merge, while a newer edit of that position
+/// from another device still does – so every merge order ends the same way.
 /// Returns the accounts it changed.
 fn resolve_duplicate_tickers(conn: &Connection) -> CoreResult<Vec<i64>> {
     let mut st = conn.prepare(
-        "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = MAX(changed_ms + 1, ?1)
+        "UPDATE crypto_positions SET deleted_ms = ?1
           WHERE deleted_ms IS NULL AND EXISTS (
                 SELECT 1 FROM crypto_positions o
                  WHERE o.account_id = crypto_positions.account_id AND o.symbol = crypto_positions.symbol
@@ -286,7 +291,8 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
     let changed_symbols: Vec<String> = conn
         .prepare(
             "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms)
-             SELECT symbol, price_eur, fetched_ms FROM other.crypto_prices WHERE true
+             SELECT symbol, price_eur, fetched_ms FROM other.crypto_prices
+              WHERE price_eur > 0 AND price_eur < 1e15 -- a price cents can hold, as a fetch checks it
              ON CONFLICT(symbol) DO UPDATE SET price_eur = excluded.price_eur, fetched_ms = excluded.fetched_ms
               WHERE excluded.fetched_ms > crypto_prices.fetched_ms
                  OR (excluded.fetched_ms = crypto_prices.fetched_ms AND excluded.price_eur > crypto_prices.price_eur)

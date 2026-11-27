@@ -334,3 +334,70 @@ fn equal_price_stamps_end_with_the_same_price_on_both_devices() {
         assert_eq!(p, 101.0);
     }
 }
+
+#[test]
+fn duplicate_cleanup_ends_the_same_in_every_merge_order() {
+    // A adds BTC (x); C copies it; B adds BTC (y); C edits x last
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    let (c, pc) = temp_vault();
+    c.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let (bacc, cacc) = (
+        b.list_crypto_account_ids().unwrap()[0],
+        c.list_crypto_account_ids().unwrap()[0],
+    );
+    tick();
+    b.save_crypto_position(bacc, None, "BTC".into(), 2.0, None)
+        .unwrap();
+    tick();
+    c.save_crypto_position(cacc, Some("BTC".into()), "BTC".into(), 3.0, None)
+        .unwrap();
+
+    let merge = |v: &Vault, from: &std::path::PathBuf| {
+        v.merge_other_vault(from.to_string_lossy().to_string(), vec![7u8; 32])
+            .unwrap()
+    };
+    merge(&a, &pb);
+    merge(&c, &pb);
+    merge(&a, &pc);
+    merge(&b, &pa);
+    merge(&c, &pa);
+    for (v, acc) in [(&a, acc), (&b, bacc), (&c, cacc)] {
+        let p = v.list_crypto_positions(acc).unwrap();
+        assert_eq!(p.len(), 1, "one live BTC");
+        assert_eq!(p[0].quantity, 3.0, "the newest edit");
+    }
+}
+
+#[test]
+fn a_price_beyond_cents_from_another_vault_is_not_taken() {
+    let (a, pa) = temp_vault();
+    a.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms) VALUES ('BTC', 1e17, 5)",
+            [],
+        )
+        .unwrap();
+    let (b, _pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let n: i64 = b
+        .db()
+        .unwrap()
+        .query_row("SELECT count(*) FROM crypto_prices", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 0);
+    // a stored one is refused before the holdings are rewritten
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    assert!(
+        a.save_crypto_position(acc, None, "BTC".into(), 0.001, None)
+            .is_err()
+    );
+}
