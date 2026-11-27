@@ -67,18 +67,36 @@ async fn fetch_spot(client: &reqwest::Client, symbol: &str) -> CoreResult<Spot> 
     }
 }
 
-/// Stores fetched prices and writes the crypto accounts again.
-pub(super) fn store_prices(conn: &Connection, prices: &[(String, f64)]) -> CoreResult<()> {
-    let now = now_ms();
-    for (symbol, eur) in prices {
-        conn.execute(
+/// A fetched price: ticker, EUR per unit, when it was received (ms).
+pub(super) type Quote = (String, f64, i64);
+
+/// Stores fetched prices (a quote older than the stored one is dropped, e.g. a
+/// bulk refresh that overlapped a single fetch) and writes again only the
+/// crypto accounts holding a ticker that got a new price: a price that was not
+/// fetched now must not enter the value history as observed today.
+pub(super) fn store_prices(conn: &Connection, quotes: &[Quote]) -> CoreResult<()> {
+    let mut changed = Vec::new();
+    for (symbol, eur, received_ms) in quotes {
+        let n = conn.execute(
             "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms) VALUES (?1, ?2, ?3)
-             ON CONFLICT(symbol) DO UPDATE SET price_eur = excluded.price_eur, fetched_ms = excluded.fetched_ms",
-            params![symbol, eur, now],
+             ON CONFLICT(symbol) DO UPDATE SET price_eur = excluded.price_eur, fetched_ms = excluded.fetched_ms
+              WHERE excluded.fetched_ms > crypto_prices.fetched_ms",
+            params![symbol, eur, received_ms],
         )?;
+        if n > 0 {
+            changed.push(symbol.as_str());
+        }
     }
     for id in crypto_account_ids(conn)? {
-        materialize(conn, id)?;
+        let holds: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM crypto_positions WHERE account_id = ?1 AND deleted_ms IS NULL
+                AND symbol IN (SELECT value FROM json_each(?2)))",
+            params![id, serde_json::to_string(&changed)?],
+            |r| r.get(0),
+        )?;
+        if holds {
+            materialize(conn, id)?;
+        }
     }
     Ok(())
 }
@@ -108,7 +126,7 @@ impl Vault {
         let mut prices = Vec::new();
         for symbol in symbols {
             match fetch_spot(&client, &symbol).await {
-                Ok(Spot::Price(p)) => prices.push((symbol, p)),
+                Ok(Spot::Price(p)) => prices.push((symbol, p, now_ms())),
                 Ok(Spot::Unknown) => out.unknown.push(symbol),
                 Err(e) => {
                     out.error.get_or_insert(e.to_string());
@@ -140,7 +158,7 @@ impl Vault {
         };
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
-        store_prices(&tx, &[(symbol, price)])?;
+        store_prices(&tx, &[(symbol, price, now_ms())])?;
         tx.commit()?;
         Ok(price)
     }
@@ -179,7 +197,7 @@ mod tests {
             .unwrap();
         {
             let db = v.db().unwrap();
-            store_prices(&db, &[("BTC".into(), 60_000.0)]).unwrap();
+            store_prices(&db, &[("BTC".into(), 60_000.0, now_ms())]).unwrap();
         }
         let value = |acc| v.list_crypto_positions(acc).unwrap()[0].value_cents;
         assert_eq!((value(a), value(b)), (6_000_000, 1_500_000));
@@ -187,5 +205,44 @@ mod tests {
             v.list_holdings(b).unwrap()[0].current_price_cents,
             6_000_000
         );
+    }
+
+    #[test]
+    fn an_older_quote_is_dropped_and_only_holders_of_a_new_price_are_written() {
+        let p = crate::test_support::thread_temp_path("crypto-quotes.db");
+        let v = Vault::open(p.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
+        let btc = v.create_crypto_account("A".into()).unwrap();
+        let eth = v.create_crypto_account("B".into()).unwrap();
+        v.save_crypto_position(btc, None, "BTC".into(), 1.0, None)
+            .unwrap();
+        v.save_crypto_position(eth, None, "ETH".into(), 1.0, None)
+            .unwrap();
+        let db = v.db().unwrap();
+        let observations = |acc: i64| -> i64 {
+            db.query_row(
+                "SELECT count(*) FROM depot_observations WHERE account_id = ?1",
+                [acc],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        store_prices(&db, &[("ETH".into(), 3_000.0, 1_000)]).unwrap();
+        let eth_before = observations(eth);
+        store_prices(&db, &[("BTC".into(), 60_000.0, 2_000)]).unwrap();
+        assert_eq!(
+            observations(eth),
+            eth_before,
+            "ETH holder not written again"
+        );
+        // a bulk refresh that received its quote before the single fetch
+        store_prices(&db, &[("BTC".into(), 50_000.0, 1_500)]).unwrap();
+        let price: f64 = db
+            .query_row(
+                "SELECT price_eur FROM crypto_prices WHERE symbol = 'BTC'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(price, 60_000.0);
     }
 }
