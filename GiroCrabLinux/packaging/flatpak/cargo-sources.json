@@ -3629,14 +3629,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/rusqlite/rusqlite-0.42.0.crate",
-        "sha256": "a4edff0039f148731aee2fd80f76dbfeb12d204ab3d1c544838d34e02151049b",
-        "dest": "cargo/vendor/rusqlite-0.42.0"
+        "url": "https://static.crates.io/crates/rusqlite/rusqlite-0.43.0.crate",
+        "sha256": "f172c4812a19b26d1c23cdb0070e69db335503dfa378b910eb857386e5b8beba",
+        "dest": "cargo/vendor/rusqlite-0.43.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"a4edff0039f148731aee2fd80f76dbfeb12d204ab3d1c544838d34e02151049b\", \"files\": {}}",
-        "dest": "cargo/vendor/rusqlite-0.42.0",
+        "contents": "{\"package\": \"f172c4812a19b26d1c23cdb0070e69db335503dfa378b910eb857386e5b8beba\", \"files\": {}}",
+        "dest": "cargo/vendor/rusqlite-0.43.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
