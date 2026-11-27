@@ -1155,12 +1155,14 @@ final class TRWebCoordinator: NSObject, WKNavigationDelegate {
         // The phone number goes into Trade Republic's own form only (https).
         guard !phone.isEmpty, webView.url?.scheme == "https",
               WebLoginSheet.isTradeRepublicHost(webView.url?.host) else { return }
-        let digits = phone.replacingOccurrences(of: "\"", with: "")
+        // a JSON string literal (as on Linux): quotes, backslashes and line breaks in the
+        // stored value cannot break the script
+        guard let literal = (try? JSONEncoder().encode(phone)).flatMap({ String(data: $0, encoding: .utf8) }) else { return }
         let js = """
         (function fill(tries) {
           var el = document.querySelector('input[type="tel"], input[autocomplete="tel"], input[name*="phone" i], input[id*="phone" i]');
           if (!el) { if (tries > 0) setTimeout(function(){ fill(tries - 1); }, 500); return; }
-          var v = "\(digits)";
+          var v = \(literal);
           if (el.maxLength > 0 && el.maxLength < v.length && v.startsWith("+49")) v = v.substring(3);
           var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
           setter.call(el, v);

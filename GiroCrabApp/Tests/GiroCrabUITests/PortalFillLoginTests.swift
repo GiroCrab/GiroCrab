@@ -31,11 +31,17 @@ final class PortalFillLoginTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertTrue(loaded)
+        if !presetPassword.isEmpty {
+            _ = try await browser.webView.evaluateJavaScript("document.getElementById('pw').value = '\(presetPassword)'")
+        }
         let result = await browser.fillLogin(user: user, password: "fiktiv-pw")
         let u = try await browser.webView.evaluateJavaScript("document.getElementById('user').value") as? String ?? ""
         let p = try await browser.webView.evaluateJavaScript("document.getElementById('pw').value") as? String ?? ""
         return (result, u, p)
     }
+
+    /// A password the user typed before the autofill ran (empty: none).
+    private var presetPassword = ""
 
     func testEmptyUserFieldIsFilledTogetherWithPassword() async throws {
         let (ok, user, pw) = try await fill(existingUser: "")
@@ -51,11 +57,21 @@ final class PortalFillLoginTests: XCTestCase {
         XCTAssertEqual(pw, "fiktiv-pw")
     }
 
-    func testDifferentUserFieldAbortsAndWritesNothing() async throws {
+    // another user signs in: nothing is written and the autofill ends (true), so the
+    // poll does not try this page again every 1.5 s
+    func testDifferentUserFieldEndsAutofillAndWritesNothing() async throws {
         let (ok, user, pw) = try await fill(existingUser: "anderer")
-        XCTAssertFalse(ok)
+        XCTAssertTrue(ok)
         XCTAssertEqual(user, "anderer")
         XCTAssertEqual(pw, "")
+    }
+
+    func testTypedPasswordIsNotOverwritten() async throws {
+        presetPassword = "selbst-getippt"
+        let (ok, user, pw) = try await fill(existingUser: "")
+        XCTAssertTrue(ok)
+        XCTAssertEqual(user, "fiktiv")
+        XCTAssertEqual(pw, "selbst-getippt")
     }
 }
 #endif

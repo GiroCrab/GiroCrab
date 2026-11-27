@@ -20,11 +20,13 @@ is_local() { local f; for f in "${LOCAL_ONLY[@]}"; do [[ "$f" == "$1" ]] && retu
 # 1. Swift: a file creating a remote WKWebView must decide navigations (https only), and every
 #    `decidePolicyFor navigationAction` must use the scheme guard itself: call
 #    `ConsentRedirect.allowsMainFrame` (or compare with "https") and cancel. An unused helper
-#    next to an unconditional `.allow` does not count.
+#    next to an unconditional `.allow` does not count, nor a guard result thrown away
+#    (`_ = ….allowsMainFrame(…)`) while another branch supplies the `.cancel`.
 #    Hosts are deliberately not checked here: consent pages belong to whichever bank the
 #    user picked and portal logins may hand over to bank SSO domains. Host binding is
 #    enforced on the data paths (check 4), not on main-frame navigation.
 SWIFT_SCHEME_RE='allowsMainFrame\(|== *"https"'
+SWIFT_DISCARDED_RE='_ *= *[A-Za-z_.]*allowsMainFrame\('
 swift_policies() {   # stdin = Swift source; each `decidePolicyFor navigationAction` body on one line
     awk '!on && /decidePolicyFor navigationAction/ { on = 1; d = 0; s = 0; b = "" }
          on { b = b " " $0; o = gsub(/\{/, "{"); c = gsub(/\}/, "}"); d += o - c; if (o) s = 1
@@ -35,11 +37,14 @@ swift_guard_gap() {   # $1 = Swift source; succeeds when a navigation policy is 
     while IFS= read -r body; do
         found=1
         grep -qE "$SWIFT_SCHEME_RE" <<<"$body" && grep -q '\.cancel' <<<"$body" || return 0
+        ! grep -qE "$SWIFT_DISCARDED_RE" <<<"$body" || return 0
     done < <(swift_policies <<<"$1")
     (( found == 0 ))
 }
 swift_guard_gap $'static func allowsMainFrame(_ url: URL?) -> Bool { url?.scheme?.lowercased() == "https" }\nfunc webView(_ w: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,\n             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {\n    decisionHandler(.allow)\n}' \
     || err "self-test: unused allowsMainFrame helper with an unconditional .allow accepted"
+swift_guard_gap $'func webView(_ w: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,\n             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {\n    if navigationAction.request.url?.host == "localhost" { decisionHandler(.cancel); return }\n    _ = ConsentRedirect.allowsMainFrame(navigationAction.request.url)\n    decisionHandler(.allow)\n}' \
+    || err "self-test: discarded allowsMainFrame result next to a .cancel in another branch accepted"
 if swift_guard_gap $'func webView(_ w: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,\n             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {\n    let ok = ConsentRedirect.allowsMainFrame(navigationAction.request.url)\n    decisionHandler(ok ? .allow : .cancel)\n}'; then
     err "self-test: navigation policy using allowsMainFrame flagged"
 fi
@@ -108,7 +113,8 @@ hits=$(grep -nE 'navigationGuard: *false' "$QML_DIR"/*.qml || true)
 # 3. Scripts that look at a password field: each script carries its own origin/host gate, and none reads
 #    the field's value (neither through a variable `pw`/`password…`, nor straight from the selector,
 #    `querySelector('input[type=password]').value`, nor through a name bound to such a selector,
-#    `const field = querySelector('input[type=password]'); field.value`). Writes stay allowed.
+#    `const field = querySelector('input[type=password]'); field.value`). Writes stay allowed, and so does the
+#    bare emptiness test `field.value === ''` (a Bool, the value itself is never used).
 PW_READ_RE='\b(pw|pwd|pass(word)?[A-Za-z]*)\.value\b|type[[:space:]]*=[^]]*password[^)]*\)\.value\b'
 # password fields a script addresses (any quoting / spacing of the attribute selector)
 PW_FIELD_RE='type[[:space:]]*={1,3}[[:space:]]*(\\)?.?password'
@@ -124,10 +130,12 @@ pw_aliases() {   # stdin = script; the names bound to a password field as `a|b`
         | sed -E 's/^(var|let|const)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\2/' | sort -u | paste -s -d '|' -
 }
 pw_reads() {   # stdin = lines, $1 = bound names (`a|b`, optional); prints the lines that read a value
-    local line re="$PW_READ_RE"
+    local line seen re="$PW_READ_RE"
     [[ -z "${1:-}" ]] || re="\b($1)\.value\b|$re"
     while IFS= read -r line; do
-        [[ -n "$(grep -oE "($re)( *==?|\)\.set)?" <<<"$line" | grep -vE "$PW_WRITE_END" || true)" ]] && printf '%s\n' "$line"
+        # `x.value === ''` only tests for emptiness (a Bool, nothing of the value is kept): allowed
+        seen=$(sed -E "s/\.value[[:space:]]*===[[:space:]]*(''|\"\")([^.[:alnum:]_([]|\$)/.emptiness_test\2/g" <<<"$line")
+        [[ -n "$(grep -oE "($re)( *==?|\)\.set)?" <<<"$seen" | grep -vE "$PW_WRITE_END" || true)" ]] && printf '%s\n' "$line"
     done
     return 0
 }
@@ -146,11 +154,15 @@ for bad in "var v = pw.value;" \
            "const old = pw.value; pw.value = next;" \
            "pw.value=pwd.value;" \
            "if (pw.value==x) { go(); }" \
+           "if (pw.value === 'x') { go(); }" \
+           "if (pw.value === ''.concat(pw.value)) { go(); }" \
+           "if (pw.value === '' || pw.value.length > 3) { go(); }" \
            $'const field = document.querySelector(\'input[type=password]\');\nconst value = field.value;'; do
     [[ -n "$(pw_scan <<<"$bad")" ]] || err "self-test: password read not detected: $bad"
 done
 for ok in "pw.value = v;" \
           "pw.value=v;" \
+          "if (pw && password && pw.value === '') set(pw, password);" \
           "document.querySelector('input[type=password]').value = v;" \
           "document.querySelector(\"input[type='password']\").value = v;" \
           $'const field = document.querySelector(\'input[type=password]\');\nfield.value = secret;'; do
