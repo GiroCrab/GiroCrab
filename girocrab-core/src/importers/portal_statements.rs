@@ -273,12 +273,14 @@ fn list_like(field: Option<&str>, v: &serde_json::Value) -> bool {
             // a bare empty array is a list only at the root or under a
             // statement-named field — elsewhere it is no statements list
             let empty_list = a.is_empty() && field.is_none_or(|f| f.contains("statement"));
-            // an entry-shaped item: a closing date, or a PDF where `entry` would
-            // read one — directly or nested (a `files` array of link strings)
+            // an entry-shaped item: a closing date, a document id (the
+            // document-id kind of entry, dated or not), or a PDF where `entry`
+            // would read one — directly or nested (a `files` array of links)
             let shaped = empty_list
                 || a.iter().any(|i| match i {
                     serde_json::Value::Object(m) => {
                         own_date(m).is_some()
+                            || document_id(m).is_some()
                             || m.values()
                                 .filter_map(|s| s.as_str())
                                 .any(|s| pdf_link(s).is_some())
@@ -849,6 +851,12 @@ mod statement_list_tests {
             r#"{"statements":[{"statementDate":"2026-10-31","documentId":"d0"},{"documentId":"d1"}]}"#,
         );
         assert!(l.readable && l.items.is_empty() && l.rejected == 1, "{l:?}");
+        // a listing with only undated document ids: a recognized list whose
+        // every entry is an unidentified statement — readable, all rejected
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"documentId":"d1"},{"documentId":"d2"}]}"#,
+        );
+        assert!(l.readable && l.items.is_empty() && l.rejected == 2, "{l:?}");
         // an undated entry whose PDF the listing carries anyway counts its
         // PDF, not its documentId — one statement, one failure
         let l = parse_portal_statement_listing(

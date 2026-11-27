@@ -7,9 +7,12 @@
 
 Status: **Verified** – `ConnectorKind::AmazonVisa` (Schlüssel `amazonvisa`).
 In der [Bankenmatrix](../README.md) als **EnableBanking, offiziell, Verified**
-geführt: Der laufende Umsatzabruf läuft über EnableBanking, den Abruf der
-Kontoauszugs-PDFs aus dem Kundenportal hat
-[#1925](https://github.com/GiroCrab/GiroCrab/pull/1925) ergänzt. Anmeldung im
+geführt — das ist die Klassifizierung, nicht der Standardweg: Der Abruf läuft
+standardmäßig über das Kundenportal, den Abruf der Kontoauszugs-PDFs hat
+[#1925](https://github.com/GiroCrab/GiroCrab/pull/1925) ergänzt. Der
+EnableBanking-Weg (laufende Umsätze) ist optional und setzt einen ausdrücklichen
+Opt-in voraus: eine eigene EnableBanking-Anwendung mit Signatur-Schlüssel, mit
+der jede API-Anfrage signiert wird. Anmeldung im
 Browserfenster, Auswertung der Abrechnungsliste in
 `girocrab-core/src/importers/portal_statements.rs`, Portal-Logik in
 `GiroCrabApp/Sources/GiroCrabUI/PortalUI.swift`.
