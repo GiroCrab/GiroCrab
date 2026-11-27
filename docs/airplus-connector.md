@@ -1,8 +1,8 @@
 # AirPlus browser connector
 
 <!-- sync:connector-note:start -->
-> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur AirPlus. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
-> This connector is an independent community project and is not affiliated with AirPlus. Interface: unofficial. Using unofficial interfaces may violate the bank's terms of service.
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter AirPlus. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with AirPlus. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
 
 Design page for `AirPlusUI.swift` and `girocrab-core/src/connectors/airplus.rs` (#1143).

@@ -105,6 +105,238 @@ fn store_fetch_matches_depot_holdings_without_iban() {
 }
 
 #[test]
+fn store_fetch_keeps_stored_purchase_price_when_fetch_has_none() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-depot-purchase");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "login".into())
+        .unwrap();
+    let fetch = |isin: &str, price: i64, purchase: i64| FetchResult {
+        accounts: vec![RemoteAccount {
+            external_ref: "0012345678".into(),
+            name: "Depot".into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: "0012345678".into(),
+            currency: "EUR".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents: 5000,
+            balance_date: "2026-11-10".into(),
+        }],
+        holdings: vec![RemoteHolding {
+            classification: Default::default(),
+            direct_crypto: false,
+            account_ref: "0012345678".into(),
+            holding: crate::models::Holding {
+                isin: isin.into(),
+                name: "X".into(),
+                quantity: 2.0,
+                current_price_cents: price,
+                purchase_price_cents: purchase,
+                value_cents: price * 2,
+                ..Default::default()
+            },
+        }],
+        ..Default::default()
+    };
+    // synthetic data: stored purchase price (as after an import), then a fetch without one
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0001234567", 100, 80),
+    )
+    .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0001234567", 120, 0),
+    )
+    .unwrap();
+    let acc = v.list_accounts().unwrap().pop().unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.current_price_cents, 120, "price is updated");
+    assert_eq!(h.purchase_price_cents, 80, "purchase price is kept");
+    // a purchase price the fetch brings wins
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0001234567", 130, 90),
+    )
+    .unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 90);
+    // another position does not inherit it
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0007654321", 50, 0),
+    )
+    .unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 0);
+}
+
+#[test]
+fn store_fetch_matches_stored_purchase_price_by_wkn_when_isin_is_missing() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-depot-purchase-wkn");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "login".into())
+        .unwrap();
+    let fetch = |isin: &str, wkn: &str, price: i64, purchase: i64| FetchResult {
+        accounts: vec![RemoteAccount {
+            external_ref: "0012345678".into(),
+            name: "Depot".into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: "0012345678".into(),
+            currency: "EUR".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents: 5000,
+            balance_date: "2026-11-10".into(),
+        }],
+        holdings: vec![RemoteHolding {
+            classification: Default::default(),
+            direct_crypto: false,
+            account_ref: "0012345678".into(),
+            holding: crate::models::Holding {
+                isin: isin.into(),
+                wkn: wkn.into(),
+                name: "X".into(),
+                quantity: 2.0,
+                current_price_cents: price,
+                purchase_price_cents: purchase,
+                value_cents: price * 2,
+                ..Default::default()
+            },
+        }],
+        ..Default::default()
+    };
+    // synthetic data: stored without ISIN (as after an import), fetch brings the ISIN
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("", "A0TEST", 100, 80),
+    )
+    .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0001234567", "A0TEST", 120, 0),
+    )
+    .unwrap();
+    let acc = v.list_accounts().unwrap().pop().unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.isin, "DE0001234567");
+    assert_eq!(h.purchase_price_cents, 80, "kept via WKN");
+    // two different non-empty ISINs never match via the WKN
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch("DE0007654321", "A0TEST", 50, 0),
+    )
+    .unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 0);
+}
+
+#[test]
+fn store_fetch_keeps_no_purchase_price_when_stored_rows_disagree_or_currency_changes() {
+    let p_dir = crate::test_support::TempDir::new("girocrab-depot-purchase-ambiguous");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Comdirect, String::new(), "login".into())
+        .unwrap();
+    // every row: same ISIN, (currency, purchase price) as given
+    let fetch = |rows: &[(&str, i64)]| FetchResult {
+        accounts: vec![RemoteAccount {
+            external_ref: "0012345678".into(),
+            name: "Depot".into(),
+            owner: String::new(),
+            iban: String::new(),
+            account_number: "0012345678".into(),
+            currency: "EUR".into(),
+            kind: AccountKind::Brokerage,
+            balance_cents: 5000,
+            balance_date: "2026-11-10".into(),
+        }],
+        holdings: rows
+            .iter()
+            .map(|&(currency, purchase)| RemoteHolding {
+                classification: Default::default(),
+                direct_crypto: false,
+                account_ref: "0012345678".into(),
+                holding: crate::models::Holding {
+                    isin: "DE0001234567".into(),
+                    name: "X".into(),
+                    quantity: 1.0,
+                    current_price_cents: 100,
+                    purchase_price_cents: purchase,
+                    value_cents: 100,
+                    currency: currency.into(),
+                    ..Default::default()
+                },
+            })
+            .collect(),
+        ..Default::default()
+    };
+    // synthetic data: two stored rows of one ISIN with different purchase prices
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(&[("EUR", 80), ("EUR", 95)]),
+    )
+    .unwrap();
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(&[("EUR", 0), ("EUR", 0)]),
+    )
+    .unwrap();
+    let acc = v.list_accounts().unwrap().pop().unwrap();
+    let held = v.list_holdings(acc.id).unwrap();
+    assert_eq!(held.len(), 2);
+    assert!(
+        held.iter().all(|h| h.purchase_price_cents == 0),
+        "ambiguous: nothing is kept"
+    );
+    // a stored row with a price next to one without is ambiguous too
+    store_fetch(
+        &v,
+        ConnectorKind::Comdirect,
+        conn,
+        fetch(&[("EUR", 80), ("EUR", 0)]),
+    )
+    .unwrap();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 0)])).unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 0);
+    // a stored USD purchase price is not carried over to an EUR position
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("USD", 80)])).unwrap();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 0)])).unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 0, "currency changed");
+    assert_eq!(h.native_purchase_price_cents, None);
+    // the same currency keeps it
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 80)])).unwrap();
+    store_fetch(&v, ConnectorKind::Comdirect, conn, fetch(&[("EUR", 0)])).unwrap();
+    let h = v.list_holdings(acc.id).unwrap().pop().unwrap();
+    assert_eq!(h.purchase_price_cents, 80);
+}
+
+#[test]
 fn history_bookings_arrive_checked_and_stored_documents_get_linked() {
     let p_dir = crate::test_support::TempDir::new("girocrab-history-docs");
     let p = p_dir.join("v.db");
@@ -415,6 +647,56 @@ fn fetch_warnings_name_accounts_by_their_stored_name() {
     assert_eq!(
         v.list_accounts().unwrap().pop().unwrap().balance_cents,
         250_00
+    );
+}
+
+#[test]
+fn fetch_hints_name_accounts_by_their_stored_name_without_any_warning() {
+    // #1743: "Depotbestand (HKWPD) – von der Bank nicht angeboten" is a hint, not a warning.
+    // With no warning in the fetch, the IBAN must still become the stored name.
+    let p_dir = crate::test_support::TempDir::new("girocrab-fetch-hints");
+    let p = p_dir.join("v.db");
+    let v = Vault::open(p.to_string_lossy().to_string(), vec![3u8; 32]).unwrap();
+    let conn = v
+        .add_bank_connection(
+            ConnectorKind::FinTsGeneric,
+            "fints:50010517".into(),
+            "login".into(),
+        )
+        .unwrap();
+    let iban = "DE02120300000000202051";
+    let depot = RemoteAccount {
+        external_ref: iban.into(),
+        name: "Direkt-Depot".into(),
+        owner: String::new(),
+        iban: iban.into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::Brokerage,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let first = FetchResult {
+        accounts: vec![depot.clone()],
+        ..Default::default()
+    };
+    store_fetch(&v, ConnectorKind::FinTsGeneric, conn, first).unwrap();
+    let id = v.list_accounts().unwrap().pop().unwrap().id;
+    v.rename_account(id, "Mein Depot".into()).unwrap();
+
+    let hinted = FetchResult {
+        accounts: vec![depot],
+        balances_unknown: vec![iban.into()],
+        hints: vec![format!(
+            "{iban}: Depotbestand (HKWPD) – von der Bank nicht angeboten"
+        )],
+        ..Default::default()
+    };
+    let s = store_fetch(&v, ConnectorKind::FinTsGeneric, conn, hinted).unwrap();
+    assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+    assert_eq!(
+        s.hints,
+        vec!["Mein Depot: Depotbestand (HKWPD) – von der Bank nicht angeboten".to_string()]
     );
 }
 
@@ -2093,6 +2375,112 @@ fn amounts_above_the_sepa_limit_are_rejected_before_the_tan() {
             .begin_standing_order(order(MAX_AMOUNT_CENTS + 1), "pin".into(), true),
         Err(CoreError::InvalidInput { .. })
     ));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn savings_transfer_only_goes_to_an_own_active_checking_account() {
+    let (v, path) = demo_vault();
+    let accounts = v.list_accounts().unwrap();
+    let savings = accounts
+        .iter()
+        .find(|a| a.name == "Tagesgeld Plus" && a.connection_id.is_some())
+        .unwrap();
+    assert_eq!(savings.kind, AccountKind::Savings);
+    let own = accounts
+        .iter()
+        .find(|a| a.name == "Musterbank Girokonto" && a.connection_id.is_some())
+        .unwrap();
+    let send = |iban: &str| {
+        v.clone().begin_transfer(
+            SepaTransferRequest {
+                account_id: savings.id,
+                recipient_name: "Müller GmbH".into(),
+                recipient_iban: iban.into(),
+                recipient_bic: None,
+                amount_cents: 100,
+                purpose: "Test".into(),
+                instant: false,
+                execution_date: None,
+            },
+            "pin".into(),
+            true,
+        )
+    };
+    // Third party and another savings account are refused.
+    assert!(matches!(
+        send("DE02120300000000202051"),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    let other_savings = accounts
+        .iter()
+        .find(|a| a.name == "Tagesgeld Familie")
+        .unwrap();
+    assert!(matches!(
+        send(&other_savings.iban),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    // Own checking account (spaces and case ignored) is accepted.
+    let spaced = own
+        .iban
+        .as_bytes()
+        .chunks(4)
+        .map(|c| std::str::from_utf8(c).unwrap().to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(send(&spaced).is_ok());
+    // An archived target no longer counts as own.
+    v.set_account_archived(own.id, true).unwrap();
+    assert!(matches!(
+        send(&own.iban),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn savings_batch_transfer_only_goes_to_own_active_checking_accounts() {
+    use crate::models::{BatchPaymentInput, BatchTransferRequest};
+    let (v, path) = demo_vault();
+    let accounts = v.list_accounts().unwrap();
+    let savings = accounts
+        .iter()
+        .find(|a| a.name == "Tagesgeld Plus" && a.connection_id.is_some())
+        .unwrap();
+    let own = accounts
+        .iter()
+        .find(|a| a.name == "Musterbank Girokonto" && a.connection_id.is_some())
+        .unwrap();
+    let payment = |iban: &str| BatchPaymentInput {
+        name: "Müller GmbH".into(),
+        iban: iban.into(),
+        bic: None,
+        amount_cents: 100,
+        purpose: "Test".into(),
+    };
+    let send = |ibans: &[&str]| {
+        v.clone().begin_batch_transfer(
+            BatchTransferRequest {
+                account_id: savings.id,
+                payments: ibans.iter().map(|i| payment(i)).collect(),
+                batch_booking: true,
+                execution_date: None,
+            },
+            "pin".into(),
+            true,
+        )
+    };
+    // A third party is refused, even when it is only one payment of the batch.
+    assert!(matches!(
+        send(&["DE02120300000000202051"]),
+        Err(CoreError::InvalidInput { .. })
+    ));
+    let err = send(&[own.iban.as_str(), "DE02120300000000202051"]).err();
+    assert!(matches!(err, Some(CoreError::InvalidInput { .. })));
+    // The error names the rejected payment (one-based position).
+    assert!(err.unwrap().to_string().contains("Zahlung 2:"));
+    // Only own active checking accounts pass.
+    assert!(send(&[own.iban.as_str()]).is_ok());
     let _ = std::fs::remove_file(path);
 }
 

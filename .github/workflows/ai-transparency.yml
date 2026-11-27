@@ -30,7 +30,7 @@ jobs:
     env:
       PR: ${{ github.event.pull_request.number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Trusted base commit, never the PR head.
           ref: ${{ github.event.pull_request.base.sha }}
@@ -60,3 +60,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/export-ai-provenance.py comment --pr "$PR" --file card.md
+
+  # Binding check (#1803): a PR on security-critical paths needs a ticked Security-Check in its body.
+  # Separate job so the informational card above never blocks and this one does.
+  security-checklist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Trusted base commit, never the PR head.
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: tools
+          persist-credentials: false
+
+      - name: Security-Check ticked when security-critical paths change
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 tools/check-security-checklist.py --pr "$PR_NUMBER"

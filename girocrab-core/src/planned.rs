@@ -13,8 +13,8 @@ use crate::schema::{has_column, has_table};
 use crate::vault::Vault;
 
 /// Step 17: scheduled transfers sent to the bank. `end_to_end_id` is the merge
-/// key. Rows stay until the execution date has passed; the bank's booking
-/// then arrives through the normal sync. Idempotent like the steps before.
+/// key. Rows stay until the execution date has passed or a fetched booking
+/// settles them ([`drop_booked`], #1881). Idempotent like the steps before.
 pub(crate) fn planned_transfers(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS planned_transfers (
@@ -43,6 +43,22 @@ pub(crate) fn planned_kind(conn: &Connection) -> CoreResult<()> {
             "ALTER TABLE planned_transfers ADD COLUMN kind TEXT NOT NULL DEFAULT 'transfer';",
         )?;
     }
+    Ok(())
+}
+
+/// Step 43 (#1900): `settled_ms` marks a scheduled order the bank's booking has
+/// settled (NULL = still open), so a vault merge cannot bring it back. The date
+/// index already covers it for the `settled_ms IS NULL` filter that lists and
+/// counts get in part 2; no query reads it yet. Idempotent.
+pub(crate) fn planned_settled(conn: &Connection) -> CoreResult<()> {
+    if !has_column(conn, "main", "planned_transfers", "settled_ms")? {
+        conn.execute_batch("ALTER TABLE planned_transfers ADD COLUMN settled_ms INTEGER;")?;
+    }
+    conn.execute_batch(
+        "DROP INDEX IF EXISTS planned_transfers_date;
+         CREATE INDEX IF NOT EXISTS planned_transfers_date_settled
+            ON planned_transfers(execution_date, settled_ms);",
+    )?;
     Ok(())
 }
 
@@ -309,6 +325,118 @@ impl Vault {
         }
         Ok(t)
     }
+}
+
+/// Removes the planned payments of `account_id` the bank has booked by now (#1881): the
+/// same amount, booked on or after the day the order was placed. Only orders with an
+/// execution date from today on are matched; among those the earliest execution date goes
+/// first, so an order already past its date cannot take the booking of a listed one.
+/// Three passes: a booking carrying the order's end-to-end id first, then one with the exact
+/// IBAN, then one without an IBAN on either side. A booking with another end-to-end id than
+/// an order with a recipient IBAN is another payment (same amount to the same payee) and never
+/// settles it (batch sum rows have no IBAN and carry a local id the bank never sees); an id
+/// missing on either side (or SEPA's `NOTPROVIDED`) leaves the IBAN match to decide.
+/// A booking settles one order only: only the bookings this fetch inserted or adopted
+/// (`fetched`, their ids) count, so a later fetch cannot use the same booking for a second
+/// order. Pending/held rows are no bookings. Orders the bank executes early or on another
+/// day (weekend, holiday) would otherwise stay until their date has passed.
+pub(crate) fn drop_booked(
+    db: &Connection,
+    account_id: i64,
+    fetched: &std::collections::HashSet<i64>,
+) -> CoreResult<()> {
+    struct Order {
+        id: i64,
+        iban: String,
+        signed: i64,
+        since: String,
+        e2e: String,
+    }
+    if fetched.is_empty() {
+        return Ok(());
+    }
+    let mut q = db.prepare(
+        "SELECT id, recipient_iban, amount_cents, kind,
+                date(created_ms / 1000, 'unixepoch', 'localtime'),
+                COALESCE(end_to_end_id, '')
+         FROM planned_transfers WHERE account_id = ?1 AND execution_date >= ?2
+         ORDER BY execution_date, id",
+    )?;
+    let orders: Vec<Order> = q
+        .query_map(params![account_id, today()], |r| {
+            let cents: i64 = r.get(2)?;
+            let kind: String = r.get(3)?;
+            Ok(Order {
+                id: r.get(0)?,
+                iban: r.get(1)?,
+                signed: if kind == "debit" { cents } else { -cents },
+                since: r.get(4)?,
+                e2e: r.get(5)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    if orders.is_empty() {
+        return Ok(());
+    }
+    let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
+    // SEPA's placeholder for "no end-to-end id" counts as none
+    let ref_id = |s: &str| {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("NOTPROVIDED") {
+            String::new()
+        } else {
+            s.to_string()
+        }
+    };
+    let mut used: std::collections::HashSet<i64> = Default::default();
+    let mut find = db.prepare(
+        "SELECT id, COALESCE(counterparty_iban, ''), COALESCE(end_to_end_id, '') FROM transactions
+         WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
+           AND booking_date >= ?3
+           AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
+         ORDER BY booking_date, id",
+    )?;
+    // Pass 0: same end-to-end id; pass 1: exact IBAN, so an order without a better booking
+    // cannot take the booking of another order; pass 2: no IBAN on either side.
+    let mut open = orders;
+    for pass in 0..3 {
+        let mut left = Vec::new();
+        for order in open {
+            let cands: Vec<(i64, String, String)> = find
+                .query_map(params![account_id, order.signed, order.since], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?
+                .collect::<Result<_, _>>()?;
+            let mine = ref_id(&order.e2e);
+            let hit = cands.iter().find(|(tid, tiban, te2e)| {
+                if used.contains(tid) || !fetched.contains(tid) {
+                    return false;
+                }
+                let theirs = ref_id(te2e);
+                if !mine.is_empty() && !theirs.is_empty() && !order.iban.is_empty() {
+                    // both carry an id and the order names a payee: the id alone decides
+                    return pass == 0 && mine == theirs;
+                }
+                match pass {
+                    0 => false,
+                    1 => !order.iban.is_empty() && norm(&order.iban) == norm(tiban),
+                    _ => {
+                        order.iban.is_empty()
+                            || tiban.is_empty()
+                            || norm(&order.iban) == norm(tiban)
+                    }
+                }
+            });
+            if let Some((tid, _, _)) = hit {
+                used.insert(*tid);
+                db.execute("DELETE FROM planned_transfers WHERE id = ?1", [order.id])?;
+            } else {
+                left.push(order);
+            }
+        }
+        open = left;
+    }
+    Ok(())
 }
 
 /// Vault merge: adds the other vault's scheduled transfers we do not have yet
