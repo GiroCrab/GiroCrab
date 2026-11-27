@@ -3278,14 +3278,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/qrcode/qrcode-0.14.1.crate",
-        "sha256": "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec",
-        "dest": "cargo/vendor/qrcode-0.14.1"
+        "url": "https://static.crates.io/crates/qrcode/qrcode-0.15.0.crate",
+        "sha256": "ace1a365f55004297f2cf24acfd96d02966246ca423385273b58a7dc873ee14d",
+        "dest": "cargo/vendor/qrcode-0.15.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec\", \"files\": {}}",
-        "dest": "cargo/vendor/qrcode-0.14.1",
+        "contents": "{\"package\": \"ace1a365f55004297f2cf24acfd96d02966246ca423385273b58a7dc873ee14d\", \"files\": {}}",
+        "dest": "cargo/vendor/qrcode-0.15.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
