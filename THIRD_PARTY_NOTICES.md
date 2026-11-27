@@ -25,7 +25,7 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 | **`miniz_oxide`** | `0.9.1` | `MIT OR Zlib OR Apache-2.0` | [https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide](https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide) |
 | **`p256`** | `0.14.0` | `Apache-2.0 OR MIT` | [https://github.com/RustCrypto/elliptic-curves](https://github.com/RustCrypto/elliptic-curves/tree/master/p256) |
 | **`pbkdf2`** | `0.13.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/password-hashes](https://github.com/RustCrypto/password-hashes) |
-| **`qrcode`** (GiroCode / EPC QR matrix, #663) | `0.14.1` | `MIT OR Apache-2.0` | [https://github.com/kennytm/qrcode-rust](https://github.com/kennytm/qrcode-rust) |
+| **`qrcode`** (GiroCode / EPC QR matrix, #663) | `0.15.0` | `MIT OR Apache-2.0` | [https://github.com/kennytm/qrcode-rust](https://github.com/kennytm/qrcode-rust) |
 | **`rand`** | `0.9.5` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
 | **`rand`** | `0.10.3` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
 | **`regex`** | `1.13.1` | `MIT OR Apache-2.0` | [https://github.com/rust-lang/regex](https://github.com/rust-lang/regex) |
