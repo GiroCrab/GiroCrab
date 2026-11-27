@@ -2394,7 +2394,7 @@ fn match_by_iban(
     claimed: &mut HashSet<i64>,
 ) -> CoreResult<HashSet<i64>> {
     let mut st = conn.prepare(
-        "SELECT id, name, upper(trim(IFNULL(currency, ''))), connection_id IS NOT NULL
+        "SELECT id, name, IFNULL(currency, ''), connection_id IS NOT NULL
            FROM accounts WHERE upper(replace(iban, ' ', '')) = ?1 AND deleted_ms IS NULL
           ORDER BY id",
     )?;
@@ -2409,6 +2409,8 @@ fn match_by_iban(
             Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?, r.get(3)?))
         })? {
             let (id, name, cur, connected) = row?;
+            // all whitespace, like the check in `target_account` (SQLite's trim takes only spaces)
+            let cur = cur.trim().to_uppercase();
             if cur.is_empty() || cur == currency {
                 let exact = !cur.is_empty();
                 candidates.push(IbanCandidate {
@@ -2425,7 +2427,7 @@ fn match_by_iban(
     for exact in [true, false] {
         loop {
             // (index into `open`, wanted vault account) of each account still open
-            let mut wants: Vec<(usize, i64)> = Vec::new();
+            let mut wants: Vec<(usize, &IbanCandidate)> = Vec::new();
             for (i, (mm_id, _, candidates)) in open.iter().enumerate() {
                 if out.contains_key(mm_id) || ambiguous.contains(mm_id) {
                     continue;
@@ -2436,7 +2438,7 @@ fn match_by_iban(
                 let synced = free.clone().any(|c| c.connected);
                 let mut best = free.filter(|c| c.connected || !synced);
                 match (best.next(), best.next()) {
-                    (Some(c), None) => wants.push((i, c.id)),
+                    (Some(c), None) => wants.push((i, c)),
                     (Some(_), Some(_)) => {
                         ambiguous.insert(*mm_id);
                     }
@@ -2446,13 +2448,14 @@ fn match_by_iban(
             if wants.is_empty() {
                 break;
             }
-            for &(i, id) in &wants {
-                if wants.iter().any(|w| w.1 == id && open[w.0].1 != open[i].1) {
+            for &(i, c) in &wants {
+                if wants
+                    .iter()
+                    .any(|w| w.1.id == c.id && open[w.0].1 != open[i].1)
+                {
                     ambiguous.insert(open[i].0);
-                } else if !claimed.contains(&id) {
-                    let c = open[i].2.iter().find(|c| c.id == id).expect("candidate");
-                    claimed.insert(id);
-                    out.insert(open[i].0, (id, c.name.clone()));
+                } else if claimed.insert(c.id) {
+                    out.insert(open[i].0, (c.id, c.name.clone()));
                 }
             }
         }

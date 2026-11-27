@@ -4137,7 +4137,7 @@ fn the_same_currency_comes_before_none_whatever_its_spelling() {
     for usd_first in [false, true] {
         let v = vault();
         let unknown = wallet(&v, "Ohne Währung", "", false);
-        let eur = wallet(&v, "Euro", " eur ", false);
+        let eur = wallet(&v, "Euro", "\t eur\n", false);
         assert_eq!(
             wallet_targets(&v, &wallets_db(usd_first)),
             [(Some(eur), false), (Some(unknown), false)],
