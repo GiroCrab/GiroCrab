@@ -498,6 +498,8 @@ extension AppModel {
             case .needsChallenge, .stillWaiting:
                 logSync(connectionID: connection.id, source: .automatic, outcome: .cancelled,
                         message: String(localized: "Automatischer Abruf übersprungen: Die Bank verlangt eine neue Freigabe."))
+                // The bank cannot be fetched without a fresh approval (#1997): back off.
+                AutoSync.recordScaBlock(connectionID: connection.id, defaults: AppDefaults.store, now: Date())
                 quietSyncConnectionID = nil
                 let s = activeSession
                 activeSession = nil
@@ -585,7 +587,11 @@ extension AppModel {
             }
             let wasQuiet = quietSyncConnectionID == connection.id
             quietSyncConnectionID = nil
-            if wasQuiet { reloadAllInBackground() } else { reloadAll() }
+            if wasQuiet {
+                // the bank allowed a quiet fetch again: no back-off any more (#1997)
+                AutoSync.clearScaBlock(connectionID: connection.id, defaults: AppDefaults.store)
+                reloadAllInBackground()
+            } else { reloadAll() }
             // A regular BHW sync can bring mailbox PDFs too (automatic statements).
             if connection.connector == .bhw && !statementsFetch {
                 Task { @MainActor in
@@ -744,6 +750,14 @@ extension AppModel {
     func finishSync(error: Error) {
         let failedID = quietSyncConnectionID ?? syncingConnectionID
         logSync(connectionID: failedID, source: syncLogSource(for: failedID), outcome: .error, message: describe(error))
+        // A scheduled fetch that died in an approval the bank demanded (FinTS:
+        // TAN for a job, or an app approval that never came, #1997) cannot
+        // succeed quietly: back off instead of logging in every interval.
+        if let failedID, quietSyncConnectionID == failedID,
+           let ce = error as? CoreError, case .Bank(let code, _) = ce,
+           ["SCA", "0030", "3956"].contains(code) {
+            AutoSync.recordScaBlock(connectionID: failedID, defaults: AppDefaults.store, now: Date())
+        }
         let retrySecret = failedSyncSecret
         failedSyncSecret = nil
         if let quietID = quietSyncConnectionID {

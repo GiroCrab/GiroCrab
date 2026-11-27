@@ -11547,6 +11547,17 @@
         }
       }
     },
+    "Der automatische Abruf braucht die gespeicherte PIN. Ohne sie ruft GiroCrab diese Verbindung nur manuell ab." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The automatic fetch needs the stored PIN. Without it GiroCrab fetches this connection manually only."
+          }
+        }
+      }
+    },
     "Der bisherige Ordner und der Ordner „GiroCrab“ in iCloud Drive enthalten beide einen Tresor. GiroCrab wechselt nicht automatisch und nutzt weiter den bisherigen Ordner. Bitte prüfen Sie, welcher Tresor aktuell ist, bevor Sie Daten zusammenführen." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12781,6 +12792,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "These details are still needed before transactions can be fetched."
+          }
+        }
+      }
+    },
+    "Diese Bank verlangt für den Abruf eine Freigabe in der Banking-App, die ein Abruf im Hintergrund nicht geben kann. GiroCrab versucht den automatischen Abruf für diese Verbindung deshalb nur noch einmal am Tag; einen selbst gestarteten Abruf gib in der App frei." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This bank requires an approval in the banking app for every fetch, which a background fetch cannot give. GiroCrab therefore retries the automatic fetch of this connection at most once a day; approve a fetch you started yourself in the app."
           }
         }
       }
