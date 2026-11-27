@@ -18,8 +18,11 @@ extension AppModel {
     }
 
     /// "Neuer Crypto-Bestand …" created the empty depot `id` in the open vault: show and select it.
+    /// The tab is shared by all depots: a new holding opens on its positions, where
+    /// "Position hinzufügen …" is.
     func cryptoAccountCreated(_ id: Int64) {
         reloadAccounts()
+        depotTab = .positions
         sidebarSelection = .account(id)
     }
 
