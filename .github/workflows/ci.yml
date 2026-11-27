@@ -118,6 +118,30 @@ jobs:
       - name: cargo audit
         run: cargo audit --deny warnings
 
+  # Licenses, bans and sources of all dependencies (`deny.toml`, #1800). Advisory exceptions
+  # there mirror `.cargo/audit.toml`. `--workspace`: the root is a package itself. The Linux
+  # and Windows front ends are separate workspaces with their own lockfiles (cxx-qt, Slint):
+  # they get the same policy, cargo-deny finds the root `deny.toml` in the manifest's parent.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@18101caa61cb89118e2ee749786f33c6d1f8a8cb # v2
+        with:
+          tool: cargo-deny
+      - name: cargo deny (core workspace)
+        run: cargo deny --workspace check
+      - name: cargo deny (GiroCrabLinux)
+        if: ${{ !cancelled() }}
+        run: cargo deny --manifest-path GiroCrabLinux/Cargo.toml --workspace check
+      - name: cargo deny (GiroCrabWindows)
+        if: ${{ !cancelled() }}
+        run: cargo deny --manifest-path GiroCrabWindows/Cargo.toml --workspace check
+
   # `rust` and `swift` deliberately run in parallel and independently: a red
   # fmt/Clippy/Rust test run must not hide the Swift build, and vice versa.
   # The job names stay unchanged so existing required checks keep matching.

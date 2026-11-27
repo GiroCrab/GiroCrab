@@ -7,6 +7,9 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/GiroCrab/GiroCrab"
 description = "GiroCrab for Windows (MVP): Slint front end on the GiroCrab Rust core"
 build = "build.rs"
+# An app, never published to crates.io: lets cargo-deny accept the unversioned path
+# dependency on girocrab-core (`allow-wildcard-paths` in deny.toml).
+publish = false
 
 # Own workspace: the macOS/Linux CI (`cargo clippy --workspace`) must not build Slint.
 [workspace]
