@@ -12,7 +12,7 @@
 //! them like a bank fetch (`depot_values::record_fetch`). So the rest of the
 //! app sees an ordinary depot: positions, gain, balance and value history.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -108,8 +108,19 @@ fn position_id(conn: &Connection, account_id: i64, symbol: &str) -> CoreResult<i
     })
 }
 
-fn value_cents(quantity: f64, price_eur: f64) -> i64 {
-    (quantity * price_eur * 100.0).round() as i64
+/// Quantity × price in cents, rounded after multiplying (tiny prices keep their
+/// precision); a value beyond what cents can hold is an error, not a clamp.
+fn value_cents(quantity: f64, price_eur: f64) -> CoreResult<i64> {
+    let v = (quantity * price_eur * 100.0).round();
+    if v.is_finite() && v.abs() < i64::MAX as f64 {
+        Ok(v as i64)
+    } else {
+        Err(too_large())
+    }
+}
+
+fn too_large() -> CoreError {
+    CoreError::invalid(tr("Der Wert des Bestands ist zu groß."))
 }
 
 fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
@@ -119,18 +130,22 @@ fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
           WHERE p.account_id = ?1 AND p.deleted_ms IS NULL ORDER BY p.symbol",
     )?;
     let rows = st.query_map([account_id], |r| {
-        let quantity: f64 = r.get(1)?;
-        let price_eur: Option<f64> = r.get(3)?;
         Ok(CryptoPosition {
             symbol: r.get(0)?,
-            quantity,
+            quantity: r.get(1)?,
             purchase_price_cents: r.get(2)?,
-            price_eur,
+            price_eur: r.get(3)?,
             price_fetched_ms: r.get(4)?,
-            value_cents: price_eur.map_or(0, |p| value_cents(quantity, p)),
+            value_cents: 0,
         })
     })?;
-    Ok(rows.collect::<Result<_, _>>()?)
+    let mut out: Vec<CryptoPosition> = rows.collect::<Result<_, _>>()?;
+    for p in &mut out {
+        if let Some(price) = p.price_eur {
+            p.value_cents = value_cents(p.quantity, price)?;
+        }
+    }
+    Ok(out)
 }
 
 /// Writes the positions of the crypto account `account_id` into `holdings` and
@@ -171,7 +186,10 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
         )?;
     }
     let all_priced = positions.iter().all(|p| p.price_eur.is_some());
-    let total: i64 = positions.iter().map(|p| p.value_cents).sum();
+    let total = positions
+        .iter()
+        .try_fold(0i64, |sum, p| sum.checked_add(p.value_cents))
+        .ok_or_else(too_large)?;
     conn.execute(
         "UPDATE accounts SET balance_cents = ?1, balance_date = ?2 WHERE id = ?3",
         params![total, today_iso(), account_id],
@@ -203,17 +221,19 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
 /// positions after a merge: the newest edit stays (on equal stamps the larger
 /// uuid, so every device keeps the same one), the others become tombstones
 /// that a later merge carries along.
-fn resolve_duplicate_tickers(conn: &Connection) -> CoreResult<()> {
-    conn.execute(
+/// Returns the accounts it changed.
+fn resolve_duplicate_tickers(conn: &Connection) -> CoreResult<Vec<i64>> {
+    let mut st = conn.prepare(
         "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = MAX(changed_ms + 1, ?1)
           WHERE deleted_ms IS NULL AND EXISTS (
                 SELECT 1 FROM crypto_positions o
                  WHERE o.account_id = crypto_positions.account_id AND o.symbol = crypto_positions.symbol
                    AND o.deleted_ms IS NULL AND o.id <> crypto_positions.id
-                   AND (o.changed_ms, o.uuid) > (crypto_positions.changed_ms, crypto_positions.uuid))",
-        [now_ms()],
+                   AND (o.changed_ms, o.uuid) > (crypto_positions.changed_ms, crypto_positions.uuid))
+          RETURNING account_id",
     )?;
-    Ok(())
+    let rows = st.query_map([now_ms()], |r| r.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// Ids of all crypto accounts.
@@ -229,7 +249,9 @@ fn crypto_account_ids(conn: &Connection) -> CoreResult<Vec<i64>> {
 /// Takes over positions and prices from an attached vault (`other`): positions
 /// by uuid, the newer edit wins and soft deletes travel along (on equal stamps
 /// a deletion wins, then the larger values, so both devices agree); a price by
-/// ticker, the newer fetch wins. Then the crypto accounts are written again.
+/// ticker, the newer fetch wins (on equal stamps the higher price). Then the
+/// crypto accounts the merge changed are written again; an untouched one keeps
+/// its state, so a merge records no valuation of its own.
 pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> CoreResult<()> {
     if !has_table(conn, "other", "crypto_positions")? {
         return Ok(());
@@ -238,11 +260,12 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
         .prepare("SELECT id, account_id FROM other.crypto_positions")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<_, _>>()?;
+    let mut touched: HashSet<i64> = HashSet::new();
     for (oid, oacc) in rows {
         let Some(acc) = acc_map.get(&oacc) else {
             continue;
         };
-        conn.execute(
+        let n = conn.execute(
             "INSERT INTO crypto_positions(uuid, account_id, symbol, quantity, purchase_price_cents, changed_ms, deleted_ms)
              SELECT uuid, ?2, symbol, quantity, purchase_price_cents, changed_ms, deleted_ms
                FROM other.crypto_positions WHERE id = ?1
@@ -256,19 +279,42 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
                           IFNULL(crypto_positions.purchase_price_cents, -1), crypto_positions.symbol))",
             params![oid, acc],
         )?;
+        if n > 0 {
+            touched.insert(*acc);
+        }
     }
-    conn.execute(
-        "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms)
-         SELECT symbol, price_eur, fetched_ms FROM other.crypto_prices WHERE true
-         ON CONFLICT(symbol) DO UPDATE SET price_eur = excluded.price_eur, fetched_ms = excluded.fetched_ms
-          WHERE excluded.fetched_ms > crypto_prices.fetched_ms",
-        [],
-    )?;
-    resolve_duplicate_tickers(conn)?;
+    let changed_symbols: Vec<String> = conn
+        .prepare(
+            "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms)
+             SELECT symbol, price_eur, fetched_ms FROM other.crypto_prices WHERE true
+             ON CONFLICT(symbol) DO UPDATE SET price_eur = excluded.price_eur, fetched_ms = excluded.fetched_ms
+              WHERE excluded.fetched_ms > crypto_prices.fetched_ms
+                 OR (excluded.fetched_ms = crypto_prices.fetched_ms AND excluded.price_eur > crypto_prices.price_eur)
+             RETURNING symbol",
+        )?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    touched.extend(resolve_duplicate_tickers(conn)?);
+    touched.extend(holders_of(conn, &changed_symbols)?);
     for id in crypto_account_ids(conn)? {
-        materialize(conn, id)?;
+        if touched.contains(&id) {
+            materialize(conn, id)?;
+        }
     }
     Ok(())
+}
+
+/// The accounts holding one of `symbols`.
+fn holders_of(conn: &Connection, symbols: &[String]) -> CoreResult<Vec<i64>> {
+    if symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut st = conn.prepare(
+        "SELECT DISTINCT account_id FROM crypto_positions
+          WHERE deleted_ms IS NULL AND symbol IN (SELECT value FROM json_each(?1))",
+    )?;
+    let rows = st.query_map([serde_json::to_string(symbols)?], |r| r.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 #[uniffi::export]

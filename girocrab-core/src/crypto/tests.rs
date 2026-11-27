@@ -257,3 +257,80 @@ fn on_equal_stamps_a_deletion_wins_the_merge() {
         .unwrap();
     assert!(b.list_crypto_positions(bacc).unwrap().is_empty());
 }
+
+#[test]
+fn a_value_beyond_cents_is_refused() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    price(&v, "BTC", 60_000.0);
+    assert!(
+        v.save_crypto_position(acc, None, "BTC".into(), 1e20, None)
+            .is_err()
+    );
+    // each position fits, their sum does not
+    price(&v, "ETH", 60_000.0);
+    v.save_crypto_position(acc, None, "BTC".into(), 1e12, None)
+        .unwrap();
+    assert!(
+        v.save_crypto_position(acc, None, "ETH".into(), 1e12, None)
+            .is_err()
+    );
+    assert_eq!(v.list_crypto_positions(acc).unwrap().len(), 1);
+}
+
+#[test]
+fn a_merge_without_crypto_changes_records_no_valuation() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    price(&a, "BTC", 80_000.0);
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let count = || -> i64 {
+        a.db()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM depot_observations WHERE account_id = ?1",
+                [acc],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    // the first merge back brings B's own history along (a union); after that, nothing changes
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let before = count();
+    tick();
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    assert_eq!(count(), before);
+}
+
+#[test]
+fn equal_price_stamps_end_with_the_same_price_on_both_devices() {
+    let (a, pa) = temp_vault();
+    let (b, pb) = temp_vault();
+    for (v, eur) in [(&a, 100.0), (&b, 101.0)] {
+        v.db()
+            .unwrap()
+            .execute(
+                "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms) VALUES ('BTC', ?1, 5)",
+                [eur],
+            )
+            .unwrap();
+    }
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    for v in [&a, &b] {
+        let p: f64 = v
+            .db()
+            .unwrap()
+            .query_row("SELECT price_eur FROM crypto_prices", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(p, 101.0);
+    }
+}

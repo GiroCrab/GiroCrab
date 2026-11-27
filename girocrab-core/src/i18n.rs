@@ -278,6 +278,7 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Die Stückzahl muss größer als 0 sein." => "The quantity must be greater than 0.",
         "{0} ist bereits in diesem Bestand." => "{0} is already in this holding.",
+        "Der Wert des Bestands ist zu groß." => "The value of the holding is too large.",
         "Depotposition" => "Depot position",
         "Falscher Bankzugang." => "Wrong bank connection.",
         "Ungültiger Sitzungszustand." => "Invalid session state.",
