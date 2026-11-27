@@ -1791,8 +1791,10 @@ impl EnableBankingConnector {
                 res.map(|p| p.items).unwrap_or_default()
             };
             if generic {
+                // own counter: a booked twin must not shift a hold's id
+                let mut hold_ids = super::ContentIds::default();
                 out.transactions
-                    .extend(card_pending_holds(&pending, &external_ref, &mut ids));
+                    .extend(card_pending_holds(&pending, &external_ref, &mut hold_ids));
             }
             for t in &pending {
                 if t["status"].as_str().is_some_and(|s| s == "BOOK") {
