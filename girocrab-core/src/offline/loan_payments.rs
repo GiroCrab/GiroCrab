@@ -225,10 +225,32 @@ pub(crate) fn move_source(conn: &Connection, old: i64, new: i64) -> CoreResult<(
 
     conn.prepare_cached("INSERT INTO offline_loan_source_moves(old_id, new_id) VALUES (?1, ?2)")?
         .execute(params![from, to])?;
-    // Preserve links if a caller physically removes the original booking.
+    repoint_payments(conn, from, resolve_source(conn, to)?)
+}
+
+fn repoint_payments(conn: &Connection, from: i64, to: i64) -> CoreResult<()> {
     conn.prepare_cached("UPDATE offline_loan_payments SET source_id = ?2 WHERE source_id = ?1")?
-        .execute(params![from, resolve_source(conn, to)?])?;
+        .execute(params![from, to])?;
     Ok(())
+}
+
+/// Remove a node from an already joined alias tree before its foreign keys
+/// cascade. If it was the root, promote the exact booking the caller keeps.
+/// A retained tombstone is a valid destination here.
+pub(crate) fn retire_source(conn: &Connection, removed: i64, retained: i64) -> CoreResult<()> {
+    let root = source_root(conn, retained)?;
+    let destination = if root == removed {
+        // Detach the replacement from the old root before redirecting edges,
+        // including those on the path from the replacement to that root.
+        conn.prepare_cached("DELETE FROM offline_loan_source_moves WHERE old_id = ?1")?
+            .execute([retained])?;
+        retained
+    } else {
+        root
+    };
+    conn.prepare_cached("UPDATE offline_loan_source_moves SET new_id = ?2 WHERE new_id = ?1")?
+        .execute(params![removed, destination])?;
+    repoint_payments(conn, removed, destination)
 }
 
 /// Persist the same live representative for every linked copy in a cohort.

@@ -5276,6 +5276,107 @@ fn offline_loan_converges_when_two_devices_fold_the_same_rate_into_different_ban
     }
 }
 
+#[test]
+fn physical_account_dedup_preserves_loan_sources_and_incoming_aliases() {
+    for (retained_deleted, retained_was_alias) in [(false, false), (true, false), (true, true)] {
+        let dir = temp_dir("physical-dedup-loan-sources");
+        let (local, stale) = (open(&dir, "local.db"), open(&dir, "stale.db"));
+        let imported = wallet(&local, None, "imported", "", "EUR");
+        booking(&local, imported, "mm-rate", "rate");
+        let loan = local
+            .create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+            .unwrap();
+        let original_sql = "SELECT id FROM transactions WHERE external_id='mm-rate'";
+        let original = n(&local, original_sql);
+        merge(&stale, &local);
+        let stale_loan = n(&stale, "SELECT id FROM accounts WHERE kind='loan'");
+        stale
+            .mirror_offline_loan_payment(n(&stale, original_sql), stale_loan, 80)
+            .unwrap();
+
+        let keep_login = comdirect(&local);
+        exec(
+            &local,
+            &format!(
+            "INSERT INTO bank_connections(connector, display_name, login_name)
+             SELECT connector, display_name, login_name FROM bank_connections WHERE id={keep_login}"
+        ),
+        );
+        let duplicate_login = n(&local, "SELECT MAX(id) FROM bank_connections");
+        let add_source = |connection| {
+            let account = wallet(&local, Some(connection), "bank-account", "", "EUR");
+            booking(&local, account, "bank-rate", "rate");
+            n(
+                &local,
+                &format!("SELECT id FROM transactions WHERE account_id={account}"),
+            )
+        };
+        let retained = add_source(keep_login);
+        let duplicate = add_source(duplicate_login);
+        if retained_deleted {
+            exec(
+                &local,
+                &format!("UPDATE transactions SET deleted_ms=3 WHERE id={retained}"),
+            );
+        }
+        {
+            let db = local.db().unwrap();
+            crate::offline::loan_payments::move_source(&db, original, duplicate).unwrap();
+            if retained_was_alias {
+                crate::offline::loan_payments::move_source(&db, retained, duplicate).unwrap();
+            }
+        }
+        exec(
+            &local,
+            &format!("UPDATE transactions SET deleted_ms=2 WHERE id={original}"),
+        );
+        let payment = local
+            .mirror_offline_loan_payment(duplicate, loan, 80)
+            .unwrap();
+
+        assert_eq!(local.deduplicate_bank_connections().unwrap(), 1);
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT COUNT(*) FROM transactions WHERE id={duplicate}")
+            ),
+            0
+        );
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT source_id FROM offline_loan_payments WHERE payment_id={payment}")
+            ),
+            retained
+        );
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT new_id FROM offline_loan_source_moves WHERE old_id={original}")
+            ),
+            retained
+        );
+
+        // The stale peer supplies a separate mirrored copy using the old ID.
+        merge(&local, &stale);
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT balance_cents FROM accounts WHERE id={loan}")
+            ),
+            -420
+        );
+        assert_eq!(n(&local, "SELECT COUNT(*) FROM offline_loan_payments"), 2);
+        assert_eq!(
+            n(
+                &local,
+                "SELECT COUNT(DISTINCT source_id) FROM offline_loan_payments"
+            ),
+            1
+        );
+    }
+}
+
 /// A login set up after the MoneyMoney import (Enable Banking) took over an
 /// unlinked MoneyMoney account; another device brought the unlinked copy
 /// back. It is a twin by IBAN and bookings: the fetch renamed most of them

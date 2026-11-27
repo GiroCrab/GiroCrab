@@ -180,6 +180,11 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
         })?
         .collect::<Result<Vec<_>, _>>()?
     };
+    // Join all equivalent sources before removing any node. Several bookings
+    // in this account can be intermediate nodes in the same alias tree.
+    for &(keep_id, duplicate_id, ..) in &pairs {
+        crate::offline::loan_payments::move_source(conn, duplicate_id, keep_id)?;
+    }
     for (k, o, same_amount, cat, src, rule, checked, note, salary) in pairs {
         conn.execute(
             "UPDATE transactions SET
@@ -210,7 +215,7 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
             )?;
         }
         crate::refunds::fold_booking(conn, o, k, same_amount, source_had_splits)?;
-        crate::offline::loan_payments::move_source(conn, o, k)?;
+        crate::offline::loan_payments::retire_source(conn, o, k)?;
         // a loan link of `keep` wins (transaction_id is the key)
         conn.execute(
             "UPDATE OR IGNORE loan_links SET transaction_id = ?1 WHERE transaction_id = ?2",
@@ -288,7 +293,7 @@ fn merge_duplicate_account(conn: &Connection, keep: i64, dup: i64) -> CoreResult
     )?;
     // standing orders are replaced on every fetch
     conn.execute("DELETE FROM standing_orders WHERE account_id = ?1", [dup])?;
-    crate::offline::loan_payments::reconcile(conn)
+    Ok(())
 }
 
 fn deduplicate_inner(conn: &Connection) -> CoreResult<u32> {
@@ -337,6 +342,7 @@ fn deduplicate_inner(conn: &Connection) -> CoreResult<u32> {
                         merge_duplicate_account(conn, t, acc_id)?;
                         // only true duplicates are left; their data now lives on `t`
                         conn.execute("DELETE FROM accounts WHERE id = ?1", [acc_id])?;
+                        crate::offline::loan_payments::reconcile(conn)?;
                     }
                     None => {
                         conn.execute(
