@@ -1956,6 +1956,61 @@ async fn a_balance_the_bank_did_not_send_is_unknown_not_zero() {
     assert!(r.balances_unknown.is_empty());
 }
 
+#[tokio::test]
+async fn unreadable_standing_orders_are_reported_not_left_out_silently() {
+    // #1902: one HICDB with a schedule the client cannot read. The readable order is
+    // kept, the other one is missing from the list and the sync says so – also when
+    // the bank offers no balance or bookings (the warning must not fail the sync).
+    let pain = r#"<Document><CstmrCdtTrfInitn><PmtInf><CdtTrfTxInf><Amt><InstdAmt Ccy="EUR">850.00</InstdAmt></Amt><Cdtr><Nm>Hausverwaltung</Nm></Cdtr><CdtrAcct><Id><IBAN>DE75512108001245126199</IBAN></Id></CdtrAcct></CdtTrfTxInf></PmtInf></CstmrCdtTrfInitn></Document>"#;
+    let hicdb = |n: u32, details: &str| {
+        format!(
+            "HICDB:{n}:1:3+DE02120300000000202051:BYLADEM1001:::280:12030000+urn?:iso?:std?:iso?:20022?:tech?:xsd?:pain.001.001.03+@{}@{pain}+O{n}+{details}++J+N+J'",
+            pain.len()
+        )
+    };
+    let reply: &'static str = Box::leak(
+        format!(
+            "{ACCEPT}{}{}",
+            hicdb(4, "20260101:M:1:1"),
+            hicdb(5, "20260101:Q:1:1")
+        )
+        .into_boxed_str(),
+    );
+    let (url, seen) = mock_bank(vec![reply]);
+    let state = serde_json::json!({"system_id": "123", "sec_func": "946", "tan_method_name": "", "tan_medium": "", "versions": {"HKCDB": [1]}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    // HKSAL lists the account (`merge_upd_with_sepa`), but the BPD offers only HKCDB
+    c.upd = vec![upd_acc(
+        "0532013000",
+        "",
+        IBAN_A,
+        "Girokonto",
+        &["HKSAL", "HKCDB"],
+    )];
+
+    let r = c.fetch(&test_ctx()).await.unwrap();
+
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .any(|ids| ids.iter().any(|i| i == "HKCDB"))
+    );
+    assert_eq!(r.standing_orders.len(), 1);
+    assert_eq!(r.standing_orders[0].order_id, "O4");
+    assert_eq!(r.standing_orders_fetched, vec![IBAN_A.to_string()]);
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+    assert!(r.warnings[0].starts_with(IBAN_A), "{:?}", r.warnings);
+    assert!(r.warnings[0].contains("1 von 2"), "{:?}", r.warnings);
+    // a count, never the order's data
+    assert!(
+        !r.warnings[0].contains("Hausverwaltung"),
+        "{:?}",
+        r.warnings
+    );
+    assert!(!r.warnings[0].contains("DE75512108"), "{:?}", r.warnings);
+}
+
 #[test]
 fn own_account_transfer_from_savings_uses_hkcum() {
     // #1513: the savings account allows only SEPA-Umbuchung, the current account both.
