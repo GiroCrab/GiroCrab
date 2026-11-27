@@ -698,7 +698,9 @@ fn is_placeholder_ref(r: &str) -> bool {
 /// The payee of a pending card authorisation without a payee name: some banks put a time
 /// stamp first ("MM-DD hh:mm:ss MERCHANT TOWN CC") and repeat the merchant alone in a last
 /// line. That last line, else the text without the leading stamp, names the booking and
-/// feeds the merchant recognition. `None` keeps what `map_transaction` chose.
+/// feeds the merchant recognition (`None` keeps what `map_transaction` chose). The shape
+/// is that of a real Bank Norwegian card authorisation; no other bank was checked against
+/// live data.
 fn hold_counterparty(t: &Value, amount_cents: i64) -> Option<String> {
     let party = if amount_cents < 0 {
         &t["creditor"]
@@ -749,7 +751,9 @@ fn strip_leading_time_stamp(text: &str) -> &str {
 /// bookings with the hold prefix, so the vault shows them and removes them once the bank
 /// no longer lists them (`hold_prefix`). A missing or placeholder `entry_reference` gets
 /// a content id. The card balance keeps adding the pending sum on its own; these bookings
-/// never enter it.
+/// never enter it. An entry without a `status` counts as pending: the separate `PDNG`
+/// request lists pending entries only, and the default listing hands over entries
+/// whose status says `PDNG` or `HOLD`.
 fn card_pending_holds(
     items: &[Value],
     account_ref: &str,
@@ -757,7 +761,7 @@ fn card_pending_holds(
 ) -> Vec<RemoteTransaction> {
     let mut holds = Vec::new();
     for t in items {
-        if !matches!(t["status"].as_str(), Some("PDNG" | "HOLD")) {
+        if !matches!(t["status"].as_str(), Some("PDNG" | "HOLD") | None) {
             continue;
         }
         let Some(mut rt) = map_transaction(t, account_ref) else {
@@ -2575,6 +2579,18 @@ mod tests {
             "credit_debit_indicator": "DBIT", "transaction_date": "2026-03-14"})];
         let held = card_pending_holds(&real, "CARD-REF", &mut super::super::ContentIds::default());
         assert_eq!(held[0].external_id, format!("{HOLD_PREFIX}A-9"));
+        // the separate PDNG request can leave the status out: pending by definition of the request
+        let unstated = vec![json!({"entry_reference": "B-2",
+            "transaction_amount": {"amount": "5.00", "currency": "EUR"},
+            "credit_debit_indicator": "DBIT", "transaction_date": "2026-03-14"})];
+        let unstated = card_pending_holds(
+            &unstated,
+            "CARD-REF",
+            &mut super::super::ContentIds::default(),
+        );
+        assert_eq!(unstated.len(), 1);
+        assert_eq!(unstated[0].external_id, format!("{HOLD_PREFIX}B-2"));
+        assert_eq!(unstated[0].amount_cents, -500);
         assert!(is_placeholder_ref("0") && is_placeholder_ref("000") && is_placeholder_ref(" "));
         // without a payee name: the last remittance line, else the text without its time stamp
         let named = |lines: Vec<&str>, creditor: &str| {

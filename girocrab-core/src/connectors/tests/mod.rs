@@ -2306,6 +2306,7 @@ fn keep_only_follows_a_renamed_ref_and_keeps_revocations() {
         accounts: vec![account("new-a"), account("b")],
         renamed_refs: vec![("a".into(), "new-a".into())],
         revoked_refs: vec!["c".into()],
+        holds_incomplete: vec!["new-a".into(), "b".into()],
         accounts_complete: true,
         ..Default::default()
     };
@@ -2313,6 +2314,8 @@ fn keep_only_follows_a_renamed_ref_and_keeps_revocations() {
     assert_eq!(data.accounts.len(), 1);
     assert_eq!(data.accounts[0].external_ref, "new-a");
     assert_eq!(data.revoked_refs, ["c"]);
+    // the one account's incomplete hold list stays incomplete
+    assert_eq!(data.holds_incomplete, ["new-a"]);
     assert!(!data.accounts_complete && data.single_account);
 }
 

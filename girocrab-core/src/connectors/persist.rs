@@ -1015,7 +1015,9 @@ pub(crate) fn store_fetch(
         }
         // Card holds: keep exactly the ones the bank still reports as open.
         if let Some(prefix) = data.hold_prefix.as_deref().filter(|p| !p.is_empty()) {
-            // per account: two cards can list holds with the same id
+            // per account: two cards can list holds with the same id, and every connector
+            // that sets `hold_prefix` stores its holds under the account's external ref,
+            // so the pair identifies them
             let current: std::collections::HashSet<(&str, &str)> = data
                 .transactions
                 .iter()
