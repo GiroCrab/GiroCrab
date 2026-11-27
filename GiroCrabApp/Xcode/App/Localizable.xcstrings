@@ -20669,6 +20669,17 @@
         }
       }
     },
+    "Kein Klartext – Hinweis ausgeblendet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notice hidden"
+          }
+        }
+      }
+    },
     "Kein Konto zum Einziehen" : {
       "extractionState" : "manual",
       "localizations" : {
