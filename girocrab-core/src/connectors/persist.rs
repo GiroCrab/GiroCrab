@@ -116,6 +116,173 @@ fn adopt_legacy_content_id(
     Ok(n > 0)
 }
 
+/// Id prefix of camt entries with a bank reference (`fints/camt.rs`).
+const CAMT_ID_PREFIX: &str = "camt:";
+
+/// A FinTS account can deliver the same booking via MT940 (content id `c…`)
+/// and later via camt (`camt:<ref>`), or the other way round (#1715). A stored
+/// row of the other source with the same content takes the new id instead of
+/// being imported a second time. Rows whose id this fetch delivers itself are
+/// skipped, so every stored row is taken at most once and two real, identical
+/// bookings stay two rows (n-th against n-th). Same-source ids are never
+/// adopted. The caller checks that no row holds the new id yet.
+fn adopt_switched_source_id(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+    fetched: &HashSet<&str>,
+) -> CoreResult<bool> {
+    let other = if is_content_id(&t.external_id, CONTENT_ID_PREFIX) {
+        format!("{CAMT_ID_PREFIX}*")
+    } else if t.external_id.starts_with(CAMT_ID_PREFIX) {
+        format!("{CONTENT_ID_PREFIX}{}", "[0-9a-f]".repeat(16))
+    } else {
+        return Ok(false);
+    };
+    let mut candidates = tx.prepare_cached(
+        "SELECT id, external_id FROM transactions
+          WHERE account_id = ?1 AND external_id GLOB ?2
+            AND booking_date = ?3 AND value_date = ?4 AND amount_cents = ?5
+            AND purpose = ?7
+            AND (counterparty = ?6 OR (?8 != '' AND counterparty = ?8))
+          ORDER BY (?8 != '' AND counterparty = ?8) DESC, (counterparty = ?6) DESC, id",
+    )?;
+    let rows = candidates.query_map(
+        params![
+            account_id,
+            other,
+            t.booking_date,
+            t.value_date,
+            t.amount_cents,
+            t.counterparty,
+            t.purpose,
+            t.original_counterparty
+        ],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+    )?;
+    let mut found = None;
+    for row in rows {
+        let (id, external_id) = row?;
+        if !fetched.contains(external_id.as_str()) {
+            found = Some(id);
+            break;
+        }
+    }
+    let Some(id) = found else {
+        return Ok(false);
+    };
+    tx.prepare_cached("UPDATE transactions SET external_id = ?1 WHERE id = ?2")?
+        .execute(params![t.external_id, id])?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod source_switch_tests {
+    use super::*;
+
+    fn db() -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
+                external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
+                amount_cents INTEGER, counterparty TEXT, purpose TEXT,
+                UNIQUE(account_id, external_id))",
+        )
+        .unwrap();
+        db
+    }
+
+    fn booking(external_id: &str) -> RemoteTransaction {
+        RemoteTransaction {
+            external_id: external_id.into(),
+            booking_date: "2026-11-02".into(),
+            value_date: "2026-11-02".into(),
+            amount_cents: -1999,
+            counterparty: "Muster GmbH".into(),
+            purpose: "Abo Monat 11".into(),
+            ..Default::default()
+        }
+    }
+
+    fn store(db: &rusqlite::Connection, t: &RemoteTransaction) {
+        db.execute(
+            "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
+                    amount_cents, counterparty, purpose) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                t.external_id,
+                t.booking_date,
+                t.value_date,
+                t.amount_cents,
+                t.counterparty,
+                t.purpose
+            ],
+        )
+        .unwrap();
+    }
+
+    fn ids(db: &rusqlite::Connection) -> Vec<String> {
+        let mut q = db
+            .prepare("SELECT external_id FROM transactions ORDER BY id")
+            .unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn cid(n: u64) -> String {
+        format!("{CONTENT_ID_PREFIX}{n:016x}")
+    }
+
+    fn adopt(db: &rusqlite::Connection, t: &RemoteTransaction, fetch: &[&str]) -> bool {
+        let fetched: HashSet<&str> = fetch.iter().copied().collect();
+        adopt_switched_source_id(db, 1, t, &fetched).unwrap()
+    }
+
+    #[test]
+    fn mt940_rows_take_camt_ids_one_each() {
+        let db = db();
+        store(&db, &booking(&cid(1)));
+        store(&db, &booking(&cid(2)));
+        let fetch = ["camt:R1", "camt:R2", "camt:R3"];
+        assert!(adopt(&db, &booking("camt:R1"), &fetch));
+        assert!(adopt(&db, &booking("camt:R2"), &fetch));
+        // A third identical booking is new: no stored row is left for it.
+        assert!(!adopt(&db, &booking("camt:R3"), &fetch));
+        assert_eq!(ids(&db), ["camt:R1", "camt:R2"]);
+    }
+
+    #[test]
+    fn camt_row_takes_mt940_id() {
+        let db = db();
+        store(&db, &booking("camt:R1"));
+        let id = cid(1);
+        assert!(adopt(&db, &booking(&id), &[id.as_str()]));
+        assert_eq!(ids(&db), [id]);
+    }
+
+    #[test]
+    fn row_delivered_in_the_same_fetch_is_not_taken() {
+        let db = db();
+        store(&db, &booking("camt:R1"));
+        let id = cid(1);
+        assert!(!adopt(&db, &booking(&id), &["camt:R1", id.as_str()]));
+        assert_eq!(ids(&db), ["camt:R1"]);
+    }
+
+    #[test]
+    fn same_source_or_other_content_is_not_adopted() {
+        let db = db();
+        store(&db, &booking(&cid(1)));
+        let id = cid(2);
+        assert!(!adopt(&db, &booking(&id), &[id.as_str()]));
+        let mut other = booking("camt:R9");
+        other.amount_cents = -2000;
+        assert!(!adopt(&db, &other, &["camt:R9"]));
+        assert_eq!(ids(&db), [cid(1)]);
+    }
+}
+
 /// Safety net for every connector: repairs UTF-8/Latin-1 mojibake in a
 /// fetched booking's texts. Includes `original_counterparty`, since older
 /// versions stored that name cleaned and legacy ids are adopted by it (#1721).
@@ -805,6 +972,11 @@ pub(crate) fn store_fetch(
                          end_to_end_id, mandate_id, creditor_id, item_refs)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             )?;
+            let fetched: HashSet<&str> = data
+                .transactions
+                .iter()
+                .map(|t| t.external_id.as_str())
+                .collect();
             for t in &data.transactions {
                 let Some(acc_id) = account_ids.get(&t.account_ref) else {
                     if let Some(id) = archived_ids.get(&t.account_ref)
@@ -816,7 +988,9 @@ pub(crate) fn store_fetch(
                     continue;
                 };
                 let stored = match Stored::read(&tx, *acc_id, &t.external_id)? {
-                    None if adopt_legacy_content_id(&tx, *acc_id, t)? => {
+                    None if adopt_legacy_content_id(&tx, *acc_id, t)?
+                        || adopt_switched_source_id(&tx, *acc_id, t, &fetched)? =>
+                    {
                         Stored::read(&tx, *acc_id, &t.external_id)?
                     }
                     stored => stored,
