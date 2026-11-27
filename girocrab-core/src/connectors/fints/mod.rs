@@ -937,8 +937,17 @@ impl BankConnector for FinTsConnector {
             .collect();
         if !ok_any && !errors.is_empty() {
             errors.extend(hints);
+            // #1997: the app records the 24-h back-off only from codes that name
+            // the approval ("SCA", "0030", "3956"). A scheduled sync whose jobs
+            // were all left out must not come back as the aggregate code, or it
+            // would log in to the bank again at every interval.
+            let code = if self.approval_skipped {
+                dialog::SCA_NOT_ASKED
+            } else {
+                "FinTS"
+            };
             return Err(CoreError::Bank {
-                code: "FinTS".into(),
+                code: code.into(),
                 message: errors.join(" / "),
             });
         }

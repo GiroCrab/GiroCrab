@@ -2366,6 +2366,23 @@ async fn an_automatic_fetch_leaves_out_what_the_bank_wants_a_tan_for() {
 }
 
 #[tokio::test]
+async fn a_failed_fetch_names_the_approval_when_every_job_was_skipped() {
+    // #1997: all jobs left out, nothing read: the aggregate error must carry a code
+    // that names the approval ("SCA"), or the app records no back-off and the
+    // scheduled sync logs in to the bank again at every interval
+    let (url, seen) = mock_bank(vec![]);
+    let mut c = savings_needing_sca_seen(&url, &["HKSAL"]);
+    match c.fetch(&test_ctx()).await {
+        Err(CoreError::Bank { code, message }) => {
+            assert_eq!(code, "SCA");
+            assert!(message.contains("HKSAL"), "{message:?}");
+        }
+        other => panic!("expected the SCA bank error, got {other:?}"),
+    }
+    assert!(seen.lock().unwrap().is_empty(), "no request went out");
+}
+
+#[tokio::test]
 async fn a_failed_fetch_hands_back_the_jobs_it_found_out_about() {
     // #1828: a bank that wants a TAN for every job: nothing is read, the sync fails, and the
     // state with `sca_seen` still has to reach the sync session, or the next sync asks again
