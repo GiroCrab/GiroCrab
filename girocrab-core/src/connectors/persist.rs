@@ -226,41 +226,18 @@ fn refresh_existing(
     s: &Stored,
     t: &RemoteTransaction,
 ) -> CoreResult<()> {
-    // A group is filled only while all of it is missing, so a row never mixes
+    // A group is filled only while all of it is empty, so a row never mixes
     // codes or references of two deliveries.
     fn fill<'a, const N: usize>(stored: [&str; N], fresh: [&'a String; N]) -> [Option<&'a str>; N] {
-        let take = stored.iter().all(|s| s.trim().is_empty())
-            && fresh.iter().any(|f| !f.trim().is_empty());
+        let take = stored.iter().all(|s| s.is_empty()) && fresh.iter().any(|f| !f.is_empty());
         fresh.map(|f| take.then_some(f.as_str()))
-    }
-    // SEPA references (#1900): the placeholder `NOTPROVIDED` counts as a missing end-to-end id,
-    // so a later delivery's real one replaces it, but only while the stored mandate and creditor
-    // are blank or the delivered ones (no mix of two deliveries); a usable stored id stays.
-    fn fill_refs<'a>(stored: [&str; 3], fresh: [&'a String; 3]) -> [Option<&'a str>; 3] {
-        let [s_e2e, s_mandate, s_creditor] = stored;
-        let [f_e2e, f_mandate, f_creditor] = fresh;
-        if !crate::planned::names_order(f_e2e) || crate::planned::names_order(s_e2e) {
-            return fill(stored, fresh);
-        }
-        let fits = |s: &str, f: &str| s.trim().is_empty() || s.trim() == f.trim();
-        if !fits(s_mandate, f_mandate) || !fits(s_creditor, f_creditor) {
-            return [None; 3];
-        }
-        let blank_to = |s: &str, f: &'a String| {
-            (s.trim().is_empty() && !f.trim().is_empty()).then_some(f.as_str())
-        };
-        [
-            Some(f_e2e.as_str()),
-            blank_to(s_mandate, f_mandate),
-            blank_to(s_creditor, f_creditor),
-        ]
     }
     fn heal<'a>(stored: &str, fresh: &'a str) -> Option<&'a str> {
         let clean = crate::text::is_clean;
         (!clean(stored) && !fresh.is_empty() && clean(fresh)).then_some(fresh)
     }
     let [code, gvc] = fill([&s.purpose_code, &s.gvc], [&t.purpose_code, &t.gvc]);
-    let [e2e, mandate, creditor] = fill_refs(
+    let [e2e, mandate, creditor] = fill(
         [&s.end_to_end_id, &s.mandate_id, &s.creditor_id],
         [&t.end_to_end_id, &t.mandate_id, &t.creditor_id],
     );
@@ -927,21 +904,7 @@ pub(crate) fn store_fetch(
                                 .execute(params![t.amount_cents, t.booking_date, acc_id])?;
                             }
                         } else if let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)? {
-                            // an adopted import is new to this fetch as well (#1881): it may
-                            // settle a planned payment like an inserted booking (#1900).
-                            // An imported row without a usable reference stores the bank's, so
-                            // the booking names its order and not an equal one; only while its
-                            // mandate and creditor are blank or the delivered ones (no mix of
-                            // two deliveries, like `refresh_existing`)
-                            tx.execute(
-                                "UPDATE transactions SET end_to_end_id = ?1
-                                  WHERE id = ?2
-                                    AND upper(trim(?1)) NOT IN ('', 'NOTPROVIDED')
-                                    AND upper(trim(coalesce(end_to_end_id, ''))) IN ('', 'NOTPROVIDED')
-                                    AND trim(coalesce(mandate_id, '')) IN ('', trim(?3))
-                                    AND trim(coalesce(creditor_id, '')) IN ('', trim(?4))",
-                                params![t.end_to_end_id, adopted.id, t.mandate_id, t.creditor_id],
-                            )?;
+                            // an adopted import is new to this fetch as well (#1881)
                             inserted_ids.insert(adopted.id);
                             if match_rules.is_some() {
                                 new_booking_ids.insert(adopted.id);

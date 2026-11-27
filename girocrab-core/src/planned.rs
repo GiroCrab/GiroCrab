@@ -13,9 +13,8 @@ use crate::schema::{has_column, has_table};
 use crate::vault::Vault;
 
 /// Step 17: scheduled transfers sent to the bank. `end_to_end_id` is the merge
-/// key. Rows stay until the execution date has passed; a fetched booking marks them
-/// settled ([`drop_booked`], #1881; `settled_ms`, step 43, #1900). Idempotent like the
-/// steps before.
+/// key. Rows stay until the execution date has passed or a fetched booking
+/// settles them ([`drop_booked`], #1881; marked in `settled_ms` since step 43, #1900). Idempotent like the steps before.
 pub(crate) fn planned_transfers(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS planned_transfers (
@@ -48,9 +47,9 @@ pub(crate) fn planned_kind(conn: &Connection) -> CoreResult<()> {
 }
 
 /// Step 43 (#1900): `settled_ms` marks a scheduled order the bank's booking has
-/// settled (NULL = still open), so a vault merge cannot bring it back. List, count and
-/// totals filter `settled_ms IS NULL`; the index over `(execution_date, settled_ms)`
-/// replaces the plain date index for that filter. Idempotent.
+/// settled (NULL = still open), so a vault merge cannot bring it back. The date
+/// index already covers it for the `settled_ms IS NULL` filter that lists and
+/// counts get in part 2; no query reads it yet. Idempotent.
 pub(crate) fn planned_settled(conn: &Connection) -> CoreResult<()> {
     if !has_column(conn, "main", "planned_transfers", "settled_ms")? {
         conn.execute_batch("ALTER TABLE planned_transfers ADD COLUMN settled_ms INTEGER;")?;
@@ -328,110 +327,54 @@ impl Vault {
     }
 }
 
-/// Marks open planned payments (from today on) as settled whose SEPA end-to-end reference a
-/// live booking of the same account carries, with the order's amount, booked on or after the
-/// day the order was placed (#1900). The reference names one order (`end_to_end_id` is
-/// unique), so this needs no "booking used once" bookkeeping and may look at every booking:
-/// one that gained its reference in a later fetch counts, and so does one a vault merge
-/// brought in before or after the order. `account_id` `None` = all accounts (after a merge).
-pub(crate) fn settle_referenced(db: &Connection, account_id: Option<i64>) -> CoreResult<()> {
-    db.execute(
-        "UPDATE planned_transfers SET settled_ms = ?1
-         WHERE settled_ms IS NULL AND execution_date >= ?2
-           AND (?3 IS NULL OR account_id = ?3)
-           AND trim(end_to_end_id) <> '' AND upper(trim(end_to_end_id)) <> 'NOTPROVIDED'
-           AND EXISTS (
-               SELECT 1 FROM transactions t
-               WHERE t.account_id = planned_transfers.account_id AND t.deleted_ms IS NULL
-                 AND trim(t.end_to_end_id) = trim(planned_transfers.end_to_end_id)
-                 AND t.amount_cents = CASE WHEN planned_transfers.kind = 'debit'
-                     THEN planned_transfers.amount_cents ELSE -planned_transfers.amount_cents END
-                 AND t.booking_date >=
-                     date(planned_transfers.created_ms / 1000, 'unixepoch', 'localtime')
-                 AND t.external_id NOT LIKE 'pending-%'
-                 AND t.external_id NOT LIKE 'advanzia-hold-%')",
-        params![crate::dates::now_ms(), today(), account_id],
-    )?;
-    Ok(())
-}
-
-/// A usable SEPA end-to-end reference: neither blank nor the placeholder `NOTPROVIDED`.
-/// Only such a reference names an order (#1900).
-pub(crate) fn names_order(s: &str) -> bool {
-    let s = s.trim();
-    !s.is_empty() && !s.eq_ignore_ascii_case("NOTPROVIDED")
-}
-
-/// Vault merge (#1900): a booking both vaults have keeps a usable reference of its own, but
-/// takes the other side's when its own is blank or `NOTPROVIDED`, so [`settle_referenced`]
-/// finds the order it names. Only when the mandate and creditor identifiers are compatible
-/// (blank on either side, else equal): a pair that names different mandates is not the same
-/// payment, so the reference is left alone. `booking_map`: the other vault's booking id →
-/// ours. Writes only rows that change, so a merge that brings nothing new changes no row.
-pub(crate) fn adopt_peer_references<'a>(
-    conn: &Connection,
-    booking_map: impl IntoIterator<Item = (&'a i64, &'a i64)>,
-) -> CoreResult<()> {
-    type PeerRef = (String, String, String);
-    let refs: std::collections::HashMap<i64, PeerRef> = conn
-        .prepare(
-            "SELECT id, trim(end_to_end_id), trim(coalesce(mandate_id, '')),
-                    trim(coalesce(creditor_id, ''))
-             FROM other.transactions
-             WHERE upper(trim(coalesce(end_to_end_id, ''))) NOT IN ('', 'NOTPROVIDED')",
-        )?
-        .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?))))?
-        .collect::<Result<_, _>>()?;
-    if refs.is_empty() {
-        return Ok(());
-    }
-    let mut set = conn.prepare(
-        "UPDATE main.transactions SET end_to_end_id = ?2
-         WHERE id = ?1 AND upper(trim(coalesce(end_to_end_id, ''))) IN ('', 'NOTPROVIDED')
-           AND (trim(coalesce(mandate_id, '')) = '' OR ?3 = '' OR upper(trim(mandate_id)) = upper(?3))
-           AND (trim(coalesce(creditor_id, '')) = '' OR ?4 = '' OR upper(trim(creditor_id)) = upper(?4))",
-    )?;
-    for (other, mine) in booking_map {
-        if let Some((e2e, mandate, creditor)) = refs.get(other) {
-            set.execute(params![*mine, e2e, mandate, creditor])?;
-        }
-    }
-    Ok(())
-}
-
 /// Marks the planned payments of `account_id` the bank has booked by now as settled (#1881,
-/// #1900; `settled_ms`, the row stays so a vault merge cannot bring the order back). A booking
-/// with the order's end-to-end reference settles it first ([`settle_referenced`]). A booking
-/// without a reference settles by the same IBAN (when both sides have one) and amount, booked
-/// on or after the day the order was placed; such a booking settles one order only: only the
-/// bookings this fetch inserted or adopted (`fetched`, their ids) count, so a later fetch, or a second
-/// call within the same second, cannot use it for a second order. A booking with a reference
-/// settles another order by amount only when that order has no payee IBAN (a batch sum, whose
-/// local id the bank never shows, #1898) and no stored order carries the reference, so it never
-/// settles a second order next to the one it names. Pending/held rows are no bookings. Orders the bank
-/// executes early or on another day (weekend, holiday) would otherwise stay until their date
-/// has passed. Orders are tried by date, creation time and reference, bookings by date and bank
-/// id, never by the local row id, so every replica of the vault settles the same order for the
-/// same booking (the merge keeps either side's mark).
+/// #1900; `settled_ms`, the row stays so a vault merge cannot bring the order back): the
+/// same amount, booked on or after the day the order was placed. Only orders with an
+/// execution date from today on are matched; among those the earliest execution date goes
+/// first, so an order already past its date cannot take the booking of a listed one.
+/// Three passes: a booking carrying the order's end-to-end id first, then one with the exact
+/// IBAN, then one without an IBAN on either side. A booking with another end-to-end id than
+/// an order with a recipient IBAN is another payment (same amount to the same payee) and never
+/// settles it (batch sum rows have no IBAN and carry a local id the bank never sees); an id
+/// missing on either side (or SEPA's `NOTPROVIDED`) leaves the IBAN match to decide.
+/// A booking settles one order only: only the bookings this fetch inserted or adopted
+/// (`fetched`, their ids) count, so a later fetch cannot use the same booking for a second
+/// order. Pending/held rows are no bookings. Orders the bank executes early or on another
+/// day (weekend, holiday) would otherwise stay until their date has passed.
 pub(crate) fn drop_booked(
     db: &Connection,
     account_id: i64,
     fetched: &std::collections::HashSet<i64>,
 ) -> CoreResult<()> {
-    settle_referenced(db, Some(account_id))?;
+    struct Order {
+        id: i64,
+        iban: String,
+        signed: i64,
+        since: String,
+        e2e: String,
+    }
     if fetched.is_empty() {
         return Ok(());
     }
     let mut q = db.prepare(
         "SELECT id, recipient_iban, amount_cents, kind,
-                date(created_ms / 1000, 'unixepoch', 'localtime')
+                date(created_ms / 1000, 'unixepoch', 'localtime'),
+                COALESCE(end_to_end_id, '')
          FROM planned_transfers
          WHERE account_id = ?1 AND settled_ms IS NULL AND execution_date >= ?2
-         ORDER BY execution_date, created_ms, end_to_end_id",
+         ORDER BY execution_date, id",
     )?;
-    let orders: Vec<(i64, String, i64, String, String)> = q
+    let orders: Vec<Order> = q
         .query_map(params![account_id, today()], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            let cents: i64 = r.get(2)?;
+            let kind: String = r.get(3)?;
+            Ok(Order {
+                id: r.get(0)?,
+                iban: r.get(1)?,
+                signed: if kind == "debit" { cents } else { -cents },
+                since: r.get(4)?,
+                e2e: r.get(5)?,
+            })
         })?
         .collect::<Result<_, _>>()?;
     if orders.is_empty() {
@@ -439,48 +382,59 @@ pub(crate) fn drop_booked(
     }
     let now_ms = crate::dates::now_ms();
     let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
+    // SEPA's placeholder for "no end-to-end id" counts as none
+    let ref_id = |s: &str| {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("NOTPROVIDED") {
+            String::new()
+        } else {
+            s.to_string()
+        }
+    };
     let mut used: std::collections::HashSet<i64> = Default::default();
-    // `named`: a stored order (open or settled) carries the booking's reference
     let mut find = db.prepare(
-        "SELECT t.id, COALESCE(t.counterparty_iban, ''), COALESCE(t.end_to_end_id, ''),
-                EXISTS (SELECT 1 FROM planned_transfers p
-                        WHERE p.end_to_end_id = trim(t.end_to_end_id))
-         FROM transactions t
-         WHERE t.account_id = ?1 AND t.deleted_ms IS NULL AND t.amount_cents = ?2
-           AND t.booking_date >= ?3
-           AND t.external_id NOT LIKE 'pending-%' AND t.external_id NOT LIKE 'advanzia-hold-%'
-         ORDER BY t.booking_date, t.external_id, t.id",
+        "SELECT id, COALESCE(counterparty_iban, ''), COALESCE(end_to_end_id, '') FROM transactions
+         WHERE account_id = ?1 AND deleted_ms IS NULL AND amount_cents = ?2
+           AND booking_date >= ?3
+           AND external_id NOT LIKE 'pending-%' AND external_id NOT LIKE 'advanzia-hold-%'
+         ORDER BY booking_date, id",
     )?;
-    // References were settled above. First pass: exact IBAN, so an order without a better
-    // booking cannot take the booking of another order; second: no IBAN on either side.
+    // Pass 0: same end-to-end id; pass 1: exact IBAN, so an order without a better booking
+    // cannot take the booking of another order; pass 2: no IBAN on either side.
     let mut open = orders;
-    for exact in [true, false] {
+    for pass in 0..3 {
         let mut left = Vec::new();
         for order in open {
-            let (id, iban, cents, kind, since) = &order;
-            let signed = if kind == "debit" { *cents } else { -*cents };
-            let cands: Vec<(i64, String, String, bool)> = find
-                .query_map(params![account_id, signed, since], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            let cands: Vec<(i64, String, String)> = find
+                .query_map(params![account_id, order.signed, order.since], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
                 })?
                 .collect::<Result<_, _>>()?;
-            let hit = cands.iter().find(|(tid, tiban, te2e, named)| {
-                !used.contains(tid)
-                    && fetched.contains(tid)
-                    // the booking belongs to the order its reference names; only an order
-                    // without a payee IBAN (batch sum) takes one whose reference no order has
-                    && (!names_order(te2e) || (iban.is_empty() && !named))
-                    && if exact {
-                        !iban.is_empty() && norm(iban) == norm(tiban)
-                    } else {
-                        iban.is_empty() || tiban.is_empty() || norm(iban) == norm(tiban)
+            let mine = ref_id(&order.e2e);
+            let hit = cands.iter().find(|(tid, tiban, te2e)| {
+                if used.contains(tid) || !fetched.contains(tid) {
+                    return false;
+                }
+                let theirs = ref_id(te2e);
+                if !mine.is_empty() && !theirs.is_empty() && !order.iban.is_empty() {
+                    // both carry an id and the order names a payee: the id alone decides
+                    return pass == 0 && mine == theirs;
+                }
+                match pass {
+                    0 => false,
+                    1 => !order.iban.is_empty() && norm(&order.iban) == norm(tiban),
+                    _ => {
+                        order.iban.is_empty()
+                            || tiban.is_empty()
+                            || norm(&order.iban) == norm(tiban)
                     }
+                }
             });
-            if let Some((tid, _, _, _)) = hit {
+            if let Some((tid, _, _)) = hit {
                 used.insert(*tid);
                 db.execute(
                     "UPDATE planned_transfers SET settled_ms = ?2 WHERE id = ?1",
-                    params![id, now_ms],
+                    params![order.id, now_ms],
                 )?;
             } else {
                 left.push(order);
@@ -550,8 +504,8 @@ pub(crate) fn merge_attached(
                     recipient_name, recipient_iban, amount_cents, purpose, created_ms, kind,
                     settled_ms)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
-             ON CONFLICT(end_to_end_id) DO UPDATE SET settled_ms = excluded.settled_ms
-                WHERE planned_transfers.settled_ms IS NULL AND excluded.settled_ms IS NOT NULL",
+             ON CONFLICT(end_to_end_id) DO UPDATE SET
+                settled_ms = coalesce(planned_transfers.settled_ms, excluded.settled_ms)",
             params![
                 mine, e2e, date, name, iban, cents, purpose, created, kind, settled
             ],

@@ -313,12 +313,13 @@ fn booking_of_the_day_before_the_order_does_not_settle_it() {
     assert_eq!(v.count_planned_payments().unwrap(), 0);
 }
 
-/// Planned rows of `acc` of every kind (`count_planned_payments` need not list collections).
+/// Open planned rows of `acc` of every kind (`count_planned_payments` need not list
+/// collections).
 fn planned_rows(v: &Vault, acc: i64) -> i64 {
     v.db()
         .unwrap()
         .query_row(
-            "SELECT COUNT(*) FROM planned_transfers WHERE account_id = ?1",
+            "SELECT COUNT(*) FROM planned_transfers WHERE account_id = ?1 AND settled_ms IS NULL",
             [acc],
             |r| r.get(0),
         )
@@ -343,13 +344,10 @@ fn collection_is_settled_only_by_an_incoming_booking() {
     // an outgoing booking of the same amount and IBAN is no collection
     book(&v, a, "out", "2999-01-10", -500, "DE89370400440532013000");
     settle(&v, a);
-    // a settled order stays as a row (#1900); only `settled_ms` tells it apart
     assert_eq!(planned_rows(&v, a), 1);
-    assert_eq!(settled_count(&v), 0);
     book(&v, a, "in", "2999-01-10", 500, "DE89370400440532013000");
     settle(&v, a);
-    assert_eq!(planned_rows(&v, a), 1);
-    assert_eq!(settled_count(&v), 1);
+    assert_eq!(planned_rows(&v, a), 0);
 }
 
 #[test]
@@ -366,6 +364,30 @@ fn exact_iban_booking_is_reserved_before_empty_iban_fallback() {
     book(&v, a, "e", "2999-01-10", -400, "DE89370400440532013000");
     settle(&v, a);
     assert_eq!(v.count_planned_payments().unwrap(), 0);
+}
+
+#[test]
+fn an_order_whose_date_has_passed_does_not_take_the_booking() {
+    let v = vault("planned-past-order");
+    let a = account(&v, "Giro");
+    // Yesterday, not long ago: `prune_old` would delete an older row on the next insert.
+    let yesterday = (crate::dates::today() - jiff::Span::new().days(1)).to_string();
+    v.record_planned_transfer(a, &job("OLD", Some(&yesterday), 600))
+        .unwrap();
+    v.record_planned_transfer(a, &job("NEW", Some("2999-01-15"), 600))
+        .unwrap();
+    book(&v, a, "x", "2999-01-10", -600, "DE89370400440532013000");
+    settle(&v, a);
+    // the booking settles the listed order; the executed one stays untouched
+    let db = v.db().unwrap();
+    let left: Vec<String> = db
+        .prepare("SELECT end_to_end_id FROM planned_transfers WHERE settled_ms IS NULL")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(left, ["OLD"]);
 }
 
 #[test]
@@ -397,133 +419,6 @@ fn settled_step_adds_null_column_and_is_idempotent() {
         .unwrap();
     assert!(idx.contains(&"planned_transfers_date_settled".to_string()));
     assert!(!idx.contains(&"planned_transfers_date".to_string()));
-}
-
-fn settled_count(v: &Vault) -> i64 {
-    v.db()
-        .unwrap()
-        .query_row(
-            "SELECT count(*) FROM planned_transfers WHERE settled_ms IS NOT NULL",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap()
-}
-
-fn settle_all(v: &Vault) {
-    v.db()
-        .unwrap()
-        .execute("UPDATE planned_transfers SET settled_ms = 1000", [])
-        .unwrap();
-}
-
-/// Two vaults with the same account and the same scheduled order `E1`.
-fn merge_pair(tag: &str) -> (Arc<Vault>, Arc<Vault>) {
-    let a = vault(&format!("{tag}-a"));
-    let b = vault(&format!("{tag}-b"));
-    for v in [&a, &b] {
-        let acc = account(v, "Giro");
-        v.record_planned_transfer(acc, &job("E1", Some("2999-01-15"), 900))
-            .unwrap();
-    }
-    (a, b)
-}
-
-#[test]
-fn booking_marks_the_order_settled_and_hides_it() {
-    let v = vault("planned-settle-marks");
-    let a = account(&v, "Giro");
-    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 900))
-        .unwrap();
-    book(&v, a, "x1", "2999-01-10", -900, "DE89370400440532013000");
-    settle(&v, a);
-    let rows: i64 = v
-        .db()
-        .unwrap()
-        .query_row("SELECT count(*) FROM planned_transfers", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!((rows, settled_count(&v)), (1, 1));
-    assert_eq!(v.count_planned_payments().unwrap(), 0);
-    let list = v.list_planned_payments(None, None, vec![]).unwrap();
-    assert!(list.is_empty());
-    let totals = v.planned_payment_totals(None, None, vec![]).unwrap();
-    assert_eq!((totals.count, totals.outgoing_cents), (0, 0));
-}
-
-#[test]
-fn settled_order_is_not_matched_again() {
-    let v = vault("planned-settled-once");
-    let a = account(&v, "Giro");
-    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 700))
-        .unwrap();
-    book(&v, a, "x1", "2999-01-10", -700, "DE89370400440532013000");
-    settle(&v, a);
-    let first: i64 = v
-        .db()
-        .unwrap()
-        .query_row("SELECT settled_ms FROM planned_transfers", [], |r| r.get(0))
-        .unwrap();
-    // a second equal booking must stay free for the next order, not re-settle the first
-    book(&v, a, "x2", "2999-01-11", -700, "DE89370400440532013000");
-    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 700))
-        .unwrap();
-    settle(&v, a);
-    let again: i64 = v
-        .db()
-        .unwrap()
-        .query_row(
-            "SELECT settled_ms FROM planned_transfers WHERE end_to_end_id = 'E1'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(first, again);
-    assert_eq!(settled_count(&v), 2);
-}
-
-#[test]
-fn merge_keeps_a_locally_settled_order_hidden() {
-    let (a, b) = merge_pair("planned-merge-local");
-    settle_all(&a);
-    a.merge_peer_snapshot(b.file_path()).unwrap();
-    assert_eq!(settled_count(&a), 1);
-    assert_eq!(a.count_planned_payments().unwrap(), 0);
-}
-
-#[test]
-fn merge_settles_a_locally_open_order_the_other_settled() {
-    let (a, b) = merge_pair("planned-merge-other");
-    settle_all(&b);
-    b.checkpoint().unwrap();
-    a.merge_peer_snapshot(b.file_path()).unwrap();
-    assert_eq!(settled_count(&a), 1);
-    assert_eq!(a.count_planned_payments().unwrap(), 0);
-}
-
-#[test]
-fn merge_from_an_other_without_settled_column_keeps_rows_open() {
-    let v = vault("planned-merge-legacy");
-    let acc = account(&v, "Giro");
-    v.record_planned_transfer(acc, &job("E1", Some("2999-01-15"), 900))
-        .unwrap();
-    let db = v.db().unwrap();
-    db.execute_batch(
-        "ATTACH ':memory:' AS other;
-         CREATE TABLE other.planned_transfers (
-            id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
-            end_to_end_id TEXT NOT NULL UNIQUE, execution_date TEXT NOT NULL,
-            recipient_name TEXT NOT NULL DEFAULT '', recipient_iban TEXT NOT NULL DEFAULT '',
-            amount_cents INTEGER NOT NULL, purpose TEXT NOT NULL DEFAULT '',
-            created_ms INTEGER NOT NULL DEFAULT 0);
-         INSERT INTO other.planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
-            VALUES (1, 'E1', '2999-01-15', 900), (1, 'E9', '2999-03-01', 50);",
-    )
-    .unwrap();
-    let map = std::collections::HashMap::from([(1i64, acc)]);
-    super::merge_attached(&db, &map).unwrap();
-    drop(db);
-    assert_eq!(settled_count(&v), 0);
-    assert_eq!(v.count_planned_payments().unwrap(), 2);
 }
 
 /// The upgrade path of an existing vault: a table from before step 43 with the
@@ -592,259 +487,132 @@ fn settled_step_upgrades_old_table_and_keeps_rows() {
     assert_eq!(indexes(&db), idx);
 }
 
-fn book_ref(v: &Vault, acc: i64, ext: &str, cents: i64, e2e: &str) {
+fn settled_count(v: &Vault) -> i64 {
     v.db()
         .unwrap()
-        .execute(
-            "INSERT INTO transactions(account_id, external_id, booking_date, amount_cents,
-                    counterparty_iban, end_to_end_id)
-             VALUES (?1, ?2, '2999-01-10', ?3, 'DE89370400440532013000', ?4)",
-            rusqlite::params![acc, ext, cents, e2e],
-        )
-        .unwrap();
-}
-
-fn open_orders(v: &Vault) -> Vec<String> {
-    v.list_planned_payments(None, None, vec![])
-        .unwrap()
-        .into_iter()
-        .map(|p| p.date)
-        .collect()
-}
-
-#[test]
-fn booking_with_a_reference_settles_only_the_order_it_names() {
-    let v = vault("planned-reference");
-    let a = account(&v, "Giro");
-    // E1 (January) is older than E2 (December); same amount and IBAN
-    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 800))
-        .unwrap();
-    v.record_planned_transfer(a, &job("E2", Some("2999-12-15"), 800))
-        .unwrap();
-    book_ref(&v, a, "x1", -800, "E2");
-    settle(&v, a);
-    assert_eq!(open_orders(&v), ["2999-01-15"]);
-    // a booking naming an unknown order settles nothing; the placeholder counts as none
-    book_ref(&v, a, "x2", -800, "E9");
-    settle(&v, a);
-    assert_eq!(open_orders(&v), ["2999-01-15"]);
-    book_ref(&v, a, "x3", -800, "NOTPROVIDED");
-    settle(&v, a);
-    assert!(open_orders(&v).is_empty());
-}
-
-/// Without a reference the earliest order takes the booking, whatever its local row id, so
-/// two replicas with the rows in another order settle the same one.
-#[test]
-fn booking_without_reference_settles_the_earliest_order_not_the_lowest_id() {
-    let v = vault("planned-stable-order");
-    let a = account(&v, "Giro");
-    v.record_planned_transfer(a, &job("E2", Some("2999-12-15"), 600))
-        .unwrap();
-    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 600))
-        .unwrap();
-    book(&v, a, "x1", "2999-01-10", -600, "DE89370400440532013000");
-    settle(&v, a);
-    assert_eq!(open_orders(&v), ["2999-12-15"]);
-}
-
-#[test]
-fn merge_that_brings_nothing_new_changes_no_row() {
-    let v = vault("planned-merge-noop");
-    let acc = account(&v, "Giro");
-    v.record_planned_transfer(acc, &job("E1", Some("2999-01-15"), 900))
-        .unwrap();
-    v.record_planned_transfer(acc, &job("E2", Some("2999-02-15"), 900))
-        .unwrap();
-    let db = v.db().unwrap();
-    db.execute(
-        "UPDATE planned_transfers SET settled_ms = 5 WHERE end_to_end_id = 'E2'",
-        [],
-    )
-    .unwrap();
-    // the other side: E1 open like here, E2 settled at another time
-    db.execute_batch(
-        "ATTACH ':memory:' AS other;
-         CREATE TABLE other.planned_transfers AS SELECT * FROM main.planned_transfers;
-         UPDATE other.planned_transfers SET settled_ms = 9 WHERE end_to_end_id = 'E2';",
-    )
-    .unwrap();
-    let map = std::collections::HashMap::from([(acc, acc)]);
-    let before = db.total_changes();
-    super::merge_attached(&db, &map).unwrap();
-    assert_eq!(db.total_changes(), before);
-    let kept: i64 = db
         .query_row(
-            "SELECT settled_ms FROM planned_transfers WHERE end_to_end_id = 'E2'",
+            "SELECT count(*) FROM planned_transfers WHERE settled_ms IS NOT NULL",
             [],
             |r| r.get(0),
         )
-        .unwrap();
-    assert_eq!(kept, 5);
+        .unwrap()
 }
 
-#[test]
-fn an_order_whose_date_has_passed_does_not_take_the_booking() {
-    let v = vault("planned-past-order");
-    let a = account(&v, "Giro");
-    // an order of yesterday (still stored, no longer listed; earlier, so it would be tried
-    // first) and the one actually booked
-    let yesterday = (crate::dates::today() - jiff::Span::new().days(1)).to_string();
-    v.record_planned_transfer(a, &job("OLD", Some(&yesterday), 600))
-        .unwrap();
-    v.record_planned_transfer(a, &job("NEW", Some("2999-01-15"), 600))
-        .unwrap();
-    book(&v, a, "x", "2999-01-10", -600, "DE89370400440532013000");
-    settle(&v, a);
-    let settled: Vec<(String, bool)> = v
-        .db()
-        .unwrap()
-        .prepare("SELECT end_to_end_id, settled_ms IS NOT NULL FROM planned_transfers ORDER BY 1")
-        .unwrap()
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
-    assert_eq!(settled, [("NEW".into(), true), ("OLD".into(), false)]);
+/// Two vaults with the same account and the same scheduled order `E1`.
+fn merge_pair(tag: &str) -> (Arc<Vault>, Arc<Vault>) {
+    let a = vault(&format!("{tag}-a"));
+    let b = vault(&format!("{tag}-b"));
+    for v in [&a, &b] {
+        let acc = account(v, "Giro");
+        v.record_planned_transfer(acc, &job("E1", Some("2999-01-15"), 900))
+            .unwrap();
+    }
+    (a, b)
 }
 
-/// A booking that gets its reference only when the bank delivers it again (a later fetch
-/// that inserts nothing) still settles the order it names.
-#[test]
-fn booking_that_gains_the_reference_later_settles_the_order() {
-    let v = vault("planned-late-reference");
-    let a = account(&v, "Giro");
-    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 800))
-        .unwrap();
-    // first fetch: no reference and another IBAN, so it does not match
-    book(&v, a, "x1", "2999-01-10", -800, "DE02120300000000202051");
-    settle(&v, a);
-    assert_eq!(v.count_planned_payments().unwrap(), 1);
-    // the next fetch fills the reference in; the booking is not new
+fn settle_all(v: &Vault) {
     v.db()
         .unwrap()
-        .execute(
-            "UPDATE transactions SET end_to_end_id = 'E1' WHERE external_id = 'x1'",
-            [],
-        )
+        .execute("UPDATE planned_transfers SET settled_ms = 1000", [])
         .unwrap();
-    super::drop_booked(&v.db().unwrap(), a, &Default::default()).unwrap();
+}
+
+#[test]
+fn booking_marks_the_order_settled_and_hides_it() {
+    let v = vault("planned-settle-marks");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 900))
+        .unwrap();
+    book(&v, a, "x1", "2999-01-10", -900, "DE89370400440532013000");
+    settle(&v, a);
+    let rows: i64 = v
+        .db()
+        .unwrap()
+        .query_row("SELECT count(*) FROM planned_transfers", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!((rows, settled_count(&v)), (1, 1));
     assert_eq!(v.count_planned_payments().unwrap(), 0);
+    assert!(
+        v.list_planned_payments(None, None, vec![])
+            .unwrap()
+            .is_empty()
+    );
+    let totals = v.planned_payment_totals(None, None, vec![]).unwrap();
+    assert_eq!((totals.count, totals.outgoing_cents), (0, 0));
 }
 
-/// The booking reached this vault before its order: the merge that brings the order in
-/// open settles it, since the booking names it.
 #[test]
-fn merge_settles_an_arriving_order_a_stored_booking_names() {
-    let with_order = vault("planned-merge-arrives-a");
-    let acc = account(&with_order, "Giro");
-    with_order
-        .record_planned_transfer(acc, &job("E1", Some("2999-01-15"), 900))
+fn settled_order_is_not_matched_again() {
+    let v = vault("planned-settled-once");
+    let a = account(&v, "Giro");
+    v.record_planned_transfer(a, &job("E1", Some("2999-01-15"), 700))
         .unwrap();
-    with_order.checkpoint().unwrap();
-    let with_booking = vault("planned-merge-arrives-b");
-    let mine = account(&with_booking, "Giro");
-    book_ref(&with_booking, mine, "x1", -900, "E1");
-    with_booking
-        .merge_peer_snapshot(with_order.file_path())
-        .unwrap();
-    assert_eq!(settled_count(&with_booking), 1);
-    assert_eq!(with_booking.count_planned_payments().unwrap(), 0);
-}
-
-fn only_account(v: &Vault) -> i64 {
-    v.db()
-        .unwrap()
-        .query_row("SELECT id FROM accounts", [], |r| r.get(0))
-        .unwrap()
-}
-
-fn reference_of(v: &Vault, ext: &str) -> String {
-    v.db()
-        .unwrap()
-        .query_row(
-            "SELECT end_to_end_id FROM transactions WHERE external_id = ?1",
-            [ext],
-            |r| r.get(0),
-        )
-        .unwrap()
-}
-
-#[test]
-fn usable_reference_is_neither_blank_nor_the_placeholder() {
-    assert!(super::names_order(" E1 "));
-    assert!(!super::names_order("  "));
-    assert!(!super::names_order(" notprovided "));
-}
-
-/// The booking both vaults have names `E1` only on the other side (here the placeholder): the
-/// merge matches it (no second row), takes the reference over and settles the order.
-#[test]
-fn merge_takes_the_peer_reference_of_a_matched_booking() {
-    let (a, b) = merge_pair("planned-merge-peer-ref");
-    book_ref(&a, only_account(&a), "x1", -900, "NOTPROVIDED");
-    book_ref(&b, only_account(&b), "x1", -900, "E1");
-    b.checkpoint().unwrap();
-    a.merge_peer_snapshot(b.file_path()).unwrap();
-    let rows: i64 = a
+    book(&v, a, "x1", "2999-01-10", -700, "DE89370400440532013000");
+    settle(&v, a);
+    let first: i64 = v
         .db()
         .unwrap()
-        .query_row("SELECT count(*) FROM transactions", [], |r| r.get(0))
+        .query_row("SELECT settled_ms FROM planned_transfers", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rows, 1);
-    assert_eq!(reference_of(&a, "x1"), "E1");
+    // a second equal booking stays free for the next order and does not re-settle the first
+    book(&v, a, "x2", "2999-01-11", -700, "DE89370400440532013000");
+    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 700))
+        .unwrap();
+    settle(&v, a);
+    let again: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT settled_ms FROM planned_transfers WHERE end_to_end_id = 'E1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(first, again);
+    assert_eq!(settled_count(&v), 2);
+}
+
+#[test]
+fn merge_keeps_a_locally_settled_order_hidden() {
+    let (a, b) = merge_pair("planned-merge-local");
+    settle_all(&a);
+    a.merge_peer_snapshot(b.file_path()).unwrap();
     assert_eq!(settled_count(&a), 1);
     assert_eq!(a.count_planned_payments().unwrap(), 0);
 }
 
-/// A pair that names different mandates is not the same payment: the reference stays off. A
-/// booking without a mandate on our side still takes it.
 #[test]
-fn merge_adopts_the_peer_reference_only_for_compatible_mandates() {
-    let adopted = |local_mandate: &str, tag: &str| {
-        let (a, b) = merge_pair(tag);
-        book_ref(&a, only_account(&a), "x1", -900, "");
-        book_ref(&b, only_account(&b), "x1", -900, "E1");
-        for (v, m) in [(&a, local_mandate), (&b, "M1")] {
-            v.db()
-                .unwrap()
-                .execute("UPDATE transactions SET mandate_id = ?1", [m])
-                .unwrap();
-        }
-        b.checkpoint().unwrap();
-        a.merge_peer_snapshot(b.file_path()).unwrap();
-        reference_of(&a, "x1")
-    };
-    assert_eq!(adopted("M2", "planned-merge-mandate-diff"), "");
-    assert_eq!(adopted("", "planned-merge-mandate-blank"), "E1");
-}
-
-/// A usable reference of our own stays: the order only the other side's reference names
-/// remains open.
-#[test]
-fn merge_keeps_the_own_reference_of_a_matched_booking() {
-    let (a, b) = merge_pair("planned-merge-own-ref");
-    book_ref(&a, only_account(&a), "x1", -900, "E7");
-    book_ref(&b, only_account(&b), "x1", -900, "E1");
+fn merge_settles_a_locally_open_order_the_other_settled() {
+    let (a, b) = merge_pair("planned-merge-other");
+    settle_all(&b);
     b.checkpoint().unwrap();
     a.merge_peer_snapshot(b.file_path()).unwrap();
-    assert_eq!(reference_of(&a, "x1"), "E7");
-    assert_eq!(settled_count(&a), 0);
-    assert_eq!(a.count_planned_payments().unwrap(), 1);
+    assert_eq!(settled_count(&a), 1);
+    assert_eq!(a.count_planned_payments().unwrap(), 0);
 }
 
-/// A booking that names a stored order settles that order only: an order without a payee IBAN
-/// (batch sum) does not take it as well.
 #[test]
-fn order_without_iban_does_not_take_a_booking_another_order_names() {
-    let v = vault("planned-no-iban-named");
-    let a = account(&v, "Giro");
-    let mut sum = job("SUM", Some("2999-01-15"), 400);
-    sum.recipient_iban = String::new();
-    v.record_planned_transfer(a, &sum).unwrap();
-    v.record_planned_transfer(a, &job("E2", Some("2999-02-15"), 400))
+fn merge_from_an_other_without_settled_column_keeps_rows_open() {
+    let v = vault("planned-merge-legacy");
+    let acc = account(&v, "Giro");
+    v.record_planned_transfer(acc, &job("E1", Some("2999-01-15"), 900))
         .unwrap();
-    book_ref(&v, a, "x1", -400, "E2");
-    settle(&v, a);
-    assert_eq!(open_orders(&v), ["2999-01-15"]);
+    let db = v.db().unwrap();
+    db.execute_batch(
+        "ATTACH ':memory:' AS other;
+         CREATE TABLE other.planned_transfers (
+            id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
+            end_to_end_id TEXT NOT NULL UNIQUE, execution_date TEXT NOT NULL,
+            recipient_name TEXT NOT NULL DEFAULT '', recipient_iban TEXT NOT NULL DEFAULT '',
+            amount_cents INTEGER NOT NULL, purpose TEXT NOT NULL DEFAULT '',
+            created_ms INTEGER NOT NULL DEFAULT 0);
+         INSERT INTO other.planned_transfers(account_id, end_to_end_id, execution_date, amount_cents)
+            VALUES (1, 'E1', '2999-01-15', 900), (1, 'E9', '2999-03-01', 50);",
+    )
+    .unwrap();
+    let map = std::collections::HashMap::from([(1i64, acc)]);
+    super::merge_attached(&db, &map).unwrap();
+    drop(db);
+    assert_eq!(settled_count(&v), 0);
+    assert_eq!(v.count_planned_payments().unwrap(), 2);
 }
