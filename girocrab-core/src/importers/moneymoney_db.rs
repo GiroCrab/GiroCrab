@@ -128,6 +128,11 @@ pub struct MoneyMoneyDbAccount {
     /// account before) – the suggested merge target.
     pub existing_account_id: Option<i64>,
     pub existing_account_name: Option<String>,
+    /// The IBAN fits several GiroCrab accounts equally well, or one that MoneyMoney accounts
+    /// in other currencies fit too (#1993): no suggestion, the user picks the target, a new
+    /// account or leaves the account out.
+    #[uniffi(default = false)]
+    pub target_needs_choice: bool,
     /// Booked bookings that would be imported (a split booking once, #877).
     pub booking_count: u32,
     /// Pending (vorgemerkte) bookings – not imported.
@@ -2297,11 +2302,12 @@ fn reused_account(conn: &Connection, a: &SrcAccount) -> CoreResult<Option<i64>> 
 /// MoneyMoney rowid. A vault account is claimed at most once: MoneyMoney keeps
 /// closed / duplicate accounts with the same IBAN (issue #94), and without this
 /// all of them would be merged into one account. Matches by `external_ref`
-/// (an earlier import) win over IBAN matches.
+/// (an earlier import) win over IBAN matches. Also returns the MoneyMoney accounts
+/// whose IBAN fits several vault accounts equally well (`match_by_iban`).
 fn find_existing_accounts(
     conn: &Connection,
     src: &Source,
-) -> CoreResult<HashMap<i64, (i64, String)>> {
+) -> CoreResult<(HashMap<i64, (i64, String)>, HashSet<i64>)> {
     let accounts = &src.accounts;
     let mut out: HashMap<i64, (i64, String)> = HashMap::new();
     let mut claimed: HashSet<i64> = HashSet::new();
@@ -2314,23 +2320,7 @@ fn find_existing_accounts(
             out.insert(a.id, (id, name));
         }
     }
-    for a in accounts.iter().filter(|a| !a.iban.is_empty()) {
-        if out.contains_key(&a.id) {
-            continue;
-        }
-        let mut st = conn.prepare(
-            // includes soft-deleted rows
-            "SELECT id, name FROM accounts WHERE upper(replace(iban, ' ', '')) = ?1
-             ORDER BY (connection_id IS NULL), id",
-        )?;
-        let candidates: Vec<(i64, String)> = st
-            .query_map([&a.iban], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<Result<_, _>>()?;
-        if let Some(found) = candidates.into_iter().find(|c| !claimed.contains(&c.0)) {
-            claimed.insert(found.0);
-            out.insert(a.id, found);
-        }
-    }
+    let ambiguous = match_by_iban(conn, accounts, &mut out, &mut claimed)?;
     // a card already synced through a login the import links the bank to (`import_logins`,
     // set up by hand before): MoneyMoney has no IBAN for it, the number decides among the
     // cards of all those logins, so a number that fits cards on two of them is not guessed
@@ -2377,7 +2367,97 @@ fn find_existing_accounts(
             }
         }
     }
-    Ok(out)
+    Ok((out, ambiguous))
+}
+
+/// A vault account with a MoneyMoney account's IBAN that can take its bookings.
+struct IbanCandidate {
+    id: i64,
+    name: String,
+    /// In the MoneyMoney account's currency; otherwise the vault account has none.
+    exact: bool,
+    connected: bool,
+}
+
+/// The IBAN matches of [`find_existing_accounts`] (#1993). Wallets in several currencies
+/// share one IBAN, so a vault account in another currency or a deleted one is never a
+/// match, and one in the same currency comes before one without a currency. Of equally
+/// good ones a bank-synced account comes first; two left name no target. MoneyMoney
+/// accounts of one currency that want the same account get it in MoneyMoney's order,
+/// the others the next one (#94); of different currencies none of them, so neither the
+/// order of the accounts here nor in MoneyMoney decides. Returns the MoneyMoney
+/// accounts left without a target that need a choice.
+fn match_by_iban(
+    conn: &Connection,
+    accounts: &[SrcAccount],
+    out: &mut HashMap<i64, (i64, String)>,
+    claimed: &mut HashSet<i64>,
+) -> CoreResult<HashSet<i64>> {
+    let mut st = conn.prepare(
+        "SELECT id, name, upper(trim(IFNULL(currency, ''))), connection_id IS NOT NULL
+           FROM accounts WHERE upper(replace(iban, ' ', '')) = ?1 AND deleted_ms IS NULL
+          ORDER BY id",
+    )?;
+    let mut open: Vec<(i64, String, Vec<IbanCandidate>)> = Vec::new();
+    for a in accounts
+        .iter()
+        .filter(|a| !a.iban.is_empty() && !out.contains_key(&a.id))
+    {
+        let currency = a.currency.trim().to_uppercase();
+        let mut candidates = Vec::new();
+        for row in st.query_map([&a.iban], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?, r.get(3)?))
+        })? {
+            let (id, name, cur, connected) = row?;
+            if cur.is_empty() || cur == currency {
+                let exact = !cur.is_empty();
+                candidates.push(IbanCandidate {
+                    id,
+                    name,
+                    exact,
+                    connected,
+                });
+            }
+        }
+        open.push((a.id, currency, candidates));
+    }
+    let mut ambiguous = HashSet::new();
+    for exact in [true, false] {
+        loop {
+            // (index into `open`, wanted vault account) of each account still open
+            let mut wants: Vec<(usize, i64)> = Vec::new();
+            for (i, (mm_id, _, candidates)) in open.iter().enumerate() {
+                if out.contains_key(mm_id) || ambiguous.contains(mm_id) {
+                    continue;
+                }
+                let free = candidates
+                    .iter()
+                    .filter(|c| c.exact == exact && !claimed.contains(&c.id));
+                let synced = free.clone().any(|c| c.connected);
+                let mut best = free.filter(|c| c.connected || !synced);
+                match (best.next(), best.next()) {
+                    (Some(c), None) => wants.push((i, c.id)),
+                    (Some(_), Some(_)) => {
+                        ambiguous.insert(*mm_id);
+                    }
+                    _ => {}
+                }
+            }
+            if wants.is_empty() {
+                break;
+            }
+            for &(i, id) in &wants {
+                if wants.iter().any(|w| w.1 == id && open[w.0].1 != open[i].1) {
+                    ambiguous.insert(open[i].0);
+                } else if !claimed.contains(&id) {
+                    let c = open[i].2.iter().find(|c| c.id == id).expect("candidate");
+                    claimed.insert(id);
+                    out.insert(open[i].0, (id, c.name.clone()));
+                }
+            }
+        }
+    }
+    Ok(ambiguous)
 }
 
 /// Whether the vault account `id` is the MoneyMoney card `a` that a fetch took over by its
@@ -2842,7 +2922,7 @@ fn preview(
     let (mut total, mut pending, mut notes, mut parts) = (0u32, 0u32, 0u32, 0u32);
     let mut first: Option<String> = None;
     let mut last: Option<String> = None;
-    let mut existing_accounts = find_existing_accounts(conn, src)?;
+    let (mut existing_accounts, ambiguous) = find_existing_accounts(conn, src)?;
     for a in &src.accounts {
         let r = src.rows_for(a);
         let bank = src.bank(a.bank_key);
@@ -2888,6 +2968,7 @@ fn preview(
             is_portfolio: a.portfolio,
             existing_account_id: existing.as_ref().map(|e| e.0),
             existing_account_name: existing.map(|e| e.1),
+            target_needs_choice: ambiguous.contains(&a.id),
             booking_count: r.rows.len() as u32,
             pending_count: r.pending,
             holding_count: src.holdings.get(&a.id).map_or(0, |h| h.len() as u32),
@@ -3438,6 +3519,26 @@ impl ImportCtx<'_> {
             None => reused_account(conn, a)?,
         };
         if let Some(id) = target {
+            let cur: String = conn
+                .query_row("SELECT currency FROM accounts WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .optional()?
+                .ok_or_else(|| CoreError::NotFound {
+                    what: format!("account {id}"),
+                })?;
+            // never bookings and balance into an account in another currency (a wallet
+            // sharing the IBAN, #1993), also when an API caller chose it; before anything
+            // is written, and the import's transaction drops what earlier accounts wrote
+            let (from, to) = (a.currency.trim().to_uppercase(), cur.trim().to_uppercase());
+            if !to.is_empty() && to != from {
+                return Err(CoreError::InvalidInput {
+                    message: trf(
+                        "Ein Konto der Datenbank in {0} kann nicht in ein Konto in {1} übernommen werden – es wurde nichts übernommen.",
+                        &[&from, &to],
+                    ),
+                });
+            }
             let revived = crate::sync_merge::revive_account_if_deleted(conn, id)?;
             // Nobody chose the archive state of a revived account (it comes back
             // active) or of one the #998 repair reactivated: MoneyMoney's applies –
@@ -3520,14 +3621,6 @@ impl ImportCtx<'_> {
                     [id],
                 )?;
             }
-            let cur: String = conn
-                .query_row("SELECT currency FROM accounts WHERE id = ?1", [id], |r| {
-                    r.get(0)
-                })
-                .optional()?
-                .ok_or_else(|| CoreError::NotFound {
-                    what: format!("account {id}"),
-                })?;
             self.res.accounts_merged += 1;
             return Ok((id, cur));
         }

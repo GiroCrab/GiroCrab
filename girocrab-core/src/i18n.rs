@@ -1887,6 +1887,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Import abgebrochen – es wurde nichts übernommen." => {
             "Import cancelled – nothing was imported."
         }
+        "Ein Konto der Datenbank in {0} kann nicht in ein Konto in {1} übernommen werden – es wurde nichts übernommen." => {
+            "An account in {0} from the database cannot be imported into an account in {1} – nothing was imported."
+        }
         "Falsches Passwort oder keine unterstützte Datenbank." => {
             "Wrong password or not a supported database."
         }

@@ -570,13 +570,21 @@ fn import_with(
     path: &str,
     tweak: impl FnOnce(&mut MoneyMoneyDbImportOptions),
 ) -> MoneyMoneyDbImportResult {
+    try_import_with(v, path, tweak).unwrap()
+}
+
+/// [`import_with`] for an import that may be refused.
+fn try_import_with(
+    v: &Vault,
+    path: &str,
+    tweak: impl FnOnce(&mut MoneyMoneyDbImportOptions),
+) -> CoreResult<MoneyMoneyDbImportResult> {
     let p = v
         .preview_moneymoney_database(path.into(), PW.into(), None)
         .unwrap();
     let mut o = options_from(&p, false);
     tweak(&mut o);
     v.import_moneymoney_database(path.into(), PW.into(), o)
-        .unwrap()
 }
 
 /// The Girokonto's only booking of `cents`.
@@ -3990,6 +3998,198 @@ fn accounts_sharing_an_iban_are_merged_into_different_vault_accounts() {
     assert_eq!(ids, vec![Some(existing), None]);
 }
 
+const WALLET_IBAN: &str = "DE89370400440532013000";
+
+/// A database with a EUR and a USD wallet sharing one IBAN (#1993), in this order unless
+/// `usd_first`: four bookings in euro, one in dollars.
+fn wallets_db(usd_first: bool) -> String {
+    let path = temp("wallets.db").to_string_lossy().to_string();
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(SCHEMA).unwrap();
+    let (eur, usd) = if usd_first { (2, 1) } else { (1, 2) };
+    conn.execute_batch(&format!(
+        "INSERT INTO accounts (rowid, account, bankcode, iban, currency, name, kind, type, sort) VALUES
+           (1, '', '', '{WALLET_IBAN}', 'EUR', 'Wallet EUR', 0, 0, {eur}),
+           (2, '', '', '{WALLET_IBAN}', 'USD', 'Wallet USD', 0, 0, {usd});
+         INSERT INTO transactions (rowid, local_account_key, amount, currency, timestamp, booked, unformatted_purpose, name, splitted, split_key) VALUES
+           (1, 1, -1.0, 'EUR', 1772712000, 1, 'Eins', 'Laden', 0, 1),
+           (2, 1, -2.0, 'EUR', 1772798400, 1, 'Zwei', 'Laden', 0, 2),
+           (3, 1, -3.0, 'EUR', 1772884800, 1, 'Drei', 'Laden', 0, 3),
+           (4, 1, -4.0, 'EUR', 1772971200, 1, 'Vier', 'Laden', 0, 4),
+           (5, 2, 5.0, 'USD', 1772712000, 1, 'Fünf', 'Store', 0, 5);"
+    ))
+    .unwrap();
+    path
+}
+
+/// A vault account with the wallets' IBAN that the import does not own; `""` = no currency.
+fn wallet(v: &Vault, name: &str, currency: &str, connected: bool) -> i64 {
+    let db = v.db().unwrap();
+    let gid = Vault::ensure_group(&db, "Girokonten", "building.columns", 1).unwrap();
+    let login = connected.then(|| {
+        db.execute(
+            "INSERT INTO bank_connections(connector, display_name, login_name) VALUES ('fints', 'Bank', ?1)",
+            [name],
+        )
+        .unwrap();
+        db.last_insert_rowid()
+    });
+    db.execute(
+        "INSERT INTO accounts(connection_id, group_id, external_ref, name, iban, currency, kind, balance_cents)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'checking', 0)",
+        params![login, gid, format!("bank:{name}"), name, WALLET_IBAN, currency],
+    )
+    .unwrap();
+    db.last_insert_rowid()
+}
+
+/// The preview's (suggested target, needs a choice) of the EUR and the USD wallet.
+fn wallet_targets(v: &Vault, path: &str) -> [(Option<i64>, bool); 2] {
+    let p = v
+        .preview_moneymoney_database(path.into(), String::new(), None)
+        .unwrap();
+    let of = |name: &str| {
+        let a = p.accounts.iter().find(|a| a.name == name).unwrap();
+        (a.existing_account_id, a.target_needs_choice)
+    };
+    [of("Wallet EUR"), of("Wallet USD")]
+}
+
+fn booking_currencies(v: &Vault, account: i64) -> Vec<String> {
+    let db = v.db().unwrap();
+    let mut st = db
+        .prepare("SELECT currency FROM transactions WHERE account_id = ?1 AND deleted_ms IS NULL")
+        .unwrap();
+    st.query_map([account], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+#[test]
+fn wallets_sharing_an_iban_get_the_history_of_their_currency() {
+    // #1993: neither MoneyMoney's order nor the order the wallets were set up here decides
+    for usd_first in [false, true] {
+        for usd_created_first in [true, false] {
+            let v = vault();
+            let (eur, usd) = if usd_created_first {
+                let usd = wallet(&v, "Dollar", "USD", false);
+                (wallet(&v, "Euro", "EUR", false), usd)
+            } else {
+                let eur = wallet(&v, "Euro", "EUR", false);
+                (eur, wallet(&v, "Dollar", "USD", false))
+            };
+            let path = wallets_db(usd_first);
+            let case = format!("usd first: {usd_first}, created first: {usd_created_first}");
+            assert_eq!(
+                wallet_targets(&v, &path),
+                [(Some(eur), false), (Some(usd), false)],
+                "{case}"
+            );
+            let p = v
+                .preview_moneymoney_database(path.clone(), String::new(), None)
+                .unwrap();
+            let r = v
+                .import_moneymoney_database(path, String::new(), options_from(&p, false))
+                .unwrap();
+            assert_eq!((r.accounts_merged, r.accounts_created), (2, 0), "{case}");
+            assert_eq!(booking_currencies(&v, eur), vec!["EUR"; 4], "{case}");
+            assert_eq!(booking_currencies(&v, usd), vec!["USD"], "{case}");
+        }
+    }
+}
+
+#[test]
+fn a_wallet_in_another_currency_is_never_the_target() {
+    let v = vault();
+    let usd = wallet(&v, "Dollar", "USD", false);
+    // one the import owns: it would take MoneyMoney's balance
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET external_ref = 'moneymoney-db:77:abcd', balance_cents = 777 WHERE id = ?1",
+            [usd],
+        )
+        .unwrap();
+    let path = wallets_db(false);
+    assert_eq!(
+        wallet_targets(&v, &path),
+        [(None, false), (Some(usd), false)]
+    );
+    // chosen anyway (by an API caller): refused before a booking or the balance is written
+    let p = v
+        .preview_moneymoney_database(path.clone(), String::new(), None)
+        .unwrap();
+    let mut o = options_from(&p, false);
+    for c in &mut o.accounts {
+        c.target_account_id = Some(usd);
+    }
+    let err = v
+        .import_moneymoney_database(path, String::new(), o)
+        .unwrap_err();
+    assert!(err.to_string().contains("in EUR"), "{err}");
+    assert!(booking_currencies(&v, usd).is_empty());
+    assert_eq!(account_by_id(&v, usd).balance_cents, 777);
+}
+
+#[test]
+fn the_same_currency_comes_before_none_whatever_its_spelling() {
+    for usd_first in [false, true] {
+        let v = vault();
+        let unknown = wallet(&v, "Ohne Währung", "", false);
+        let eur = wallet(&v, "Euro", " eur ", false);
+        assert_eq!(
+            wallet_targets(&v, &wallets_db(usd_first)),
+            [(Some(eur), false), (Some(unknown), false)],
+            "usd first: {usd_first}"
+        );
+    }
+}
+
+#[test]
+fn equally_good_targets_need_a_choice() {
+    // two of the same currency: no guess, not even "new account"
+    let v = vault();
+    wallet(&v, "Euro 1", "EUR", false);
+    wallet(&v, "Euro 2", "EUR", false);
+    assert_eq!(
+        wallet_targets(&v, &wallets_db(false)),
+        [(None, true), (None, false)]
+    );
+    // a bank-synced one comes before one kept by hand
+    let v = vault();
+    wallet(&v, "Euro von Hand", "EUR", false);
+    let synced = wallet(&v, "Euro", "EUR", true);
+    assert_eq!(
+        wallet_targets(&v, &wallets_db(false)),
+        [(Some(synced), false), (None, false)]
+    );
+    // one without a currency that both wallets fit: neither order decides
+    for usd_first in [false, true] {
+        let v = vault();
+        wallet(&v, "Ohne Währung", "", false);
+        assert_eq!(
+            wallet_targets(&v, &wallets_db(usd_first)),
+            [(None, true), (None, true)],
+            "usd first: {usd_first}"
+        );
+    }
+}
+
+#[test]
+fn a_deleted_account_is_not_found_by_its_iban_alone() {
+    let v = vault();
+    let eur = wallet(&v, "Euro", "EUR", false);
+    v.db()
+        .unwrap()
+        .execute("UPDATE accounts SET deleted_ms = 1 WHERE id = ?1", [eur])
+        .unwrap();
+    assert_eq!(
+        wallet_targets(&v, &wallets_db(false)),
+        [(None, false), (None, false)]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn statement_lookup_rejects_symlinks_leaving_the_import_folder() {
@@ -4895,7 +5095,7 @@ fn the_iban_names_the_source_only_of_a_taken_over_account_in_its_currency() {
                 params![id, ext, currency],
             )
             .unwrap();
-        import_with(
+        let r = try_import_with(
             &v,
             &fake_db_with(false, "UPDATE accounts SET refresh = 16 WHERE rowid = 1;"),
             |o| {
@@ -4904,6 +5104,8 @@ fn the_iban_names_the_source_only_of_a_taken_over_account_in_its_currency() {
                 }
             },
         );
+        // in another currency the import is refused before it writes anything (#1993)
+        assert_eq!(r.is_err(), currency != "EUR", "{ext} {currency}");
         assert_eq!(archived_unix(&v, id), None, "{ext} {currency}");
         assert_eq!(
             archive_unknown(&v.db().unwrap()).unwrap(),
@@ -5031,11 +5233,13 @@ fn a_card_number_names_the_source_only_on_its_login_and_in_its_currency() {
                 params![card, login, currency],
             )
             .unwrap();
-        import_with(&v, &fake_db_with(false, CARD_CLOSED), |o| {
+        let r = try_import_with(&v, &fake_db_with(false, CARD_CLOSED), |o| {
             for c in o.accounts.iter_mut().filter(|c| c.mm_id == 2) {
                 c.target_account_id = Some(card);
             }
         });
+        // in another currency the import is refused before it writes anything (#1993)
+        assert_eq!(r.is_err(), currency != "EUR", "other login: {other_login}");
         assert_eq!(
             archive_state(&v, card),
             (None, 1_790_001_000_124, true),
