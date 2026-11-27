@@ -364,29 +364,36 @@ pub(crate) fn names_order(s: &str) -> bool {
 
 /// Vault merge (#1900): a booking both vaults have keeps a usable reference of its own, but
 /// takes the other side's when its own is blank or `NOTPROVIDED`, so [`settle_referenced`]
-/// finds the order it names. `booking_map`: the other vault's booking id → ours. Writes only
-/// rows that change, so a merge that brings nothing new changes no row.
+/// finds the order it names. Only when the mandate and creditor identifiers are compatible
+/// (blank on either side, else equal): a pair that names different mandates is not the same
+/// payment, so the reference is left alone. `booking_map`: the other vault's booking id →
+/// ours. Writes only rows that change, so a merge that brings nothing new changes no row.
 pub(crate) fn adopt_peer_references<'a>(
     conn: &Connection,
     booking_map: impl IntoIterator<Item = (&'a i64, &'a i64)>,
 ) -> CoreResult<()> {
-    let refs: std::collections::HashMap<i64, String> = conn
+    type PeerRef = (String, String, String);
+    let refs: std::collections::HashMap<i64, PeerRef> = conn
         .prepare(
-            "SELECT id, trim(end_to_end_id) FROM other.transactions
+            "SELECT id, trim(end_to_end_id), trim(coalesce(mandate_id, '')),
+                    trim(coalesce(creditor_id, ''))
+             FROM other.transactions
              WHERE upper(trim(coalesce(end_to_end_id, ''))) NOT IN ('', 'NOTPROVIDED')",
         )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?))))?
         .collect::<Result<_, _>>()?;
     if refs.is_empty() {
         return Ok(());
     }
     let mut set = conn.prepare(
         "UPDATE main.transactions SET end_to_end_id = ?2
-         WHERE id = ?1 AND upper(trim(coalesce(end_to_end_id, ''))) IN ('', 'NOTPROVIDED')",
+         WHERE id = ?1 AND upper(trim(coalesce(end_to_end_id, ''))) IN ('', 'NOTPROVIDED')
+           AND (trim(coalesce(mandate_id, '')) = '' OR ?3 = '' OR upper(trim(mandate_id)) = upper(?3))
+           AND (trim(coalesce(creditor_id, '')) = '' OR ?4 = '' OR upper(trim(creditor_id)) = upper(?4))",
     )?;
     for (other, mine) in booking_map {
-        if let Some(e2e) = refs.get(other) {
-            set.execute(params![*mine, e2e])?;
+        if let Some((e2e, mandate, creditor)) = refs.get(other) {
+            set.execute(params![*mine, e2e, mandate, creditor])?;
         }
     }
     Ok(())

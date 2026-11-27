@@ -797,6 +797,28 @@ fn merge_takes_the_peer_reference_of_a_matched_booking() {
     assert_eq!(a.count_planned_payments().unwrap(), 0);
 }
 
+/// A pair that names different mandates is not the same payment: the reference stays off. A
+/// booking without a mandate on our side still takes it.
+#[test]
+fn merge_adopts_the_peer_reference_only_for_compatible_mandates() {
+    let adopted = |local_mandate: &str, tag: &str| {
+        let (a, b) = merge_pair(tag);
+        book_ref(&a, only_account(&a), "x1", -900, "");
+        book_ref(&b, only_account(&b), "x1", -900, "E1");
+        for (v, m) in [(&a, local_mandate), (&b, "M1")] {
+            v.db()
+                .unwrap()
+                .execute("UPDATE transactions SET mandate_id = ?1", [m])
+                .unwrap();
+        }
+        b.checkpoint().unwrap();
+        a.merge_peer_snapshot(b.file_path()).unwrap();
+        reference_of(&a, "x1")
+    };
+    assert_eq!(adopted("M2", "planned-merge-mandate-diff"), "");
+    assert_eq!(adopted("", "planned-merge-mandate-blank"), "E1");
+}
+
 /// A usable reference of our own stays: the order only the other side's reference names
 /// remains open.
 #[test]
