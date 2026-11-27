@@ -94,11 +94,24 @@ fn normalize_symbol(symbol: &str) -> CoreResult<String> {
     Ok(s)
 }
 
-/// The held position `symbol` of `account_id`.
+/// Two devices that each added the same ticker to an account hold two live
+/// positions after a merge. A merge keeps both (deleting one would make the
+/// result depend on the merge order); every reader takes the newest edit per
+/// ticker (on equal stamps the larger uuid), so all devices show the same.
+/// A user edit or deletion of the ticker then retires the others.
+const NEWEST_OF_TICKER: &str = "NOT EXISTS (
+    SELECT 1 FROM crypto_positions o
+     WHERE o.account_id = p.account_id AND o.symbol = p.symbol AND o.deleted_ms IS NULL
+       AND (o.changed_ms, o.uuid) > (p.changed_ms, p.uuid))";
+
+/// The held position `symbol` of `account_id` (the newest, see [`NEWEST_OF_TICKER`]).
 fn position_id(conn: &Connection, account_id: i64, symbol: &str) -> CoreResult<i64> {
     let symbol = symbol.trim().to_ascii_uppercase();
     conn.query_row(
-        "SELECT id FROM crypto_positions WHERE account_id = ?1 AND symbol = ?2 AND deleted_ms IS NULL",
+        &format!(
+            "SELECT id FROM crypto_positions p WHERE account_id = ?1 AND symbol = ?2 AND deleted_ms IS NULL
+                AND {NEWEST_OF_TICKER}"
+        ),
         params![account_id, symbol],
         |r| r.get(0),
     )
@@ -106,6 +119,18 @@ fn position_id(conn: &Connection, account_id: i64, symbol: &str) -> CoreResult<i
     .ok_or_else(|| CoreError::NotFound {
         what: tr("Depotposition").into(),
     })
+}
+
+/// The user edits or deletes the position `id`: other live positions of its
+/// ticker (merged in from another device) are retired with it.
+fn retire_twins(conn: &Connection, id: i64) -> CoreResult<()> {
+    conn.execute(
+        "UPDATE crypto_positions SET deleted_ms = ?2, changed_ms = MAX(?2, changed_ms + 1)
+          WHERE deleted_ms IS NULL AND id <> ?1
+            AND (account_id, symbol) = (SELECT account_id, symbol FROM crypto_positions WHERE id = ?1)",
+        params![id, now_ms()],
+    )?;
+    Ok(())
 }
 
 /// Quantity × price in cents, rounded after multiplying (tiny prices keep their
@@ -124,11 +149,11 @@ fn too_large() -> CoreError {
 }
 
 fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
-    let mut st = conn.prepare(
+    let mut st = conn.prepare(&format!(
         "SELECT p.symbol, p.quantity, p.purchase_price_cents, c.price_eur, c.fetched_ms
            FROM crypto_positions p LEFT JOIN crypto_prices c ON c.symbol = p.symbol
-          WHERE p.account_id = ?1 AND p.deleted_ms IS NULL ORDER BY p.symbol",
-    )?;
+          WHERE p.account_id = ?1 AND p.deleted_ms IS NULL AND {NEWEST_OF_TICKER} ORDER BY p.symbol"
+    ))?;
     let rows = st.query_map([account_id], |r| {
         Ok(CryptoPosition {
             symbol: r.get(0)?,
@@ -220,27 +245,6 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
     )
 }
 
-/// Two devices that each added the same ticker to an account hold two live
-/// positions after a merge: the newest edit stays (on equal stamps the larger
-/// uuid, so every device keeps the same one), the others become tombstones
-/// that a later merge carries along. A tombstone keeps its edit stamp: on an
-/// equal stamp a deletion wins the merge, while a newer edit of that position
-/// from another device still does – so every merge order ends the same way.
-/// Returns the accounts it changed.
-fn resolve_duplicate_tickers(conn: &Connection) -> CoreResult<Vec<i64>> {
-    let mut st = conn.prepare(
-        "UPDATE crypto_positions SET deleted_ms = ?1
-          WHERE deleted_ms IS NULL AND EXISTS (
-                SELECT 1 FROM crypto_positions o
-                 WHERE o.account_id = crypto_positions.account_id AND o.symbol = crypto_positions.symbol
-                   AND o.deleted_ms IS NULL AND o.id <> crypto_positions.id
-                   AND (o.changed_ms, o.uuid) > (crypto_positions.changed_ms, crypto_positions.uuid))
-          RETURNING account_id",
-    )?;
-    let rows = st.query_map([now_ms()], |r| r.get(0))?;
-    Ok(rows.collect::<Result<_, _>>()?)
-}
-
 /// Ids of all crypto accounts.
 fn crypto_account_ids(conn: &Connection) -> CoreResult<Vec<i64>> {
     let mut st = conn.prepare(
@@ -254,7 +258,8 @@ fn crypto_account_ids(conn: &Connection) -> CoreResult<Vec<i64>> {
 /// Takes over positions and prices from an attached vault (`other`): positions
 /// by uuid, the newer edit wins and soft deletes travel along (on equal stamps
 /// a deletion wins, then the larger values, so both devices agree); a price by
-/// ticker, the newer fetch wins (on equal stamps the higher price). Then the
+/// ticker, the newer fetch wins (on equal stamps the higher price). Two live
+/// positions of one ticker both stay (see [`NEWEST_OF_TICKER`]). Then the
 /// crypto accounts the merge changed are written again; an untouched one keeps
 /// its state, so a merge records no valuation of its own.
 pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> CoreResult<()> {
@@ -300,7 +305,6 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
         )?
         .query_map([], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
-    touched.extend(resolve_duplicate_tickers(conn)?);
     touched.extend(holders_of(conn, &changed_symbols)?);
     for id in crypto_account_ids(conn)? {
         if touched.contains(&id) {
@@ -390,7 +394,11 @@ impl Vault {
         let tx = db.unchecked_transaction()?;
         require_crypto(&tx, account_id)?;
         let previous = match previous_symbol {
-            Some(p) => Some(position_id(&tx, account_id, &p)?),
+            Some(p) => {
+                let id = position_id(&tx, account_id, &p)?;
+                retire_twins(&tx, id)?;
+                Some(id)
+            }
             None => None,
         };
         let taken: bool = tx.query_row(
@@ -430,6 +438,7 @@ impl Vault {
         let tx = db.unchecked_transaction()?;
         require_crypto(&tx, account_id)?;
         let id = position_id(&tx, account_id, &symbol)?;
+        retire_twins(&tx, id)?;
         tx.execute(
             "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = MAX(?1, changed_ms + 1) WHERE id = ?2",
             params![now_ms(), id],

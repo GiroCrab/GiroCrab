@@ -401,3 +401,101 @@ fn a_price_beyond_cents_from_another_vault_is_not_taken() {
             .is_err()
     );
 }
+
+#[test]
+fn a_renamed_twin_survives_in_every_merge_order() {
+    // A: x (BTC); B: y (BTC), added separately; C: y renamed to ETH
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    tick();
+    b.save_crypto_position(bacc, None, "BTC".into(), 2.0, None)
+        .unwrap();
+    let (c, pc) = temp_vault();
+    c.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let cacc = c.list_crypto_account_ids().unwrap()[0];
+    tick();
+    c.save_crypto_position(cacc, Some("BTC".into()), "ETH".into(), 2.0, None)
+        .unwrap();
+    // two copies of A merge B and C in opposite orders
+    let (a2, _pa2) = temp_vault();
+    a2.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let a2acc = a2.list_crypto_account_ids().unwrap()[0];
+    for from in [&pb, &pc] {
+        a.merge_other_vault(from.to_string_lossy().to_string(), vec![7u8; 32])
+            .unwrap();
+    }
+    for from in [&pc, &pb] {
+        a2.merge_other_vault(from.to_string_lossy().to_string(), vec![7u8; 32])
+            .unwrap();
+    }
+    let held = |v: &Vault, acc| -> Vec<(String, f64)> {
+        v.list_crypto_positions(acc)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.symbol, p.quantity))
+            .collect()
+    };
+    let expected = vec![("BTC".to_string(), 1.0), ("ETH".to_string(), 2.0)];
+    assert_eq!(held(&a, acc), expected);
+    assert_eq!(held(&a2, a2acc), expected);
+}
+
+#[test]
+fn editing_a_merged_twin_retires_the_other() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    b.save_crypto_position(bacc, None, "BTC".into(), 2.0, None)
+        .unwrap();
+    tick();
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    // the newest shows; editing it works and leaves one row
+    assert_eq!(a.list_crypto_positions(acc).unwrap()[0].quantity, 1.0);
+    a.save_crypto_position(acc, Some("BTC".into()), "BTC".into(), 5.0, None)
+        .unwrap();
+    let live: i64 = a
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM crypto_positions WHERE deleted_ms IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(live, 1);
+    a.delete_crypto_position(acc, "BTC".into()).unwrap();
+    assert!(a.list_crypto_positions(acc).unwrap().is_empty());
+}
+
+#[test]
+fn a_partial_balance_is_no_value_in_the_history() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    v.save_crypto_position(acc, None, "ETH".into(), 1.0, None)
+        .unwrap();
+    price(&v, "BTC", 80_000.0);
+    v.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    assert_eq!(balance(&v, acc), 80_000_00, "shown: the priced part");
+    assert!(
+        v.depot_value_history(vec![acc], 30)
+            .unwrap()
+            .iter()
+            .all(|d| d.covered_depots == 0),
+        "ETH has no price: no depot value"
+    );
+}

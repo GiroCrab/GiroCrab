@@ -290,7 +290,9 @@ fn reported_point(
     depot: &DepotRow,
     end: Date,
 ) -> CoreResult<Option<(String, i64)>> {
-    if depot.balance_cents == 0 {
+    // a crypto holding records its own history (`crypto::materialize`); its balance may be a
+    // partial sum while a ticker has no price yet
+    if depot.balance_cents == 0 || crate::crypto::is_crypto(conn, id)? {
         return Ok(None);
     }
     // An account with bookings keeps the walk back over them: that history is real. Only a depot
