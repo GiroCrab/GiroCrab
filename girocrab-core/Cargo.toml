@@ -23,7 +23,7 @@ serde = []
 [dependencies]
 uniffi = { version = "0.32", features = ["tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
-rusqlite = { version = "0.42", features = ["bundled-sqlcipher-vendored-openssl", "backup", "functions"] }
+rusqlite = { version = "0.43", features = ["bundled-sqlcipher-vendored-openssl", "backup", "functions"] }
 zeroize = { version = "1.9", features = ["zeroize_derive"] }
 async-trait = "0.1"
 thiserror = "2"
