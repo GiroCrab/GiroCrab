@@ -66,7 +66,6 @@ import de.girocrab.app.model.Booking
 import de.girocrab.app.model.CorePaymentDetails
 import de.girocrab.app.model.CorePaymentParser
 import de.girocrab.app.model.DirectDebitMandate
-import de.girocrab.app.model.Interval
 import de.girocrab.app.model.StandingOrder
 import java.time.Instant
 import java.time.LocalDate
@@ -110,33 +109,23 @@ data class RecurringContract(
     val next: LocalDate,
 )
 
-fun Interval.advance(d: LocalDate): LocalDate = when (this) {
-    Interval.Weekly -> d.plusWeeks(1)
-    Interval.Monthly -> d.plusMonths(1)
-    Interval.Quarterly -> d.plusMonths(3)
-    Interval.Yearly -> d.plusYears(1)
-}
-
-fun intervalLabel(i: Interval) = when (i) {
-    Interval.Weekly -> "wöchentlich"
-    Interval.Monthly -> "monatlich"
-    Interval.Quarterly -> "vierteljährlich"
-    Interval.Yearly -> "jährlich"
-}
-
-/** Expands standing orders into dated occurrences within [today, today + horizon]. */
+/**
+ * Expands standing orders into dated occurrences within [today, today + horizon]. The dates come
+ * from the core's fields through [StandingOrder.after]; nothing is stored, so a bank fetch that
+ * moves `first_date`/`last_date` changes the plan without a migration.
+ */
 fun expandStandingOrders(orders: List<StandingOrder>, today: LocalDate, horizon: PlannedHorizon): List<PlannedPayment> {
     val end = today.plusDays(horizon.days)
     val out = mutableListOf<PlannedPayment>()
     for (o in orders) {
-        var d = o.nextDate
+        var d = o.nextRun(today) ?: continue
         var guard = 0
         while (d <= end && guard++ < 400) {
-            if (d >= today) out += PlannedPayment(
+            out += PlannedPayment(
                 "so-${o.id}-$d", o.accountId, o.recipient, o.purpose, -abs(o.amountCents), d,
-                "Dauerauftrag · ${intervalLabel(o.interval)}",
+                "Dauerauftrag · ${o.rhythm}",
             )
-            d = o.interval.advance(d)
+            d = o.after(d) ?: break
         }
     }
     return out
@@ -243,13 +232,34 @@ fun parsePaymentInput(text: String): EpcPayload? {
 
 private fun CorePaymentDetails.hasValidIban(): Boolean = iban?.let { isValidIban(it.filter { c -> !c.isWhitespace() }) } == true
 
+/**
+ * What the core says the next collection gets (`FRST`/`RCUR`/`OOFF`). A mandate marked as one-off
+ * and a manual override in the sheet win over it; an empty or unknown value falls back to what the
+ * mandate's own history implies.
+ */
 fun sequenceTypeFor(m: DirectDebitMandate, oneOff: Set<String>): SequenceType = when {
-    m.id in oneOff -> SequenceType.OOFF
-    m.lastUsed == null -> SequenceType.FRST
-    else -> SequenceType.RCUR
+    m.id in oneOff || m.oneOff -> SequenceType.OOFF
+    else -> when (m.nextSequence.uppercase(Locale.ROOT)) {
+        "FRST" -> SequenceType.FRST
+        "OOFF" -> SequenceType.OOFF
+        "RCUR" -> SequenceType.RCUR
+        else -> if (m.lastCollected == null) SequenceType.FRST else SequenceType.RCUR
+    }
 }
 
-/** Minimal pain.008.001.02 skeleton for a collection (preview/export). */
+/** What the core's `collect` accepts: active, and not a one-off mandate that has already been collected. */
+private fun DirectDebitMandate.einziehbar(): Boolean = active && !(oneOff && lastCollected != null)
+
+/**
+ * Collectable through the creditor account [accountId]: the core collects a mandate only from the
+ * account it belongs to, so a mandate of another account must not end up under this IBAN.
+ */
+fun DirectDebitMandate.collectableFrom(accountId: String?): Boolean = this.accountId == accountId && einziehbar()
+
+/**
+ * Minimal pain.008.001.02 skeleton for a collection (preview/export). One payment block per scheme
+ * and sequence type: SEPA does not allow CORE and B2B collections in the same `PmtInf`.
+ */
 fun buildPain008(
     creditorName: String, creditorIban: String, creditorId: String,
     items: List<Triple<DirectDebitMandate, Long, SequenceType>>, collectionDate: LocalDate,
@@ -261,14 +271,14 @@ fun buildPain008(
         appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
         appendLine("""<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.02"><CstmrDrctDbtInitn>""")
         appendLine("<GrpHdr><MsgId>GC-${collectionDate}</MsgId><NbOfTxs>${items.size}</NbOfTxs><CtrlSum>${eur(total)}</CtrlSum><InitgPty><Nm>${esc(creditorName)}</Nm></InitgPty></GrpHdr>")
-        for (seq in items.map { it.third }.distinct()) {
-            val g = items.filter { it.third == seq }
-            appendLine("<PmtInf><PmtMtd>DD</PmtMtd><NbOfTxs>${g.size}</NbOfTxs><PmtTpInf><SeqTp>${seq.code}</SeqTp></PmtTpInf>")
+        for ((scheme, seq) in items.map { it.first.scheme to it.third }.distinct()) {
+            val g = items.filter { it.first.scheme == scheme && it.third == seq }
+            appendLine("<PmtInf><PmtMtd>DD</PmtMtd><NbOfTxs>${g.size}</NbOfTxs><PmtTpInf><SvcLvl><Cd>SEPA</Cd></SvcLvl><LclInstrm><Cd>${scheme.label}</Cd></LclInstrm><SeqTp>${seq.code}</SeqTp></PmtTpInf>")
             appendLine("<ReqdColltnDt>$collectionDate</ReqdColltnDt><Cdtr><Nm>${esc(creditorName)}</Nm></Cdtr>")
             appendLine("<CdtrAcct><Id><IBAN>${creditorIban.filter { !it.isWhitespace() }}</IBAN></Id></CdtrAcct>")
             appendLine("<CdtrSchmeId><Id><PrvtId><Othr><Id>${esc(creditorId)}</Id></Othr></PrvtId></Id></CdtrSchmeId>")
             for ((m, cents, _) in g) {
-                appendLine("<DrctDbtTxInf><InstdAmt Ccy=\"EUR\">${eur(cents)}</InstdAmt><DrctDbtTx><MndtRltdInf><MndtId>${esc(m.mandateRef)}</MndtId><DtOfSgntr>${m.signedDate}</DtOfSgntr></MndtRltdInf></DrctDbtTx><Dbtr><Nm>${esc(m.creditor)}</Nm></Dbtr></DrctDbtTxInf>")
+                appendLine("<DrctDbtTxInf><InstdAmt Ccy=\"EUR\">${eur(cents)}</InstdAmt><DrctDbtTx><MndtRltdInf><MndtId>${esc(m.reference)}</MndtId><DtOfSgntr>${m.signedDate}</DtOfSgntr></MndtRltdInf></DrctDbtTx><Dbtr><Nm>${esc(m.debtorName)}</Nm></Dbtr><DbtrAcct><Id><IBAN>${esc(m.debtorIban.filter { !it.isWhitespace() })}</IBAN></Id></DbtrAcct></DrctDbtTxInf>")
             }
             appendLine("</PmtInf>")
         }
@@ -353,7 +363,7 @@ fun PaymentsScreen(
                     }
                     when (tab) {
                         0 -> PlannedTab(state, today, masked)
-                        1 -> StandingOrdersTab(state, masked)
+                        1 -> StandingOrdersTab(state, today, masked)
                         else -> DirectDebitsTab(state, today, masked)
                     }
                 }
@@ -463,10 +473,14 @@ private fun PlannedTab(state: AppUiState, today: LocalDate, masked: Boolean) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(if (masked) "••••••" else p.counterparty, fontWeight = FontWeight.Medium, maxLines = 1)
-                            Text(
-                                if (masked) accName else listOf(p.purpose, accName).filter { it.isNotBlank() }.joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                            )
+                            // Purpose and account name are data like the counterparty: while the app is
+                            // masked the line disappears entirely, as in the standing-order card.
+                            if (!masked) {
+                                Text(
+                                    listOf(p.purpose, accName).filter { it.isNotBlank() }.joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                                )
+                            }
                             Text(p.kindText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                         }
                         Column(horizontalAlignment = Alignment.End) {
@@ -489,8 +503,8 @@ private fun TotalCell(label: String, cents: Long, masked: Boolean, modifier: Mod
 }
 
 @Composable
-private fun StandingOrdersTab(state: AppUiState, masked: Boolean) {
-    val orders = state.data.standingOrders.sortedBy { it.nextDate }
+private fun StandingOrdersTab(state: AppUiState, today: LocalDate, masked: Boolean) {
+    val orders = state.data.standingOrders.sortedBy { it.nextRun(today) ?: LocalDate.MAX }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (orders.isEmpty()) item { Text("Keine Daueraufträge vorhanden.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(orders, key = { it.id }) { o ->
@@ -503,8 +517,12 @@ private fun StandingOrdersTab(state: AppUiState, masked: Boolean) {
                     }
                     Text(if (masked) "••••" else formatIban(o.iban), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (o.purpose.isNotBlank() && !masked) Text(o.purpose, style = MaterialTheme.typography.bodySmall)
+                    val next = o.nextRun(today)
                     Text(
-                        "${intervalLabel(o.interval)} · nächste Ausführung ${o.nextDate.format(dateFmt)}${acc?.let { " · ${it.name}" }.orEmpty()}",
+                        "${o.rhythm} · seit ${o.firstDate.format(dateFmt)} · " +
+                            "nächste Ausführung ${next?.format(dateFmt) ?: "keine (beendet)"}" +
+                            // The account name is data like the recipient: hidden while the app is masked.
+                            acc?.takeUnless { masked }?.let { " · ${it.name}" }.orEmpty(),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
                     )
                 }
@@ -520,12 +538,14 @@ private fun DirectDebitsTab(state: AppUiState, today: LocalDate, masked: Boolean
     var pain by remember { mutableStateOf<String?>(null) }
     var showCollect by remember { mutableStateOf(false) }
     val mandates = state.data.mandates
+    val collectableIds = mandates.filter { it.einziehbar() }.map { it.id }.toSet()
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("SEPA-Mandate", style = MaterialTheme.typography.titleMedium)
-                OutlinedButton(onClick = { showCollect = true }, enabled = mandates.isNotEmpty()) { Text("Einzug (pain.008)") }
+                // Privacy mode locks the collection: the dialog shows debtors and references unmasked.
+                OutlinedButton(onClick = { showCollect = true }, enabled = mandates.isNotEmpty() && !masked) { Text("Einzug (pain.008)") }
             }
         }
         if (mandates.isEmpty()) item { Text("Keine Lastschriftmandate vorhanden.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -534,17 +554,23 @@ private fun DirectDebitsTab(state: AppUiState, today: LocalDate, masked: Boolean
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (masked) "••••••" else m.creditor, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1)
+                        Text(if (masked) "••••••" else m.debtorName, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), maxLines = 1)
                         FilterChip(
                             selected = seq == SequenceType.OOFF,
                             onClick = { oneOff = if (m.id in oneOff) oneOff - m.id else oneOff + m.id },
                             label = { Text(seq.code) },
                         )
                     }
-                    Text("Gläubiger-ID: ${if (masked) "••••" else m.creditorId}", style = MaterialTheme.typography.bodySmall)
-                    Text("Mandatsreferenz: ${if (masked) "••••" else m.mandateRef}", style = MaterialTheme.typography.bodySmall)
+                    Text(if (masked) "••••" else formatIban(m.debtorIban), style = MaterialTheme.typography.bodySmall)
                     Text(
-                        "Unterschrieben ${m.signedDate.format(dateFmt)} · zuletzt genutzt ${m.lastUsed?.format(dateFmt) ?: "nie"}",
+                        "Schema ${m.scheme.label} · Mandatsreferenz ${if (masked) "••••" else m.reference}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (m.defaultAmountCents > 0) {
+                        Text("Vorgabe ${formatMoney(m.defaultAmountCents, masked = masked)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text(
+                        "Unterschrieben ${m.signedDate.format(dateFmt)} · zuletzt eingezogen ${m.lastCollected?.format(dateFmt) ?: "nie"}",
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
                     )
                     Text(seq.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -555,7 +581,7 @@ private fun DirectDebitsTab(state: AppUiState, today: LocalDate, masked: Boolean
 
     if (showCollect) {
         CollectionDialog(
-            mandates = mandates, selected = selected, onSelected = { selected = it },
+            mandates = mandates, selected = selected.filter { it in collectableIds }.toSet(), onSelected = { selected = it },
             seqOf = { sequenceTypeFor(it, oneOff) },
             accounts = state.data.accounts,
             today = today,
@@ -590,7 +616,7 @@ private fun CollectionDialog(
     var accountId by rememberSaveable { mutableStateOf(accounts.firstOrNull { it.kind == AccountKind.Giro }?.id) }
     var amounts by remember { mutableStateOf(mapOf<String, String>()) }
     val acc = accounts.firstOrNull { it.id == accountId }
-    val items = mandates.filter { it.id in selected }.mapNotNull { m -> parseCents(amounts[m.id].orEmpty())?.let { Triple(m, it, seqOf(m)) } }
+    val items = mandates.filter { it.id in selected && it.collectableFrom(accountId) }.mapNotNull { m -> parseCents(amounts[m.id].orEmpty())?.let { Triple(m, it, seqOf(m)) } }
     val valid = name.isNotBlank() && creditorId.isNotBlank() && acc?.iban?.let(::isValidIban) == true && items.isNotEmpty()
 
     AlertDialog(
@@ -603,14 +629,22 @@ private fun CollectionDialog(
                 AccountDropdown(accounts, accountId, allowAll = false, onSelect = { accountId = it })
                 mandates.forEach { m ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(m.id in selected, { c -> onSelected(if (c) selected + m.id else selected - m.id) })
+                        androidx.compose.material3.Checkbox(m.id in selected, { c -> onSelected(if (c) selected + m.id else selected - m.id) }, enabled = m.collectableFrom(accountId))
                         Column(Modifier.weight(1f)) {
-                            Text(m.creditor, maxLines = 1)
-                            Text("${seqOf(m).code} · ${m.mandateRef}", style = MaterialTheme.typography.labelSmall)
+                            Text(m.debtorName, maxLines = 1)
+                            Text(
+                                when {
+                                    m.collectableFrom(accountId) -> "${seqOf(m).code} · ${m.reference}"
+                                    !m.active -> "inaktiv"
+                                    m.einziehbar() -> "anderes Konto"
+                                    else -> "bereits eingezogen"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                            )
                         }
                         OutlinedTextField(
                             amounts[m.id].orEmpty(), { amounts = amounts + (m.id to it) }, label = { Text("€") }, singleLine = true,
-                            enabled = m.id in selected, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            enabled = m.collectableFrom(accountId) && m.id in selected, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.width(100.dp),
                         )
                     }

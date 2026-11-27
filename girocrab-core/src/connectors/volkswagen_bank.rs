@@ -120,6 +120,7 @@ struct HttpPortal {
 
 impl HttpPortal {
     /// The booking list of account `number` from `from` (YYYY-MM-DD) to `today`.
+    /// The days go out the way the browser capture shows them: `YYYY-MM-DDZ`.
     async fn cash_flow(&mut self, number: &str, from: &str, today: Date) -> CoreResult<Value> {
         let body = json!({
             "accountNumber": number,
@@ -198,11 +199,9 @@ impl HttpPortal {
             });
         }
         if !status.is_success() {
+            let body = super::read_text_limited(resp).await.unwrap_or_default();
             return Err(CoreError::Protocol {
-                message: trf(
-                    "Volkswagen Bank: Unerwartete Antwort (HTTP {0}).",
-                    &[&status.as_u16()],
-                ),
+                message: http_error_message(status.as_u16(), path, &body),
             });
         }
         let raw = super::read_text_limited(resp).await?;
@@ -516,6 +515,65 @@ fn portal_date(s: &str) -> Option<Date> {
 fn berlin_today() -> Date {
     let now = crate::dates::now_utc();
     (now + jiff::Span::new().hours(berlin_offset_hours(now))).date()
+}
+
+/// The message of a refused call: the endpoint and the first 200 characters
+/// of the error body on one line (the portal usually says what it did not
+/// like). Never the request: it can hold the password. The answer can echo
+/// account numbers or IBANs, so IBANs (also grouped) are cut to their first
+/// and last four characters and long digit runs are masked before cutting
+/// (a cut must not leave the tail of a number behind). This is no full
+/// masking of the body: names and free text stay as the portal wrote them.
+/// Public reports go through `sanitize_report_text` separately.
+fn http_error_message(status: u16, path: &str, body: &str) -> String {
+    let ibans = crate::sync_log::replace_ibans(body, |compact| {
+        let n = compact.chars().count();
+        format!(
+            "{}…{}",
+            compact.chars().take(4).collect::<String>(),
+            compact.chars().skip(n - 4).collect::<String>()
+        )
+    });
+    let detail = mask_digit_runs(&ibans)
+        .chars()
+        .take(200)
+        .collect::<String>()
+        .replace(['\n', '\r'], " ");
+    format!(
+        "{} [{path}] {}",
+        trf(
+            "Volkswagen Bank: Unerwartete Antwort (HTTP {0}).",
+            &[&status],
+        ),
+        detail.trim_end()
+    )
+    .trim_end()
+    .to_string()
+}
+
+/// Runs of 8 or more digits (account numbers, IBAN tails) become `…`;
+/// shorter ones (codes, date parts, HTTP statuses) stay.
+fn mask_digit_runs(s: &str) -> String {
+    fn flush(out: &mut String, run: &mut String) {
+        if run.len() >= 8 {
+            out.push('…');
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut run = String::new();
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            run.push(c);
+        } else {
+            flush(&mut out, &mut run);
+            out.push(c);
+        }
+    }
+    flush(&mut out, &mut run);
+    out
 }
 
 fn photo_tan_challenge(image: Vec<u8>) -> Challenge {
@@ -872,6 +930,59 @@ mod tests {
         assert_eq!(day("2026-10-25T23:30:00Z").as_deref(), Some("2026-10-26"));
         assert_eq!(day("x"), None);
         assert_eq!(day(""), None);
+    }
+
+    #[test]
+    fn refused_calls_name_the_endpoint_and_the_start_of_the_answer() {
+        let path = "CashFlowService/cashflow/list/get";
+        let msg = http_error_message(400, path, "{\"Message\":\n\"dateFrom invalid\"}\r\n");
+        assert!(msg.contains("HTTP 400"), "{msg}");
+        assert!(msg.contains("[CashFlowService/cashflow/list/get]"), "{msg}");
+        assert!(msg.contains("dateFrom invalid"), "{msg}");
+        assert!(!msg.contains(['\n', '\r']), "{msg}");
+        assert!(!msg.ends_with(' '), "{msg:?}");
+
+        // Cut after 200 characters (not bytes: no panic on umlauts), nothing after it.
+        let long = format!("{}TAIL", "ä".repeat(300));
+        let msg = http_error_message(500, path, &long);
+        assert_eq!(msg.matches('ä').count(), 200, "{msg}");
+        assert!(!msg.contains("TAIL"), "{msg}");
+
+        // An empty body leaves just status and endpoint.
+        let msg = http_error_message(502, path, "");
+        assert!(
+            msg.ends_with("[CashFlowService/cashflow/list/get]"),
+            "{msg:?}"
+        );
+
+        // Echoed account numbers and IBANs are masked; short codes and dates stay.
+        let msg = http_error_message(
+            400,
+            path,
+            "{\"accountNumber\":\"1234567890\",\"Iban\":\"DE89370400440532013000\",\"Code\":\"E4711\",\"dateFrom\":\"2026-10-23Z\"}",
+        );
+        assert!(!msg.contains("1234567890"), "{msg}");
+        assert!(!msg.contains("370400440532013000"), "{msg}");
+        assert!(!msg.contains("89370400"), "{msg}");
+        assert!(msg.contains("\"accountNumber\":\"…\""), "{msg}");
+        assert!(msg.contains("E4711"), "{msg}");
+        assert!(msg.contains("2026-10-23Z"), "{msg}");
+
+        // A grouped IBAN (every digit group is short) is cut to first/last four.
+        let msg = http_error_message(
+            400,
+            path,
+            "{\"Message\":\"IBAN DE89 3704 0044 0532 0130 00 unbekannt\"}",
+        );
+        assert!(!msg.contains("3704 0044"), "{msg}");
+        assert!(!msg.contains("0532"), "{msg}");
+        assert!(msg.contains("DE89…3000"), "{msg}");
+        assert!(msg.contains("unbekannt"), "{msg}");
+
+        // A number at the 200-character cut is masked as a whole, no tail left.
+        let msg = http_error_message(400, path, &format!("{}1234567890", "x".repeat(195)));
+        assert!(!msg.contains("12345"), "{msg}");
+        assert!(msg.ends_with('…'), "{msg:?}");
     }
 
     #[test]

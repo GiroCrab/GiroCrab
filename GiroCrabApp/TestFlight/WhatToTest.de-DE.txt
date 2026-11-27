@@ -1,6 +1,5 @@
-Neu in Build 25 (v0.7.5):
+Neu in Build 27 (v0.9.0):
 
-• 🔐 Enable Banking & iCloud-Schlüsselbund: Eigene Enable-Banking-Anwendung pro Bankzugang über den iCloud-Schlüsselbund synchronisieren, Konflikte beim Speichern gezielt auflösen und zuverlässiges Zurücksetzen/Sperren ohne Datenverlust.
-• ₿ Bitcoin Core & neue Kontoarten: Eigene Bitcoin-Core-Wallet als Depot anbinden, neue Kontoarten Bausparen und Festgeld, nach Kontoart gruppierte Übersichten im Vermögens- und Kontobereich sowie Überweisungslinks (`girocrab://transfer`).
-• 🧾 Belegabgleich, Händlererkennung & Regeln: Bankbelege automatisch nach Inhalt mit Buchungen verknüpfen und neu einsortieren, manuell gelöste Verknüpfungen bewahren, eigene Händler & Regeln mit Anwendungsbereich/Tags pflegen sowie Regeleditor im eigenen Fenster.
-• 🏦 FinTS, Überweisungen & plattformübergreifende Verbesserungen: Tagesgeld-Umbuchungen (`HKCUM`), Banknamen zur IBAN in Zahlungsformularen, lückenlose Montagsbuchungen ohne Bis-Datum, individuelle Abrufintervalle je Zugang sowie erweiterter CSV-Export, Lesestatus für Belege unter Windows und Android-Keystore-Integration.
+• MoneyMoney-Import stabilisiert: Eigene Kategorien und Regeln bleiben beim Datenbank-Import erhalten (`#1992`), namenlose Buchungen gleichen Betrags am selben Tag gehen beim CSV-Import nicht mehr verloren (`#1995`).
+• Debitkarten & FinTS/Konnektoren: Karten mit Kartenumsatz-Abruf wie *Mastercard direkt* werden als Debitkarte behandelt (`#967`), Festgeld-Konten bei FordMoney sauber erfasst (`#1766`) und Zeitstempel/Fehlerkontext bei der VW Bank verbessert (`#1081`).
+• Android-Snapshot: Mandate und Daueraufträge aus dem Rust-Core werden in den Android-Snapshot übernommen (`#1429`).

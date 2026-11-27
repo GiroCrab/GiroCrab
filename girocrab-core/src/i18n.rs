@@ -336,6 +336,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Bank lieferte die Daueraufträge nicht vollständig (zu viele Seiten)." => {
             "The bank did not return the standing orders completely (too many pages)."
         }
+        "{0} von {1} Aufträgen der Bank konnten nicht gelesen werden." => {
+            "{0} of {1} orders from the bank could not be read."
+        }
         "Der Betrag ist größer als SEPA erlaubt (999.999.999,99 €)." => {
             "The amount exceeds what SEPA allows (999,999,999.99 EUR)."
         }
@@ -1779,6 +1782,12 @@ fn english(de: &str) -> Option<&'static str> {
         "Ford Money: Die Anfrage wurde abgelehnt." => "Ford Money: The request was rejected.",
         "Ford Money: Kundennummer und Passwort erforderlich." => {
             "Ford Money: Customer number and password required."
+        }
+        "Ford Money: Der Kontostand von Konto {0} konnte nicht gelesen werden, das Konto wurde nicht abgerufen." => {
+            "Ford Money: The balance of account {0} could not be read, the account was not synced."
+        }
+        "Ford Money: Die Umsätze von Konto {0} konnten nicht gelesen werden, übernommen wurde nur der Kontostand." => {
+            "Ford Money: The transactions of account {0} could not be read, only the balance was imported."
         }
         "Kundennummer" => "Customer number",
         // ------------------------------------------------------------ connectors/ffb.rs
