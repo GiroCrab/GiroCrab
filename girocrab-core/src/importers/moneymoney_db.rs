@@ -244,6 +244,10 @@ pub struct MoneyMoneyDbPreview {
     /// The vault has no bookings yet, so MoneyMoney's categories replace
     /// GiroCrab's starter categories (and their rules) instead of being added.
     pub replaces_starter_categories: bool,
+    /// Category paths that name no single category (several categories share
+    /// the name, also with other case): the import refuses them while
+    /// categories are imported (#1992).
+    pub ambiguous_category_paths: Vec<String>,
     /// The database file that was read (inside the folder, if one was given).
     pub database_path: String,
     /// Statements / bank documents (PDF) listed in the database.
@@ -2801,6 +2805,57 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
     Ok(bookings == 0 && crate::demo::is_untouched_starter(conn)?)
 }
 
+/// Category paths that name no single category (#1992): several categories of
+/// the database share the path (names compared ignoring case, as the import
+/// does), or, when the vault keeps its tree, the path matches several live
+/// categories there (names that differ only in case). The import would put
+/// them together without asking, so it refuses them.
+fn ambiguous_category_paths(
+    conn: &Connection,
+    src: &Source,
+    keeps_tree: bool,
+) -> CoreResult<Vec<String>> {
+    let key = |path: &[String]| path.iter().map(|p| p.to_lowercase()).collect::<Vec<_>>();
+    let mut count: HashMap<Vec<String>, u32> = HashMap::new();
+    for path in &src.categories.order {
+        *count.entry(key(path)).or_default() += 1;
+    }
+    let (mut out, mut reported) = (Vec::new(), HashSet::new());
+    for path in &src.categories.order {
+        if count[&key(path)] > 1 {
+            if reported.insert(key(path)) {
+                out.push(path.join(" › "));
+            }
+            continue;
+        }
+        if !keeps_tree {
+            continue;
+        }
+        let mut parent: Option<i64> = None;
+        for (i, part) in path.iter().enumerate() {
+            // the lookup of `find_or_create_category`
+            let ids: Vec<i64> = conn
+                .prepare_cached(
+                    "SELECT id FROM categories
+                      WHERE parent_id IS ?1 AND name = ?2 COLLATE NOCASE AND deleted_ms IS NULL",
+                )?
+                .query_map(params![parent, part], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            match ids.as_slice() {
+                [id] => parent = Some(*id),
+                [] => break,
+                _ => {
+                    if reported.insert(key(&path[..=i])) {
+                        out.push(path[..=i].join(" › "));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Every way to connect a MoneyMoney bank login, best first (FinTS, own
 /// API, Enable Banking – see `connector_for_inner`).
 fn connection_options(
@@ -2948,6 +3003,7 @@ fn preview(
             }
         }
     }
+    let replaces = replaces_starter_categories(conn, src)?;
     Ok(MoneyMoneyDbPreview {
         database_path,
         statement_count: listed.len() as u32,
@@ -2963,7 +3019,8 @@ fn preview(
         split_parts: parts,
         date_range_start: first,
         date_range_end: last,
-        replaces_starter_categories: replaces_starter_categories(conn, src)?,
+        replaces_starter_categories: replaces,
+        ambiguous_category_paths: ambiguous_category_paths(conn, src, !replaces)?,
         transfer_template_count: templates::usable_count(&src.templates),
         // the rule of `import_account`; soft-deleted ones too, the import revives them
         owned_account_ids: conn
@@ -3319,7 +3376,16 @@ struct ImportCtx<'a> {
 impl ImportCtx<'_> {
     fn import_categories(&mut self) -> CoreResult<()> {
         let conn = self.conn;
-        if replaces_starter_categories(conn, self.src)? {
+        let replaces = replaces_starter_categories(conn, self.src)?;
+        let ambiguous = ambiguous_category_paths(conn, self.src, !replaces)?;
+        if !ambiguous.is_empty() {
+            // before the first write; the import is one transaction anyway
+            return Err(CoreError::invalid(trf(
+                "Nicht eindeutige Kategorien: {0}. Dort haben mehrere Kategorien denselben Namen, auch bei anderer Groß- und Kleinschreibung. Benennen Sie sie in GiroCrab oder in dem Programm, das die Datenbank erstellt hat, eindeutig um, oder übernehmen Sie die Kategorien nicht. Es wurde nichts importiert.",
+                &[&ambiguous.join(", ")],
+            )));
+        }
+        if replaces {
             // soft: rules and assignments go with them
             let roots: Vec<i64> = conn
                 .prepare(
