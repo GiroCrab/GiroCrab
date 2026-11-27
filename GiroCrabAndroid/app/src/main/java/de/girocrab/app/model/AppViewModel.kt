@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.girocrab.app.ui.screens.SepaTransferDraft
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +58,10 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
+    /** The demo load in flight; tests wait for it instead of guessing at timing. */
+    var demoLoad: Job? = null
+        private set
+
     /** Bookings after scope, search and filter, newest first. */
     val visibleBookings: StateFlow<List<Booking>> = _state
         .map { filterBookings(it) }
@@ -72,12 +77,12 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
     // ---- Vault lifecycle ----
 
     fun bootstrap() {
-        viewModelScope.launch {
+        demoLoad = viewModelScope.launch {
             _state.update { it.copy(loading = true) }
             // No vault is opened here anymore: the own vault needs the device key, and that only
             // comes back from the biometric gate (#1428, 2.2/2.4). Until then the app starts in
             // demo mode, which is exactly what it did while `openOwnVault()` returned null.
-            showDemo()
+            loadDemo(onlyWhileNoRealData = true)
         }
     }
 
@@ -98,14 +103,22 @@ class AppViewModel(private val core: CoreBridge = DefaultCoreBridge()) : ViewMod
     }
 
     fun showDemo() {
-        viewModelScope.launch {
-            val demo = withContext(Dispatchers.Default) { core.demoSnapshot() }
-            _state.update {
-                it.copy(
-                    vaultState = VaultState.Demo, loading = false, data = demo,
-                    scope = Scope.All, filter = BookingFilter(), search = "", error = null,
-                )
-            }
+        demoLoad = viewModelScope.launch { loadDemo(onlyWhileNoRealData = false) }
+    }
+
+    /**
+     * Loads the demo snapshot. The cold start passes [onlyWhileNoRealData]: that load was started
+     * before the user could reach the vault, so finishing late must not replace a snapshot that may
+     * hold real data (`vaultMayHoldRealData`, #1985 review). An explicit "show demo" does replace it.
+     */
+    private suspend fun loadDemo(onlyWhileNoRealData: Boolean) {
+        val demo = withContext(Dispatchers.Default) { core.demoSnapshot() }
+        _state.update {
+            if (onlyWhileNoRealData && it.vaultMayHoldRealData) it.copy(loading = false)
+            else it.copy(
+                vaultState = VaultState.Demo, loading = false, data = demo,
+                scope = Scope.All, filter = BookingFilter(), search = "", error = null,
+            )
         }
     }
 

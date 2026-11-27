@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.girocrab.app.security.OwnVault
 import de.girocrab.app.ui.screens.wealthBreakdown
 import java.time.LocalDate
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -313,5 +314,28 @@ class WealthBreakdownTest {
         val acc = d.accounts.single { it.kind == AccountKind.Loan }
         assertEquals(loan.accountId, acc.id)
         assertEquals(-loan.remainingCents, acc.balanceCents)
+        // Anchor minus what was repaid in principal is the remaining debt; anything else would be a
+        // second, contradicting figure for the same money (#1985 review).
+        assertEquals(loan.remainingCents, loan.anchorBalanceCents - loan.principalCents)
+        assertEquals(loan.paidCents, loan.principalCents + loan.interestCents)
+    }
+
+    /**
+     * The cold start loads the demo in the background. When it finishes after the vault was adopted,
+     * it must not replace the snapshot the user opened (`vaultMayHoldRealData`, #1985 review).
+     */
+    @Test
+    fun aLateDemoLoadDoesNotReplaceTheAdoptedVault() {
+        // The demo load answers with a different snapshot on purpose: if the guard were missing,
+        // the adopted figure would be replaced and both assertions below would fail.
+        val demo = VaultSnapshot(accounts = listOf(account("demo", AccountKind.Giro, 999_000)))
+        val vm = AppViewModel(FixtureBridge(demo))
+        vm.adoptOwnVault(
+            VaultSnapshot(accounts = listOf(account("giro", AccountKind.Giro, 100_000))),
+        )
+        vm.bootstrap()
+        runBlocking { vm.demoLoad?.join() }
+        assertEquals("the adopted snapshot stays", 100_000L, vm.netWorthCents("EUR"))
+        assertEquals(VaultState.Own, vm.state.value.vaultState)
     }
 }
