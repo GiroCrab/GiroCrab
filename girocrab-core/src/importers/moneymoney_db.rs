@@ -2331,8 +2331,9 @@ fn find_existing_accounts(
             out.insert(a.id, found);
         }
     }
-    // a card already synced through the bank login the import would use (set
-    // up by hand before): MoneyMoney has no IBAN for it, the number decides
+    // a card already synced through a login the import links the bank to (`import_logins`,
+    // set up by hand before): MoneyMoney has no IBAN for it, the number decides among the
+    // cards of all those logins, so a number that fits cards on two of them is not guessed
     for b in &src.banks {
         let cards: Vec<&SrcAccount> = accounts
             .iter()
@@ -2342,31 +2343,35 @@ fn find_existing_accounts(
         if cards.is_empty() {
             continue;
         }
-        let Some((kind, key)) = src.connector_key(b) else {
-            continue;
-        };
-        let Some(connection_id) = find_connection(conn, kind, &key, &b.username)? else {
-            continue;
-        };
+        let mut logins = import_logins(conn, src, b, None)?;
+        logins.sort_unstable();
+        logins.dedup();
+        // the cards `card_taken_over_from` accepts too: no IBAN, and below in `a`'s currency
+        // (a card in another currency is not `a`, not even for a tie, #1976)
         let mut st = conn.prepare(
-            "SELECT id, name, IFNULL(account_number, '') FROM accounts
+            "SELECT id, name, IFNULL(account_number, ''), upper(IFNULL(currency, '')) FROM accounts
              WHERE connection_id = ?1 AND kind = ?2 AND deleted_ms IS NULL
-               AND external_ref NOT LIKE 'moneymoney-db:%'",
+               AND external_ref NOT LIKE 'moneymoney-db:%'
+               AND replace(IFNULL(iban, ''), ' ', '') = ''",
         )?;
-        let synced: Vec<(i64, String, String)> = st
-            .query_map(
-                params![connection_id, AccountKind::CreditCard.as_str()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )?
-            .collect::<Result<_, _>>()?;
+        let mut synced: Vec<(i64, String, String, String)> = Vec::new();
+        for login in logins {
+            let rows = st.query_map(params![login, AccountKind::CreditCard.as_str()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?;
+            synced.extend(rows.collect::<Result<Vec<_>, _>>()?);
+        }
         for a in cards {
+            let currency = a.currency.trim().to_uppercase();
             let free = synced
                 .iter()
                 .enumerate()
-                .filter(|(_, (id, _, _))| !claimed.contains(id))
-                .map(|(i, (_, _, number))| (i, number.as_str()));
+                .filter(|(_, (id, _, _, cur))| {
+                    !claimed.contains(id) && (cur.is_empty() || *cur == currency)
+                })
+                .map(|(i, (_, _, number, _))| (i, number.as_str()));
             if let CardMatch::One(i) = card_by_number(free, &a.account) {
-                let (id, name, _) = &synced[i];
+                let (id, name, _, _) = &synced[i];
                 claimed.insert(*id);
                 out.insert(a.id, (*id, name.clone()));
             }
@@ -2781,7 +2786,9 @@ fn unique<T>(mut it: impl Iterator<Item = T>) -> Option<T> {
 }
 
 /// MoneyMoney's tree replaces the starter categories only in a vault without
-/// bookings: nothing can be assigned to them yet, so nothing is lost.
+/// bookings whose categories and rules are still the untouched starter seed
+/// (#1992): nothing can be assigned to them yet and nothing of the user's is
+/// lost. Any own or edited category or rule keeps the tree.
 fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bool> {
     if src.categories.order.is_empty() {
         return Ok(false);
@@ -2791,7 +2798,7 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
         [],
         |r| r.get(0),
     )?;
-    Ok(bookings == 0)
+    Ok(bookings == 0 && crate::demo::is_untouched_starter(conn)?)
 }
 
 /// Every way to connect a MoneyMoney bank login, best first (FinTS, own

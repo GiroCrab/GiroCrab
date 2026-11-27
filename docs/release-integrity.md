@@ -13,9 +13,17 @@ Repo, und läuft deshalb auch in Forks (gegen deren eigene Releases).
 |---|---|
 | `appcast.xml` | erreichbar; eingebettete Sparkle-Signatur gegen `scripts/sparkle-public-ed-key.txt` (während eines Schlüsselwechsels auch `scripts/sparkle-previous-public-ed-key.txt`); höchstens ein Eintrag pro Kanal |
 | jeder Appcast-Eintrag | zeigt auf ein Release-Asset **dieses** Repos (stabiles Release, Beta-Pre-Release oder `nightly`), das existiert; Länge und `sparkle:edSignature` passen zum heruntergeladenen Disk-Image |
+| `SHA256SUMS.txt` (Windows) | jede Zeile (`.exe`/`.msi`/`.zip`) verweist auf ein Asset des neuesten stabilen Releases, dessen SHA-256 passt; unbekannte Dateitypen, kaputte Zeilen und fehlende Assets sind Funde. Fehlt die Datei (noch kein Windows-Release), nur ein Hinweis |
 | `banking-policy.json` + `.sig` | erreichbar; Signatur gegen `BankingPolicy.publicKeys`; `sequence` nie kleiner als beim letzten Lauf (gemerkt im Actions-Cache) |
 
-Prüfsummen eignen sich nicht: Jeder Beta- und Nightly-Lauf schreibt den Feed neu.
+Das Windows-Paket (Installer/ZIP) ist noch **nicht** Authenticode-signiert und nicht im Appcast. Die
+Windows-App liest die GitHub-Releases-API (`GiroCrabWindows/src/updates.rs`), deshalb hängen
+`release.yml` (Tags `v*`, Entwurf) und `nightly.yml` (versionierter Pre-Release `vX.Y.Z-nightly.YYYYMMDD`)
+Installer, ZIP und `SHA256SUMS.txt` an das Release; vorher setzt `scripts/set-windows-version.sh` die Tag-Version in
+`GiroCrabWindows/Cargo.toml`/`Cargo.lock` (#1778). Die Prüfsumme liegt im selben Release wie die Datei und erkennt daher
+Beschädigung oder Austausch **einer** Datei, nicht aber einen Angreifer, der beide ersetzt.
+
+Für den Appcast eignen sich Prüfsummen nicht: Jeder Beta- und Nightly-Lauf schreibt den Feed neu.
 Geprüft werden deshalb Signaturen und der Bezug auf echte Releases.
 
 Ein Teil wird übersprungen, solange sein Schlüssel nicht eingetragen ist
@@ -23,8 +31,13 @@ Ein Teil wird übersprungen, solange sein Schlüssel nicht eingetragen ist
 `BankingPolicy.publicKeys` oder Datei nicht vorhanden).
 
 Wurde eine Datei **noch nie** veröffentlicht (kein Release mit In-App-Updates,
-Policy noch nicht aktiviert), ist ein 404 nur ein Hinweis. Sobald ein Lauf sie
-einmal gesehen hat (gemerkt im Actions-Cache), ist ein späteres 404 ein Fund.
+kein Windows-Release mit `SHA256SUMS.txt`, Policy noch nicht aktiviert), ist ein
+404 nur ein Hinweis. Sobald ein Lauf sie einmal gesehen hat (gemerkt im
+Actions-Cache), ist ein späteres 404 ein Fund.
+
+Windows-Nightlies heißen `vX.Y.Z-nightly.JJJJMMTT` mit X.Y.Z = letzter Stable-
+oder Beta-Tag plus eine Patch-Version. So bietet der Updater sie Nutzern dieser
+Version an, und spätere Betas oder Stables von X.Y.Z sind wieder neuer.
 
 ## Schutzstatus von `main` und Release-Tags (Stand 2026-11-25, #1804)
 

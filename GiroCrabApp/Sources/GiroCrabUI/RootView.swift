@@ -901,7 +901,7 @@ struct MainSplitView: View {
                 .environment(model)
         }
         #if os(iOS)
-        .capturableSheet(isPresented: $model.showSettings) {
+        .capturableSheet(isPresented: $model.showSettings, onDismiss: { model.settingsDismissed() }) {
             NavigationStack { SettingsView() }
                 .environment(model)
         }

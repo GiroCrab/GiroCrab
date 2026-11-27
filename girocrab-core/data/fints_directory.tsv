@@ -5,8 +5,9 @@
 # hosts and the Sparda bankingonline.de gateway mapped to the current Atruvia endpoint, HypoVereinsbank mapped to its
 # current endpoint, and explicit overrides for ING, GLS, DKB, Consorsbank, Norisbank,
 # BBBank, apoBank, EthikBank, Postbank and the Deutsche Bank code for Miles & More
-# credit cards (50070439, added by hand). Every URL is https and was taken from
-# the dataset or the maintainers' list – none is derived from a pattern.
+# credit cards (50070439) and Baader Bank (70033100), both added by hand. Every URL is https
+# and was taken from the dataset, the maintainers' list or (Baader Bank) users' working
+# logins – none is derived from a pattern.
 # Columns (tab-separated): blz, bank name, FinTS URL. Sorted by BLZ.
 10010010	Postbank	https://hbci.postbank.de/banking/hbci.do
 10020200	BHF-Bank AG	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
@@ -1469,6 +1470,7 @@
 70030400	Merck Finck & Co.	https://www.bv-activebanking.de/hbciTunnel/hbciTransfer.jsp
 70031000	Bankhaus Ludwig Sperrer KG	https://hbciplus.sperrer.de
 70032500	St. Galler Kantonalbank Deutschland	https://fints1.atruvia.de/cgi-bin/hbciservlet
+70033100	Baader Bank	https://fints.baaderbank.de
 70035000	Oldenburgische Landesbank AG (vormals Allianz Bank)	https://hbci.olb.de
 70051003	Sparkasse Freising	https://banking-by2.s-fints-pt-by.de/fints30
 70051540	Sparkasse Dachau	https://banking-by3.s-fints-pt-by.de/fints30

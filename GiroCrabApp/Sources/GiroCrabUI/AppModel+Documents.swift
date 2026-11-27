@@ -350,11 +350,13 @@ extension AppModel {
     }
 
     /// Dropped anywhere: Rust matches amount/date/merchant (with PDFKit/Vision text as hint).
-    /// Files only, as in `attach`; false when there is none.
+    /// With `account` (the one chosen in "Belege & Postbox", #1967) only its bookings are
+    /// candidates and an unmatched file stays on it. Files only, as in `attach`; false when there is none.
     @discardableResult
-    func dropAnywhere(_ urls: [URL]) -> Bool {
+    func dropAnywhere(_ urls: [URL], account: Int64? = nil) -> Bool {
         let urls = urls.filter(\.isFileURL)
         guard !urls.isEmpty, let pin = pinVault() else { return false }
+        let account = account == Self.documentsWithoutAccount ? nil : account
         Task {
             var linked: [String] = []
             var unmatched = 0
@@ -367,7 +369,7 @@ extension AppModel {
                 let text = await ReceiptText.extract(data: data, fileName: fileName)
                 do {
                     // Parses the PDF and scores every booking: too slow for the main thread.
-                    if let hit = try await pin.run({ try $0.autoMatchDocument(fileName: fileName, bytes: data, textHint: text) }) {
+                    if let hit = try await pin.run({ try $0.autoMatchDocumentForAccount(fileName: fileName, bytes: data, textHint: text, accountId: account) }) {
                         linked.append(hit)
                     } else {
                         unmatched += 1
@@ -383,7 +385,9 @@ extension AppModel {
             if !linked.isEmpty {
                 toast = String(localized: "Beleg zugeordnet: \(linked.joined(separator: ", "))")
             } else if unmatched > 0 {
-                toast = String(localized: "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
+                toast = account.flatMap { accountsByID[$0]?.name }.map {
+                    String(localized: "Kein passender Umsatz gefunden – beim Konto „\($0)“ abgelegt")
+                } ?? String(localized: "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
             }
             documentsChanged()
         }

@@ -1392,7 +1392,7 @@ export component MainWindow inherits Window {
                     MenuEntry { text: "Tresor wechseln / Neuer Tresor …"; clicked => { root.vaults-open = true; } }
                     MenuEntry { text: "Tresor-Synchronisation …"; clicked => { root.vaults-open = true; } }
                     MenuSep {}
-                    MenuEntry { text: "Einstellungen …"; hint: "Strg+,"; clicked => { SettingsImportState.request(); SettingsImportState.tab = 3; } }
+                    MenuEntry { text: "Einstellungen …"; hint: "Strg+,"; clicked => { SettingsImportState.request(); SettingsImportState.tab = 3; SettingsImportState.tab-changed(3); } }
                     MenuEntry { text: "Problem melden …"; clicked => { root.report-request(); } }
                     MenuEntry { text: "Info"; clicked => { root.about-open = true; } }
                 }
