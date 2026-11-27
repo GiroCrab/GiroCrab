@@ -761,6 +761,9 @@ private struct DocumentRow: View {
     @Environment(\.backgroundProminence) private var prominence
     #if os(macOS)
     @Environment(\.controlActiveState) private var controlActiveState
+    #elseif os(iOS)
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
     let doc: DocumentInfo
     let account: String
@@ -783,10 +786,20 @@ private struct DocumentRow: View {
         onAccentHighlight ? AnyShapeStyle(highlighted) : AnyShapeStyle(normal)
     }
 
+    private var stacksDate: Bool {
+        #if os(iOS)
+        horizontalSizeClass == .compact && dynamicTypeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         let secondary = tint(Theme.secondary, highlighted: .secondary)
-        HStack(spacing: 10) {
-            Image(systemName: docSymbol(doc)).foregroundStyle(tint(Theme.accent)).frame(width: 22)
+        let date = Text(DateText.medium(doc.docDate)).appFont(.caption, monospacedDigit: true).foregroundStyle(secondary)
+        HStack(alignment: stacksDate ? .top : .center, spacing: 10) {
+            Image(systemName: docSymbol(doc)).foregroundStyle(tint(Theme.accent))
+                .frame(width: stacksDate ? nil : 22)
                 .overlay(alignment: .topLeading) {
                     if !doc.seen {
                         Circle().fill(tint(Color.blue)).frame(width: 8, height: 8).offset(x: -4, y: -3)
@@ -794,10 +807,11 @@ private struct DocumentRow: View {
                     }
                 }
             VStack(alignment: .leading, spacing: 2) {
-                Text(doc.title).fontWeight(doc.seen ? .medium : .bold).lineLimit(2)
+                Text(doc.title).fontWeight(doc.seen ? .medium : .bold).lineLimit(stacksDate ? nil : 2)
                     .frame(maxWidth: .infinity, alignment: .leading).sensitive()
                 Text("\(doc.originTitle) · \(account)")
                     .appFont(.caption).foregroundStyle(secondary).lineLimit(1).sensitive()
+                if stacksDate { date }
                 if !doc.bookingLabel.isEmpty {
                     Text(doc.bookingLabel)
                         .appFont(.caption).foregroundStyle(secondary).lineLimit(1)
@@ -813,7 +827,7 @@ private struct DocumentRow: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .multilineTextAlignment(.leading)
-            Text(DateText.medium(doc.docDate)).appFont(.caption, monospacedDigit: true).foregroundStyle(secondary)
+            if !stacksDate { date }
         }
     }
 }
