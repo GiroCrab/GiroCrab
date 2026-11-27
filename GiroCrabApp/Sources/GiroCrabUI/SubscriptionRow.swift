@@ -13,8 +13,10 @@ struct SubscriptionIcon: View {
         if item.details.symbol == nil, let b = model.subscriptionBookings[item.id]?.first {
             MerchantSignet(merchant: b.merchant, categorySymbol: b.categorySymbol, size: size)
         } else if let m = item.manual?.logoMerchant {
-            // the symbol tile stands in while the logo loads or when none is found
+            // the symbol tile stands in while the logo loads or when none is found; covered in bug
+            // reports like the typed domain it shows
             MerchantSignet(merchant: m, categorySymbol: item.categorySymbol.isEmpty ? "repeat" : item.categorySymbol, size: size)
+                .sensitive()
         } else {
             let side = size * textScale
             Image(systemName: item.categorySymbol.isEmpty ? "repeat" : item.categorySymbol)
