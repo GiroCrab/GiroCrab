@@ -1265,23 +1265,7 @@ export component MainWindow inherits Window {
     callback category-duplicate();
     callback shortcut(string, bool) -> bool;
     in property <int> search-focus-tick: 0;
-    // An open palette keeps the focus (e.g. a sync finishing calls this); `cmd-close` clears
-    // `cmd-open` before it refocuses, so closing still returns the focus to `fs`.
-    public function refocus() { if (!root.cmd-open) { fs.focus(); } }
-
-    // Command palette (Ctrl+K); Mac: CommandPalette.swift. Rows are filtered in Rust on plain text.
-    in property <bool> cmd-open: false;
-    in-out property <string> cmd-query;
-    in property <[string]> cmd-titles;
-    in property <[string]> cmd-subtitles;
-    in property <[bool]> cmd-personal;
-    in property <int> cmd-index: 0;
-    callback cmd-request();
-    callback cmd-search(string);
-    callback cmd-move(int);
-    callback cmd-run(int);
-    callback cmd-close();
-    changed unlocked => { if (!self.unlocked) { root.cmd-close(); } }
+    public function refocus() { fs.focus(); }
 
     callback unlock();
     callback demo();
@@ -1329,80 +1313,8 @@ export component MainWindow inherits Window {
     }
     clip := TextInput { x: 0px; y: 0px; width: 0px; height: 0px; visible: false; single-line: false; }
 
-    // A PIN/TAN prompt (the sync worker waits for the answer) takes priority over the palette.
-    changed tan-open => {
-        if (root.tan-open && root.cmd-open) { root.cmd-close(); }
-    }
-
-    if root.unlocked && root.cmd-open: Rectangle {
-        z: 10;
-        x: 0px; y: 0px; width: root.width; height: root.height;
-        background: #0000004d;
-        init => { cmd-field.focus(); }
-        TouchArea { clicked => { root.cmd-close(); } }
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: 60px;
-            width: min(560px, parent.width - 40px);
-            height: cmd-box.preferred-height;
-            background: root.background;
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: Theme.muted.with-alpha(0.4);
-            TouchArea { }
-            cmd-box := VerticalLayout {
-                padding: 10px;
-                spacing: 6px;
-                FocusScope {
-                    height: 34px;
-                    capture-key-pressed(event) => {
-                        if (event.text == Key.Tab || event.text == Key.Backtab) { return accept; }
-                        if (event.text == Key.Escape) { root.cmd-close(); return accept; }
-                        if (event.text == Key.UpArrow) { root.cmd-move(-1); return accept; }
-                        if (event.text == Key.DownArrow) { root.cmd-move(1); return accept; }
-                        if (event.text == Key.Return) { root.cmd-run(-1); return accept; }
-                        if (event.modifiers.control && (event.text == "k" || event.text == "K" || event.text == "\u{b}")) { root.cmd-close(); return accept; }
-                        reject
-                    }
-                    cmd-field := LineEdit {
-                        placeholder-text: "Befehl oder Konto …";
-                        text <=> root.cmd-query;
-                        edited(text) => { root.cmd-search(text); }
-                    }
-                }
-                if root.cmd-titles.length == 0: Text { text: "Keine Treffer"; color: Theme.muted; horizontal-alignment: center; }
-                ListView {
-                    height: min(root.cmd-titles.length * 30px, 420px);
-                    for title[i] in root.cmd-titles: Rectangle {
-                        height: 30px;
-                        border-radius: 6px;
-                        background: i == root.cmd-index ? Theme.text.with-alpha(0.08) : transparent;
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            spacing: 10px;
-                            Text {
-                                text: root.privacy && root.cmd-personal[i] ? "••••••" : title;
-                                color: Theme.text;
-                                vertical-alignment: center;
-                                overflow: elide;
-                                horizontal-stretch: 1;
-                            }
-                            Text { text: root.cmd-subtitles[i]; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
-                        }
-                        TouchArea { clicked => { root.cmd-run(i); } }
-                    }
-                }
-            }
-        }
-    }
-
     fs := FocusScope {
     capture-key-pressed(event) => {
-        if (root.cmd-open) {
-            if (event.text == Key.Escape) { root.cmd-close(); return accept; }
-            return reject;
-        }
         if (root.transfer-open && event.modifiers.control && event.modifiers.shift && (event.text == "V" || event.text == "v" || event.text == "\u{16}")) { root.paste-transfer(); return accept; }
         if (root.unlocked && event.modifiers.control && event.modifiers.shift && (event.text == "P" || event.text == "p" || event.text == "\u{10}")) { root.privacy = !root.privacy; root.privacy-changed(); return accept; }
         // Bei offenem „Problem melden“ öffnen weder Ctrl+, noch Ctrl+E die Einstellungen darüber.
@@ -2570,7 +2482,6 @@ export component MainWindow inherits Window {
     // Height is capped to the window: title, message, image and comparison scroll,
     // the input and the buttons stay fixed at the bottom (reachable at the 600px minimum height).
     if tan-open: Rectangle {
-        z: 20;
         background: #000000aa;
         TouchArea { }
         Rectangle {
