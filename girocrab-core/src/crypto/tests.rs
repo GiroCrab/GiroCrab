@@ -264,7 +264,12 @@ fn a_value_beyond_cents_is_refused() {
     let acc = v.create_crypto_account("Wallet".into()).unwrap();
     price(&v, "BTC", 60_000.0);
     assert!(
-        v.save_crypto_position(acc, None, "BTC".into(), 1e20, None)
+        v.save_crypto_position(acc, None, "BTC".into(), 1e11 * 2e7, None)
+            .is_err()
+    );
+    // above any holding even without a price
+    assert!(
+        v.save_crypto_position(acc, None, "DOGE".into(), 1e13, None)
             .is_err()
     );
     // each position fits, their sum does not
@@ -394,12 +399,13 @@ fn a_price_beyond_cents_from_another_vault_is_not_taken() {
         .query_row("SELECT count(*) FROM crypto_prices", [], |r| r.get(0))
         .unwrap();
     assert_eq!(n, 0);
-    // a stored one is refused before the holdings are rewritten
+    // one stored anyway counts as no price: the position is kept, unvalued
     let acc = a.create_crypto_account("Wallet".into()).unwrap();
-    assert!(
-        a.save_crypto_position(acc, None, "BTC".into(), 0.001, None)
-            .is_err()
-    );
+    a.save_crypto_position(acc, None, "BTC".into(), 0.001, None)
+        .unwrap();
+    let p = a.list_crypto_positions(acc).unwrap();
+    assert_eq!((p[0].price_eur, p[0].value_cents), (None, 0));
+    assert_eq!(a.list_holdings(acc).unwrap()[0].current_price_cents, 0);
 }
 
 #[test]
@@ -555,4 +561,29 @@ fn an_unpriced_ticker_ends_the_carried_total() {
         0,
         "ETH has no price: today's value is unknown"
     );
+}
+
+#[test]
+fn a_huge_position_meeting_a_price_leaves_the_account_usable() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    // no price yet: the quantity passes (within the cap)
+    a.save_crypto_position(acc, None, "BTC".into(), 1e12, None)
+        .unwrap();
+    let (b, _pb) = temp_vault();
+    price(&b, "BTC", 1e10);
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    let p = b.list_crypto_positions(bacc).unwrap();
+    assert_eq!(
+        (p[0].price_eur, p[0].value_cents),
+        (None, 0),
+        "counts as unpriced"
+    );
+    assert_eq!(b.list_holdings(bacc).unwrap().len(), 1);
+    // and it can still be corrected
+    b.save_crypto_position(bacc, Some("BTC".into()), "BTC".into(), 1.0, None)
+        .unwrap();
+    assert_eq!(balance(&b, bacc), 1_000_000_000_000);
 }

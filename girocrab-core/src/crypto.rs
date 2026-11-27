@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS crypto_prices (
 
 const EXTERNAL_REF_PREFIX: &str = "crypto-";
 const MAX_NAME_CHARS: usize = 100;
+/// More than any coin supply a person holds; keeps quantity × price in range.
+const MAX_QUANTITY: f64 = 1e12;
 
 /// A position of a crypto account with its last known price.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -78,15 +80,9 @@ pub(crate) fn is_crypto(conn: &Connection, account_id: i64) -> CoreResult<bool> 
 /// (`depot_values::series`).
 pub(crate) fn is_incomplete(conn: &Connection, account_id: i64) -> CoreResult<bool> {
     Ok(is_crypto(conn, account_id)?
-        && conn.query_row(
-            &format!(
-                "SELECT EXISTS(SELECT 1 FROM crypto_positions p WHERE account_id = ?1 AND deleted_ms IS NULL
-                    AND {NEWEST_OF_TICKER}
-                    AND NOT EXISTS (SELECT 1 FROM crypto_prices c WHERE c.symbol = p.symbol))"
-            ),
-            [account_id],
-            |r| r.get(0),
-        )?)
+        && load(conn, account_id)?
+            .iter()
+            .any(|p| p.price_eur.is_none()))
 }
 
 fn require_crypto(conn: &Connection, account_id: i64) -> CoreResult<()> {
@@ -186,8 +182,15 @@ fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
     })?;
     let mut out: Vec<CryptoPosition> = rows.collect::<Result<_, _>>()?;
     for p in &mut out {
-        if let Some(price) = p.price_eur {
-            p.value_cents = value_cents(p.quantity, price)?;
+        // a value cents cannot hold (e.g. a merged position meeting a price) counts as
+        // unpriced: the account stays usable, its total unknown (see `is_incomplete`)
+        match p
+            .price_eur
+            .map(|price| (value_cents(p.quantity, price), value_cents(1.0, price)))
+        {
+            Some((Ok(v), Ok(_))) => p.value_cents = v,
+            Some(_) => p.price_eur = None,
+            None => {}
         }
     }
     Ok(out)
@@ -405,6 +408,9 @@ impl Vault {
                 "Die Stückzahl muss größer als 0 sein.",
             )));
         }
+        if quantity > MAX_QUANTITY {
+            return Err(too_large());
+        }
         if purchase_price_cents.is_some_and(|c| c < 0) {
             return Err(CoreError::invalid(tr(
                 "Der Einstandskurs darf nicht negativ sein.",
@@ -413,6 +419,16 @@ impl Vault {
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
         require_crypto(&tx, account_id)?;
+        let known: Option<f64> = tx
+            .query_row(
+                "SELECT price_eur FROM crypto_prices WHERE symbol = ?1",
+                [&symbol],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(price) = known {
+            value_cents(quantity, price)?;
+        }
         let previous = match previous_symbol {
             Some(p) => {
                 let id = position_id(&tx, account_id, &p)?;
