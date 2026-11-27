@@ -1004,6 +1004,7 @@ impl FinTsConnector {
                 crate::depot_debug::log(&format!(
                     "fints: login HKTAN refused with function {refused_code}, trying HKTAN v{version}"
                 ));
+                self.st.init_without_hktan = false;
                 self.st
                     .tan_function_versions
                     .insert(refused_code.to_string(), version);

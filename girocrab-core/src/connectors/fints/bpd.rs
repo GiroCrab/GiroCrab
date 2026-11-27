@@ -427,13 +427,14 @@ impl FinTsConnector {
             // best (newest) format first: …camt.052.001.08 > …001.02
             self.st.camt_formats.sort_by(|a, b| b.cmp(a));
         }
-        // A full BPD comes with HIBPA. A new BPD version replaces the learned pain formats, so
-        // a schema the bank withdrew (e.g. .001.09 from HISPAS) stops being chosen. Replies
+        // A full BPD comes with HIBPA. A new BPD version replaces the learned pain formats and
+        // TAN function versions, so a schema the bank withdrew (e.g. .001.09 from HISPAS) stops being chosen. Replies
         // without HIBPA (HKTAB, …) and further messages of the same version only add.
         if let Some(bpa) = reply.first("HIBPA") {
             let version = bpa.get(1, 0);
             if !version.is_empty() && version != self.st.bpd_version {
                 self.st.pain_formats.clear();
+                self.st.tan_function_versions.clear();
                 self.st.bpd_version = version.to_string();
             }
         }
@@ -531,11 +532,11 @@ impl FinTsConnector {
                 self.st.system_id = id.to_string();
             }
         }
-        // The HITANS version that describes each two-step function (#1641).
-        let described = Self::tan_function_versions(reply);
-        if !described.is_empty() {
-            self.st.tan_function_versions = described;
-        }
+        // The HITANS version that describes each two-step function (#1641); further replies
+        // of the same BPD version only add (cleared with HIBPA above)
+        self.st
+            .tan_function_versions
+            .extend(Self::tan_function_versions(reply));
         // Allowed TAN methods for this user.
         if let Some(c) = reply.code("3920") {
             let allowed: Vec<String> =

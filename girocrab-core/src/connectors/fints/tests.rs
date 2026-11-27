@@ -620,6 +620,34 @@ fn hktan_goes_out_in_the_hitans_version_that_describes_the_function() {
     }
 }
 
+#[test]
+fn hitans_versions_are_kept_within_a_bpd_version_and_replaced_by_a_new_one() {
+    let mut c = FinTsConnector::new("40050150");
+    let bpa = |v: &str| format!("HIBPA:5:3:3+{v}+280:40050150+Sparkasse+1'");
+    c.learn_bpd(&reply(format!("{}{SPARKASSE_HITANS}", bpa("6")).as_bytes()));
+    assert_eq!(c.st.tan_function_versions.get("913"), Some(&6));
+    // a further reply of the same BPD version with only part of the HITANS removes nothing
+    c.learn_bpd(&reply(
+        format!(
+            "{}HITANS:21:7:4+1+1+1+N:N:0:923:2:pushTAN-cas:Decoupled::pushTAN 2.0:::Aufforderung:2048:J:2:N:0:0:N:N:00:2:N:5:180:1:1:J:J'",
+            bpa("6")
+        )
+        .as_bytes(),
+    ));
+    assert_eq!(c.st.tan_function_versions.get("913"), Some(&6));
+    assert_eq!(c.st.tan_function_versions.get("923"), Some(&7));
+    // a new BPD version replaces them
+    c.learn_bpd(&reply(
+        format!(
+            "{}HITANS:21:7:4+1+1+1+N:N:0:913:2:Q1S:Secoder_UC:1.2.0:chipTAN-QR:6:1:TAN-Nummer:3:J:2:N:0:0:N:N:00:0:N:1:N:5:180:1:1:J:J'",
+            bpa("7")
+        )
+        .as_bytes(),
+    ));
+    assert_eq!(c.st.tan_function_versions.get("913"), Some(&7));
+    assert_eq!(c.st.tan_function_versions.get("910"), None);
+}
+
 /// `mock_bank` label: segment with its version.
 fn id_and_version(s: &syntax::Segment) -> String {
     format!("{}:{}", s.id(), s.version())
@@ -674,6 +702,26 @@ async fn dialog_init_9110_with_a_known_hktan_version_goes_on_to_another_function
         "{seen:?}"
     );
     assert_eq!(c.sec(), "911");
+}
+
+#[tokio::test]
+async fn hktan_version_retry_sends_hktan_after_a_saved_init_without_it() {
+    let (url, seen) = mock_bank_with(vec![REJECT_9110, ACCEPT], id_and_version);
+    let mut state = state_with_functions("913", &[("913", "chipTAN-QR")]);
+    state["versions"] = serde_json::json!({"HKTAN": [6, 7]});
+    state["init_without_hktan"] = true.into();
+    let mut c = two_step_connector(&url, state);
+    assert!(matches!(
+        c.open_dialog(&test_ctx()).await.unwrap(),
+        Phase::Ready
+    ));
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[1].contains(&"HKTAN:6".to_string()), "{seen:?}");
+    }
+    assert!(!c.st.init_without_hktan);
+    assert_eq!(c.st.tan_function_versions.get("913"), Some(&6));
 }
 
 #[tokio::test]
