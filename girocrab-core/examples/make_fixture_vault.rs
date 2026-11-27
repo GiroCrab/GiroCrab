@@ -75,6 +75,10 @@ fn main() {
             )
             .unwrap();
         v.mirror_offline_loan_payment(source, offline, 800).unwrap();
+        // crypto holdings (#1836)
+        let crypto = v.create_crypto_account("Fixture-Wallet".into()).unwrap();
+        v.save_crypto_position(crypto, None, "BTC".into(), 0.5, Some(3_000_000))
+            .unwrap();
         // merchant recognition (#1373): an own merchant and a copy that replaces its original
         v.save_custom_merchant(
             None,

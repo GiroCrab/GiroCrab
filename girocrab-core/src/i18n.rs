@@ -272,6 +272,12 @@ fn english(de: &str) -> Option<&'static str> {
         "Bankzugang nicht gefunden." => "Bank connection not found.",
         "Der Einstandskurs darf nicht negativ sein." => "The purchase price must not be negative.",
         "Die Position hat weder ISIN noch WKN." => "The position has neither an ISIN nor a WKN.",
+        "Crypto-Bestand {0}" => "crypto holding {0}",
+        "Bitte ein Kürzel aus Buchstaben und Ziffern angeben (z. B. BTC)." => {
+            "Please enter a ticker of letters and digits (e.g. BTC)."
+        }
+        "Die Stückzahl muss größer als 0 sein." => "The quantity must be greater than 0.",
+        "{0} ist bereits in diesem Bestand." => "{0} is already in this holding.",
         "Depotposition" => "Depot position",
         "Falscher Bankzugang." => "Wrong bank connection.",
         "Ungültiger Sitzungszustand." => "Invalid session state.",

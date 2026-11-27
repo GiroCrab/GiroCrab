@@ -18,6 +18,13 @@ security_classifications       Nutzerwahl je Wertpapier (security_key), unabhän
 Sachwerte (`kind` mit `assets::is_tangible`) haben ein eigenes Modell: `asset_items`, `asset_quantities`,
 `asset_values`, `asset_prices`, `asset_price_fetch` (Schritt 13, `girocrab-core/src/assets.rs`).
 
+Crypto-Bestände (#1836, Schritt 46, `girocrab-core/src/crypto.rs`) sind Depots ohne Bankzugang
+(`external_ref = 'crypto-<uuid>'`). Ihre Positionen führt der Nutzer in `crypto_positions` (Kürzel, Stückzahl,
+Einstandskurs pro Stück in EUR; Abgleich zwischen Geräten über `uuid`, die neueste Änderung gewinnt), den
+zuletzt abgerufenen EUR-Kurs je Kürzel in `crypto_prices`. Nach jeder Änderung schreibt `crypto::materialize`
+sie wie ein Abruf in `holdings` (ISIN leer, Kürzel als WKN, `direct_crypto = 1`), in den Saldo und in
+`depot_observations`; fehlt einem Kürzel der Kurs, entsteht für den Tag kein Depotwert.
+
 ## Tabellen
 
 ### `holdings` (Basis, Schritt 14 ergänzt Spalten)
