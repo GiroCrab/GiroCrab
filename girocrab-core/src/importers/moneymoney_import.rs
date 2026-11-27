@@ -213,8 +213,11 @@ impl MmRow {
         )
     }
 
+    /// End-to-end reference: the EREF column, else an `EREF:` in the purpose
+    /// (same fallback as `load_existing`), so a CSV without that column keeps
+    /// conflicting references apart (#1995).
     fn e2e(&self) -> Option<&str> {
-        e2e_ref(&self.end_to_end)
+        e2e_ref(&self.end_to_end).or_else(|| e2e_in_purpose(&self.purpose))
     }
 
     /// Date, amount and name (see `Existing::named`); only for a row without
@@ -696,7 +699,7 @@ pub(crate) fn load_existing(conn: &Connection, account_id: i64) -> CoreResult<Ve
             category_source: r.get(7)?,
             note: r.get(8)?,
             deleted: r.get(9)?,
-            bare_bank_purpose: bare.then(|| fold(&purpose)),
+            bare_bank_purpose: bare.then(|| fold(&purpose_without_refs(&purpose))),
             iban_norm: norm(&iban),
             name_fold: fold(&name),
             booking_date: date.clone(),
@@ -951,6 +954,29 @@ fn e2e_differs(r: &MmRow, e: &Existing) -> bool {
     matches!((r.e2e(), e.e2e.as_deref()), (Some(a), Some(b)) if a != b)
 }
 
+#[test]
+fn row_e2e_falls_back_to_purpose_reference() {
+    let row = |end_to_end: &str, purpose: &str| MmRow {
+        end_to_end: end_to_end.into(),
+        purpose: purpose.into(),
+        ..Default::default()
+    };
+    // No EREF column: the reference in the purpose counts, so A and B stay apart.
+    let a = row("", "Abschlag EREF: RG2024-0001");
+    let b = row("", "Abschlag EREF: RG2024-0002");
+    assert!(a.e2e().is_some());
+    assert!(b.e2e().is_some());
+    assert_ne!(a.e2e(), b.e2e());
+    assert_eq!(a.e2e(), e2e_in_purpose("Abschlag EREF: RG2024-0001"));
+    // An explicit EREF column wins over the purpose.
+    assert_eq!(
+        row("RG2024-COL", "Abschlag EREF: RG2024-0002").e2e(),
+        e2e_ref("RG2024-COL")
+    );
+    // Neither source: still no reference (missing-reference matching unchanged).
+    assert_eq!(row("", "Abschlag").e2e(), None);
+}
+
 /// A bank booking without counterparty (no name, no IBAN) that was fetched
 /// before the import, e.g. comdirect's interest statement via FinTS, whose
 /// MoneyMoney twin carries the first line as name ("Abschluss Zinsen Kto …")
@@ -973,12 +999,19 @@ pub(crate) fn match_bank_without_counterparty(
             continue;
         }
         let (name, purpose) = (fold(&r.name), fold(&purpose_without_refs(&r.purpose)));
+        // Neither side names a counterparty: only the purpose tells them apart,
+        // so a shared prefix ("… Filiale A" / "… Filiale B") is not enough (#1995).
+        let nameless = norm(&r.name).is_empty() && norm(&r.iban).is_empty();
         let mut hits = existing.iter().enumerate().filter(|(j, e)| {
             !used[*j]
                 && e.amount_cents == r.amount_cents
                 && days(&e.booking_date, &r.booking_date).is_some_and(|d| d <= 2)
                 && e.bare_bank_purpose.as_deref().is_some_and(|p| {
-                    (name.len() >= 3 && p.contains(&name)) || purposes_alike(p, &purpose)
+                    if nameless {
+                        !purpose.is_empty() && p == purpose
+                    } else {
+                        (name.len() >= 3 && p.contains(&name)) || purposes_alike(p, &purpose)
+                    }
                 })
                 && !e2e_differs(r, e)
         });
@@ -1394,8 +1427,9 @@ pub(crate) fn merge_rows(
         }
         conn.prepare_cached(
             "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents, currency,
-                    counterparty, counterparty_iban, purpose, booking_text, category_id, category_source, checked, note, import_fp, category_ms, note_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15, ?16)",
+                    counterparty, counterparty_iban, purpose, booking_text, category_id, category_source, checked, note, import_fp, category_ms, note_ms,
+                    end_to_end_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15, ?16, ?17)",
         )?
         .execute(params![
             st.account_id,
@@ -1413,7 +1447,11 @@ pub(crate) fn merge_rows(
             note,
             fp,
             if cat_id.is_some() { now_ms() } else { 0 },
-            if note.is_empty() { 0 } else { now_ms() }
+            if note.is_empty() { 0 } else { now_ms() },
+            // Stored directly: `stored_purpose` skips an EREF already in the text,
+            // so the next import could not recover it from the purpose (#1995).
+            // The column is NOT NULL, "" = unknown (`e2e_ref` reads it as none).
+            r.e2e().unwrap_or("")
         ])?;
         if preserve_categories && !r.splits.is_empty() {
             let id = conn.last_insert_rowid();
