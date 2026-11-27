@@ -3073,6 +3073,17 @@
         }
       }
     },
+    "Abbuchung" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Debit"
+          }
+        }
+      }
+    },
     "Abgebrochen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10084,6 +10095,17 @@
         }
       }
     },
+    "Darlehen / Kredit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loan / Credit"
+          }
+        }
+      }
+    },
     "Darlehen anlegen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12451,6 +12473,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The parts must add up to %@ before you can save."
+          }
+        }
+      }
+    },
+    "Die Tilgungsübernahme ist nicht mehr aktiv." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This principal payment request is no longer active."
           }
         }
       }
@@ -16618,6 +16651,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Garden"
+          }
+        }
+      }
+    },
+    "Geben Sie den Anteil der Rate ein, der die Restschuld senkt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter the part of the payment that reduces the outstanding balance."
           }
         }
       }
@@ -29588,6 +29632,17 @@
         }
       }
     },
+    "Restschuld zum Start" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening outstanding balance"
+          }
+        }
+      }
+    },
     "Rhythmus" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -30370,6 +30425,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Step %1$lld of %2$lld"
+          }
+        }
+      }
+    },
+    "Schuld erhöhen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Increase debt"
           }
         }
       }
@@ -33049,6 +33115,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Repayment"
+          }
+        }
+      }
+    },
+    "Tilgung übernehmen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record principal payment"
+          }
+        }
+      }
+    },
+    "Tilgungsanteil" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Principal portion"
           }
         }
       }

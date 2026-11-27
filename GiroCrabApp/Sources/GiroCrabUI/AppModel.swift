@@ -25,6 +25,7 @@ public final class AppModel {
             vaultRevision &+= 1
             refundPickerBooking = nil
             refundUndo = nil
+            offlineStore.loanPaymentRequest = nil
             showRuleEditor = false
             ruleDraft = nil
             advanziaWorkflow?.cancel()

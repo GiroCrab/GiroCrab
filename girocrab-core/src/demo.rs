@@ -2797,14 +2797,14 @@ impl Vault {
         ] {
             let day = crate::dates::iso(today - crate::dates::days(days_ago));
             let setup = crate::offline::ManualBookingSetup {
-                booking_date: day.clone(),
+                booking_date: day,
                 amount_cents: cents,
                 counterparty: who.into(),
                 purpose: purpose.into(),
                 category_id: None,
                 note: String::new(),
             };
-            crate::offline::insert_booking(&tx, cash, &day, &setup, who, purpose, "")?;
+            crate::offline::insert_booking(&tx, cash, &setup, None)?;
             n += 1;
         }
         crate::opening_balance::refresh(&tx, cash)?;
