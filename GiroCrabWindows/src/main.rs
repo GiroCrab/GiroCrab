@@ -14,6 +14,7 @@ mod bug_report_ui;
 mod cockpit;
 mod command_palette;
 mod daily;
+mod diag;
 mod girocode;
 mod groups;
 mod groups_ui;
@@ -1383,6 +1384,41 @@ fn search_rows(query: &str) -> (Vec<BankHit>, Vec<Option<BankSearchResult>>) {
     (hits, raw)
 }
 
+/// Wie lange auf das Einrichten einer Bank gewartet wird. Der Aufruf selbst schreibt nur in den
+/// Tresor (gemessen: 3 ms für einen Eintrag aus dem Verzeichnis), die Grenze greift also nur, wenn etwas
+/// klemmt — und dann muss der Dialog das sagen statt „Bank wird eingerichtet …“ stehen zu lassen.
+const ADD_BANK_TIMEOUT: Duration = Duration::from_secs(30);
+
+const ADD_PANIC_MSG: &str = "Interner Fehler beim Einrichten der Bank. Bitte in der Liste nachsehen, \
+ob sie angelegt wurde, und den Fehler über „Problem melden“ schicken.";
+
+/// Führt `work` in einem Arbeitsfaden aus, wartet höchstens `timeout` und macht aus einem Panic
+/// einen Fehler. Beides fehlte: die Ereignisschleife erfährt das Ergebnis nur über diesen Rückgabewert,
+/// ein Panic oder ein steckender Aufruf ließen den Dialog dauerhaft auf „wird eingerichtet …“ stehen,
+/// ohne Abbruch und ohne Meldung.
+fn run_guarded<T, F>(timeout: Duration, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+            .unwrap_or_else(|_| Err(ADD_PANIC_MSG.to_string()));
+        let _ = tx.send(result);
+    });
+    rx.recv_timeout(timeout).unwrap_or_else(|_| {
+        // Kein „unverändert“: der Faden ist abgekoppelt und kann später noch schreiben. Das
+        // Ergebnis ist an dieser Stelle unbekannt, und die Meldung muss das sagen.
+        Err(format!(
+            "Zeitüberschreitung: Das Einrichten der Bank kam nach {} Sekunden nicht zurück. Der \
+Vorgang kann im Hintergrund noch abschließen — bitte in der Liste nachsehen, ob die Bank \
+angelegt wurde, bevor du es erneut versuchst.",
+            timeout.as_secs()
+        ))
+    })
+}
+
 /// Adds the chosen bank (`None` = demo bank) and, for the demo bank, syncs it right away.
 /// Real banks are stored; their first fetch starts with "Jetzt abrufen" (PIN/TAN or browser dialog).
 fn add_bank(
@@ -1405,6 +1441,18 @@ fn add_bank(
     let login = login.trim();
     if login.is_empty() {
         return Err("Bitte die Zugangskennung (Login) eingeben.".into());
+    }
+    // Zweimal hinzufügen legt sonst zwei gleiche Verbindungen an — der Weg über eine
+    // Zeitüberschreitung (Faden läuft weiter) macht das besonders leicht.
+    let already = vault
+        .list_bank_connections()
+        .unwrap_or_default()
+        .iter()
+        .any(|c| {
+            c.display_name.eq_ignore_ascii_case(&r.name) && c.login_name.eq_ignore_ascii_case(login)
+        });
+    if already {
+        return Ok(format!("{} ist bereits eingerichtet.", r.name));
     }
     match (r.mode, r.connector) {
         (BankAccessMode::FinTs, _) => {
@@ -1647,6 +1695,16 @@ fn show(win: &MainWindow, vault: &Arc<Vault>, selected: Option<i64>) {
         win.set_busy(false);
     }
     win.set_unlocked(true);
+    // Einmal je Sitzung: was im Protokoll und auf der Konsole maskiert wird.
+    if !diag::has_known_terms() {
+        if let (Ok(accounts), Ok(counterparties)) = (
+            vault.list_accounts(),
+            vault.counterparty_names(bug_report_ui::MAX_COUNTERPARTY_TERMS),
+        ) {
+            let accounts = accounts.into_iter().map(|a| [a.name, a.owner, a.iban]);
+            diag::set_known_terms(bug_report_ui::known_terms(accounts, counterparties));
+        }
+    }
     refresh_dashboard(win, vault.clone());
     match render_header(win, vault, selected) {
         Ok(sel) => {
@@ -2257,6 +2315,13 @@ fn main() -> Result<(), slint::PlatformError> {
     if let Ok(code) = std::env::var("GIROCRAB_LANGUAGE") {
         girocrab_core::i18n::set_language(code);
     }
+    // Protokoll neben dem Tresor: ein Fensterstart zeigt kein stderr, und ein hängender Dialog
+    // hinterlässt sonst keine Spur (siehe `diag`).
+    diag::init(vault_path().with_file_name("girocrab.log"));
+    diag::info(
+        "app",
+        &format!("start v{VERSION} tresor={}", vault_path().display()),
+    );
     views_ui::purge_stale_documents();
     let screenshot = screenshot_path_from_args(std::env::args().skip(1));
     if screenshot.is_some() && std::env::var_os("SLINT_BACKEND").is_none() {
@@ -2479,25 +2544,51 @@ fn main() -> Result<(), slint::PlatformError> {
                 win.set_add_status("Gesperrt: Diese Version darf keine Bank hinzufügen.".into());
                 return;
             }
+            // Ohne Banknamen und BLZ: das Protokoll soll einen Ablauf zeigen, nicht Kontodaten
+            // tragen — dieselbe Regel wie `bug_report::sanitized_log` für „Problem melden“.
+            diag::info(
+                "bank-add",
+                &format!(
+                    "choice={choice} {}",
+                    hit.as_ref()
+                        .map(|r| format!("mode={:?} connector={:?}", r.mode, r.connector))
+                        .unwrap_or_else(|| "demo".to_string())
+                ),
+            );
             win.set_add_busy(true);
             win.set_add_status("Bank wird eingerichtet …".into());
             let weak = win.as_weak();
             let login = login.to_string();
+            let worker_vault = v.clone();
             std::thread::spawn(move || {
-                let result = add_bank(&v, hit.as_ref(), &login);
-                let _ = weak.upgrade_in_event_loop(move |win| {
+                let result = run_guarded(ADD_BANK_TIMEOUT, move || {
+                    // Innerhalb der Frist: ein hängendes Schreiben auf der Platte darf den
+                    // Zeitauslöser nicht aussperren.
+                    diag::info("bank-add", "worker start");
+                    add_bank(&worker_vault, hit.as_ref(), &login)
+                });
+                let queued = weak.upgrade_in_event_loop(move |win| {
+                    diag::debug("bank-add", "ui closure");
                     win.set_add_busy(false);
                     match result {
                         Ok(msg) => {
                             let sel = Some(win.get_selected() as i64).filter(|s| *s >= 0);
                             views_ui::invalidate_planned_count();
+                            diag::debug("bank-add", "show start");
                             show(&win, &v, sel);
                             win.set_sync_status(msg.into());
                             win.set_add_open(false);
+                            diag::debug("bank-add", "show done");
                         }
                         Err(e) => win.set_add_status(e.into()),
                     }
                 });
+                // Erst nach dem Einreihen protokollieren: ein hängendes Schreiben auf der Platte
+                // darf den Abschluss in der Oberfläche nicht aufhalten.
+                diag::info(
+                    "bank-add",
+                    &format!("worker done, queued={}", queued.is_ok()),
+                );
             });
         });
     }
@@ -3539,6 +3630,50 @@ mod tests {
                 let _ = std::fs::remove_file(std::path::PathBuf::from(side));
             }
         }
+    }
+
+    #[test]
+    fn a_panic_while_adding_a_bank_ends_the_wait() {
+        let result = run_guarded(Duration::from_secs(5), || -> Result<(), String> {
+            panic!("kaputt")
+        });
+        let err = result
+            .err()
+            .expect("ein Panic muss als Fehler zurückkommen");
+        assert!(err.contains("Interner Fehler"), "unerwartet: {err}");
+    }
+
+    #[test]
+    fn a_wedged_worker_ends_the_wait_with_a_timeout_message() {
+        let started = std::time::Instant::now();
+        let result = run_guarded(Duration::from_millis(50), || {
+            std::thread::sleep(Duration::from_secs(5));
+            Ok(())
+        });
+        let err = result
+            .err()
+            .expect("eine Zeitüberschreitung muss als Fehler zurückkommen");
+        assert!(err.contains("Zeitüberschreitung"), "unerwartet: {err}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn adding_a_bank_from_the_directory_only_writes_to_the_vault() {
+        // Kein Netz, keine Dialoge: „Hinzufügen“ legt die Verbindung nur im Tresor ab. Wer an
+        // dieser Stelle steht, steht in der Oberfläche — nicht bei der Bank. Bewusst mit dem
+        // ersten Treffer des Verzeichnisses statt mit einer bestimmten Bank.
+        let db = TempDb::new("fints-add");
+        let vault = Vault::open(db.path_string(), vec![7; 32]).unwrap();
+        let (_, raw) = search_rows("Sparkasse");
+        let hit = raw
+            .first()
+            .and_then(|h| h.clone())
+            .expect("FinTS-Verzeichnis liefert keine Sparkasse");
+        let msg = add_bank(&vault, Some(&hit), "meinlogin").expect("Einrichten muss durchlaufen");
+        assert!(msg.contains(&hit.name), "unerwartet: {msg}");
+        let conns = vault.list_bank_connections().unwrap();
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].bank_code, hit.blz);
     }
 
     #[test]
