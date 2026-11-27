@@ -15,9 +15,12 @@ import uniffi.girocrab_core.CategorySource as CoreCategorySource
 import uniffi.girocrab_core.ConnectorKind as CoreConnector
 import uniffi.girocrab_core.FlowKind as CoreFlowKind
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.Mandate as CoreMandate
+import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
 import uniffi.girocrab_core.MatchKind as CoreMatchKind
 import uniffi.girocrab_core.Rule as CoreRule
 import uniffi.girocrab_core.RuleField as CoreRuleField
+import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
 import uniffi.girocrab_core.Tag as CoreTag
 
 /**
@@ -98,6 +101,8 @@ object VaultSnapshotMapper {
         rules: List<CoreRule>,
         holdingsByAccount: Map<Long, List<CoreHolding>>,
         assets: List<CoreAssetItem>,
+        mandates: List<CoreMandate> = emptyList(),
+        standingOrders: List<CoreStandingOrder> = emptyList(),
     ): VaultSnapshot {
         // Holdings come back in the currency of their account; that is the label for their prices.
         val quoteCurrencies = accounts.associate { it.id to it.currency.ifBlank { "EUR" } }
@@ -108,6 +113,8 @@ object VaultSnapshotMapper {
             bookings = bookings.map(::booking),
             categories = categories.map(::category),
             tags = tags.map(::tag),
+            mandates = mandates.map(::mandate),
+            standingOrders = standingOrders.map(::standingOrder),
             rules = rules.map(::rule),
             holdings = holdingsByAccount.flatMap { (accountId, rows) ->
                 val quote = quoteCurrencies[accountId] ?: "EUR"
@@ -212,6 +219,46 @@ object VaultSnapshotMapper {
         colorHex = color(row.colorHex, 0xFF1976D2),
     )
 
+    /** One standing order. The core has no next date — only first/last, exec day and rhythm. */
+    private fun standingOrder(row: CoreStandingOrder): StandingOrder = StandingOrder(
+        id = row.id.toString(),
+        accountId = row.accountId.toString(),
+        recipient = row.recipientName,
+        iban = row.recipientIban,
+        amountCents = row.amountCents,
+        purpose = row.purpose,
+        unit = row.timeUnit,
+        every = row.interval.toInt(),
+        execDay = row.execDay.toInt(),
+        firstDate = LocalDate.parse(row.firstDate),
+        lastDate = parseOderNull(row.lastDate),
+    )
+
+    /**
+     * One mandate. The debtor is the counterpart, `scheme`/`nextSequence` are what the core
+     * reports; the creditor id belongs to the collecting account and is not part of the mandate.
+     */
+    private fun mandate(row: CoreMandate): DirectDebitMandate = DirectDebitMandate(
+        id = row.id.toString(),
+        accountId = row.accountId.toString(),
+        debtorName = row.debtorName,
+        debtorIban = row.debtorIban,
+        reference = row.reference,
+        signedDate = LocalDate.parse(row.signedDate),
+        scheme = when (row.scheme) {
+            CoreMandateScheme.CORE -> MandateScheme.Core
+            CoreMandateScheme.COR1 -> MandateScheme.Cor1
+            CoreMandateScheme.B2B -> MandateScheme.B2b
+        },
+        oneOff = row.oneOff,
+        defaultAmountCents = row.defaultAmountCents,
+        defaultPurpose = row.defaultPurpose,
+        note = row.note,
+        active = row.active,
+        lastCollected = parseOderNull(row.lastCollected),
+        nextSequence = row.nextSequence,
+    )
+
     /**
      * The core keeps the EUR value of a holding; the app recomputes it as
      * `quantity * priceCents * fxRateToEur`. Instead of assuming a rate, the rate is derived, so the
@@ -252,6 +299,11 @@ object VaultSnapshotMapper {
     )
 
     private fun date(raw: String): LocalDate = LocalDate.parse(raw)
+
+    /** Optionales Datum: liefert null statt zu werfen, damit ein kaputter Wert den Snapshot nicht
+     * scheitern lässt. */
+    private fun parseOderNull(s: String?): LocalDate? =
+        s?.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 
     /** The core sends `#RRGGBB`; the app models carry ARGB as a Long. */
     private fun color(hex: String, fallback: Long): Long {
