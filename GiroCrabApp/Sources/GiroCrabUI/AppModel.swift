@@ -1428,6 +1428,7 @@ public final class AppModel {
     }
 
     private func adoptDemoVault(_ v: Vault) {
+        resetSubscriptionState()
         vault = v
         accountsLoaded = false
         lockPreview = false
@@ -1458,6 +1459,7 @@ public final class AppModel {
         do {
             let v = try Vault.open(path: prepared ?? url.path, key: key)
             if prepared == nil { _ = try v.seedDemoData() }
+            resetSubscriptionState()
             vault = v
             accountsLoaded = false
             lockPreview = false

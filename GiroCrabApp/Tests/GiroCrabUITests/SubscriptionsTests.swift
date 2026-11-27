@@ -424,6 +424,18 @@ final class SubscriptionsTests: XCTestCase {
     }
 
     @MainActor
+    func testSwitchingToTheDemoVaultDropsTheSubscriptionState() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.addManualSubscription(name: "Eigener Vertrag", amountCents: -500, group: .monthly, currency: "EUR", startDate: "2026-01-01")
+        model.selectedSubscriptionID = "x"
+        model.demoActive = false // stands in for the own vault
+
+        model.showDemo()
+        XCTAssertNil(model.selectedSubscriptionID)
+        XCTAssertFalse(model.subscriptionData.manual.contains { $0.name == "Eigener Vertrag" })
+    }
+
+    @MainActor
     func testMarkingKeepsDetailsPerSeriesAndPersistsInTheVault() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         model.refreshRecurring()
