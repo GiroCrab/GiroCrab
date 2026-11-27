@@ -731,3 +731,40 @@ fn cash_words_are_no_tickers_and_an_unchanged_quantity_may_stay() {
         "a changed quantity must give a value"
     );
 }
+
+#[test]
+fn a_merged_price_updates_the_balance_but_records_no_observation() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    price(&a, "BTC", 80_000.0);
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let count = || -> i64 {
+        a.db()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM depot_observations WHERE account_id = ?1",
+                [acc],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let before = count();
+    // B received a newer price (written directly: no observation on B either)
+    b.db()
+        .unwrap()
+        .execute(
+            "UPDATE crypto_prices SET price_eur = 90000, fetched_ms = fetched_ms + 1000",
+            [],
+        )
+        .unwrap();
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    assert_eq!(balance(&a, acc), 90_000_00);
+    assert_eq!(count(), before);
+}

@@ -229,7 +229,8 @@ fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
 ///
 /// `fresh` (after a price refresh): only these tickers got a new price. The
 /// history then records only their positions, and a total only when every
-/// position is among them: a cached price is no observation of today.
+/// position is among them: a cached price is no observation of today. An
+/// empty set (a vault merge) records nothing.
 pub(crate) fn materialize(
     conn: &Connection,
     account_id: i64,
@@ -376,9 +377,13 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
         .query_map([MAX_PRICE_EUR], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
     touched.extend(holders_of(conn, &changed_symbols)?);
+    // positions and balance follow the merged data; the history does not record them again:
+    // the device that made the change or fetched the price recorded it, and its observations
+    // come along with the merge (`depot_values::merge_attached`)
+    let nothing_fresh = HashSet::new();
     for id in crypto_account_ids(conn)? {
         if touched.contains(&id) {
-            materialize(conn, id, None)?;
+            materialize(conn, id, Some(&nothing_fresh))?;
         }
     }
     Ok(())
