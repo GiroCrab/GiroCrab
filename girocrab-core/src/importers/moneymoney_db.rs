@@ -2786,7 +2786,9 @@ fn unique<T>(mut it: impl Iterator<Item = T>) -> Option<T> {
 }
 
 /// MoneyMoney's tree replaces the starter categories only in a vault without
-/// bookings: nothing can be assigned to them yet, so nothing is lost.
+/// bookings whose categories and rules are still the untouched starter seed
+/// (#1992): nothing can be assigned to them yet and nothing of the user's is
+/// lost. Any own or edited category or rule keeps the tree.
 fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bool> {
     if src.categories.order.is_empty() {
         return Ok(false);
@@ -2796,7 +2798,7 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
         [],
         |r| r.get(0),
     )?;
-    Ok(bookings == 0)
+    Ok(bookings == 0 && crate::demo::is_untouched_starter(conn)?)
 }
 
 /// Every way to connect a MoneyMoney bank login, best first (FinTS, own
