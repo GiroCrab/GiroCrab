@@ -8,7 +8,7 @@ use rusqlite::{Connection, params};
 
 use std::collections::HashSet;
 
-use super::{holders_of, materialize, normalize_symbol};
+use super::{NEWEST_OF_TICKER, holders_of, materialize, normalize_symbol};
 use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::i18n::{tr, trf};
@@ -43,8 +43,9 @@ fn valid_price(eur: f64) -> bool {
 
 /// `{"data":{"amount":"56537.74","base":"BTC","currency":"EUR"}}` → 56537.74.
 fn parse_spot(body: &str, symbol: &str) -> CoreResult<f64> {
+    // no ticker in the text: it reaches the toast and the Abrufprotokoll and says what is held
     let bad = || CoreError::Network {
-        message: trf("Unerwartete Antwort der Kurs-API für {0}", &[&symbol]),
+        message: tr("Unerwartete Antwort der Kurs-API").into(),
     };
     let v: serde_json::Value = serde_json::from_str(body).map_err(|_| bad())?;
     let data = &v["data"];
@@ -119,10 +120,11 @@ impl Vault {
     pub async fn refresh_crypto_prices(&self) -> Result<CryptoPriceRefresh, CoreError> {
         let symbols: Vec<String> = {
             let db = self.db()?;
-            let mut st = db.prepare(
+            // only tickers a position shows (a newer deletion hides older copies)
+            let mut st = db.prepare(&format!(
                 "SELECT DISTINCT p.symbol FROM crypto_positions p JOIN accounts a ON a.id = p.account_id
-                  WHERE p.deleted_ms IS NULL AND a.deleted_ms IS NULL ORDER BY p.symbol",
-            )?;
+                  WHERE p.deleted_ms IS NULL AND a.deleted_ms IS NULL AND {NEWEST_OF_TICKER} ORDER BY p.symbol"
+            ))?;
             st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?
         };
         let mut out = CryptoPriceRefresh::default();
@@ -241,6 +243,8 @@ mod tests {
     fn spot_answers_are_read_strictly() {
         let ok = r#"{"data":{"amount":"0.0000034","base":"SHIB","currency":"EUR"}}"#;
         assert_eq!(parse_spot(ok, "SHIB").unwrap(), 0.000_003_4);
+        let e = parse_spot("<html>", "SHIB").unwrap_err().to_string();
+        assert!(!e.contains("SHIB"), "no ticker in an error text: {e}");
         for body in [
             r#"{"data":{"amount":"1.5","base":"ETH","currency":"EUR"}}"#, // other ticker
             r#"{"data":{"amount":"1.5","base":"SHIB","currency":"USD"}}"#, // other currency

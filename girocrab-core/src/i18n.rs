@@ -284,7 +284,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Crypto-Kurse: {0}" => "Crypto prices: {0}",
         "Crypto-Kurse: {0} aktualisiert" => "Crypto prices: {0} updated",
         ", {0} ohne Euro-Kurs" => ", {0} without a euro price",
-        "Unerwartete Antwort der Kurs-API für {0}" => "Unexpected answer of the price API for {0}",
+        "Unerwartete Antwort der Kurs-API" => "Unexpected answer of the price API",
         "Für das Kürzel {0} gibt es keinen Euro-Kurs. Bitte das Kürzel prüfen." => {
             "There is no euro price for the ticker {0}. Please check the ticker."
         }
