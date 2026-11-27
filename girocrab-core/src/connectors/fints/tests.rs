@@ -2383,6 +2383,19 @@ async fn a_failed_fetch_names_the_approval_when_every_job_was_skipped() {
 }
 
 #[tokio::test]
+async fn a_failed_fetch_names_the_approval_when_the_bank_wants_a_tan_nobody_can_type() {
+    // #1997: a quiet fetch gets 0030 for the job: the TAN cannot be typed, the
+    // job was not read; the fetch must say that an approval was skipped, or the
+    // app records no back-off and the scheduled sync logs in again every interval
+    let (url, _seen) = mock_bank(vec![SAL_TAN_DEMANDED]);
+    let mut c = savings_needing_sca(&url);
+    match c.fetch(&test_ctx()).await {
+        Err(CoreError::Bank { code, .. }) => assert_eq!(code, "SCA"),
+        other => panic!("expected the SCA bank error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn a_failed_fetch_hands_back_the_jobs_it_found_out_about() {
     // #1828: a bank that wants a TAN for every job: nothing is read, the sync fails, and the
     // state with `sca_seen` still has to reach the sync session, or the next sync asks again

@@ -752,6 +752,11 @@ impl FinTsConnector {
             }
             approval_given = true;
         } else if reply.has("0030") {
+            // a TAN nobody can type (a quiet fetch has no prompt): the job was
+            // not read (#1997), like a skipped app approval
+            if ctx.prompt.is_none() {
+                self.approval_skipped = true;
+            }
             return Err(CoreError::Bank {
                 code: "0030".into(),
                 message: trf(
