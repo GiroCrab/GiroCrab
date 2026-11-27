@@ -499,3 +499,60 @@ fn a_partial_balance_is_no_value_in_the_history() {
         "ETH has no price: no depot value"
     );
 }
+
+#[test]
+fn a_newer_deletion_hides_older_copies_in_both_merge_directions() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    // A: x (BTC); B: y (BTC, newer); A sees both and shows y
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    tick();
+    b.save_crypto_position(bacc, None, "BTC".into(), 2.0, None)
+        .unwrap();
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    assert_eq!(a.list_crypto_positions(acc).unwrap()[0].quantity, 2.0);
+    // B deletes BTC without ever having seen x
+    tick();
+    b.delete_crypto_position(bacc, "BTC".into()).unwrap();
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    assert!(a.list_crypto_positions(acc).unwrap().is_empty());
+    assert!(b.list_crypto_positions(bacc).unwrap().is_empty());
+    // the ticker can be added again
+    b.save_crypto_position(bacc, None, "BTC".into(), 3.0, None)
+        .unwrap();
+    assert_eq!(b.list_crypto_positions(bacc).unwrap()[0].quantity, 3.0);
+}
+
+#[test]
+fn an_unpriced_ticker_ends_the_carried_total() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    price(&v, "BTC", 80_000.0);
+    v.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    // that total was recorded yesterday
+    let yesterday = crate::dates::iso(crate::dates::today() - crate::dates::days(1));
+    v.db()
+        .unwrap()
+        .execute("UPDATE depot_values SET value_date = ?1", [&yesterday])
+        .unwrap();
+    v.save_crypto_position(acc, None, "ETH".into(), 1.0, None)
+        .unwrap();
+    let h = v.depot_value_history(vec![acc], 30).unwrap();
+    let day = |d: &str| h.iter().find(|p| p.date == d).unwrap().covered_depots;
+    assert_eq!(day(&yesterday), 1);
+    assert_eq!(
+        day(&today_iso()),
+        0,
+        "ETH has no price: today's value is unknown"
+    );
+}

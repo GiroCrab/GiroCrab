@@ -73,6 +73,22 @@ pub(crate) fn is_crypto(conn: &Connection, account_id: i64) -> CoreResult<bool> 
         .is_some())
 }
 
+/// A crypto account holding a ticker without a price: its value is unknown,
+/// the depot history does not carry an earlier total forward
+/// (`depot_values::series`).
+pub(crate) fn is_incomplete(conn: &Connection, account_id: i64) -> CoreResult<bool> {
+    Ok(is_crypto(conn, account_id)?
+        && conn.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM crypto_positions p WHERE account_id = ?1 AND deleted_ms IS NULL
+                    AND {NEWEST_OF_TICKER}
+                    AND NOT EXISTS (SELECT 1 FROM crypto_prices c WHERE c.symbol = p.symbol))"
+            ),
+            [account_id],
+            |r| r.get(0),
+        )?)
+}
+
 fn require_crypto(conn: &Connection, account_id: i64) -> CoreResult<()> {
     if is_crypto(conn, account_id)? {
         Ok(())
@@ -96,12 +112,14 @@ fn normalize_symbol(symbol: &str) -> CoreResult<String> {
 
 /// Two devices that each added the same ticker to an account hold two live
 /// positions after a merge. A merge keeps both (deleting one would make the
-/// result depend on the merge order); every reader takes the newest edit per
-/// ticker (on equal stamps the larger uuid), so all devices show the same.
-/// A user edit or deletion of the ticker then retires the others.
+/// result depend on the merge order). Per account and ticker the newest row
+/// decides (largest `(changed_ms, uuid)`, deleted rows included): live, it is
+/// the position every device shows; deleted, the ticker is not held – a newer
+/// deletion also hides older copies its device never saw. The result depends
+/// only on the set of rows. A user edit of the ticker retires the others.
 const NEWEST_OF_TICKER: &str = "NOT EXISTS (
     SELECT 1 FROM crypto_positions o
-     WHERE o.account_id = p.account_id AND o.symbol = p.symbol AND o.deleted_ms IS NULL
+     WHERE o.account_id = p.account_id AND o.symbol = p.symbol AND o.id <> p.id
        AND (o.changed_ms, o.uuid) > (p.changed_ms, p.uuid))";
 
 /// The held position `symbol` of `account_id` (the newest, see [`NEWEST_OF_TICKER`]).
@@ -122,10 +140,12 @@ fn position_id(conn: &Connection, account_id: i64, symbol: &str) -> CoreResult<i
 }
 
 /// The user edits or deletes the position `id`: other live positions of its
-/// ticker (merged in from another device) are retired with it.
+/// ticker (merged in from another device) are retired with it. They keep their
+/// stamp: on an equal stamp the deletion wins a merge, it never outranks `id`,
+/// and a newer edit of that copy elsewhere still counts.
 fn retire_twins(conn: &Connection, id: i64) -> CoreResult<()> {
     conn.execute(
-        "UPDATE crypto_positions SET deleted_ms = ?2, changed_ms = MAX(?2, changed_ms + 1)
+        "UPDATE crypto_positions SET deleted_ms = ?2
           WHERE deleted_ms IS NULL AND id <> ?1
             AND (account_id, symbol) = (SELECT account_id, symbol FROM crypto_positions WHERE id = ?1)",
         params![id, now_ms()],
@@ -402,8 +422,10 @@ impl Vault {
             None => None,
         };
         let taken: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM crypto_positions WHERE account_id = ?1 AND symbol = ?2
-                AND deleted_ms IS NULL AND id IS NOT ?3)",
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM crypto_positions p WHERE account_id = ?1 AND symbol = ?2
+                    AND deleted_ms IS NULL AND id IS NOT ?3 AND {NEWEST_OF_TICKER})"
+            ),
             params![account_id, symbol, previous],
             |r| r.get(0),
         )?;

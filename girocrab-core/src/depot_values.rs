@@ -261,12 +261,18 @@ pub(crate) fn series(
             }
         }
         firsts.push((id, points[0].0.clone(), points[0].1));
+        // a crypto holding with an unpriced ticker has no known value after its last point
+        let open_end =
+            crate::crypto::is_incomplete(conn, id)?.then(|| points[points.len() - 1].0.clone());
         let mut next = 0;
         let mut current: Option<i64> = None;
         for (i, day) in keys.iter().enumerate() {
             while next < points.len() && points[next].0 <= *day {
                 current = Some(points[next].1);
                 next += 1;
+            }
+            if open_end.as_ref().is_some_and(|last| day > last) {
+                continue;
             }
             if let Some(v) = current {
                 total[i] += v;
