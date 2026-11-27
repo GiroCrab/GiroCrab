@@ -82,7 +82,7 @@ extension AppModel {
         return String(key[..<r.lowerBound])
     }
 
-    /// The amount a series key carries (`…#-1299`); nil for keys without one.
+    /// The amount a series key carries (`…#1299`, the core writes it without a sign); nil for keys without one.
     private static func amount(of key: String) -> Int64? {
         guard let r = key.range(of: #"#-?\d+$"#, options: .regularExpression) else { return nil }
         return Int64(key[r].dropFirst())
@@ -97,7 +97,8 @@ extension AppModel {
         return recurring.filter { s in
             s.baseKey == base && data.entries[s.seriesKey] == nil && !known.contains(s.seriesKey)
                 && (d.accountId == nil || d.accountId == s.accountId)
-                && gone.contains { abs(s.amountCents - $0) <= abs(s.amountCents - own) }
+                // magnitudes: the keys carry no sign, the amounts of expenses are negative
+                && gone.contains { abs(abs(s.amountCents) - abs($0)) <= abs(abs(s.amountCents) - abs(own)) }
         }.map(\.seriesKey)
     }
 
