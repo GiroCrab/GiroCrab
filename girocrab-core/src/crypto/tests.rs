@@ -28,9 +28,13 @@ fn balance(v: &Vault, acc: i64) -> i64 {
         .balance_cents
 }
 
-/// Edits get their own millisecond, so "newer" is well defined in the merge test.
+/// The next edit gets a later stamp: waits until the clock has moved past the
+/// current millisecond (not a fixed sleep, so a stalled clock cannot tie them).
 fn tick() {
-    std::thread::sleep(std::time::Duration::from_millis(3));
+    let now = now_ms();
+    while now_ms() <= now {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 #[test]
@@ -263,21 +267,16 @@ fn a_value_beyond_cents_is_refused() {
     let (v, _p) = temp_vault();
     let acc = v.create_crypto_account("Wallet".into()).unwrap();
     price(&v, "BTC", 60_000.0);
+    // above 10 trillion EUR for one position
     assert!(
-        v.save_crypto_position(acc, None, "BTC".into(), 1e11 * 2e7, None)
+        v.save_crypto_position(acc, None, "BTC".into(), 2e8, None)
             .is_err()
     );
+    v.save_crypto_position(acc, None, "BTC".into(), 1e8, None)
+        .unwrap();
     // above any holding even without a price
     assert!(
         v.save_crypto_position(acc, None, "DOGE".into(), 1e13, None)
-            .is_err()
-    );
-    // each position fits, their sum does not
-    price(&v, "ETH", 60_000.0);
-    v.save_crypto_position(acc, None, "BTC".into(), 1e12, None)
-        .unwrap();
-    assert!(
-        v.save_crypto_position(acc, None, "ETH".into(), 1e12, None)
             .is_err()
     );
     assert_eq!(v.list_crypto_positions(acc).unwrap().len(), 1);
@@ -303,14 +302,19 @@ fn a_merge_without_crypto_changes_records_no_valuation() {
             )
             .unwrap()
     };
-    // the first merge back brings B's own history along (a union); after that, nothing changes
     a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
         .unwrap();
-    let before = count();
+    // without any history a write of the merge would show, even one with today's values
+    for v in [&a, &b] {
+        v.db()
+            .unwrap()
+            .execute_batch("DELETE FROM depot_observations; DELETE FROM depot_values;")
+            .unwrap();
+    }
     tick();
     a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
         .unwrap();
-    assert_eq!(count(), before);
+    assert_eq!(count(), 0);
 }
 
 #[test]
@@ -326,18 +330,19 @@ fn equal_price_stamps_end_with_the_same_price_on_both_devices() {
             )
             .unwrap();
     }
-    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
-        .unwrap();
-    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
-        .unwrap();
-    for v in [&a, &b] {
-        let p: f64 = v
-            .db()
+    let stored = |v: &Vault| -> f64 {
+        v.db()
             .unwrap()
             .query_row("SELECT price_eur FROM crypto_prices", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(p, 101.0);
-    }
+            .unwrap()
+    };
+    // the lower incoming price is refused, the higher one taken
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    assert_eq!(stored(&b), 101.0);
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    assert_eq!(stored(&a), 101.0);
 }
 
 #[test]
@@ -586,4 +591,74 @@ fn a_huge_position_meeting_a_price_leaves_the_account_usable() {
     b.save_crypto_position(bacc, Some("BTC".into()), "BTC".into(), 1.0, None)
         .unwrap();
     assert_eq!(balance(&b, bacc), 1_000_000_000_000);
+}
+
+#[test]
+fn an_edit_against_a_newer_deletion_ends_the_same_on_both_devices() {
+    // A holds x and y (BTC, merged); C renames y to ETH; A, not knowing that, deletes BTC
+    // later. Two edits of one position conflict: the newer one (the deletion) wins on both.
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    tick();
+    b.save_crypto_position(bacc, None, "BTC".into(), 2.0, None)
+        .unwrap();
+    a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let (c, pc) = temp_vault();
+    c.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let cacc = c.list_crypto_account_ids().unwrap()[0];
+    tick();
+    c.save_crypto_position(cacc, Some("BTC".into()), "ETH".into(), 2.0, None)
+        .unwrap();
+    tick();
+    a.delete_crypto_position(acc, "BTC".into()).unwrap();
+    a.merge_other_vault(pc.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    c.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    for (v, acc) in [(&a, acc), (&c, cacc)] {
+        let p: Vec<String> = v
+            .list_crypto_positions(acc)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.symbol)
+            .collect();
+        assert!(p.is_empty(), "{p:?}");
+    }
+}
+
+#[test]
+fn a_held_position_without_a_value_is_not_closed_and_zero_cost_means_unknown() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    price(&v, "BTC", 80_000.0);
+    price(&v, "ETH", 3_000.0);
+    v.save_crypto_position(acc, None, "BTC".into(), 1.0, Some(0))
+        .unwrap();
+    assert_eq!(
+        v.list_crypto_positions(acc).unwrap()[0].purchase_price_cents,
+        None
+    );
+    // BTC's price no longer gives a value in cents; then ETH is edited
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE crypto_prices SET price_eur = 1e14 WHERE symbol = 'BTC'",
+            [],
+        )
+        .unwrap();
+    v.save_crypto_position(acc, None, "ETH".into(), 1.0, None)
+        .unwrap();
+    assert_eq!(
+        last_observed(&v, acc, "BTC"),
+        80_000_00,
+        "no closing 0: still held"
+    );
 }

@@ -47,6 +47,10 @@ const EXTERNAL_REF_PREFIX: &str = "crypto-";
 const MAX_NAME_CHARS: usize = 100;
 /// More than any coin supply a person holds; keeps quantity × price in range.
 const MAX_QUANTITY: f64 = 1e12;
+/// The largest value of one position (10 trillion EUR). Far below `i64::MAX`, so
+/// the sum of an account and of all depots of a day cannot overflow either
+/// (that would take about 9,000 such positions).
+const MAX_VALUE_CENTS: i64 = 1_000_000_000_000_000;
 
 /// A position of a crypto account with its last known price.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -153,7 +157,7 @@ fn retire_twins(conn: &Connection, id: i64) -> CoreResult<()> {
 /// precision); a value beyond what cents can hold is an error, not a clamp.
 fn value_cents(quantity: f64, price_eur: f64) -> CoreResult<i64> {
     let v = (quantity * price_eur * 100.0).round();
-    if v.is_finite() && v.abs() < i64::MAX as f64 {
+    if v.is_finite() && v.abs() <= MAX_VALUE_CENTS as f64 {
         Ok(v as i64)
     } else {
         Err(too_large())
@@ -206,8 +210,14 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
         return Ok(());
     }
     let positions = load(conn, account_id)?;
+    // a position closes only when it is gone, not while it is held without a value
+    let held: HashSet<String> = positions
+        .iter()
+        .filter_map(|p| crate::depot_values::observations::position_key("", &p.symbol))
+        .collect();
     let previous: Vec<String> = crate::depot_values::positions::held_keys(conn, account_id)?
         .into_iter()
+        .filter(|k| !held.contains(k))
         .collect();
     // built before the old holdings go: an error leaves them as they were
     let holdings: Vec<Holding> = positions
@@ -342,10 +352,10 @@ fn holders_of(conn: &Connection, symbols: &[String]) -> CoreResult<Vec<i64>> {
     if symbols.is_empty() {
         return Ok(Vec::new());
     }
-    let mut st = conn.prepare(
-        "SELECT DISTINCT account_id FROM crypto_positions
-          WHERE deleted_ms IS NULL AND symbol IN (SELECT value FROM json_each(?1))",
-    )?;
+    let mut st = conn.prepare(&format!(
+        "SELECT DISTINCT account_id FROM crypto_positions p
+          WHERE deleted_ms IS NULL AND {NEWEST_OF_TICKER} AND symbol IN (SELECT value FROM json_each(?1))"
+    ))?;
     let rows = st.query_map([serde_json::to_string(symbols)?], |r| r.get(0))?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
@@ -416,6 +426,8 @@ impl Vault {
                 "Der Einstandskurs darf nicht negativ sein.",
             )));
         }
+        // 0 means unknown, as everywhere for depot positions (`holdings.purchase_price_cents`)
+        let purchase_price_cents = purchase_price_cents.filter(|c| *c > 0);
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
         require_crypto(&tx, account_id)?;
@@ -426,7 +438,8 @@ impl Vault {
                 |r| r.get(0),
             )
             .optional()?;
-        if let Some(price) = known {
+        // a price that gives no per-unit value counts as none (see `load`)
+        if let Some(price) = known.filter(|p| value_cents(1.0, *p).is_ok()) {
             value_cents(quantity, price)?;
         }
         let previous = match previous_symbol {
