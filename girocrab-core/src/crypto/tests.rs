@@ -391,7 +391,7 @@ fn a_price_beyond_cents_from_another_vault_is_not_taken() {
     a.db()
         .unwrap()
         .execute(
-            "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms) VALUES ('BTC', 1e17, 5)",
+            "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms) VALUES ('BTC', 1e17, 5), ('ETH', 1e14, 5)",
             [],
         )
         .unwrap();

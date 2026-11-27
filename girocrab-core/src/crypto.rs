@@ -51,6 +51,14 @@ const MAX_QUANTITY: f64 = 1e12;
 /// the sum of an account and of all depots of a day cannot overflow either
 /// (that would take about 9,000 such positions).
 const MAX_VALUE_CENTS: i64 = 1_000_000_000_000_000;
+/// The largest price per unit that still gives a value (one unit at [`MAX_VALUE_CENTS`]).
+const MAX_PRICE_EUR: f64 = MAX_VALUE_CENTS as f64 / 100.0;
+
+/// A price the app can value with, the one rule for fetch, storage, merge and
+/// [`load`]: positive, finite, one unit within [`MAX_VALUE_CENTS`].
+fn valid_price(eur: f64) -> bool {
+    eur.is_finite() && eur > 0.0 && eur <= MAX_PRICE_EUR
+}
 
 /// A position of a crypto account with its last known price.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -190,11 +198,11 @@ fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
         // unpriced: the account stays usable, its total unknown (see `is_incomplete`)
         match p
             .price_eur
-            .map(|price| (value_cents(p.quantity, price), value_cents(1.0, price)))
+            .filter(|price| valid_price(*price))
+            .map(|price| value_cents(p.quantity, price))
         {
-            Some((Ok(v), Ok(_))) => p.value_cents = v,
-            Some(_) => p.price_eur = None,
-            None => {}
+            Some(Ok(v)) => p.value_cents = v,
+            _ => p.price_eur = None,
         }
     }
     Ok(out)
@@ -330,13 +338,13 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
         .prepare(
             "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms)
              SELECT symbol, price_eur, fetched_ms FROM other.crypto_prices
-              WHERE price_eur > 0 AND price_eur < 1e15 -- a price cents can hold, as a fetch checks it
+              WHERE price_eur > 0 AND price_eur <= ?1 -- `valid_price`, as a fetch checks it
              ON CONFLICT(symbol) DO UPDATE SET price_eur = excluded.price_eur, fetched_ms = excluded.fetched_ms
               WHERE excluded.fetched_ms > crypto_prices.fetched_ms
                  OR (excluded.fetched_ms = crypto_prices.fetched_ms AND excluded.price_eur > crypto_prices.price_eur)
              RETURNING symbol",
         )?
-        .query_map([], |r| r.get(0))?
+        .query_map([MAX_PRICE_EUR], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
     touched.extend(holders_of(conn, &changed_symbols)?);
     for id in crypto_account_ids(conn)? {
@@ -439,7 +447,7 @@ impl Vault {
             )
             .optional()?;
         // a price that gives no per-unit value counts as none (see `load`)
-        if let Some(price) = known.filter(|p| value_cents(1.0, *p).is_ok()) {
+        if let Some(price) = known.filter(|p| valid_price(*p)) {
             value_cents(quantity, price)?;
         }
         let previous = match previous_symbol {
