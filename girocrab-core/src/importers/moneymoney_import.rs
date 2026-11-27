@@ -130,6 +130,58 @@ pub fn fingerprint(date: &str, cents: i64, iban: &str, name: &str, purpose: &str
     format!("{:016x}", fnv1a64(key))
 }
 
+/// Key without the purpose (see `Existing::weak`). Without name and IBAN that
+/// would be date and amount only and join unrelated bookings (#1995), so it
+/// keeps the purpose then, minus the references MoneyMoney appends.
+fn weak_key(date: &str, cents: i64, iban: &str, name: &str, purpose: &str) -> String {
+    let bare = norm(iban).is_empty() && norm(name).is_empty();
+    let purpose = if bare {
+        purpose_text(purpose)
+    } else {
+        String::new()
+    };
+    fingerprint(date, cents, iban, name, &purpose)
+}
+
+/// The purpose without the SEPA references of MoneyMoney's exports (CSV
+/// ", Mandatsref: …, Gläubiger: …", camt `EREF+…`/`MREF+…`/`CRED+…` and `SVWZ+`)
+/// and of [`MmRow::stored_purpose`] (`EREF: …`).
+fn purpose_text(p: &str) -> String {
+    let cut = ["Mandatsref:", "Gläubiger:"]
+        .iter()
+        .filter_map(|m| p.find(m))
+        .filter(|&i| i == 0 || p[..i].ends_with(", "))
+        .min()
+        .unwrap_or(p.len());
+    purpose_without_refs(p[..cut].trim_end_matches([',', ' ']))
+        .split(' ')
+        .filter(|w| !["EREF+", "MREF+", "CRED+"].iter().any(|t| w.starts_with(t)))
+        .map(|w| w.strip_prefix("SVWZ+").unwrap_or(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A SEPA end-to-end reference (first word); `NOTPROVIDED` counts as none.
+fn e2e_ref(s: &str) -> Option<&str> {
+    let s = s.split_whitespace().next()?;
+    (!s.eq_ignore_ascii_case("NOTPROVIDED")).then_some(s)
+}
+
+/// The end-to-end reference inside a stored purpose (`EREF: …` from
+/// [`MmRow::stored_purpose`], `EREF+…` from camt).
+fn e2e_in_purpose(p: &str) -> Option<&str> {
+    let mut words = p.split_whitespace();
+    while let Some(w) = words.next() {
+        if w == "EREF:" {
+            return e2e_ref(words.next()?);
+        }
+        if let Some(v) = w.strip_prefix("EREF+") {
+            return e2e_ref(v);
+        }
+    }
+    None
+}
+
 impl MmRow {
     /// Category path parts (empty = uncategorised).
     pub(crate) fn category_path(&self) -> Vec<String> {
@@ -150,15 +202,19 @@ impl MmRow {
         )
     }
 
-    /// Key without the purpose (see `Existing::weak`).
+    /// See [`weak_key`].
     fn weak_fp(&self) -> String {
-        fingerprint(
+        weak_key(
             &self.booking_date,
             self.amount_cents,
             &self.iban,
             &self.name,
-            "",
+            &self.purpose,
         )
+    }
+
+    fn e2e(&self) -> Option<&str> {
+        e2e_ref(&self.end_to_end)
     }
 
     /// Date, amount and name (see `Existing::named`); only for a row without
@@ -576,8 +632,11 @@ pub(crate) struct Existing {
     fp: String,
     /// Without the purpose: MoneyMoney's exports append the SEPA references
     /// to the purpose (CSV ", Mandatsref: …", camt "EREF+… SVWZ+…"), while
-    /// the database keeps them apart.
+    /// the database keeps them apart. Keeps the purpose without name and IBAN
+    /// ([`weak_key`]).
     weak: String,
+    /// End-to-end reference (column, else from the stored purpose).
+    e2e: Option<String>,
     /// Date, amount and name only: the database import fills in the own IBAN
     /// for transfers that MoneyMoney only knows by account number (#94), the
     /// export leaves it empty.
@@ -608,7 +667,7 @@ pub(crate) fn load_existing(conn: &Connection, account_id: i64) -> CoreResult<Ve
         "SELECT id, booking_date, amount_cents, counterparty_iban, counterparty, purpose,
                 import_fp, category_source, note, deleted_ms IS NOT NULL, external_id,
                 splits_ms != 0 OR EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = transactions.id),
-                external_id LIKE 'mm-%', external_id LIKE 'mm-%' OR import_fp != ''
+                external_id LIKE 'mm-%', external_id LIKE 'mm-%' OR import_fp != '', end_to_end_id
          FROM transactions WHERE account_id = ?1
            AND NOT (deleted_ms IS NOT NULL
                     AND (external_id LIKE 'pending-%' OR external_id LIKE 'mm-switch-pending-hold-%'
@@ -629,7 +688,10 @@ pub(crate) fn load_existing(conn: &Connection, account_id: i64) -> CoreResult<Ve
             } else {
                 fp
             },
-            weak: fingerprint(&date, cents, &iban, &name, ""),
+            weak: weak_key(&date, cents, &iban, &name, &purpose),
+            e2e: e2e_ref(&r.get::<_, String>(14)?)
+                .or_else(|| e2e_in_purpose(&purpose))
+                .map(str::to_string),
             named: fingerprint(&date, cents, "", &name, ""),
             category_source: r.get(7)?,
             note: r.get(8)?,
@@ -770,41 +832,32 @@ fn join_notes(notes: impl IntoIterator<Item = String>) -> String {
 }
 
 /// For each row the existing booking it duplicates (index into `existing`).
-/// Both passes count as multisets – every existing booking is used once, so
-/// two identical coffees on one day stay two rows:
+/// All passes count as multisets – every existing booking is used once, so
+/// two identical coffees on one day stay two rows. A row and a booking whose
+/// end-to-end references differ never match ([`e2e_differs`]):
+/// 0. same date, amount and end-to-end reference (#1995),
 /// 1. exact fingerprint,
 /// 2. rows still unmatched: same date, amount and counterparty (purpose
-///    ignored), in order,
+///    ignored unless both are missing, [`weak_key`]), in order,
 /// 3. rows without counterparty IBAN: same date, amount and name,
 /// 4. [`match_folded_name`],
 /// 5. [`match_bank_without_counterparty`].
 pub(crate) fn match_existing(rows: &[MmRow], existing: &[Existing]) -> Vec<Option<usize>> {
-    let (mut out, mut used) = match_by_fingerprint(rows, existing);
-    let mut by_weak: HashMap<&str, std::collections::VecDeque<usize>> = HashMap::new();
-    for (j, e) in existing.iter().enumerate().filter(|(j, _)| !used[*j]) {
-        by_weak.entry(e.weak.as_str()).or_default().push_back(j);
-    }
-    for (r, m) in rows.iter().zip(out.iter_mut()).filter(|(_, m)| m.is_none()) {
-        if let Some(j) = by_weak
-            .get_mut(r.weak_fp().as_str())
-            .and_then(|q| q.pop_front())
-        {
-            used[j] = true;
-            *m = Some(j);
-        }
-    }
-    let mut by_name: HashMap<&str, std::collections::VecDeque<usize>> = HashMap::new();
-    for (j, e) in existing.iter().enumerate().filter(|(j, _)| !used[*j]) {
-        by_name.entry(e.named.as_str()).or_default().push_back(j);
-    }
-    for (r, m) in rows.iter().zip(out.iter_mut()).filter(|(_, m)| m.is_none()) {
-        if let Some(key) = r.named_fp()
-            && let Some(j) = by_name.get_mut(key.as_str()).and_then(|q| q.pop_front())
-        {
-            used[j] = true;
-            *m = Some(j);
-        }
-    }
+    let mut out: Vec<Option<usize>> = vec![None; rows.len()];
+    let mut used = vec![false; existing.len()];
+    let e2e_key =
+        |date: &str, cents: i64, id: Option<&str>| id.map(|id| format!("{date}|{cents}|{id}"));
+    let mut pass = |row_key: &dyn Fn(&MmRow) -> Option<String>,
+                    key: &dyn Fn(&Existing) -> Option<String>| {
+        match_by_key(rows, existing, &mut out, &mut used, row_key, key)
+    };
+    pass(
+        &|r| e2e_key(&r.booking_date, r.amount_cents, r.e2e()),
+        &|e| e2e_key(&e.booking_date, e.amount_cents, e.e2e.as_deref()),
+    );
+    pass(&|r| Some(r.fp()), &|e| Some(e.fp.clone()));
+    pass(&|r| Some(r.weak_fp()), &|e| Some(e.weak.clone()));
+    pass(&MmRow::named_fp, &|e| Some(e.named.clone()));
     match_folded_name(rows, existing, &mut out, &mut used);
     match_bank_without_counterparty(rows, existing, &mut out, &mut used);
     out
@@ -835,6 +888,7 @@ pub(crate) fn match_folded_name(
                 && e.amount_cents == r.amount_cents
                 && e.name_fold == name
                 && (iban.is_empty() || e.iban_norm.is_empty() || e.iban_norm == iban)
+                && !e2e_differs(r, e)
         });
         if let Some(j) = hit {
             used[j] = true;
@@ -849,20 +903,52 @@ pub(crate) fn match_by_fingerprint(
     rows: &[MmRow],
     existing: &[Existing],
 ) -> (Vec<Option<usize>>, Vec<bool>) {
-    let mut by_fp: HashMap<&str, std::collections::VecDeque<usize>> = HashMap::new();
-    for (j, e) in existing.iter().enumerate() {
-        by_fp.entry(e.fp.as_str()).or_default().push_back(j);
-    }
+    let mut out = vec![None; rows.len()];
     let mut used = vec![false; existing.len()];
-    let out = rows
-        .iter()
-        .map(|r| {
-            let j = by_fp.get_mut(r.fp().as_str())?.pop_front()?;
-            used[j] = true;
-            Some(j)
-        })
-        .collect();
+    match_by_key(
+        rows,
+        existing,
+        &mut out,
+        &mut used,
+        &|r| Some(r.fp()),
+        &|e| Some(e.fp.clone()),
+    );
     (out, used)
+}
+
+/// One multiset pass: each unmatched row takes the first unused booking with
+/// the same key whose end-to-end reference does not contradict it.
+fn match_by_key(
+    rows: &[MmRow],
+    existing: &[Existing],
+    out: &mut [Option<usize>],
+    used: &mut [bool],
+    row_key: &dyn Fn(&MmRow) -> Option<String>,
+    key: &dyn Fn(&Existing) -> Option<String>,
+) {
+    let mut by_key: HashMap<String, std::collections::VecDeque<usize>> = HashMap::new();
+    for (j, e) in existing.iter().enumerate().filter(|(j, _)| !used[*j]) {
+        if let Some(k) = key(e) {
+            by_key.entry(k).or_default().push_back(j);
+        }
+    }
+    for (r, m) in rows.iter().zip(out.iter_mut()).filter(|(_, m)| m.is_none()) {
+        let Some(k) = row_key(r) else { continue };
+        let Some(q) = by_key.get_mut(&k) else {
+            continue;
+        };
+        let hit = q.iter().position(|&j| !e2e_differs(r, &existing[j]));
+        if let Some(j) = hit.and_then(|i| q.remove(i)) {
+            used[j] = true;
+            *m = Some(j);
+        }
+    }
+}
+
+/// Row and booking both carry an end-to-end reference and they differ: never
+/// the same booking, whatever else matches (#1995).
+fn e2e_differs(r: &MmRow, e: &Existing) -> bool {
+    matches!((r.e2e(), e.e2e.as_deref()), (Some(a), Some(b)) if a != b)
 }
 
 /// A bank booking without counterparty (no name, no IBAN) that was fetched
@@ -894,6 +980,7 @@ pub(crate) fn match_bank_without_counterparty(
                 && e.bare_bank_purpose.as_deref().is_some_and(|p| {
                     (name.len() >= 3 && p.contains(&name)) || purposes_alike(p, &purpose)
                 })
+                && !e2e_differs(r, e)
         });
         if let (Some((j, _)), None) = (hits.next(), hits.next()) {
             used[j] = true;
@@ -1292,6 +1379,18 @@ pub(crate) fn merge_rows(
                 st.enriched += 1;
             }
             continue;
+        }
+        // A row kept apart by its end-to-end reference shares the fingerprint of
+        // the booking already here: take the next free id ((account, external_id)
+        // is unique, soft-deleted rows included).
+        let mut k = k;
+        while conn
+            .prepare_cached(
+                "SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2",
+            )?
+            .exists(params![st.account_id, format!("mm-{fp}-{k}")])?
+        {
+            k += 1;
         }
         conn.prepare_cached(
             "INSERT INTO transactions(account_id, external_id, booking_date, value_date, amount_cents, currency,
@@ -2307,6 +2406,84 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
         assert_eq!((p.new_bookings, p.duplicates_skipped_or_enriched), (0, 1));
     }
 
+    /// Without name and IBAN the purpose (minus references) still tells rows
+    /// apart; an end-to-end reference on both sides decides first (#1995).
+    #[test]
+    fn nameless_rows_and_end_to_end_references_match_by_content() {
+        let (_dir, v) = vault();
+        let csv = |rows: &[&str]| {
+            let head = "Datum;Name;Verwendungszweck;Konto;Betrag;Notiz;EREF\n";
+            format!("{head}{}\n", rows.join("\n")).into_bytes()
+        };
+        let iban = "DE02120300000000202051";
+        let a = v
+            .import_moneymoney_data(
+                csv(&[
+                    "02.01.2026;;Parking;;-10,00;;",
+                    "03.01.2026;;Parkhaus;;-5,00;;",
+                    "04.01.2026;;Parking;;-7,00;;",
+                    "05.01.2026;;Kiosk;;-3,00;;NOTPROVIDED",
+                    "06.01.2026;;Fahrkarte;;-4,00;;E-1",
+                    &format!("07.01.2026;Stadtwerke;Abschlag;{iban};-50,00;;E-2"),
+                ]),
+                "a.csv".into(),
+                None,
+                true,
+                true,
+            )
+            .unwrap();
+        assert_eq!(a.imported, 6);
+        let acc = Some(a.account_id);
+        let counts = |row: &str| {
+            let p = v
+                .preview_moneymoney_import(csv(&[row]), "b.csv".into(), acc)
+                .unwrap();
+            (p.new_bookings, p.duplicates_skipped_or_enriched)
+        };
+        assert_eq!(
+            counts("02.01.2026;;Postage;;-10,00;Postage receipt;"),
+            (1, 0)
+        );
+        let mandate = "Parkhaus, Mandatsref: M-1, Gläubiger: DE98ZZZ09999999999";
+        assert_eq!(counts(&format!("03.01.2026;;{mandate};;-5,00;;")), (0, 1));
+        assert_eq!(counts("04.01.2026;;Parking Garage;;-7,00;;"), (1, 0));
+        assert_eq!(
+            counts("05.01.2026;;Kiosk, Mandatsref: M-9;;-3,00;;NOTPROVIDED"),
+            (0, 1)
+        );
+        assert_eq!(counts("06.01.2026;;Fahrkarte Zone A;;-4,00;;E-1"), (0, 1));
+        let other_ref = format!("07.01.2026;Stadtwerke;Abschlag;{iban};-50,00;;E-3");
+        assert_eq!(counts(&other_ref), (1, 0));
+
+        // the reported case: two bookings, each with its own purpose and note
+        let b = v
+            .import_moneymoney_data(
+                csv(&["02.01.2026;;Postage;;-10,00;Postage receipt;"]),
+                "b.csv".into(),
+                acc,
+                true,
+                true,
+            )
+            .unwrap();
+        assert_eq!((b.imported, b.duplicates), (1, 0));
+        let db = v.db().unwrap();
+        let mut q = db
+            .prepare("SELECT purpose, note FROM transactions WHERE booking_date = '2026-01-02' ORDER BY id")
+            .unwrap();
+        let day: Vec<(String, String)> = q
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        assert_eq!(
+            day,
+            vec![
+                ("Parking".to_string(), String::new()),
+                ("Postage".to_string(), "Postage receipt".to_string())
+            ]
+        );
+    }
+
     #[test]
     fn reimport_creates_no_duplicates_and_keeps_identical_rows() {
         let (_dir, v) = vault();
@@ -2967,6 +3144,14 @@ Kartenzahlung;01.01.2030;;-5,00;Bäcker;;;Brötchen;Kartenzahlung;123456;Pocket;
             "Kartenzahlung"
         );
         assert_eq!(purpose_without_refs("EREF+123 Einkauf"), "EREF+123 Einkauf");
+        assert_eq!(purpose_text("EREF+1 MREF+M-1 SVWZ+Parking"), "Parking");
+        assert_eq!(
+            purpose_text("Parkhaus, Mandatsref: M-1, Gläubiger: X"),
+            "Parkhaus"
+        );
+        assert_eq!(purpose_text("Kartenzahlung EREF: 1111"), "Kartenzahlung");
+        assert_eq!(e2e_in_purpose("Kartenzahlung EREF: 1111"), Some("1111"));
+        assert_eq!(e2e_in_purpose("EREF+NOTPROVIDED SVWZ+Kiosk"), None);
     }
 
     #[test]
