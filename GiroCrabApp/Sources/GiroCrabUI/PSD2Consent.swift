@@ -113,7 +113,7 @@ extension AppModel {
     /// Why the automatic fetch of this connection is not running although an
     /// interval is set (#1997); nil when nothing blocks it. The consent state
     /// itself is shown separately in the connection view (`consentRows`).
-    func autoSyncHint(_ connection: BankConnection) -> String? {
+    func autoSyncHint(_ connection: BankConnection, now: Date = Date()) -> String? {
         guard !connection.allAccountsArchived, supportsSyncSchedule(connection),
               syncSchedule(connection.id) > 0 else { return nil }
         // Logins without their own secret (Bitcoin Core) are not blocked by a
@@ -122,7 +122,7 @@ extension AppModel {
         if needsSecret, let status = connectionStatus(connection.id), !status.hasPin, !status.hasSession {
             return String(localized: "Der automatische Abruf braucht die gespeicherte PIN. Ohne sie ruft GiroCrab diese Verbindung nur manuell ab.")
         }
-        if AutoSync.scaBackOffActive(connectionID: connection.id, defaults: AppDefaults.store, now: Date()) {
+        if AutoSync.scaBackOffActive(connectionID: connection.id, defaults: AppDefaults.store, now: now) {
             return String(localized: "Diese Bank verlangt für den Abruf eine Freigabe in der Banking-App, die ein Abruf im Hintergrund nicht geben kann. GiroCrab versucht den automatischen Abruf für diese Verbindung deshalb nur noch einmal am Tag; einen selbst gestarteten Abruf gib in der App frei.")
         }
         return nil

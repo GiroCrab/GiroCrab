@@ -684,6 +684,9 @@ impl FinTsConnector {
             && self.st.sca_seen.contains(seg_id)
             && (self.stored.sca_seen.contains(seg_id) || !self.sca_approved.contains(seg_id))
         {
+            // #1997: the automatic fetch left the job out, and it stays left out
+            // until a manual sync approved it.
+            self.approval_skipped = true;
             return Err(CoreError::Bank {
                 code: SCA_NOT_ASKED.into(),
                 message: trf(
@@ -736,6 +739,9 @@ impl FinTsConnector {
                 }
             }
             if !approved {
+                // an approval nobody gave (a quiet fetch has no prompt): the job
+                // was not read (#1997)
+                self.approval_skipped = true;
                 return Err(CoreError::Bank {
                     code: "3956".into(),
                     message: trf(

@@ -306,6 +306,10 @@ pub struct FinTsConnector {
     sca_in_dialog: bool,
     /// The user skipped the TAN for this account's bookings (#1828): the late HKSAL is not sent either.
     tan_skipped: bool,
+    /// An approval the bank demanded was left out (`SCA_NOT_ASKED`) or waited
+    /// for in vain (`3956`) during this fetch (#1997): the result says so, so
+    /// the UI keeps its scheduled-sync back-off.
+    approval_skipped: bool,
     /// `sca_seen` changed during this connector's requests: a fetch that fails still hands the
     /// state back (`state_after_failed_fetch`, #1828).
     sca_seen_changed: bool,
@@ -403,6 +407,7 @@ impl FinTsConnector {
             truncated_statements: false,
             sca_in_dialog: false,
             tan_skipped: false,
+            approval_skipped: false,
             sca_seen_changed: false,
             sca_asked: HashSet::new(),
             sca_approved: HashSet::new(),
@@ -557,6 +562,7 @@ impl BankConnector for FinTsConnector {
     }
 
     async fn fetch(&mut self, ctx: &ConnectContext) -> CoreResult<FetchResult> {
+        self.approval_skipped = false;
         let (accounts, list_error) = self.account_list(ctx).await;
         // A rejected HKSPA only matters when the UPD lists no account either: flatex
         // answers it with 9380 on every sync and serves all accounts anyway (#1083).
@@ -939,6 +945,7 @@ impl BankConnector for FinTsConnector {
         // Something worked: the sync is done, and says what did not (#1083).
         result.warnings = errors;
         result.hints = hints;
+        result.approval_skipped = self.approval_skipped;
         // Claim the hold list as complete only when every camt request worked.
         if holds_listed && holds_complete {
             result.hold_prefix = Some(camt::HOLD_PREFIX.into());

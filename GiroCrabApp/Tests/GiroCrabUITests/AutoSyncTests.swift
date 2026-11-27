@@ -228,7 +228,7 @@ final class ConnectionAutoSyncTests: XCTestCase {
         model.autoSyncTick(now: now)
         XCTAssertNil(model.syncingConnectionID)
         XCTAssertNil(model.quietSyncConnectionID)
-        let hint = model.autoSyncHint(try XCTUnwrap(model.connections.first { $0.id == id }))
+        let hint = model.autoSyncHint(try XCTUnwrap(model.connections.first { $0.id == id }), now: now)
         XCTAssertTrue(hint?.contains("Freigabe") == true, "\(hint ?? "nil")")
 
         // without the block the tick fetches it
@@ -237,6 +237,6 @@ final class ConnectionAutoSyncTests: XCTestCase {
         XCTAssertEqual(model.syncingConnectionID, id)
         XCTAssertEqual(model.quietSyncConnectionID, id)
         // nothing blocks it any more: no hint
-        XCTAssertFalse(model.autoSyncHint(try XCTUnwrap(model.connections.first { $0.id == id }))?.contains("Freigabe") == true)
+        XCTAssertFalse(model.autoSyncHint(try XCTUnwrap(model.connections.first { $0.id == id }), now: now)?.contains("Freigabe") == true)
     }
 }

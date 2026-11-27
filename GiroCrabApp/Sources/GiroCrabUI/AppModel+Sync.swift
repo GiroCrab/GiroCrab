@@ -588,8 +588,14 @@ extension AppModel {
             let wasQuiet = quietSyncConnectionID == connection.id
             quietSyncConnectionID = nil
             if wasQuiet {
-                // the bank allowed a quiet fetch again: no back-off any more (#1997)
-                AutoSync.clearScaBlock(connectionID: connection.id, defaults: AppDefaults.store)
+                // The bank allowed a quiet fetch again: no back-off any more (#1997).
+                // A finished sync that left an approval-demanded job out (warnings,
+                // #1828) is not that: the next scheduled fetch stays backed off.
+                if s.approvalSkipped {
+                    AutoSync.recordScaBlock(connectionID: connection.id, defaults: AppDefaults.store, now: Date())
+                } else {
+                    AutoSync.clearScaBlock(connectionID: connection.id, defaults: AppDefaults.store)
+                }
                 reloadAllInBackground()
             } else { reloadAll() }
             // A regular BHW sync can bring mailbox PDFs too (automatic statements).

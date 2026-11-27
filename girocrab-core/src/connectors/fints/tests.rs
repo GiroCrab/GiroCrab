@@ -2256,6 +2256,10 @@ async fn a_tan_the_bank_wants_during_the_fetch_is_asked_for_and_sent() {
     let r = c.fetch(&ctx).await.unwrap();
     drop(ctx);
     assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert!(
+        !r.approval_skipped,
+        "the TAN was given, nothing was skipped"
+    );
     assert_eq!(r.accounts[0].balance_cents, 123_456);
     assert!(r.balances_unknown.is_empty());
     let asked = asked.await.unwrap();
@@ -2347,6 +2351,9 @@ async fn an_automatic_fetch_leaves_out_what_the_bank_wants_a_tan_for() {
     assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
     assert!(r.warnings[0].starts_with(IBAN_A), "{:?}", r.warnings);
     assert!(r.warnings[0].contains("HKSAL"), "{:?}", r.warnings);
+    // #1997: the sync says that an approval was demanded and the job left out,
+    // so a scheduled sync that comes back as .finished keeps its back-off
+    assert!(r.approval_skipped);
     assert_eq!(r.balances_unknown, vec![IBAN_A.to_string()]);
     let b = r
         .accounts

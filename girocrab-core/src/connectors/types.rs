@@ -97,6 +97,12 @@ pub struct SyncSummary {
     #[uniffi(default = false)]
     #[cfg_attr(feature = "serde", serde(default))]
     pub documents_off: bool,
+    /// The bank demanded a fresh approval for at least one job and it was left
+    /// out or waited for in vain (#1828, #1997): the automatic fetch of this
+    /// login keeps failing that job until a manual sync approved it.
+    #[uniffi(default = false)]
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub approval_skipped: bool,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -687,6 +693,11 @@ pub struct FetchResult {
     /// What the user can do about `warnings` (#1627), already in the UI language
     /// and without account names.
     pub hints: Vec<String>,
+    /// The bank demanded a fresh approval (TAN / app confirmation) for at least
+    /// one job and the fetch left it out or timed out waiting for it (#1828,
+    /// #1997): a quiet fetch of this login keeps failing that job, so the UI
+    /// keeps its scheduled-sync back-off.
+    pub approval_skipped: bool,
 }
 
 impl FetchResult {
