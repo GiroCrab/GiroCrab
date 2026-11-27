@@ -2238,6 +2238,143 @@ fn deleted_bookings_do_not_count_as_existing() {
     assert!(p.replaces_starter_categories);
 }
 
+/// #1992: an own category and rule in a vault without bookings keep the tree.
+#[test]
+fn own_categories_and_rules_keep_the_starter_tree() {
+    let v = vault();
+    v.seed_starter_categories().unwrap();
+    let hobby = v
+        .create_category("Hobby".into(), None, "tag".into(), "#808080".into())
+        .unwrap();
+    let kid = v
+        .create_category(
+            "Modellbau".into(),
+            Some(hobby),
+            "tag".into(),
+            "#808080".into(),
+        )
+        .unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO rules(name, category_id, pattern) VALUES ('Bastelbedarf', ?1, 'Bastel')",
+            [kid],
+        )
+        .unwrap();
+    let path = fake_db();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert!(!p.replaces_starter_categories);
+    v.import_moneymoney_database(path, PW.into(), options_from(&p, false))
+        .unwrap();
+    let db = v.db().unwrap();
+    let n = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(
+        n("SELECT count(*) FROM categories WHERE deleted_ms IS NOT NULL"),
+        0
+    );
+    assert_eq!(
+        n("SELECT count(*) FROM rules WHERE deleted_ms IS NOT NULL"),
+        0
+    );
+    assert_eq!(
+        n(
+            "SELECT count(*) FROM rules r JOIN categories c ON c.id = r.category_id
+           WHERE r.name = 'Bastelbedarf' AND c.name = 'Modellbau' AND c.deleted_ms IS NULL"
+        ),
+        1
+    );
+}
+
+/// #1992: only the untouched starter seed may be replaced; any edit of it,
+/// even one undone again, keeps the tree.
+#[test]
+fn edited_starter_data_is_not_replaced() {
+    fn untouched_after(edit: impl Fn(&Vault, i64)) -> bool {
+        let v = vault();
+        v.seed_starter_categories().unwrap();
+        let db = v.db().unwrap();
+        let sql = "SELECT id FROM categories WHERE name = 'Supermarkt'";
+        let id: i64 = db.query_row(sql, [], |r| r.get(0)).unwrap();
+        drop(db);
+        edit(&v, id);
+        let db = v.db().unwrap();
+        crate::demo::is_untouched_starter(&db).unwrap()
+    }
+    fn update(v: &Vault, id: i64, parent: bool, sym: &str, color: &str) {
+        let db = v.db().unwrap();
+        let sql = "SELECT parent_id FROM categories WHERE id = ?1";
+        let p: Option<i64> = db.query_row(sql, [id], |r| r.get(0)).unwrap();
+        drop(db);
+        let p = p.filter(|_| parent);
+        v.update_category(id, "Supermarkt".into(), p, sym.into(), color.into())
+            .unwrap();
+    }
+    assert!(untouched_after(|_, _| {}));
+    assert!(untouched_after(|v, id| update(
+        v, id, true, "cart", "#B5474F"
+    )));
+    let edits: [(&str, &dyn Fn(&Vault, i64)); 7] = [
+        ("icon", &|v, id| update(v, id, true, "tag", "#B5474F")),
+        ("color", &|v, id| update(v, id, true, "cart", "#000000")),
+        ("parent", &|v, id| update(v, id, false, "cart", "#B5474F")),
+        ("undone", &|v, id| {
+            update(v, id, true, "tag", "#B5474F");
+            update(v, id, true, "cart", "#B5474F");
+        }),
+        ("budget", &|v, id| {
+            v.set_category_budget(id, Some(100)).unwrap()
+        }),
+        ("deleted", &|v, id| v.delete_category(id).unwrap()),
+        ("rule", &|v, _| {
+            let sql = "UPDATE rules SET pattern = 'REWE' WHERE name = 'Supermärkte'";
+            v.db().unwrap().execute(sql, []).unwrap();
+        }),
+    ];
+    for (what, edit) in edits {
+        assert!(!untouched_after(edit), "{what}");
+    }
+}
+
+/// #1992: a second import of a source without bookings keeps the imported
+/// tree (same row and uuid) and the edits made in between.
+#[test]
+fn repeated_import_without_bookings_keeps_category_identity() {
+    let v = vault();
+    v.seed_starter_categories().unwrap();
+    let path = fake_db_with(false, "DELETE FROM transactions;");
+    let run = || {
+        let p = v
+            .preview_moneymoney_database(path.clone(), PW.into(), None)
+            .unwrap();
+        v.import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false))
+            .unwrap();
+        p.replaces_starter_categories
+    };
+    let haushalt = || -> (i64, Option<i64>, String, String) {
+        let sql = "SELECT id, parent_id, uuid, sf_symbol FROM categories
+                    WHERE name = 'Haushalt' AND deleted_ms IS NULL";
+        let db = v.db().unwrap();
+        db.query_row(sql, [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap()
+    };
+    assert!(run(), "untouched starter tree in a vault without bookings");
+    let (id, parent, uuid, _) = haushalt();
+    v.update_category(
+        id,
+        "Haushalt".into(),
+        parent,
+        "sofa".into(),
+        "#FF9500".into(),
+    )
+    .unwrap();
+    assert!(!run(), "the imported tree is kept");
+    assert_eq!(haushalt(), (id, parent, uuid, "sofa".to_string()));
+}
+
 #[test]
 fn directory_banks_map_to_fints_keys() {
     // (bank code, name) -> stored connector key
