@@ -947,11 +947,7 @@ impl EnableBankingConnector {
             .await?;
         let balances = bal["balances"].as_array().cloned().unwrap_or_default();
         let (balance_cents, ref_date) = pick_account_balance(&balances);
-        let since = ctx.since_for(&acc.ext_ref);
-        let since = ctx
-            .bounded_history_from
-            .as_deref()
-            .map_or(since, |floor| since.max(floor));
+        let since = booked_history_start(ctx, ctx.since_for(&acc.ext_ref));
         let since_query = format!("date_from={since}");
         let listed = if acc.history_done || ctx.bounded_history_from.is_some() {
             self.list_transactions(&acc.uid, &since_query, TX_MAX_PAGES)
@@ -1595,12 +1591,7 @@ impl EnableBankingConnector {
             let mut skipped_unreadable = 0u32;
             let mut ids = super::ContentIds::default();
             // A later page failing keeps the earlier ones (logged by `list_transactions`).
-            let booked_since = ctx
-                .bounded_history_from
-                .as_deref()
-                .map_or(since.as_str(), |floor| {
-                    ctx.since_for(&external_ref).max(floor)
-                });
+            let booked_since = booked_history_start(ctx, &since);
             let listed = self
                 .list_transactions(&uid, &format!("date_from={booked_since}"), TX_MAX_PAGES)
                 .await?;
@@ -1735,6 +1726,14 @@ impl EnableBankingConnector {
             Ok(complete)
         }
     }
+}
+
+/// A pending bounded fetch starts at its selected date, even after a partial
+/// fetch has already advanced the newest local booking past that date.
+fn booked_history_start<'a>(ctx: &'a ConnectContext, ordinary_since: &'a str) -> &'a str {
+    ctx.bounded_history_from
+        .as_deref()
+        .unwrap_or(ordinary_since)
 }
 
 /// Records whose booking history is complete after a fetch (`listed`: uid →
@@ -2155,6 +2154,19 @@ impl EnableBankingEnrollment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_history_starts_at_the_selected_date_during_incremental_sync() {
+        let mut ctx = ConnectContext {
+            bounded_history_from: Some("2025-11-12".into()),
+            ..Default::default()
+        };
+        assert!(!ctx.full_fetch);
+        assert_eq!(booked_history_start(&ctx, "2026-10-31"), "2025-11-12");
+        assert_eq!(booked_history_start(&ctx, "2025-10-01"), "2025-11-12");
+        ctx.bounded_history_from = None;
+        assert_eq!(booked_history_start(&ctx, "2026-10-31"), "2026-10-31");
+    }
 
     #[test]
     fn enrollment_stores_only_the_approved_connection_and_its_selected_key() {
