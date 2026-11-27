@@ -763,6 +763,8 @@ impl BankConnector for FinTsConnector {
                         &[&label, &card_tx, &e],
                     )),
                 }
+                // a debit card adds nothing to the overview and the totals (#967)
+                balance = accounts::card_balance(kind, balance);
             } else {
                 let can_camt = self.bank_supports("HKCAZ")
                     && allowed("HKCAZ")

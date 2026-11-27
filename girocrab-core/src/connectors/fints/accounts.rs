@@ -55,6 +55,19 @@ pub(super) fn card_account_kind(kind: AccountKind, names: &[&str]) -> AccountKin
     }
 }
 
+/// Balance of an account the bank serves through HKKKU/DKKKU, `kind` as
+/// [`card_account_kind`] returned it. A card that stays a Kontokorrent is a debit card:
+/// its bookings are already in the Girokonto's balance, so the amount the bank names for
+/// the card would count twice in the overview and the totals. It is 0, also when nothing
+/// was read (a balance stored while it was led as a credit card must not stay, #967).
+pub(super) fn card_balance(kind: AccountKind, bank: Option<i64>) -> Option<i64> {
+    if kind == AccountKind::Checking {
+        Some(0)
+    } else {
+        bank
+    }
+}
+
 /// Accounts from the UPD (HIUPD) merged with the SEPA account list (HISPA), which adds
 /// BIC and IBAN. Returns (account, upd); HISPA accounts missing from the UPD follow
 /// with `None`. `blz` fills in a bank code the UPD leaves empty.

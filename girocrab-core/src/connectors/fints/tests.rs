@@ -860,6 +860,28 @@ fn card_account_kind_keeps_debit_cards_as_checking() {
 }
 
 #[test]
+fn card_balance_of_a_debit_card_is_zero() {
+    use super::{
+        AccountKind,
+        accounts::{card_account_kind, card_balance},
+    };
+    // #967: the bank's amount for "Mastercard direkt" stays out of overview and totals
+    let debit = card_account_kind(AccountKind::Checking, &["Mastercard direkt", ""]);
+    assert_eq!(card_balance(debit, Some(-12500)), Some(0));
+    // nothing read: 0 replaces a balance stored while it was led as a credit card
+    assert_eq!(card_balance(debit, None), Some(0));
+    // credit cards keep what the bank says, or none (then derived when storing)
+    let credit = card_account_kind(AccountKind::Checking, &["Visa", ""]);
+    assert_eq!(credit, AccountKind::CreditCard);
+    assert_eq!(card_balance(credit, Some(-12500)), Some(-12500));
+    assert_eq!(card_balance(credit, None), None);
+    assert_eq!(
+        card_balance(AccountKind::CreditCard, Some(-4200)),
+        Some(-4200)
+    );
+}
+
+#[test]
 fn builds_dkkku_with_ktv_and_hkkku_with_kti() {
     let acc = sepa_acc("", "5232000011112222");
     assert_eq!(
