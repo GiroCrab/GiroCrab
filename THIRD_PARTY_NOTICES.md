@@ -27,7 +27,7 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 | **`pbkdf2`** | `0.13.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/password-hashes](https://github.com/RustCrypto/password-hashes) |
 | **`qrcode`** (GiroCode / EPC QR matrix, #663) | `0.14.1` | `MIT OR Apache-2.0` | [https://github.com/kennytm/qrcode-rust](https://github.com/kennytm/qrcode-rust) |
 | **`rand`** | `0.9.5` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
-| **`rand`** | `0.10.3` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
+| **`rand`** | `0.10.4` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
 | **`regex`** | `1.13.1` | `MIT OR Apache-2.0` | [https://github.com/rust-lang/regex](https://github.com/rust-lang/regex) |
 | **`reqwest`** | `0.13.5` | `MIT OR Apache-2.0` | [https://github.com/seanmonstar/reqwest](https://github.com/seanmonstar/reqwest) |
 | **`rsa`** | `0.10.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/RSA](https://github.com/RustCrypto/RSA) |
@@ -307,7 +307,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | `r-efi` | `5.3.0` | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | [Repo](https://github.com/r-efi/r-efi) |
 | `r-efi` | `6.0.0` | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | [Repo](https://github.com/r-efi/r-efi) |
 | `rand` | `0.9.5` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
-| `rand` | `0.10.3` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
+| `rand` | `0.10.4` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
 | `rand_chacha` | `0.9.0` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers, Th) |
 | `rand_core` | `0.9.5` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
 | `rand_core` | `0.10.1` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand_core) (The Rand Project Developers) |
