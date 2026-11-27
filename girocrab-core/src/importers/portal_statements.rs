@@ -326,7 +326,10 @@ fn rejected_entries(v: &serde_json::Value, under_entry: bool, out: &mut HashSet<
                 .find_map(pdf_link)
                 .is_some()
                 || m.values().find_map(pdf_in).is_some();
-            if !under && !has_pdf && let Some(id) = document_id(m) {
+            if !under
+                && !has_pdf
+                && let Some(id) = document_id(m)
+            {
                 out.insert(id.to_string());
             }
             m.values().for_each(|val| rejected_entries(val, under, out));
