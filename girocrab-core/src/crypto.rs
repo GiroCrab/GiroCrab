@@ -284,6 +284,9 @@ pub(crate) fn materialize(
         "UPDATE accounts SET balance_cents = ?1, balance_date = ?2 WHERE id = ?3",
         params![total, today_iso(), account_id],
     )?;
+    if fresh.is_some_and(|f| f.is_empty()) {
+        return Ok(()); // a vault merge: no observation of its own, not even a closing total
+    }
     let observed_now =
         |p: &CryptoPosition| p.price_eur.is_some() && fresh.is_none_or(|f| f.contains(&p.symbol));
     let priced: Vec<&Holding> = holdings

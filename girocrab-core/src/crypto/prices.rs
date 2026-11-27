@@ -11,7 +11,8 @@ use std::collections::HashSet;
 use super::{holders_of, materialize, normalize_symbol};
 use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
-use crate::i18n::trf;
+use crate::i18n::{tr, trf};
+use crate::sync_log::{SyncLogOutcome, SyncLogSource};
 use crate::vault::Vault;
 
 const SPOT_URL: &str = "https://api.coinbase.com/v2/prices";
@@ -128,11 +129,26 @@ impl Vault {
                 }
             }
         }
-        let db = self.db()?;
-        let tx = db.unchecked_transaction()?;
-        out.updated = store_prices(&tx, &prices)?;
-        tx.commit()?;
-        Ok(out)
+        let stored = (|| {
+            let db = self.db()?;
+            let tx = db.unchecked_transaction()?;
+            let n = store_prices(&tx, &prices)?;
+            tx.commit()?;
+            Ok::<_, CoreError>(n)
+        })();
+        // logged once the transaction is done and the vault free again
+        match stored {
+            Ok(n) => {
+                out.updated = n;
+                let (outcome, message) = refresh_outcome(&out);
+                self.log_price_fetch(outcome, message, n);
+                Ok(out)
+            }
+            Err(e) => {
+                self.log_price_fetch(SyncLogOutcome::Error, refresh_message(&e.to_string()), 0);
+                Err(e)
+            }
+        }
     }
 
     /// Fetches and stores the EUR price of one ticker, e.g. before a new
@@ -141,6 +157,27 @@ impl Vault {
     /// still be saved, without a price).
     pub async fn fetch_crypto_price(&self, symbol: String) -> Result<f64, CoreError> {
         let symbol = normalize_symbol(&symbol)?;
+        let result = self.fetch_and_store(symbol).await;
+        match &result {
+            Ok(_) => {
+                self.log_price_fetch(SyncLogOutcome::Ok, tr("Crypto-Kurs abgerufen").into(), 1)
+            }
+            Err(e) => {
+                self.log_price_fetch(SyncLogOutcome::Error, refresh_message(&e.to_string()), 0)
+            }
+        }
+        result
+    }
+}
+
+impl Vault {
+    /// A price fetch in the Abrufprotokoll (no bank connection). Logging never
+    /// fails the fetch: a log that cannot be written is left out.
+    fn log_price_fetch(&self, outcome: SyncLogOutcome, message: String, imported: u32) {
+        let _ = self.log_sync(None, SyncLogSource::Manual, outcome, message, imported);
+    }
+
+    async fn fetch_and_store(&self, symbol: String) -> CoreResult<f64> {
         let spot = fetch_spot(&client()?, &symbol).await?;
         // stamped on receipt, not after waiting for the vault (see `store_prices`)
         let received_ms = now_ms();
@@ -159,6 +196,29 @@ impl Vault {
         tx.commit()?;
         Ok(price)
     }
+}
+
+fn refresh_message(detail: &str) -> String {
+    trf("Crypto-Kurse: {0}", &[&detail])
+}
+
+/// How a bulk refresh goes into the Abrufprotokoll: counts and the first
+/// network problem, no tickers (they say what the user holds).
+fn refresh_outcome(r: &CryptoPriceRefresh) -> (SyncLogOutcome, String) {
+    let failed = r.unknown.len() + usize::from(r.error.is_some());
+    let mut message = trf("Crypto-Kurse: {0} aktualisiert", &[&r.updated]);
+    if !r.unknown.is_empty() {
+        message.push_str(&trf(", {0} ohne Euro-Kurs", &[&r.unknown.len()]));
+    }
+    if let Some(e) = &r.error {
+        message.push_str(&format!(" – {e}"));
+    }
+    let outcome = match (failed, r.updated) {
+        (0, _) => SyncLogOutcome::Ok,
+        (_, 0) => SyncLogOutcome::Error,
+        _ => SyncLogOutcome::Partial,
+    };
+    (outcome, message)
 }
 
 #[cfg(test)]
@@ -287,5 +347,37 @@ mod tests {
             "no observation from the cached price"
         );
         assert_eq!(count("total", ""), total, "no total with a cached price");
+    }
+
+    #[test]
+    fn the_log_says_how_a_refresh_went_without_naming_tickers() {
+        let r = |updated, unknown: &[&str], error: Option<&str>| CryptoPriceRefresh {
+            updated,
+            unknown: unknown.iter().map(|s| s.to_string()).collect(),
+            error: error.map(str::to_string),
+        };
+        assert_eq!(refresh_outcome(&r(2, &[], None)).0, SyncLogOutcome::Ok);
+        let (outcome, message) = refresh_outcome(&r(1, &["XYZQQ"], Some("timeout")));
+        assert_eq!(outcome, SyncLogOutcome::Partial);
+        assert!(!message.contains("XYZQQ"), "{message}");
+        assert!(message.contains("timeout"), "{message}");
+        assert_eq!(
+            refresh_outcome(&r(0, &[], Some("offline"))).0,
+            SyncLogOutcome::Error
+        );
+    }
+
+    #[test]
+    fn a_failed_price_fetch_lands_in_the_sync_log() {
+        // synthetic data
+        let p = crate::test_support::thread_temp_path("crypto-log.db");
+        let v = Vault::open(p.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
+        v.log_price_fetch(SyncLogOutcome::Error, refresh_message("offline"), 0);
+        let rows = v
+            .list_sync_log(crate::sync_log::SyncLogFilter::default())
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].outcome, SyncLogOutcome::Error);
+        assert!(rows[0].message.starts_with("Crypto-Kurse"));
     }
 }

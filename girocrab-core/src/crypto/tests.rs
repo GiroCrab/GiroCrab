@@ -768,3 +768,28 @@ fn a_merged_price_updates_the_balance_but_records_no_observation() {
     assert_eq!(balance(&a, acc), 90_000_00);
     assert_eq!(count(), before);
 }
+
+#[test]
+fn a_merge_removing_the_last_position_records_nothing_of_its_own() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    price(&a, "BTC", 80_000.0);
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    let (b, _pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    a.delete_crypto_position(acc, "BTC".into()).unwrap();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    assert_eq!(balance(&b, bacc), 0);
+    // B holds exactly A's observations (the closing 0 included), none of its own
+    let count = |v: &Vault| -> i64 {
+        v.db()
+            .unwrap()
+            .query_row("SELECT count(*) FROM depot_observations", [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(count(&b), count(&a));
+}
