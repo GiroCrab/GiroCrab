@@ -356,9 +356,16 @@ extension AppModel {
                 self.recurring = loaded.recurring.series
                 self.recurringHidden = loaded.recurring.ignored
                 self.recurringMonth = loaded.recurring.month
+                // A sync or merge (`keepingShown`) may have filled a category of the booking filter,
+                // also outside the period the category list counts, so it always reloads the set.
+                // The set depends on the scope only, not on period or accounts: a plain selection
+                // change (other amounts, same categories) skips the full scan; only a changed set of
+                // categories reloads it. Edits reload it themselves.
+                let categoriesChanged = self.categories.map(\.id) != loaded.categories.map(\.id)
                 self.categories = loaded.categories
                 self.uncategorizedFilteredCount = loaded.uncategorized
                 self.categoryTree = Self.buildTree(loaded.categories)
+                if keepingShown || categoriesChanged { self.loadScopeCategories() }
                 self.history = Self.trimmedHistory(loaded.history, from: from, to: to)
                 self.categoryHistory = loaded.categoryHistory
                 self.categoryOtherCurrencies = loaded.otherCurrencies
@@ -390,6 +397,18 @@ extension AppModel {
         if viewSwitchPending { selectedBookingID = nil }
         viewSwitchPending = false
         errorMessage = describe(error)
+    }
+
+    /// Switches the booking filter ("Alle Buchungen" / "Alltag & Konsum" / "Sparpläne & Perks") as set by a
+    /// UI control: a chosen category would narrow the new filter to its bookings and often leave
+    /// the list empty, so it ends and the filter shows all its bookings first.
+    func selectScope(_ newScope: BookingScope) {
+        guard newScope != scope else { return }
+        switch sidebarSelection {
+        case .category, .uncategorized: interactiveSidebarSelection = .allAccounts
+        default: break
+        }
+        scope = newScope
     }
 
     // MARK: - Merchant list (GitHub #495)

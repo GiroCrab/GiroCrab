@@ -250,16 +250,19 @@ pub fn parse_response(data: &[u8]) -> CoreResult<Vec<Segment>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn unmappable_characters_keep_the_framing() {
         // "€" is not in ISO 8859-1: it must not become a bare escape character
         assert_eq!(to_latin1("a€b"), b"a??b".to_vec());
         let seg = to_latin1(&escape("Preis 5€ + Porto"));
-        // the '+' is escaped, the '€' is a literal '?'
+        // the '+' is escaped, the '€' becomes the escaped literal '??' (one '?')
         assert_eq!(seg, b"Preis 5?? ?+ Porto".to_vec());
+        let parsed = parse(b"HKTST:2:1+Preis 5?? ?+ Porto'").unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].get(1, 0), "Preis 5? + Porto");
     }
-
-    use super::*;
 
     #[test]
     fn roundtrip_escape_and_binary() {
@@ -295,6 +298,37 @@ mod tests {
         assert_eq!(esc, b"HKTST:2:1+foo?+'".to_vec());
         let parsed_esc = parse(&esc).unwrap();
         assert_eq!(parsed_esc[0].get(1, 0), "foo+");
+    }
+
+    #[test]
+    fn hnsha_keeps_pin_ending_in_plus_1726() {
+        // Same shape as dialog.rs: ctrl ref, empty custom signature, escaped PIN (+ TAN).
+        let pin = escape("test1+");
+        let seg = SegmentBuilder::new("HNSHA", 5, 2)
+            .raw("4711")
+            .raw("")
+            .raw(&pin)
+            .build();
+        assert_eq!(seg, b"HNSHA:5:2+4711++test1?+'".to_vec());
+        let parsed = parse(&seg).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].get(3, 0), "test1+");
+
+        let with_tan = SegmentBuilder::new("HNSHA", 5, 2)
+            .raw("4711")
+            .raw("")
+            .raw(&format!("{}:{}", escape("test1+"), escape("123456")))
+            .build();
+        assert_eq!(with_tan, b"HNSHA:5:2+4711++test1?+:123456'".to_vec());
+
+        // A PIN made only of '+' followed by empty trailing elements stays intact.
+        let only_plus = SegmentBuilder::new("HKTST", 2, 1)
+            .de(&["++"])
+            .raw("")
+            .raw("")
+            .build();
+        assert_eq!(only_plus, b"HKTST:2:1+?+?+'".to_vec());
+        assert_eq!(parse(&only_plus).unwrap()[0].get(1, 0), "++");
     }
 
     #[test]
