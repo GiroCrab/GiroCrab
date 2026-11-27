@@ -16,6 +16,8 @@ use crate::sync_log::{SyncLogOutcome, SyncLogSource};
 use crate::vault::Vault;
 
 const SPOT_URL: &str = "https://api.coinbase.com/v2/prices";
+/// Prices above this cannot be held in cents per unit (the vault merge applies the same bound).
+const MAX_PRICE_EUR: f64 = 1e15;
 
 /// What [`Vault::refresh_crypto_prices`] did.
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
@@ -35,6 +37,10 @@ enum Spot {
     Unknown,
 }
 
+fn valid_price(eur: f64) -> bool {
+    eur.is_finite() && eur > 0.0 && eur < MAX_PRICE_EUR
+}
+
 /// `{"data":{"amount":"56537.74","base":"BTC","currency":"EUR"}}` → 56537.74.
 fn parse_spot(body: &str, symbol: &str) -> CoreResult<f64> {
     let bad = || CoreError::Network {
@@ -48,7 +54,7 @@ fn parse_spot(body: &str, symbol: &str) -> CoreResult<f64> {
     data["amount"]
         .as_str()
         .and_then(|a| a.parse::<f64>().ok())
-        .filter(|p| p.is_finite() && *p > 0.0)
+        .filter(|p| valid_price(*p))
         .ok_or_else(bad)
 }
 
@@ -80,10 +86,15 @@ pub(super) type Quote = (String, f64, i64);
 pub(super) fn store_prices(conn: &Connection, quotes: &[Quote]) -> CoreResult<u32> {
     let mut fresh = HashSet::new();
     for (symbol, eur, received_ms) in quotes {
+        if !valid_price(*eur) {
+            continue;
+        }
+        // on equal stamps the higher price, like the vault merge: the result never depends on order
         let n = conn.execute(
             "INSERT INTO crypto_prices(symbol, price_eur, fetched_ms) VALUES (?1, ?2, ?3)
              ON CONFLICT(symbol) DO UPDATE SET price_eur = excluded.price_eur, fetched_ms = excluded.fetched_ms
-              WHERE excluded.fetched_ms > crypto_prices.fetched_ms",
+              WHERE excluded.fetched_ms > crypto_prices.fetched_ms
+                 OR (excluded.fetched_ms = crypto_prices.fetched_ms AND excluded.price_eur > crypto_prices.price_eur)",
             params![symbol, eur, received_ms],
         )?;
         if n > 0 {
@@ -235,6 +246,7 @@ mod tests {
             r#"{"data":{"amount":"1.5","base":"SHIB","currency":"USD"}}"#, // other currency
             r#"{"data":{"amount":"0","base":"SHIB","currency":"EUR"}}"#,  // no price
             r#"{"data":{"amount":"abc","base":"SHIB","currency":"EUR"}}"#,
+            r#"{"data":{"amount":"1e100","base":"SHIB","currency":"EUR"}}"#, // beyond cents
             r#"{"error":"not found"}"#,
             "<html>",
         ] {
@@ -379,5 +391,32 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].outcome, SyncLogOutcome::Error);
         assert!(rows[0].message.starts_with("Crypto-Kurse"));
+    }
+
+    #[test]
+    fn equal_stamps_keep_the_higher_price_in_any_order_and_bad_prices_are_skipped() {
+        let p = crate::test_support::thread_temp_path("crypto-ties.db");
+        let v = Vault::open(p.to_string_lossy().to_string(), vec![7u8; 32]).unwrap();
+        let db = v.db().unwrap();
+        let stored = |sym: &str| -> f64 {
+            db.query_row(
+                "SELECT price_eur FROM crypto_prices WHERE symbol = ?1",
+                [sym],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        store_prices(
+            &db,
+            &[("BTC".into(), 50_000.0, 7), ("BTC".into(), 60_000.0, 7)],
+        )
+        .unwrap();
+        store_prices(
+            &db,
+            &[("ETH".into(), 3_000.0, 7), ("ETH".into(), 2_000.0, 7)],
+        )
+        .unwrap();
+        assert_eq!((stored("BTC"), stored("ETH")), (60_000.0, 3_000.0));
+        assert_eq!(store_prices(&db, &[("XRP".into(), 1e100, 8)]).unwrap(), 0);
     }
 }
