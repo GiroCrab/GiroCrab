@@ -35,4 +35,14 @@ final class ConsentRedirectTests: XCTestCase {
         XCTAssertFalse(ConsentRedirect.matches(try XCTUnwrap(URL(string: "https://localhost/girocrab/callback?code=1")), redirect: custom))
         XCTAssertFalse(ConsentRedirect.matches(try XCTUnwrap(URL(string: "https://localhost/x?code=1")), redirect: "kein url"))
     }
+
+    func testMainFrameAllowsOnlyHTTPS() throws {
+        for s in ["https://example.org/login", "HTTPS://example.org", "about:blank"] {
+            XCTAssertTrue(ConsentRedirect.allowsMainFrame(URL(string: s)), s)
+        }
+        for s in ["http://example.org", "file:///etc/hosts", "javascript:alert(1)", "data:text/html,x", "tel:123", "myapp://x"] {
+            XCTAssertFalse(ConsentRedirect.allowsMainFrame(URL(string: s)), s)
+        }
+        XCTAssertFalse(ConsentRedirect.allowsMainFrame(nil))
+    }
 }

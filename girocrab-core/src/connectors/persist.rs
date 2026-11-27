@@ -75,6 +75,10 @@ fn kept_purchase_for<'a>(
 /// One-time migration of ids from older versions: a booking stored under a
 /// legacy content id (`h…`, `DefaultHasher` / list position) with exactly the
 /// same content gets the new id instead of being imported a second time.
+/// Older versions stored the `Cdtr`/`Dbtr` name, so a booking whose ultimate
+/// party replaced it matches by `original_counterparty` (#1721). The IBAN alone
+/// is no identity: another booking at the same payment provider can share it
+/// and every other compared field.
 /// The caller checks that no row holds the new id yet: the UPDATE would hit
 /// the unique key. Returns true when a row was adopted.
 fn adopt_legacy_content_id(
@@ -92,8 +96,11 @@ fn adopt_legacy_content_id(
               WHERE id = (SELECT id FROM transactions
                            WHERE account_id = ?2 AND external_id GLOB ?3
                              AND booking_date = ?4 AND value_date = ?5 AND amount_cents = ?6
-                             AND counterparty = ?7 AND purpose = ?8
-                           ORDER BY id LIMIT 1)",
+                             AND purpose = ?8
+                             AND (counterparty = ?7
+                                  OR (?9 != '' AND counterparty = ?9))
+                           ORDER BY (?9 != '' AND counterparty = ?9) DESC,
+                                    (counterparty = ?7) DESC, id LIMIT 1)",
         )?
         .execute(params![
             t.external_id,
@@ -103,10 +110,64 @@ fn adopt_legacy_content_id(
             t.value_date,
             t.amount_cents,
             t.counterparty,
-            t.purpose
+            t.purpose,
+            t.original_counterparty
         ])?;
     Ok(n > 0)
 }
+
+/// Safety net for every connector: repairs UTF-8/Latin-1 mojibake in a
+/// fetched booking's texts. Includes `original_counterparty`, since older
+/// versions stored that name cleaned and legacy ids are adopted by it (#1721).
+/// The id stays as it is: `external_id` is not recomputed here, and
+/// `original_counterparty` is not part of the content key (booking and value
+/// date, amount, counterparty, purpose).
+fn clean_fetched_text(t: &mut RemoteTransaction) {
+    t.counterparty = crate::text::clean_bank_text(&t.counterparty);
+    t.original_counterparty = crate::text::clean_bank_text(&t.original_counterparty);
+    t.purpose = crate::text::clean_bank_text(&t.purpose);
+    t.booking_text = crate::text::clean_bank_text(&t.booking_text);
+}
+
+/// The ultimate party's name (#1721) for a known booking that still holds the
+/// `Cdtr`/`Dbtr` name an older version stored; `None` for any other stored
+/// name, so names from other sources stay untouched.
+fn ultimate_rename<'a>(stored: &str, t: &'a RemoteTransaction) -> Option<&'a str> {
+    let original = t.original_counterparty.trim();
+    let fresh = t.counterparty.trim();
+    (!original.is_empty() && !fresh.is_empty() && original != fresh && stored.trim() == original)
+        .then_some(t.counterparty.as_str())
+}
+
+/// A MoneyMoney row that just took over a fetched booking (adoption or twin
+/// merge) gets the ultimate party's name like a known row in
+/// [`refresh_existing`] (#1721), but only while it still holds exactly the
+/// ordinary name. Only the counterparty changes: category, note and the other
+/// manual fields stay.
+fn rename_taken_over(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+) -> CoreResult<()> {
+    let Some(name) = ultimate_rename(&t.original_counterparty, t) else {
+        return Ok(());
+    };
+    tx.prepare_cached(
+        "UPDATE transactions SET counterparty = ?1
+          WHERE account_id = ?2 AND external_id = ?3 AND deleted_ms IS NULL
+            AND trim(counterparty) = ?4",
+    )?
+    .execute(params![
+        name,
+        account_id,
+        t.external_id,
+        t.original_counterparty.trim()
+    ])?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod legacy_adoption_tests;
 
 /// The row stored under a fetched booking's `(account_id, external_id)`,
 /// soft-deleted ones included: the one read that decides whether the booking
@@ -187,7 +248,10 @@ fn refresh_existing(
     // likewise a booking text, e.g. the booking key of a Hanseatic interest booking
     let [text] = fill([&s.booking_text], [&t.booking_text]);
     let set = [
-        heal(&s.counterparty, &t.counterparty).or(named),
+        // an ultimate party replaces the `Cdtr`/`Dbtr` name an older version stored (#1721)
+        heal(&s.counterparty, &t.counterparty)
+            .or(named)
+            .or_else(|| ultimate_rename(&s.counterparty, t)),
         heal(&s.purpose, &t.purpose),
         code,
         gvc,
@@ -302,9 +366,7 @@ pub(crate) fn store_fetch(
             a.owner = crate::text::clean_bank_text(&a.owner);
         }
         for t in &mut data.transactions {
-            t.counterparty = crate::text::clean_bank_text(&t.counterparty);
-            t.purpose = crate::text::clean_bank_text(&t.purpose);
-            t.booking_text = crate::text::clean_bank_text(&t.booking_text);
+            clean_fetched_text(t);
         }
         // A connector without a bank id must not collapse bookings into one
         // `(account, "")` row: give them a deterministic content id instead.
@@ -730,6 +792,9 @@ pub(crate) fn store_fetch(
         }
         let match_rules = super::document_matching::rules_for_connection(&tx, connection_id, kind)?;
         let mut new_booking_ids = HashSet::new();
+        // every booking this fetch inserted or adopted from an import (settles planned
+        // payments, #1881)
+        let mut inserted_ids = HashSet::new();
         let mut changed_document_ids = HashSet::new();
         let mut imported = 0u32;
         let mut skipped_archived = 0u32;
@@ -767,24 +832,27 @@ pub(crate) fn store_fetch(
                     // it, anything else is refreshed.
                     Some(stored) => {
                         if hold
-                            || !crate::importers::moneymoney_import::merge_synced_twin(
+                            || !crate::importers::moneymoney_import::merge_synced_twin_or_original(
                                 &tx,
                                 stored.id,
                                 &t.booking_date,
                                 t.amount_cents,
                                 &t.counterparty_iban,
                                 &t.counterparty,
+                                &t.original_counterparty,
                                 &t.purpose,
                             )?
                         {
                             refresh_existing(&tx, &stored, t)?;
+                        } else {
+                            rename_taken_over(&tx, *acc_id, t)?;
                         }
                     }
                     // New: adopt the row imported from MoneyMoney (keeps category +
                     // note), else insert it.
                     None => {
-                        if hold
-                            || !crate::importers::moneymoney_import::adopt_import(
+                        let adopted = !hold
+                            && crate::importers::moneymoney_import::adopt_import_or_original(
                                 &tx,
                                 *acc_id,
                                 &t.external_id,
@@ -792,10 +860,14 @@ pub(crate) fn store_fetch(
                                 t.amount_cents,
                                 &t.counterparty_iban,
                                 &t.counterparty,
+                                &t.original_counterparty,
                                 &t.purpose,
                                 &t.booking_text,
-                            )?
-                        {
+                            )?;
+                        if adopted {
+                            rename_taken_over(&tx, *acc_id, t)?;
+                        }
+                        if !adopted {
                             ins.execute(params![
                                 acc_id,
                                 t.external_id,
@@ -817,6 +889,7 @@ pub(crate) fn store_fetch(
                             if match_rules.is_some() && !hold {
                                 new_booking_ids.insert(tx.last_insert_rowid());
                             }
+                            inserted_ids.insert(tx.last_insert_rowid());
                             imported += 1;
                             if t.checked {
                                 tx.prepare_cached(
@@ -830,10 +903,12 @@ pub(crate) fn store_fetch(
                                 )?
                                 .execute(params![t.amount_cents, t.booking_date, acc_id])?;
                             }
-                        } else if match_rules.is_some()
-                            && let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)?
-                        {
-                            new_booking_ids.insert(adopted.id);
+                        } else if let Some(adopted) = Stored::read(&tx, *acc_id, &t.external_id)? {
+                            // an adopted import is new to this fetch as well (#1881)
+                            inserted_ids.insert(adopted.id);
+                            if match_rules.is_some() {
+                                new_booking_ids.insert(adopted.id);
+                            }
                         }
                     }
                 }
@@ -1161,6 +1236,9 @@ pub(crate) fn store_fetch(
                 &changed_document_ids,
                 &new_booking_ids,
             )?;
+        }
+        for id in account_ids.values() {
+            crate::planned::drop_booked(&tx, *id, &inserted_ids)?;
         }
         let categorized = Vault::apply_rules_inner(&tx, true)?;
         if let Some(state) = &data.state {
@@ -2069,6 +2147,7 @@ impl Vault {
         }
         let (connection_id, iban, owner, key_str, kind, demo) =
             self.transfer_source(request.account_id, demo)?;
+        self.ensure_savings_transfer_to_own_checking(request.account_id, &request.recipient_iban)?;
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2169,6 +2248,23 @@ impl Vault {
                 "Sammelüberweisungen sind nur für FinTS-Konten möglich.",
             )));
         }
+        // A savings account only books to own checking accounts: every payment counts (#1893).
+        // The eligible IBANs are loaded once; the first foreign payment aborts with its position.
+        if let Some(own) = self.savings_own_checking_ibans(request.account_id)? {
+            for (i, p) in request.payments.iter().enumerate() {
+                if !own.contains(&normalize_iban(&p.iban)) {
+                    return Err(CoreError::invalid(trf(
+                        "Zahlung {0}: {1}",
+                        &[
+                            &(i + 1),
+                            &tr(
+                                "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich.",
+                            ),
+                        ],
+                    )));
+                }
+            }
+        }
         let exec_date = request
             .execution_date
             .as_deref()
@@ -2256,6 +2352,8 @@ impl Vault {
                 if !validate_iban(&recipient_iban) {
                     return Err(CoreError::invalid(tr("Die Empfänger-IBAN ist ungültig.")));
                 }
+                // Create/Change only; Delete stays possible so existing orders can be cancelled (#1893).
+                self.ensure_savings_transfer_to_own_checking(request.account_id, &recipient_iban)?;
                 if request.amount_cents <= 0 {
                     return Err(CoreError::invalid(tr("Der Betrag muss größer als 0 sein.")));
                 }
@@ -2475,6 +2573,53 @@ impl Vault {
 }
 
 impl Vault {
+    /// A savings account (Tagesgeld) only books to the user's own active checking accounts (#582, #1893).
+    /// Enforced here so no front end can send it to a third party.
+    fn ensure_savings_transfer_to_own_checking(
+        &self,
+        account_id: i64,
+        recipient_iban: &str,
+    ) -> CoreResult<()> {
+        match self.savings_own_checking_ibans(account_id)? {
+            Some(own) if !own.contains(&normalize_iban(recipient_iban)) => Err(CoreError::invalid(
+                tr("Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich."),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// `None` when `account_id` is not a savings account (or unknown: `transfer_source`
+    /// reports that); otherwise the normalized IBANs of the user's own active checking accounts.
+    fn savings_own_checking_ibans(
+        &self,
+        account_id: i64,
+    ) -> CoreResult<Option<std::collections::HashSet<String>>> {
+        let rows: Vec<(i64, String, String, bool)> = {
+            let db = self.db()?;
+            let mut stmt = db.prepare(
+                "SELECT id, kind, iban, archived_unix IS NOT NULL FROM accounts WHERE deleted_ms IS NULL",
+            )?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let Some((_, kind, _, _)) = rows.iter().find(|r| r.0 == account_id) else {
+            return Ok(None);
+        };
+        if AccountKind::from_str(kind) != AccountKind::Savings {
+            return Ok(None);
+        }
+        Ok(Some(
+            rows.iter()
+                .filter(|(id, k, _, archived)| {
+                    *id != account_id
+                        && !archived
+                        && AccountKind::from_str(k) == AccountKind::Checking
+                })
+                .map(|(_, _, iban, _)| normalize_iban(iban))
+                .collect(),
+        ))
+    }
+
     /// Debit account of a transfer: connection, IBAN, owner, connector and the
     /// gate/kind checks shared by single and batch transfers.
     #[allow(clippy::type_complexity)]

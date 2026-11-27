@@ -301,7 +301,7 @@ private final class PortalNavigationGuard: NSObject, WKNavigationDelegate {
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard navigationAction.targetFrame?.isMainFrame ?? true else { decisionHandler(.allow); return }
         let url = navigationAction.request.url
-        if url?.absoluteString == "about:blank" || url?.scheme?.lowercased() == "https" {
+        if ConsentRedirect.allowsMainFrame(url) {
             browser?.blockedHost = nil
             decisionHandler(.allow)
             return
@@ -522,9 +522,15 @@ final class PortalBrowser {
         return list
     }
 
-    /// Types user name and password into the visible login form (empty fields only).
-    /// Runs in an isolated script world, so the page's scripts never get the values
-    /// as arguments; does not submit.
+    /// Types user name and password into the visible login form, each into an empty field
+    /// only: what the user typed stays. The password value never leaves the script (only its
+    /// emptiness is tested, the result is a Bool; `scripts/lint-webview-security.sh`).
+    /// True also when the form already holds another user name (someone else signs in):
+    /// nothing is written and the autofill ends instead of retrying on every poll.
+    /// An empty password only fills the user name — two-step logins (e-mail first,
+    /// password on the next page) have no visible password field there. Otherwise a
+    /// visible password field is required. Runs in an isolated script world, so the
+    /// page's scripts never get the values as arguments; does not submit.
     func fillLogin(user: String, password: String) async -> Bool {
         guard onPortal else { return false }
         let js = """
@@ -535,23 +541,44 @@ final class PortalBrowser {
         });
         if (location.protocol !== 'https:' || !allowed) return false;
         var vis = function(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-        var pw = Array.prototype.find.call(document.querySelectorAll('input[type=password]'), vis);
-        if (!pw) return false;
+        var editable = function(i) { return !i.disabled && !i.readOnly; };
+        var pw = Array.prototype.filter.call(document.querySelectorAll('input[type=password]'),
+          function(i) { return vis(i) && editable(i); })[0] || null;
+        if (password && !pw) return false;
         var texts = Array.prototype.filter.call(document.querySelectorAll('input'), function(i) {
-          return vis(i) && /^(text|email|tel)?$/i.test(i.getAttribute('type') || ''); });
+          return vis(i) && editable(i) && /^(text|email|tel)?$/i.test(i.getAttribute('type') || ''); });
         var named = texts.find(function(i) {
           return /user|login|benutzer/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || '')); });
-        var before = texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; });
+        // a username-only page (the password comes on the next one) names its
+        // field e-mail — or none of it, and the field is just typed `email`.
+        // A newsletter box elsewhere on the page must not win: candidates from
+        // a form with a submit button (there the last editable e-mail); outside
+        // such a form only when it is the page's single editable e-mail field
+        if (!pw) {
+          var mailish = function(i) {
+            return /email/i.test((i.id || '') + ' ' + (i.name || '') + ' ' + (i.getAttribute('autocomplete') || ''))
+              || (i.getAttribute('type') || '').toLowerCase() === 'email'; };
+          var inLoginForm = function(i) {
+            var f = i.closest && i.closest('form');
+            return !!f && !!f.querySelector('button[type=submit], input[type=submit], button:not([type])'); };
+          var mails = texts.filter(function(i) { return mailish(i) && inLoginForm(i); });
+          var anyMails = texts.filter(mailish);
+          named = named || mails[mails.length - 1] || (anyMails.length === 1 ? anyMails[0] : null);
+        }
+        var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
         var set = function(el, v) {
-          if (el.value) return;
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
           el.dispatchEvent(new Event('input', {bubbles: true}));
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
-        if (u) set(u, user);
-        set(pw, password);
-        return true;
+        // another user name is typed in: someone else signs in, write nothing and end
+        // the autofill (false would retry this page on every poll)
+        if (u && u.value && u.value !== user) return true;
+        if (u && !u.value) set(u, user);
+        // a password the user already typed stays; only its emptiness is checked
+        if (pw && password && pw.value === '') set(pw, password);
+        return pw ? true : !!u;
         """
         return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password,
                                                                                "domains": domains.domains],
@@ -832,6 +859,9 @@ struct PortalWebSheet: View {
     @State private var cardsSince: Date?
     /// Amex: the stored login was filled in (or there is none): not tried again.
     @State private var loginFilled = false
+    /// Amex: polls that found the vault unanswered — ends the retry after a while
+    /// (a vault that stays closed would otherwise be read and logged forever).
+    @State private var missingTries = 0
     /// Amex: statement PDFs are being downloaded before the sheet closes.
     @State private var loadingStatements = false
     /// Amex: statements were loaded with the button: the automatic import still stores
@@ -1143,22 +1173,99 @@ struct PortalWebSheet: View {
             + String(localized: "„Vorerst behalten“ lässt sie als Vormerkung stehen; beim nächsten Abruf wird erneut gesucht.")
     }
 
+    /// What to do with the stored portal login on this poll. `.retry` keeps the poll
+    /// running (the vault has not answered: at app start it opens for a moment;
+    /// treating that as "nothing stored" latched the autofill off for one test run
+    /// and the login form stayed empty after a restart).
+    enum StoredLoginStep {
+        case fill(user: String, password: String)
+        case retry
+        case done
+    }
+
+    static func storedLoginStep(autofillDisabled: Bool, vaultAnswered: Bool,
+                                storedUser: String, password: String,
+                                connectionLogin: String, connectionIsAmazonVisa: Bool,
+                                tryCount: Int = 0) -> StoredLoginStep {
+        if autofillDisabled { return .done }
+        // an unanswered vault is retried (a restart catches it while opening) —
+        // but a vault that stays closed (e.g. a real read error) ends the poll,
+        // or every poll would read again and log for the whole session
+        guard vaultAnswered else { return tryCount < 20 ? .retry : .done }
+        // Amazon Visa already stores the email as the connection login; use it as the
+        // user name only when a password is stored — opting out clears the stored
+        // values but not the autofill flag, so a bare email may never be filled in.
+        let user = storedUser.isEmpty && connectionIsAmazonVisa && !password.isEmpty
+            ? connectionLogin : storedUser
+        // nothing stored (or only a user name that was never given): stop polling
+        guard !user.isEmpty else { return .done }
+        return .fill(user: user, password: password)
+    }
+
     /// Fills the stored user name and password into the portal's login form. True once
-    /// done, or when nothing is stored; false while the form is not there yet.
+    /// done (filled, or the form holds another user's login), or when nothing is stored;
+    /// false while the form is not there yet, the vault has not answered, or privacy
+    /// mode / a bug-report capture hides personal data.
     private func fillStoredLogin() async -> Bool {
-        let id = connection.id
-        guard !AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)) else { return true }
-        let stored = try? await model.vaultOffMain {
-            (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+        // privacy mode or a running bug-report capture: nothing is read or typed now;
+        // the poll goes on and fills once the redaction ends (a transient state must
+        // not end the autofill for the session). The environment value in this
+        // running task is a snapshot of the first render — privacy mode is re-read
+        // from its defaults switch, before the vault read and after it (the read
+        // can outlast the switch).
+        func redactedNow() -> Bool {
+            // the capture redaction live (`ReportRedactionState` mirrors it —
+            // the environment value in this running task is a snapshot of the
+            // first render), privacy mode fresh from its defaults switch, the
+            // launch options are static
+            let scope = (UserDefaults.standard.string(forKey: PrivacyMode.scopeKey))
+                .flatMap(PrivacyMode.Scope.init(rawValue:)) ?? PrivacyMode.defaultScope
+            return !ReportRedactionState.shared.current.isEmpty
+                || !LaunchOptions.current.redaction.isEmpty
+                || PrivacyMode.redaction(
+                    enabled: UserDefaults.standard.bool(forKey: PrivacyMode.enabledKey),
+                    scope: scope) != []
         }
-        guard let (storedUser, password) = stored, !password.isEmpty else { return true }
-        // Amazon Visa already stores the email as the connection login; copy it to
-        // the encrypted portal-login secret when the user opts into saving credentials.
-        let user = storedUser.isEmpty && connection.connector == .amazonVisa ? connection.loginName : storedUser
-        guard !user.isEmpty else { return true }
-        let filled = await browser.fillLogin(user: user, password: password)
-        if filled { AppModel.debugLog("portal: stored login filled in") }
-        return filled
+        guard !redactedNow() else { return false }
+        let id = connection.id
+        var answered = true
+        var storedUser = "", password = ""
+        do {
+            let stored: (String, String)? = try await model.vaultOffMain {
+                (try $0.getSetting(key: AppModel.portalLoginKey(id)) ?? "", try $0.getSetting(key: "pin.conn.\(id)") ?? "")
+            }
+            if let stored {
+                (storedUser, password) = stored
+            } else {
+                answered = false
+            }
+        } catch {
+            answered = false
+        }
+        // privacy turned on while the read was pending: nothing is processed
+        // or typed — the next poll decides fresh
+        guard !redactedNow() else { return false }
+        // the limit counts consecutive unanswered reads: an answered vault
+        // starts fresh, recoveries must not be spent on the earlier gap
+        if answered { missingTries = 0 }
+        let step = Self.storedLoginStep(
+            autofillDisabled: AppDefaults.store.bool(forKey: AppModel.portalLoginAutofillDisabledKey(id)),
+            vaultAnswered: answered, storedUser: storedUser, password: password,
+            connectionLogin: connection.loginName, connectionIsAmazonVisa: connection.connector == .amazonVisa,
+            tryCount: missingTries)
+        switch step {
+        case .done:
+            AppModel.debugLog("portal: stored login autofill ended – \(answered ? "nothing stored or autofill off" : "vault did not answer (\(missingTries) tries)")")
+            return true
+        case .retry:
+            missingTries += 1
+            AppModel.debugLog("portal: stored login not readable yet – read again (\(missingTries).)")
+            return false
+        case let .fill(user, password):
+            let filled = await browser.fillLogin(user: user, password: password)
+            if filled { AppModel.debugLog("portal: stored login autofill finished (password \(password.isEmpty ? "no" : "yes"))") }
+            return filled
+        }
     }
 
     /// Amex: switches the portal to the next card not seen yet. Returns true while
