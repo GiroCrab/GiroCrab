@@ -3966,7 +3966,8 @@ fn database_locked_by_running_moneymoney_is_not_a_wrong_password() {
 }
 
 /// Issue #94: MoneyMoney keeps closed accounts with the same IBAN; they must
-/// not all be merged into the one vault account that has this IBAN.
+/// not all be merged into the one vault account that has this IBAN. Which one is
+/// it, the order in MoneyMoney does not decide: both wait for a choice (#1993).
 #[test]
 fn accounts_sharing_an_iban_are_merged_into_different_vault_accounts() {
     let v = vault();
@@ -3994,8 +3995,14 @@ fn accounts_sharing_an_iban_are_merged_into_different_vault_accounts() {
     let p = v
         .preview_moneymoney_database(path, String::new(), None)
         .unwrap();
-    let ids: Vec<Option<i64>> = p.accounts.iter().map(|a| a.existing_account_id).collect();
-    assert_eq!(ids, vec![Some(existing), None]);
+    let ids: Vec<(Option<i64>, bool)> = p
+        .accounts
+        .iter()
+        .map(|a| (a.existing_account_id, a.target_needs_choice))
+        .collect();
+    assert_eq!(ids, vec![(None, true), (None, true)]);
+    // both may still be pointed at it by hand
+    assert!(v.list_accounts().unwrap().iter().any(|a| a.id == existing));
 }
 
 const WALLET_IBAN: &str = "DE89370400440532013000";

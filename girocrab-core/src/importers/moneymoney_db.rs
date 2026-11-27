@@ -2384,10 +2384,10 @@ struct IbanCandidate {
 /// share one IBAN, so a vault account in another currency or a deleted one is never a
 /// match, and one in the same currency comes before one without a currency. Of equally
 /// good ones a bank-synced account comes first; two left name no target. MoneyMoney
-/// accounts of one currency that want the same account get it in MoneyMoney's order,
-/// the others the next one (#94); of different currencies none of them, so neither the
-/// order of the accounts here nor in MoneyMoney decides. Returns the MoneyMoney
-/// accounts left without a target that need a choice.
+/// accounts that want the same account (a closed and an open one with one IBAN, #94, or
+/// wallets in several currencies) get none of it, so neither the order of the accounts
+/// here nor in MoneyMoney decides. Returns the MoneyMoney accounts left without a target
+/// that need a choice.
 fn match_by_iban(
     conn: &Connection,
     accounts: &[SrcAccount],
@@ -2450,10 +2450,7 @@ fn match_by_iban(
                 break;
             }
             for &(i, c) in &wants {
-                if wants
-                    .iter()
-                    .any(|w| w.1.id == c.id && open[w.0].1 != open[i].1)
-                {
+                if wants.iter().any(|w| w.1.id == c.id && w.0 != i) {
                     ambiguous.insert(open[i].0);
                 } else if claimed.insert(c.id) {
                     out.insert(open[i].0, (c.id, c.name.clone()));
