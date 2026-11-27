@@ -67,6 +67,7 @@ pub enum Command {
     Refresh,
     Import,
     NewTransfer,
+    Palette,
     CloseModal(Modal),
 }
 
@@ -96,7 +97,8 @@ fn normalize(text: &str) -> Option<char> {
 }
 
 /// Routes a key press: Esc closes the top dialog; with a dialog open, nothing else fires.
-/// `Ctrl+F` search, `Ctrl+L` lock, `Ctrl+R` / `F5` refresh, `Ctrl+I` import, `Ctrl+N` transfer.
+/// `Ctrl+F` search, `Ctrl+L` lock, `Ctrl+R` / `F5` refresh, `Ctrl+I` import, `Ctrl+N` transfer,
+/// `Ctrl+K` command palette.
 pub fn route(text: &str, ctrl: bool, ctx: &Context) -> Option<Command> {
     if !ctx.unlocked {
         return None;
@@ -109,6 +111,7 @@ pub fn route(text: &str, ctrl: bool, ctx: &Context) -> Option<Command> {
         return None;
     }
     match (key, ctrl) {
+        ('k', true) => Some(Command::Palette),
         ('f', true) => Some(Command::FocusSearch),
         ('l', true) => Some(Command::Lock),
         ('r', true) | (KEY_F5, _) if !ctx.busy => Some(Command::Refresh),
@@ -255,6 +258,8 @@ mod tests {
         assert_eq!(route("\u{f708}", false, &c), Some(Command::Refresh));
         assert_eq!(route("i", true, &c), Some(Command::Import));
         assert_eq!(route("n", true, &c), Some(Command::NewTransfer));
+        assert_eq!(route("k", true, &c), Some(Command::Palette));
+        assert_eq!(route("\u{b}", true, &c), Some(Command::Palette));
         // upper case (Caps Lock / Shift) and control characters are the same keys
         assert_eq!(route("F", true, &c), Some(Command::FocusSearch));
         assert_eq!(route("\u{6}", true, &c), Some(Command::FocusSearch));
