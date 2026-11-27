@@ -301,7 +301,7 @@ private final class PortalNavigationGuard: NSObject, WKNavigationDelegate {
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         guard navigationAction.targetFrame?.isMainFrame ?? true else { decisionHandler(.allow); return }
         let url = navigationAction.request.url
-        if url?.absoluteString == "about:blank" || url?.scheme?.lowercased() == "https" {
+        if ConsentRedirect.allowsMainFrame(url) {
             browser?.blockedHost = nil
             decisionHandler(.allow)
             return
@@ -522,7 +522,11 @@ final class PortalBrowser {
         return list
     }
 
-    /// Types user name and password into the visible login form (empty fields only).
+    /// Types user name and password into the visible login form, each into an empty field
+    /// only: what the user typed stays. The password value never leaves the script (only its
+    /// emptiness is tested, the result is a Bool; `scripts/lint-webview-security.sh`).
+    /// True also when the form already holds another user name (someone else signs in):
+    /// nothing is written and the autofill ends instead of retrying on every poll.
     /// An empty password only fills the user name — two-step logins (e-mail first,
     /// password on the next page) have no visible password field there. Otherwise a
     /// visible password field is required. Runs in an isolated script world, so the
@@ -564,13 +568,16 @@ final class PortalBrowser {
         var before = pw ? texts.filter(function(i) { return pw.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_PRECEDING; }) : [];
         var u = named || before[before.length - 1];
         var set = function(el, v) {
-          if (el.value) return;
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
           el.dispatchEvent(new Event('input', {bubbles: true}));
           el.dispatchEvent(new Event('change', {bubbles: true}));
         };
-        if (u) set(u, user);
-        if (pw && password) set(pw, password);
+        // another user name is typed in: someone else signs in, write nothing and end
+        // the autofill (false would retry this page on every poll)
+        if (u && u.value && u.value !== user) return true;
+        if (u && !u.value) set(u, user);
+        // a password the user already typed stays; only its emptiness is checked
+        if (pw && password && pw.value === '') set(pw, password);
         return pw ? true : !!u;
         """
         return (try? await webView.callAsyncJavaScript(js, arguments: ["user": user, "password": password,
@@ -1196,8 +1203,9 @@ struct PortalWebSheet: View {
     }
 
     /// Fills the stored user name and password into the portal's login form. True once
-    /// done, or when nothing is stored; false while the form is not there yet, the vault
-    /// has not answered, or privacy mode / a bug-report capture hides personal data.
+    /// done (filled, or the form holds another user's login), or when nothing is stored;
+    /// false while the form is not there yet, the vault has not answered, or privacy
+    /// mode / a bug-report capture hides personal data.
     private func fillStoredLogin() async -> Bool {
         // privacy mode or a running bug-report capture: nothing is read or typed now;
         // the poll goes on and fills once the redaction ends (a transient state must
@@ -1255,7 +1263,7 @@ struct PortalWebSheet: View {
             return false
         case let .fill(user, password):
             let filled = await browser.fillLogin(user: user, password: password)
-            if filled { AppModel.debugLog("portal: stored login filled in (password \(password.isEmpty ? "no" : "yes"))") }
+            if filled { AppModel.debugLog("portal: stored login autofill finished (password \(password.isEmpty ? "no" : "yes"))") }
             return filled
         }
     }
