@@ -4176,6 +4176,34 @@ fn a_finished_database_import_is_in_the_sync_log() {
 }
 
 #[test]
+fn wallets_in_two_currencies_never_share_an_account_without_one() {
+    // each passes the check alone; together they would mix euro and dollars (#1993)
+    let v = vault();
+    let blank = wallet(&v, "Ohne Währung", "", false);
+    let path = wallets_db(false);
+    let p = v
+        .preview_moneymoney_database(path.clone(), String::new(), None)
+        .unwrap();
+    let mut both = options_from(&p, false);
+    for c in &mut both.accounts {
+        c.target_account_id = Some(blank);
+    }
+    let err = v
+        .import_moneymoney_database(path.clone(), String::new(), both)
+        .unwrap_err();
+    assert!(err.to_string().contains("EUR und USD"), "{err}");
+    assert!(booking_currencies(&v, blank).is_empty());
+    // one of them alone is fine
+    let mut one = options_from(&p, false);
+    for c in &mut one.accounts {
+        c.target_account_id = (c.mm_id == 1).then_some(blank);
+    }
+    v.import_moneymoney_database(path, String::new(), one)
+        .unwrap();
+    assert_eq!(booking_currencies(&v, blank), vec!["EUR"; 4]);
+}
+
+#[test]
 fn the_same_currency_comes_before_none_whatever_its_spelling() {
     for usd_first in [false, true] {
         let v = vault();
@@ -4217,6 +4245,54 @@ fn equally_good_targets_need_a_choice() {
             "usd first: {usd_first}"
         );
     }
+}
+
+#[test]
+fn an_earlier_import_now_in_another_currency_gets_an_account_of_its_own() {
+    // #1993: the account an earlier import made now has another currency (a fetch changed
+    // it): not suggested, and "Neues Konto" makes one under its own reference instead of
+    // landing in it again (the same reference would merge the two on other devices)
+    let v = vault();
+    let import = |v: &Vault| {
+        let path = wallets_db(false);
+        let p = v
+            .preview_moneymoney_database(path.clone(), String::new(), None)
+            .unwrap();
+        let eur = p.accounts.iter().find(|a| a.name == "Wallet EUR").unwrap();
+        let suggested = (eur.existing_account_id, eur.target_needs_choice);
+        let r = v
+            .import_moneymoney_database(path, String::new(), options_from(&p, false))
+            .unwrap();
+        (suggested, r.accounts_created, r.bookings_new)
+    };
+    import(&v);
+    let old = account_by_name(&v, "Wallet EUR").id;
+    v.db()
+        .unwrap()
+        .execute("UPDATE accounts SET currency = 'GBP' WHERE id = ?1", [old])
+        .unwrap();
+    assert_eq!(import(&v), ((None, false), 1, 4));
+    let new = v
+        .list_accounts()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.name == "Wallet EUR" && a.id != old)
+        .unwrap();
+    assert_eq!(booking_currencies(&v, new.id), vec!["EUR"; 4]);
+    // the old one keeps the first import's bookings, no second set
+    assert_eq!(booking_currencies(&v, old).len(), 4);
+    let ext: String = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT external_ref FROM accounts WHERE id = ?1",
+            [new.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(ext.ends_with(":EUR"), "{ext}");
+    // the next import finds it again
+    assert_eq!(import(&v), ((Some(new.id), false), 0, 0));
 }
 
 #[test]

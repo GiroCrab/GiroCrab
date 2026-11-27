@@ -2289,14 +2289,41 @@ fn into_split(row: &mut MmRow, parts: Vec<MmRow>) -> Result<(), Vec<MmRow>> {
 /// The account an earlier import of `a` created (soft-deleted ones too: the import revives
 /// them), or the bank account a twin of it was folded into: where a target of `None` goes.
 fn reused_account(conn: &Connection, a: &SrcAccount) -> CoreResult<Option<i64>> {
+    reused_by_ref(conn, &own_ref(conn, a)?)
+}
+
+fn reused_by_ref(conn: &Connection, ext: &str) -> CoreResult<Option<i64>> {
     conn.query_row(
         "SELECT id FROM accounts WHERE external_ref = ?1 ORDER BY id LIMIT 1",
-        [ext_ref(a)],
+        [ext],
         |r| r.get::<_, i64>(0),
     )
     .optional()?
     .map(|id| crate::sync_merge::twins::folded_into(conn, id).map(|bank| bank.unwrap_or(id)))
     .transpose()
+}
+
+/// The reference `a`'s account carries: [`ext_ref`], unless the account an earlier import
+/// gave it (or the bank account that one was folded into) is now in another known currency
+/// (#1993). Then `a` gets an account of its own under `<ext_ref>:<currency>`: one with the
+/// same reference would be merged with the other one on the user's other devices.
+fn own_ref(conn: &Connection, a: &SrcAccount) -> CoreResult<String> {
+    let ext = ext_ref(a);
+    let source = a.currency.trim().to_uppercase();
+    let Some(id) = reused_by_ref(conn, &ext)? else {
+        return Ok(ext);
+    };
+    let cur: String = conn.query_row(
+        "SELECT IFNULL(currency, '') FROM accounts WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    let cur = cur.trim().to_uppercase();
+    Ok(if cur.is_empty() || cur == source {
+        ext
+    } else {
+        format!("{ext}:{source}")
+    })
 }
 
 /// The vault account each MoneyMoney account is merged into, keyed by its
@@ -3323,6 +3350,24 @@ fn import(
             })?;
         plan.push((choice, a, src.rows_for(a)));
     }
+    // one account takes one currency (#1993): two chosen into the same one without a
+    // currency would each pass `target_account` and mix there; refused before any write
+    let mut currency_of: HashMap<i64, String> = HashMap::new();
+    for (choice, a, _) in &plan {
+        let Some(id) = choice.target_account_id else {
+            continue;
+        };
+        let cur = a.currency.trim().to_uppercase();
+        let first = currency_of.entry(id).or_insert_with(|| cur.clone());
+        if *first != cur {
+            return Err(CoreError::InvalidInput {
+                message: trf(
+                    "Konten der Datenbank in {0} und {1} können nicht in dasselbe Konto übernommen werden – es wurde nichts übernommen.",
+                    &[&*first, &cur],
+                ),
+            });
+        }
+    }
     let mut report = Reporter {
         observer,
         state: MoneyMoneyDbImportProgress {
@@ -3440,7 +3485,7 @@ impl ImportCtx<'_> {
         let (owned, linkable): (bool, bool) = conn.query_row(
             "SELECT external_ref LIKE 'moneymoney-db:%', connection_id IS NULL OR external_ref = ?2
                FROM accounts WHERE id = ?1",
-            params![account_id, ext_ref(a)],
+            params![account_id, own_ref(conn, a)?],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         let mut st = Stats {
@@ -3512,7 +3557,7 @@ impl ImportCtx<'_> {
         a: &SrcAccount,
     ) -> CoreResult<(i64, String)> {
         let (conn, src) = (self.conn, self.src);
-        let ext = ext_ref(a);
+        let ext = own_ref(conn, a)?;
         let kind = choice.kind;
         let target = match choice.target_account_id {
             Some(id) => Some(id),

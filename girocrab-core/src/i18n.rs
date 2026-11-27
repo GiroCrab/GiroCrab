@@ -1885,6 +1885,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         // ------------------------------------------------------------ importers/moneymoney_db.rs
         "Datenimport" => "Data import",
+        "Konten der Datenbank in {0} und {1} können nicht in dasselbe Konto übernommen werden – es wurde nichts übernommen." => {
+            "Accounts in {0} and {1} from the database cannot be imported into the same account – nothing was imported."
+        }
         "Datenimport: {0} neue Buchungen, {1} Konten neu, {2} zusammengeführt" => {
             "Data import: {0} new transactions, {1} accounts created, {2} merged"
         }
