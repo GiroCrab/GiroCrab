@@ -821,6 +821,67 @@ fn card_tx_prefers_hkkku_and_needs_bank_and_account() {
 }
 
 #[test]
+fn card_account_kind_keeps_debit_cards_as_checking() {
+    use super::{AccountKind, accounts::card_account_kind};
+    let checking = || AccountKind::Checking;
+    // #807: comdirect credit card with Kontoart 1 stays a credit card
+    assert_eq!(
+        card_account_kind(checking(), &["Visa", "Max Muster"]),
+        AccountKind::CreditCard
+    );
+    // #967: debit cards (product or account name) are no credit cards
+    for name in [
+        "Mastercard direkt",
+        "Mastercard Debit",
+        "Visa Debit",
+        "Debitkarte",
+    ] {
+        assert_eq!(
+            card_account_kind(checking(), &[name, "Max Muster"]),
+            AccountKind::Checking,
+            "{name}"
+        );
+        assert_eq!(
+            card_account_kind(checking(), &["", name]),
+            AccountKind::Checking,
+            "label {name}"
+        );
+    }
+    // a bank name containing "direkt" alone marks no debit card
+    assert_eq!(
+        card_account_kind(checking(), &["Visa", "1822direkt Visa"]),
+        AccountKind::CreditCard
+    );
+    // Kontoart 50–59 stays a credit card whatever the name says
+    assert_eq!(
+        card_account_kind(AccountKind::CreditCard, &["Visa Debit", ""]),
+        AccountKind::CreditCard
+    );
+}
+
+#[test]
+fn card_balance_of_a_debit_card_is_zero() {
+    use super::{
+        AccountKind,
+        accounts::{card_account_kind, card_balance},
+    };
+    // #967: the bank's amount for "Mastercard direkt" stays out of overview and totals
+    let debit = card_account_kind(AccountKind::Checking, &["Mastercard direkt", ""]);
+    assert_eq!(card_balance(debit, Some(-12500)), Some(0));
+    // nothing read: 0 replaces a balance stored while it was led as a credit card
+    assert_eq!(card_balance(debit, None), Some(0));
+    // credit cards keep what the bank says, or none (then derived when storing)
+    let credit = card_account_kind(AccountKind::Checking, &["Visa", ""]);
+    assert_eq!(credit, AccountKind::CreditCard);
+    assert_eq!(card_balance(credit, Some(-12500)), Some(-12500));
+    assert_eq!(card_balance(credit, None), None);
+    assert_eq!(
+        card_balance(AccountKind::CreditCard, Some(-4200)),
+        Some(-4200)
+    );
+}
+
+#[test]
 fn builds_dkkku_with_ktv_and_hkkku_with_kti() {
     let acc = sepa_acc("", "5232000011112222");
     assert_eq!(
