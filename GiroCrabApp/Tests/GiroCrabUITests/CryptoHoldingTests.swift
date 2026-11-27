@@ -9,7 +9,7 @@ final class CryptoHoldingTests: XCTestCase {
     func testANewHoldingIsSelectedAndAChangeBumpsTheRevision() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         XCTAssertEqual(model.vaultState, .open)
-        try model.createCryptoAccount(name: "Wallet")
+        model.cryptoAccountCreated(try XCTUnwrap(model.vault).createCryptoAccount(name: "Wallet"))
         guard case .account(let id) = model.sidebarSelection else { return XCTFail("not selected") }
         XCTAssertTrue(model.isCrypto(id))
         XCTAssertEqual(model.account(for: id)?.kind, .brokerage)

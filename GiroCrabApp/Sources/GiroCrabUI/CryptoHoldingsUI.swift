@@ -101,6 +101,10 @@ struct NewCryptoAccountSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var error: String?
+    @State private var busy = false
+    /// The vault the sheet was opened for (`runInOwnVault` switches first, then opens it): a later
+    /// switch to the demo must not receive the new holding.
+    @State private var pin: VaultPin?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -113,20 +117,35 @@ struct NewCryptoAccountSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             if let error { Text(error).foregroundStyle(Theme.negative).appFont(.caption) }
             HStack {
-                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction).disabled(busy)
                 Spacer()
                 Button("Anlegen", action: create).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(busy || pin == nil)
             }
         }
         .padding(20).macFrame(width: 420)
+        .interactiveDismissDisabled(busy)
+        .onAppear { pin = model.pinVault() }
     }
 
     private func create() {
-        do {
-            try model.createCryptoAccount(name: name)
-            dismiss()
-        } catch {
-            self.error = describe(error)
+        guard let pin, !busy else { return }
+        let name = name
+        busy = true
+        Task {
+            do {
+                let id = try await pin.run { try $0.createCryptoAccount(name: name) }
+                busy = false
+                if model.isCurrent(pin) {
+                    model.cryptoAccountCreated(id)
+                } else {
+                    model.toast = String(localized: "Der Crypto-Bestand wurde im zuvor geöffneten Tresor angelegt.")
+                }
+                dismiss()
+            } catch {
+                busy = false
+                self.error = describe(error)
+            }
         }
     }
 }
@@ -240,6 +259,8 @@ struct CryptoPositionSheet: View {
             } catch {
                 busy = false
                 self.error = describe(error)
+                // the price fetched first is stored already: show it
+                if !priceMissing, model.isCurrent(pin) { model.cryptoChanged() }
             }
         }
     }

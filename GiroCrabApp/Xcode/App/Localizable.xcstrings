@@ -11195,6 +11195,17 @@
         }
       }
     },
+    "Der Crypto-Bestand wurde im zuvor geöffneten Tresor angelegt." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The crypto holding was created in the vault that was open before."
+          }
+        }
+      }
+    },
     "Der Dauerauftrag wird bei der Bank gelöscht. Danach werden keine weiteren Zahlungen mehr ausgeführt." : {
       "extractionState" : "manual",
       "localizations" : {

@@ -17,10 +17,8 @@ extension AppModel {
         cryptoStore.accountIDs.contains(accountId)
     }
 
-    /// "Neuer Crypto-Bestand …": creates the empty depot and selects it.
-    func createCryptoAccount(name: String) throws {
-        guard let vault else { throw CoreError.Database(message: "vault locked") }
-        let id = try vault.createCryptoAccount(name: name)
+    /// "Neuer Crypto-Bestand …" created the empty depot `id` in the open vault: show and select it.
+    func cryptoAccountCreated(_ id: Int64) {
         reloadAccounts()
         sidebarSelection = .account(id)
     }
