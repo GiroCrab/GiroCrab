@@ -50,6 +50,7 @@ struct EnableBankingSetupSection: View {
     var showGuide = true
     var collapsibleGuide = false
     @State private var importing = false
+    @State private var fileApplicationID: String?
     /// Result of reading the key file: success, or what went wrong.
     @State private var keyNote: (ok: Bool, text: String)?
     @State private var checking = false
@@ -105,13 +106,19 @@ struct EnableBankingSetupSection: View {
             do {
                 let key = try EnableBankingKeyFile.read(url)
                 values[pemKey] = key.pem
-                values[idKey] = key.applicationID ?? ""
-                keyNote = (true, key.applicationID != nil
+                if let id = key.applicationID {
+                    values[idKey] = id
+                } else if values[idKey] == fileApplicationID {
+                    values[idKey] = nil
+                }
+                fileApplicationID = key.applicationID
+                let hasID = !(values[idKey] ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+                keyNote = (true, hasID
                     ? String(localized: "Schlüssel und Application-ID übernommen")
                     : String(localized: "Schlüssel übernommen – Application-ID bitte eintragen"))
                 check = nil
                 checkError = nil
-                if key.applicationID != nil { Task { await runCheck() } }
+                if hasID { Task { await runCheck() } }
             } catch {
                 keyNote = (false, error.localizedDescription)
             }
@@ -163,6 +170,7 @@ struct EnableBankingSetupSection: View {
                     Text([a.name, a.iban.isEmpty ? (a.accountNumber.isEmpty ? nil : String(localized: "Konto \(a.accountNumber)")) : formatIBAN(a.iban)]
                         .compactMap { $0 }.joined(separator: " · "))
                         .appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
+                        .sensitive()
                         .textSelection(.enabled)
                 }
             }
@@ -219,7 +227,10 @@ struct EnableBankingSetupSection: View {
     }
 
     private func binding(_ key: String) -> Binding<String> {
-        Binding(get: { values[key] ?? "" }, set: { values[key] = $0 })
+        Binding(get: { values[key] ?? "" }, set: {
+            values[key] = $0
+            fileApplicationID = nil
+        })
     }
 
     private func copy(_ s: String) {

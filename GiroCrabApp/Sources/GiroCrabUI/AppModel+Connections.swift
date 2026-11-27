@@ -203,6 +203,17 @@ extension AppModel {
         }
     }
 
+    func trackPsd2Enrollment(_ enrollment: EnableBankingEnrollment) {
+        cancelPsd2Enrollment()
+        pendingPsd2Enrollment = enrollment
+    }
+
+    func cancelPsd2Enrollment(_ enrollment: EnableBankingEnrollment? = nil) {
+        if let enrollment, pendingPsd2Enrollment !== enrollment { return }
+        pendingPsd2Enrollment?.cancel()
+        pendingPsd2Enrollment = nil
+    }
+
     /// Adds a login at a bank reached via Enable Banking (PSD2), then starts the
     /// setup (Enable Banking credentials, if missing) and the consent redirect.
     func addEnableBankingConnection(aspsp: String, country: String, name: String, label: String) {

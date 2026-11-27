@@ -227,6 +227,51 @@ async fn only_a_full_user_sync_reaches_back_and_finishes_it() {
 }
 
 #[test]
+fn enable_banking_preserves_a_bounded_history_for_manual_and_quiet_syncs() {
+    let (vault, path) = demo_vault();
+    let id = vault
+        .add_enable_banking_connection("DKB".into(), "DE".into(), "DKB".into(), "demo".into())
+        .unwrap();
+    vault
+        .request_full_history(id, HistoryRange::Days { days: 30 })
+        .unwrap();
+    let floor = iso(today() - days(30));
+    let manual = vault.clone().begin_sync(id, String::new(), true).unwrap();
+    let quiet = vault
+        .clone()
+        .begin_quiet_sync(id, String::new(), true)
+        .unwrap();
+    assert_eq!(
+        manual
+            .clone_context()
+            .unwrap()
+            .bounded_history_from
+            .as_deref(),
+        Some(floor.as_str())
+    );
+    assert_eq!(
+        quiet
+            .clone_context()
+            .unwrap()
+            .bounded_history_from
+            .as_deref(),
+        Some(floor.as_str())
+    );
+    vault
+        .request_full_history(id, HistoryRange::Maximum)
+        .unwrap();
+    let maximum = vault.clone().begin_sync(id, String::new(), true).unwrap();
+    assert!(
+        maximum
+            .clone_context()
+            .unwrap()
+            .bounded_history_from
+            .is_none()
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn a_full_fetch_asks_enable_banking_for_the_longest_history_again() {
     use crate::secret::SecretJson;
     use serde_json::{Value, json};

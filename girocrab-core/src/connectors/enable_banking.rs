@@ -947,8 +947,13 @@ impl EnableBankingConnector {
             .await?;
         let balances = bal["balances"].as_array().cloned().unwrap_or_default();
         let (balance_cents, ref_date) = pick_account_balance(&balances);
-        let since_query = format!("date_from={}", ctx.since_for(&acc.ext_ref));
-        let listed = if acc.history_done {
+        let since = ctx.since_for(&acc.ext_ref);
+        let since = ctx
+            .bounded_history_from
+            .as_deref()
+            .map_or(since, |floor| since.max(floor));
+        let since_query = format!("date_from={since}");
+        let listed = if acc.history_done || ctx.bounded_history_from.is_some() {
             self.list_transactions(&acc.uid, &since_query, TX_MAX_PAGES)
                 .await?
         } else {
@@ -1493,6 +1498,12 @@ impl BankConnector for EnableBankingConnector {
             }
         }
         note_history(&mut self.st.accounts, &listed);
+        if let Some(from) = ctx.bounded_history_from.as_deref() {
+            // A provider can return transactions outside the requested window.
+            out.transactions
+                .retain(|tx| tx.booking_date.as_str() >= from);
+            out.history_incomplete = stopped_early || listed.values().any(|complete| !complete);
+        }
         // The vault uses the fetched name when inserting a new account.
         if let Some(label) =
             paypal_account_label(&self.aspsp_default, self.st.accounts.len(), &ctx.login_name)
@@ -1894,18 +1905,12 @@ impl Vault {
         };
         let kind = ConnectorKind::EnableBanking;
         let label = crate::vault::connections::normalize_login(kind, &label);
+        if crate::demo::is_magic_demo_login(&label) {
+            return Err(CoreError::SessionClosed);
+        }
         let (app_id, pem, redirect) = {
             let db = self.db()?;
-            let mut rows = db.prepare(
-                "SELECT login_name FROM bank_connections WHERE connector = ?1 AND deleted_ms IS NULL",
-            )?;
-            for login in rows.query_map([&key], |row| row.get::<_, String>(0))? {
-                if crate::vault::connections::normalize_login(kind, &login?)
-                    .eq_ignore_ascii_case(&label)
-                {
-                    return Err(enrollment_label_in_use());
-                }
-            }
+            ensure_enrollment_label_available(&db, &key, &label)?;
             let app = match (application_id, private_key_pem) {
                 (Some(id), Some(pem)) => (id, pem),
                 (None, None) => (
@@ -1950,6 +1955,7 @@ impl Vault {
             url,
             redirect,
             history_range,
+            cancelled: std::sync::Mutex::new(false),
             connector: tokio::sync::Mutex::new(Some(connector)),
         }))
     }
@@ -1991,6 +1997,34 @@ fn enrollment_label_in_use() -> CoreError {
     ))
 }
 
+fn ensure_enrollment_label_available(
+    db: &rusqlite::Connection,
+    key: &str,
+    label: &str,
+) -> CoreResult<()> {
+    let key = key.to_lowercase();
+    let mut stmt = db.prepare(
+        "SELECT connector, login_name FROM bank_connections
+         WHERE connector LIKE 'enablebanking:%' AND deleted_ms IS NULL",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (connector, login) = row?;
+        if connector.to_lowercase() == key
+            && crate::vault::connections::normalize_login(
+                crate::models::ConnectorKind::EnableBanking,
+                &login,
+            )
+            .eq_ignore_ascii_case(label)
+        {
+            return Err(enrollment_label_in_use());
+        }
+    }
+    Ok(())
+}
+
 /// First consent for an unsaved bank connection. Dropping it leaves the vault alone.
 #[derive(uniffi::Object)]
 pub struct EnableBankingEnrollment {
@@ -2001,6 +2035,9 @@ pub struct EnableBankingEnrollment {
     url: String,
     redirect: String,
     history_range: Option<super::HistoryRange>,
+    // Cancellation and the local transaction are mutually exclusive. Locking
+    // the app invalidates a pending response before it can start storing.
+    cancelled: std::sync::Mutex<bool>,
     connector: tokio::sync::Mutex<Option<EnableBankingConnector>>,
 }
 
@@ -2012,6 +2049,10 @@ impl EnableBankingEnrollment {
 
     pub fn redirect_url(&self) -> String {
         self.redirect.clone()
+    }
+
+    pub fn cancel(&self) {
+        *self.cancelled.lock().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
     pub async fn finish(&self, callback: String) -> Result<i64, CoreError> {
@@ -2026,13 +2067,29 @@ impl EnableBankingEnrollment {
             .await
             .take()
             .ok_or(CoreError::SessionClosed)?;
-        let phase = connector
-            .respond(&self.ctx, ChallengeResponse::Code(callback.into()))
-            .await?;
-        if !matches!(phase, Phase::Ready) || connector.st.session_id.is_empty() {
+        if *self.cancelled.lock().unwrap_or_else(|e| e.into_inner()) {
             return Err(CoreError::SessionClosed);
         }
-        self.store(&SecretJson::encode(&connector.st)?)
+        let result = connector
+            .respond(&self.ctx, ChallengeResponse::Code(callback.into()))
+            .await
+            .and_then(|phase| {
+                if !matches!(phase, Phase::Ready) || connector.st.session_id.is_empty() {
+                    return Err(CoreError::SessionClosed);
+                }
+                self.store(&SecretJson::encode(&connector.st)?)
+            });
+        if result.is_err() && !connector.st.session_id.is_empty() {
+            let path = format!("/sessions/{}", connector.st.session_id.expose());
+            if connector
+                .call(reqwest::Method::DELETE, &path, None)
+                .await
+                .is_err()
+            {
+                crate::depot_debug::log("enable_banking: cleanup of an unsaved consent failed");
+            }
+        }
+        result
     }
 }
 
@@ -2041,10 +2098,15 @@ impl EnableBankingEnrollment {
         use crate::models::ConnectorKind;
         use crate::vault::enable_banking_apps::{APP_ID_KEY, PEM_KEY, own_keys};
 
+        let cancelled = self.cancelled.lock().unwrap_or_else(|e| e.into_inner());
+        if *cancelled {
+            return Err(CoreError::SessionClosed);
+        }
         let app_id = self.ctx.setting(APP_ID_KEY)?;
         let pem = self.ctx.setting(PEM_KEY)?;
         let db = self.vault.db()?;
         let tx = db.unchecked_transaction()?;
+        ensure_enrollment_label_available(&tx, &self.key, &self.ctx.login_name)?;
         let (id, created) = Vault::add_bank_connection_keyed(
             &tx,
             ConnectorKind::EnableBanking,
@@ -2112,6 +2174,7 @@ mod tests {
             url: String::new(),
             redirect: "https://localhost/girocrab/callback".into(),
             history_range: Some(super::super::HistoryRange::Days { days: 30 }),
+            cancelled: std::sync::Mutex::new(false),
             connector: tokio::sync::Mutex::new(None),
         };
         drop(enrollment("Cancelled", "unused-key"));
@@ -2119,6 +2182,13 @@ mod tests {
         assert!(vault.get_setting(APP_ID_KEY.into()).unwrap().is_none());
 
         let state = SecretJson::encode(&json!({"session_id": "test-session"})).unwrap();
+        let cancelled = enrollment("Locked", "unused-key");
+        cancelled.cancel();
+        assert!(matches!(
+            cancelled.store(&state),
+            Err(CoreError::SessionClosed)
+        ));
+        assert!(vault.list_bank_connections().unwrap().is_empty());
         let first = enrollment("DKB", "key-a").store(&state).unwrap();
         let second = enrollment("DKB 2", "key-b").store(&state).unwrap();
         assert_ne!(first, second);
@@ -2127,6 +2197,9 @@ mod tests {
             Some(super::super::HistoryRange::Days { days: 30 })
         );
         assert!(enrollment("DKB", "wrong-key").store(&state).is_err());
+        let mut mixed_case = enrollment("dkb", "wrong-key");
+        mixed_case.key = "enablebanking:DE:dkb".into();
+        assert!(mixed_case.store(&state).is_err());
         assert_eq!(vault.list_bank_connections().unwrap().len(), 2);
         assert_eq!(
             vault.get_setting(APP_ID_KEY.into()).unwrap().as_deref(),

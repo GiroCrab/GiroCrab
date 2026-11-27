@@ -123,8 +123,10 @@ struct Psd2AddForm: View {
     @State private var useOtherKey = false
     @State private var values: [String: String] = [:]
     @State private var starting = false
+    @State private var useFileForConsent = false
     @State private var finishing = false
     @State private var consent: Consent?
+    @State private var currentEnrollment: EnableBankingEnrollment?
     @State private var addedConnection: (pin: VaultPin, id: Int64)?
     @State private var failure: String?
 
@@ -139,7 +141,7 @@ struct Psd2AddForm: View {
         model.settingEntry(idKey)?.hasValue == true && model.settingEntry(pemKey)?.hasValue == true
     }
     private var needsFile: Bool { !hasSavedKey || useOtherKey }
-    private var demoLogin: Bool { model.demoActive && AppModel.isMagicDemoLogin(label) }
+    private var demoLogin: Bool { AppModel.isMagicDemoLogin(label) }
     private var canAdd: Bool {
         !starting && (demoLogin || !needsFile ||
             (!(values[idKey] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -154,7 +156,12 @@ struct Psd2AddForm: View {
             return
         }
         failure = nil
-        starting = true
+        // Switching from the demo vault can change which saved key is available.
+        useFileForConsent = needsFile
+        model.runInOwnVault {
+            guard model.isUnlocked else { return }
+            starting = true
+        }
     }
 
     private func startConsent() async {
@@ -162,8 +169,8 @@ struct Psd2AddForm: View {
         do {
             let (pin, enrollment) = try await model.beginPsd2Enrollment(
                 bank: bank, label: label,
-                applicationID: needsFile ? values[idKey] : nil,
-                pem: needsFile ? values[pemKey] : nil)
+                applicationID: useFileForConsent ? values[idKey] : nil,
+                pem: useFileForConsent ? values[pemKey] : nil)
             guard !Task.isCancelled, model.isCurrent(pin) else { return }
             guard let url = URL(string: enrollment.authorizationUrl()), url.scheme == "https" else {
                 throw CoreError.SessionClosed
@@ -181,6 +188,8 @@ struct Psd2AddForm: View {
                     }
                 }
             }
+            model.trackPsd2Enrollment(enrollment)
+            currentEnrollment = enrollment
             consent = Consent(browser: browser)
         } catch {
             if !Task.isCancelled { failure = describe(error) }
@@ -218,6 +227,8 @@ struct Psd2AddForm: View {
             }
             if needsFile && !demoLogin {
                 EnableBankingSetupSection(values: $values, showGuide: !hasSavedKey, collapsibleGuide: true)
+                    .onAppear { syncRedirect() }
+                    .onChange(of: model.settingEntry("enablebanking.redirect_url")?.value) { _, _ in syncRedirect() }
                     .disabled(starting)
             }
             if let failure {
@@ -240,13 +251,17 @@ struct Psd2AddForm: View {
         .task(id: starting) {
             if starting { await startConsent() }
         }
+        .onDisappear { cancelEnrollment() }
         .capturableSheet(item: $consent, onDismiss: didDismissConsent) { pending in
             VStack(alignment: .leading, spacing: 12) {
                 Text("Zugriff bei der Bank freigeben").appSectionHeader()
                 ConsentWebView(browser: pending.browser)
                     .desktopFrame(minWidth: 820, idealWidth: 880, minHeight: 420, idealHeight: 620, maxHeight: .infinity)
                 HStack {
-                    Button("Abbrechen") { consent = nil }
+                    Button("Abbrechen") {
+                        cancelEnrollment()
+                        consent = nil
+                    }
                         .keyboardShortcut(.cancelAction)
                         .disabled(finishing)
                     if finishing { ProgressView() }
@@ -258,8 +273,19 @@ struct Psd2AddForm: View {
     }
 
     private func didDismissConsent() {
+        cancelEnrollment()
         guard let addedConnection, model.isCurrent(addedConnection.pin) else { return }
         onAdded()
         model.finishAddingPsd2Connection(addedConnection.id)
+    }
+
+    private func syncRedirect() {
+        values["enablebanking.redirect_url"] = model.settingEntry("enablebanking.redirect_url")?.value ?? ConsentRedirect.defaultURL
+    }
+
+    private func cancelEnrollment() {
+        guard let currentEnrollment else { return }
+        model.cancelPsd2Enrollment(currentEnrollment)
+        self.currentEnrollment = nil
     }
 }

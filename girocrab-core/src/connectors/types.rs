@@ -299,6 +299,8 @@ pub struct ConnectContext {
     /// date the bank refuses again with a shorter one: in an ordinary sync
     /// the bookings between would be skipped for good.
     pub full_fetch: bool,
+    /// Lower date bound while a finite Enable Banking history fetch is pending.
+    pub bounded_history_from: Option<String>,
     /// Which documents (PDF statements, receipts, PostBox) this sync fetches.
     pub documents: Documents,
     /// Accounts (external refs) whose data this sync does not store: switched
