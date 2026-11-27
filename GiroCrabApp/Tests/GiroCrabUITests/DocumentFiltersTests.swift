@@ -49,7 +49,7 @@ final class DocumentFiltersTests: XCTestCase {
                     doc(3, "steuer", "2026-01-01", seen: false)]
         XCTAssertEqual(DocumentFilters.apply(list, type: nil, year: nil, unseenOnly: true).map(\.id), [1, 3])
         // the open (just read) document stays in the list
-        XCTAssertEqual(DocumentFilters.apply(list, type: nil, year: nil, unseenOnly: true, keeping: 2).map(\.id), [1, 2, 3])
+        XCTAssertEqual(DocumentFilters.apply(list, type: nil, year: nil, unseenOnly: true, keeping: [2]).map(\.id), [1, 2, 3])
         XCTAssertEqual(DocumentFilters.apply(list, type: "steuer", year: nil, unseenOnly: true).map(\.id), [3])
         XCTAssertEqual(DocumentFilters.apply(list, type: nil, year: nil).count, 3)
     }

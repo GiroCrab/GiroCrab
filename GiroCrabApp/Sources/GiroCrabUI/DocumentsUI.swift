@@ -226,11 +226,12 @@ struct DocumentsView: View {
     @State private var yearFilter: Int?
     /// The documents the export was started for (nil: all); the iOS folder dialog answers later.
     @State private var exportIDs: [Int64]?
-    @State private var selected: Int64?
+    /// Several documents: no preview, only delete, unlink and move to an account (#1968).
+    @State private var selected: Set<Int64> = []
     @State private var importing = false
     @State private var exporting = false
     @State private var targeted = false
-    @State private var docToDelete: DocumentInfo?
+    @State private var docsToDelete: [DocumentInfo] = []
     @State private var previewDoc: DocumentInfo?
     #if os(macOS)
     /// The list has the focus: only then macOS draws its selection in the accent colour (`DocumentRow`).
@@ -248,7 +249,7 @@ struct DocumentsView: View {
     var body: some View {
         @Bindable var model = model
         let found = model.allDocuments(search: search, unlinkedOnly: unlinkedOnly, accountId: model.documentsAccountFilter, connectionId: model.documentsConnectionFilter, scope: model.documentsScope)
-        let docs = DocumentFilters.apply(found, type: typeFilter, year: yearFilter, unseenOnly: unseenOnly, keeping: selected ?? previewDoc?.id)
+        let docs = DocumentFilters.apply(found, type: typeFilter, year: yearFilter, unseenOnly: unseenOnly, keeping: selected.union(previewDoc.map { [$0.id] } ?? []))
         let choices = typeAndYearChoices(found)
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
@@ -267,38 +268,14 @@ struct DocumentsView: View {
                         .selectionDisabled()
                     }
                     ForEach(docs) { d in
-                        DocumentRow(doc: d, account: accountText(d), focusedSelection: selected == d.id && listHasFocus,
+                        DocumentRow(doc: d, account: accountText(d), focusedSelection: selected.contains(d.id) && listHasFocus,
                                     showsUnlinked: unlinkedOnly)
                             .tag(d.id)
                             .contentShape(Rectangle())
-                            .contextMenu {
-                                Button("Vorschau") { model.quickLook(d) }
-                                Button(d.seen ? "Als ungelesen markieren" : "Als gelesen markieren") {
-                                    model.markDocumentsSeen([d.id], seen: !d.seen)
-                                }
-                                #if os(macOS)
-                                Button("Im Finder anzeigen") { model.showInFinder(d) }
-                                Button("Pfad kopieren") { model.copyDocumentPath(d) }
-                                #endif
-                                Button("Zuordnung aufheben") { model.linkDocument(d, to: nil) }
-                                .disabled(d.bookingId == nil)
-                                Menu("Konto zuordnen") {
-                                    Button("Ohne Konto") { model.setDocumentAccount(d, nil) }
-                                        .disabled(d.accountId == nil)
-                                    ForEach(model.accountMenuSections) { section in
-                                        Section(section.title) {
-                                            ForEach(section.accounts) { a in
-                                                Button(a.name) { model.setDocumentAccount(d, a.id) }
-                                                    .disabled(d.accountId == a.id)
-                                            }
-                                        }
-                                    }
-                                }
-                                Divider()
-                                Button("Beleg löschen …", role: .destructive) { docToDelete = d }
-                            }
                     }
                 }
+                // the clicked row, or the whole selection when the click is inside it
+                .contextMenu(forSelectionType: Int64.self) { ids in documentMenu(docs.filter { ids.contains($0.id) }) }
                 .listStyle(.inset)
                 #if os(macOS)
                 .focused($listFocused)
@@ -308,13 +285,13 @@ struct DocumentsView: View {
                 // clickable (GitHub #174). On compact iOS, turn the selection
                 // into the preview sheet instead and clear it so the same
                 // document can be opened again.
-                .onChange(of: selected) { _, id in
-                    guard let id, let d = docs.first(where: { $0.id == id }) else { return }
+                .onChange(of: selected) { _, ids in
+                    guard ids.count == 1, let id = ids.first, let d = docs.first(where: { $0.id == id }) else { return }
                     // opened = read
                     if !d.seen { model.markDocumentsSeen([id], seen: true) }
                     guard isCompact else { return }
                     previewDoc = d
-                    selected = nil
+                    selected = []
                 }
                 .overlay {
                     if docs.isEmpty && !isCompact { emptyState }
@@ -323,10 +300,10 @@ struct DocumentsView: View {
                 .task {
                     guard model.options.demoSeed, !Self.pickedDemoDocument, let q = model.options.pickBooking else { return }
                     Self.pickedDemoDocument = true
-                    selected = docs.first { $0.title.lowercased().contains(q) }?.id
+                    selected = Set(docs.first { $0.title.lowercased().contains(q) }.map { [$0.id] } ?? [])
                 }
                 .onChange(of: docs.map(\.id)) { _, ids in
-                    if let selected, !ids.contains(selected) { self.selected = nil }
+                    selected.formIntersection(ids)
                     if let previewDoc, !ids.contains(previewDoc.id) { self.previewDoc = nil }
                 }
             }
@@ -335,8 +312,10 @@ struct DocumentsView: View {
             if !isCompact {
             Divider()
             Group {
-                if let id = selected, let d = docs.first(where: { $0.id == id }), let data = model.documentData(d) {
+                if selected.count == 1, let id = selected.first, let d = docs.first(where: { $0.id == id }), let data = model.documentData(d) {
                     DocumentPreview(doc: d, data: data)
+                } else if selected.count > 1 {
+                    ContentUnavailableView("\(selected.count) Dokumente ausgewählt", systemImage: "doc.on.doc", description: Text("Die Vorschau zeigt ein einzelnes Dokument."))
                 } else {
                     ContentUnavailableView("Dokument auswählen", systemImage: "doc.richtext", description: Text("Ein Dokument aus der Liste auswählen, um die Vorschau zu öffnen."))
                 }
@@ -403,11 +382,17 @@ struct DocumentsView: View {
                     }
                 }
         }
-        .confirmationDialog("Beleg löschen?", isPresented: Binding(get: { docToDelete != nil }, set: { if !$0 { docToDelete = nil } }), presenting: docToDelete) { d in
-            Button("Löschen", role: .destructive) { model.deleteDocument(d) }
+        .confirmationDialog(docsToDelete.count == 1 ? "Beleg löschen?" : "\(docsToDelete.count) Belege löschen?",
+                            isPresented: Binding(get: { !docsToDelete.isEmpty }, set: { if !$0 { docsToDelete = [] } }),
+                            presenting: docsToDelete) { list in
+            Button("Löschen", role: .destructive) { Task { await model.deleteDocuments(list.map(\.id)) } }
             Button("Abbrechen", role: .cancel) {}
-        } message: { d in
-            Text("„\(d.title)“ wird unwiderruflich gelöscht.")
+        } message: { list in
+            if list.count == 1, let d = list.first {
+                Text("„\(d.title)“ wird unwiderruflich gelöscht.")
+            } else {
+                Text("\(list.count) Belege werden unwiderruflich gelöscht.")
+            }
         }
         #if os(iOS)
         .navigationTitle("")
@@ -420,6 +405,45 @@ struct DocumentsView: View {
         .onDisappear {
             model.documentsAccountFilter = nil
             model.documentsConnectionFilter = nil
+        }
+    }
+
+    /// Context menu of the clicked document or of the selection. With several documents only delete,
+    /// unlink and move to an account work; the rest stays visible but off (#1968).
+    @ViewBuilder
+    private func documentMenu(_ chosen: [DocumentInfo]) -> some View {
+        if !chosen.isEmpty {
+            let single = chosen.count == 1 ? chosen.first : nil
+            let linked = chosen.filter { $0.bookingId != nil }.map(\.id)
+            let ids = chosen.map(\.id)
+            Button("Vorschau") { if let single { model.quickLook(single) } }
+                .disabled(single == nil)
+            Button(single?.seen == false ? "Als gelesen markieren" : "Als ungelesen markieren") {
+                if let single { model.markDocumentsSeen([single.id], seen: !single.seen) }
+            }
+            .disabled(single == nil)
+            #if os(macOS)
+            Button("Im Finder anzeigen") { if let single { model.showInFinder(single) } }
+                .disabled(single == nil)
+            Button("Pfad kopieren") { if let single { model.copyDocumentPath(single) } }
+                .disabled(single == nil)
+            #endif
+            Button("Zuordnung aufheben") { Task { await model.unlinkDocuments(linked) } }
+                .disabled(linked.isEmpty)
+            Menu("Konto zuordnen") {
+                Button("Ohne Konto") { Task { await model.setDocumentsAccount(ids, nil) } }
+                    .disabled(chosen.allSatisfy { $0.accountId == nil })
+                ForEach(model.accountMenuSections) { section in
+                    Section(section.title) {
+                        ForEach(section.accounts) { a in
+                            Button(a.name) { Task { await model.setDocumentsAccount(ids, a.id) } }
+                                .disabled(chosen.allSatisfy { $0.accountId == a.id })
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button(single == nil ? "\(chosen.count) Belege löschen …" : "Beleg löschen …", role: .destructive) { docsToDelete = chosen }
         }
     }
 
@@ -884,13 +908,13 @@ enum DocumentFilters {
         }
     }
 
-    /// `unseenOnly`: only unread ones, plus the one in `keeping` (the open document must not vanish
+    /// `unseenOnly`: only unread ones, plus those in `keeping` (a selected document must not vanish
     /// from the list the moment it is read).
     static func apply(_ docs: [DocumentInfo], type: String?, year: Int?, unseenOnly: Bool = false,
-                      keeping: Int64? = nil) -> [DocumentInfo] {
+                      keeping: Set<Int64> = []) -> [DocumentInfo] {
         docs.filter { d in
             (type == nil || d.docType == type) && (year == nil || d.docDate.hasPrefix("\(year!)-"))
-                && (!unseenOnly || !d.seen || d.id == keeping)
+                && (!unseenOnly || !d.seen || keeping.contains(d.id))
         }
     }
 }

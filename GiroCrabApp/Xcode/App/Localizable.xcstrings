@@ -784,6 +784,28 @@
         }
       }
     },
+    "%lld Belege löschen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete %lld Documents…"
+          }
+        }
+      }
+    },
+    "%lld Belege löschen?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete %lld Documents?"
+          }
+        }
+      }
+    },
     "%lld Belege nach „%@“ exportiert" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -791,6 +813,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld receipts exported to “%@”"
+          }
+        }
+      }
+    },
+    "%lld Belege werden unwiderruflich gelöscht." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld documents will be deleted permanently."
           }
         }
       }
@@ -972,6 +1005,17 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld Dokumente ausgewählt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Documents Selected"
           }
         }
       }
@@ -12545,6 +12589,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The pending charge could not be discarded. Transactions with documents or splits remain protected."
+          }
+        }
+      }
+    },
+    "Die Vorschau zeigt ein einzelnes Dokument." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The preview shows a single document."
           }
         }
       }
