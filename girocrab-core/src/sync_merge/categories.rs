@@ -1,13 +1,10 @@
-//! Category merge: newest edit per field wins, same-named live siblings are combined.
+//! Category merge: newest edit per field wins for each UUID.
 
 use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::{Connection, params};
 
-use super::{
-    category_uuid_for_path, fill_missing_uuids, fold, merge_deletion, pick_match, survivor,
-    take_newer,
-};
+use super::{fill_missing_uuids, merge_deletion, survivor, take_newer};
 use crate::error::CoreResult;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -33,8 +30,8 @@ struct Cat {
 
 impl Cat {
     fn merge(&mut self, o: Cat) {
-        // Identity is immutable; when combining a custom entry and a built-in,
-        // custom provenance wins so its name can never become translated.
+        // A peer can clear built-in provenance when importing into the same
+        // UUID. Preserve custom provenance so its name remains literal.
         merge_category_role(&mut self.role, o.role);
         take_newer(&mut self.name, &mut self.name_ms, o.name, o.name_ms);
         take_newer(&mut self.parent, &mut self.parent_ms, o.parent, o.parent_ms);
@@ -98,26 +95,6 @@ fn load_categories(conn: &Connection, schema: &str) -> CoreResult<Vec<Cat>> {
         })?
         .collect::<Result<_, _>>()?;
     Ok(rows)
-}
-
-/// uuid -> uuid of the category's current path (names from the root).
-fn path_uuids(cats: &[Cat]) -> HashMap<String, String> {
-    let by_uuid: HashMap<&str, &Cat> = cats.iter().map(|c| (c.uuid.as_str(), c)).collect();
-    cats.iter()
-        .map(|c| {
-            let mut path = vec![c.name.as_str()];
-            let mut cur = c.parent.as_deref();
-            while let Some(p) = cur.and_then(|p| by_uuid.get(p)) {
-                if path.len() > 64 {
-                    break;
-                }
-                path.push(p.name.as_str());
-                cur = p.parent.as_deref();
-            }
-            path.reverse();
-            (c.uuid.clone(), category_uuid_for_path(&path))
-        })
-        .collect()
 }
 
 fn cat_survivor<'a>(state: &'a BTreeMap<String, Cat>, uuid: &'a str) -> Option<&'a str> {
@@ -185,46 +162,12 @@ fn resolve_parents(state: &mut BTreeMap<String, Cat>) {
     }
 }
 
-/// Live categories with the same parent and case-folded name are combined
-/// into the lowest uuid. Returns whether anything was combined.
-fn combine_categories(state: &mut BTreeMap<String, Cat>) -> bool {
-    let mut groups: BTreeMap<(Option<String>, String), Vec<String>> = BTreeMap::new();
-    for c in state.values().filter(|c| c.deleted_ms.is_none()) {
-        groups
-            .entry((c.parent.clone(), fold(&c.name)))
-            .or_default()
-            .push(c.uuid.clone());
-    }
-    let mut any = false;
-    for uuids in groups.into_values().filter(|g| g.len() > 1) {
-        // BTreeMap order: the first is the lowest uuid
-        let keep = &uuids[0];
-        for u in &uuids[1..] {
-            let role = state[u].role.clone();
-            merge_category_role(&mut state.get_mut(keep).unwrap().role, role);
-        }
-        let keep_ms = state[keep].name_ms;
-        for u in &uuids[1..] {
-            let c = state.get_mut(u).unwrap();
-            c.deleted_ms = Some(c.name_ms.max(keep_ms).max(1));
-            c.merged_into = Some(keep.clone());
-            any = true;
-        }
-    }
-    any
-}
-
 /// Merges `other.categories` into this vault: upsert by uuid, newest stamp per
-/// field, deletions win, same-named live siblings combined. Returns other id
-/// -> local id (combined rows map to their survivor; a deleted row without a
-/// survivor maps to its own deleted local row).
-///
-/// `legacy`: the other vault had no uuids (v7); its rows were given path
-/// uuids and are matched by their path against every local row, deleted ones
-/// included, so they cannot revive anything.
+/// field, deletions win. Returns other id -> local id (rows with an existing
+/// redirect map to their survivor; a deleted row without a survivor maps to its
+/// own deleted local row).
 pub(crate) fn merge_categories(
     conn: &Connection,
-    legacy: bool,
     stats: &mut crate::vault::MergeStats,
 ) -> CoreResult<HashMap<i64, i64>> {
     fill_missing_uuids(conn)?;
@@ -235,62 +178,17 @@ pub(crate) fn merge_categories(
     let mut state: BTreeMap<String, Cat> =
         local.iter().map(|c| (c.uuid.clone(), c.clone())).collect();
 
-    // v7 rows: other uuid -> the local uuid they stand for
-    let mut alias: HashMap<String, String> = HashMap::new();
-    if legacy {
-        let mut by_path: HashMap<String, Vec<(&str, bool)>> = HashMap::new();
-        for (u, p) in path_uuids(&local) {
-            let live = original[&u].deleted_ms.is_none();
-            let u = original.get_key_value(&u).unwrap().0.as_str();
-            by_path.entry(p).or_default().push((u, live));
-        }
-        for (u, p) in path_uuids(&other) {
-            if original.contains_key(&u) {
-                continue;
-            }
-            if let Some(m) = by_path.get(&p).and_then(|c| pick_match(c)) {
-                alias.insert(u, m.to_string());
-            }
-        }
-    }
-    let local_uuid = |u: Option<String>| u.map(|u| alias.get(&u).cloned().unwrap_or(u));
-
     for o in &other {
-        let mut row = o.clone();
-        row.parent = local_uuid(row.parent);
-        row.merged_into = local_uuid(row.merged_into);
-        match alias.get(&o.uuid) {
-            Some(target) => {
-                // merged into its match; the row itself stays as a tombstone
-                let t = state.get_mut(target).unwrap();
-                t.merge(Cat {
-                    uuid: target.clone(),
-                    ..row.clone()
-                });
-                let ms = t.name_ms;
-                row.id = 0;
-                row.deleted_ms = Some(ms.max(1));
-                row.merged_into = Some(target.clone());
-                state.insert(row.uuid.clone(), row);
+        match state.get_mut(&o.uuid) {
+            Some(c) => c.merge(o.clone()),
+            None => {
+                state.insert(o.uuid.clone(), Cat { id: 0, ..o.clone() });
             }
-            None => match state.get_mut(&o.uuid) {
-                Some(c) => c.merge(row),
-                None => {
-                    row.id = 0;
-                    state.insert(row.uuid.clone(), row);
-                }
-            },
         }
     }
-    loop {
-        resolve_parents(&mut state);
-        if !combine_categories(&mut state) {
-            break;
-        }
-    }
+    resolve_parents(&mut state);
 
-    // write: new rows first (parked as deleted = -1, outside the unique name
-    // index), then every changed row, then unpark the live ones at once
+    // Allocate all local IDs before assigning parent edges.
     let mut ids: HashMap<String, i64> = state.values().map(|c| (c.uuid.clone(), c.id)).collect();
     let changed: Vec<&Cat> = state
         .values()
@@ -299,18 +197,13 @@ pub(crate) fn merge_categories(
     for c in &changed {
         if c.id == 0 {
             conn.execute(
-                "INSERT INTO categories(uuid, name, deleted_ms) VALUES (?1, ?2, -1)",
+                "INSERT INTO categories(uuid, name) VALUES (?1, ?2)",
                 params![c.uuid, c.name],
             )?;
             ids.insert(c.uuid.clone(), conn.last_insert_rowid());
             if c.deleted_ms.is_none() {
                 stats.categories_added += 1;
             }
-        } else {
-            conn.execute(
-                "UPDATE categories SET deleted_ms = -1 WHERE id = ?1",
-                [c.id],
-            )?;
         }
     }
     for c in &changed {
@@ -319,7 +212,7 @@ pub(crate) fn merge_categories(
             "UPDATE categories SET name = ?2, parent_id = ?3, sf_symbol = ?4, color_hex = ?5,
                     budget_cents = ?6, sort_order = ?7, name_ms = ?8, parent_ms = ?9,
                     symbol_ms = ?10, color_ms = ?11, budget_ms = ?12, order_ms = ?13,
-                    deleted_ms = IFNULL(?14, -1), merged_into = ?15, builtin_role = ?16
+                    deleted_ms = ?14, merged_into = ?15, builtin_role = ?16
              WHERE id = ?1",
             params![
                 ids[&c.uuid],
@@ -341,13 +234,12 @@ pub(crate) fn merge_categories(
             ],
         )?;
     }
-    conn.execute(
-        "UPDATE categories SET deleted_ms = NULL WHERE deleted_ms = -1",
-        [],
-    )?;
 
     // whatever points at a deleted category follows its survivor or becomes
-    // uncategorised (as a deletion does); derived, no stamps
+    // uncategorised (as a deletion does); derived, no stamps. Redirects from
+    // builds before v46, which combined same-named categories by themselves, are
+    // followed too (#1833: edge case of mixed versions on three or more devices,
+    // see `older_snapshot_redirect_is_followed`).
     for c in state.values().filter(|c| c.deleted_ms.is_some()) {
         let id = ids[&c.uuid];
         match cat_survivor(&state, &c.uuid) {
@@ -383,8 +275,7 @@ pub(crate) fn merge_categories(
     Ok(other
         .iter()
         .map(|o| {
-            let u = alias.get(&o.uuid).unwrap_or(&o.uuid);
-            let target = cat_survivor(&state, u).unwrap_or(u.as_str());
+            let target = cat_survivor(&state, &o.uuid).unwrap_or(o.uuid.as_str());
             (o.id, ids[target])
         })
         .collect())

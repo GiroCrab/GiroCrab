@@ -73,6 +73,8 @@
 //!   merge manual loan booking edits or recompute their opening balances.
 //! - 45: the source links of mirrored offline-loan payments (#1970), mapped through
 //!   booking merges and MoneyMoney twin folding.
+//! - 46: sibling category names may repeat. The schema version prevents older clients
+//!   from reading snapshots that can hold separate categories with the same name.
 //!
 //! Schema changes are a new step at the end of [`STEPS`]; never edit an
 //! existing step. After a bump, run
@@ -134,7 +136,14 @@ const STEPS: &[Step] = &[
     Step::Hook(crate::planned::planned_settled),               // 43 (#1900)
     Step::Sql(""), // 44: offline-loan compatibility fence
     Step::Hook(crate::offline::loan_payments::migrate), // 45: mirrored payments retain their source
+    Step::Sql(CATEGORY_SIBLING_LOOKUP), // 46
 ];
+
+const CATEGORY_SIBLING_LOOKUP: &str = "
+DROP INDEX IF EXISTS categories_unique_name;
+CREATE INDEX IF NOT EXISTS categories_sibling_name
+    ON categories(parent_id, name COLLATE NOCASE) WHERE deleted_ms IS NULL;
+";
 
 /// Step 41 (#714): `transactions.date_ms`, the edit stamp of a manual booking's date.
 /// Idempotent (repair paths run steps again).
@@ -1249,7 +1258,7 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 45);
+        assert_eq!(SCHEMA_VERSION, 46);
     }
 
     /// #998: what the MoneyMoney import archived from `cancel_tsp` is active again and noted for

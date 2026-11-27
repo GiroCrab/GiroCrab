@@ -315,7 +315,7 @@ fn half_migrated_v8_vault_is_repaired() {
              ALTER TABLE transactions DROP COLUMN salary_flag;
              DROP INDEX tx_rule;
              CREATE INDEX tx_rule ON transactions(rule_id);
-             DROP INDEX categories_unique_name;
+             DROP INDEX categories_sibling_name;
              CREATE UNIQUE INDEX categories_unique_name ON categories(IFNULL(parent_id, 0), name);
              ALTER TABLE user_groups DROP COLUMN color_hex;
              ALTER TABLE user_groups DROP COLUMN color_ms;

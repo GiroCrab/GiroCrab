@@ -50,7 +50,8 @@ and `migrate` runs the missing ones in a single transaction.
 | 43 | `planned_transfers.settled_ms`: settled scheduled orders (NULL = open), date index over `(execution_date, settled_ms)` (#1900) |
 | 44 | offline loan compatibility (#1970): older readers must refuse vaults whose offline loans they cannot reconcile. No tables change. |
 | 45 | `offline_loan_payments` (#1970): source links between original bookings and mirrored principal payments, and `offline_loan_source_moves` for booking replacements. |
-| 46+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 46 | Replace the unique live sibling-name index with a lookup index. Separate category UUIDs can share a name. Older schema-aware clients refuse the upgraded snapshot before merging it. |
+| 47+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 
