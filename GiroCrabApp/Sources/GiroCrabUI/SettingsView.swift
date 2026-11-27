@@ -173,6 +173,16 @@ struct GeneralSettings: View {
                 Text("Wie weit GiroCrab beim ersten Abruf eines neuen Zugangs zurückgeht. „Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Bestehende Zugänge rufen weiter ab ihrem neuesten Umsatz ab.")
                     .appFont(.caption).foregroundStyle(.secondary)
             } header: { Text("Buchungen").appSectionHeader() }
+            Section {
+                // core setting of the vault (#714): every statistic reloads
+                Toggle("Erstattungen mit der Ursprungsbuchung verrechnen", isOn: Binding(
+                    get: { model.netRefundsInStats },
+                    set: { on in Task { await model.setNetRefundsInStats(on) } }
+                ))
+                .disabled(!model.isUnlocked)
+                Text("Eine verknüpfte Erstattung zählt in Summen, Budgets und Diagrammen nicht als Einnahme, sondern verringert den Betrag ihrer Ursprungsbuchung, auch rückwirkend in deren Monat. Das gilt, wenn Erstattung und Ursprungsbuchung in den betrachteten Konten liegen. Buchungen, Liste und Kontostände bleiben unverändert.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+            } header: { Text("Auswertungen").appSectionHeader() }
             TransferSettingsSection()
             BalanceChartSettingsSection()
             #if os(macOS)

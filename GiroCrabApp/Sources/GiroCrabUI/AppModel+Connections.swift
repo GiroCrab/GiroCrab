@@ -410,7 +410,7 @@ extension AppModel {
 
     /// Whether a portal supports storing its username and password in the vault.
     nonisolated static func supportsStoredPortalLogin(_ connector: ConnectorKind) -> Bool {
-        connector == .americanExpress || connector == .amazonVisa
+        connector == .americanExpress || connector == .amazonVisa || connector == .schwaebischHall
     }
 
     /// Vault setting with the portal user name; the password is the login's PIN

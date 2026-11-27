@@ -270,6 +270,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Ungültige Konto-Zuordnung." => "Invalid account mapping.",
         "Bankzugang nicht gefunden." => "Bank connection not found.",
+        "Der Einstandskurs darf nicht negativ sein." => "The purchase price must not be negative.",
+        "Die Position hat weder ISIN noch WKN." => "The position has neither an ISIN nor a WKN.",
+        "Depotposition" => "Depot position",
         "Falscher Bankzugang." => "Wrong bank connection.",
         "Ungültiger Sitzungszustand." => "Invalid session state.",
         "Die Konto-Zuordnung hat sich geändert. Bitte erneut anmelden." => {
@@ -979,6 +982,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "{0}: Die Freigabe in der Banking-App ist nicht rechtzeitig erfolgt. Bitte erneut abrufen und in der App bestätigen." => {
             "{0}: the approval in the banking app did not arrive in time. Please fetch again and confirm in the app."
+        }
+        "Anmeldename oder PIN wurden abgelehnt. Bei manchen Banken ist die PIN das Kennwort des Online-Bankings (z. B. Deutsche Bank: Kennwort der Deutsche Bank ID). Bitte prüfen, bevor Sie es erneut versuchen: Nach mehreren Fehlversuchen sperrt die Bank den Zugang." => {
+            "Login name or PIN was refused. At some banks the PIN is the online banking password (e.g. Deutsche Bank: the password of the Deutsche Bank ID). Please check before trying again: after several failed attempts the bank locks the access."
         }
         "Die Bank verlangt den Namen Ihres TAN-Mediums (z. B. den Gerätenamen aus der BestSign-Verwaltung). Tragen Sie ihn im Bankzugang unter „TAN-Medium“ ein und rufen Sie erneut ab." => {
             "The bank requires the name of your TAN medium (e.g. the device name from your BestSign management). Enter it under “TAN medium” in the bank connection and fetch again."
