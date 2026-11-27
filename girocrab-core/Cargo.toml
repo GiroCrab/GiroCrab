@@ -23,7 +23,7 @@ serde = []
 [dependencies]
 uniffi = { version = "0.32", features = ["tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
-rusqlite = { version = "0.42", features = ["bundled-sqlcipher-vendored-openssl", "backup", "functions"] }
+rusqlite = { version = "0.43", features = ["bundled-sqlcipher-vendored-openssl", "backup", "functions"] }
 zeroize = { version = "1.9", features = ["zeroize_derive"] }
 async-trait = "0.1"
 thiserror = "2"
@@ -47,14 +47,14 @@ pbkdf2 = "0.13"
 crypto-primes = { version = "0.7", default-features = false }
 sha1 = "0.11"
 jiff = "1.0.1"
-rand = "0.9"
+rand = "0.10"
 hex = "0.4"
 uuid = { version = "1", features = ["v4", "v5"] }
 url = "2"
 simpleicons-rs = "16"
 miniz_oxide = "0.9.1"
 # GiroCode (EPC QR) matrix for every front end (#663).
-qrcode = { version = "0.14", default-features = false }
+qrcode = { version = "0.15", default-features = false }
 # Watch-only Bitcoin wallets from an xpub/ypub/zpub: BIP32 public derivation
 # (secp256k1 point arithmetic) and address hashing (RIPEMD-160).
 k256 = { version = "0.14", default-features = false, features = ["arithmetic"] }
@@ -71,5 +71,5 @@ jiff = { version = "1.0.1", features = ["tzdb-bundle-always"] }
 
 [dev-dependencies]
 # Independent XML parser for the payment invariant tests (#947); tests only.
-roxmltree = "0.20"
+roxmltree = "0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "test-util"] }

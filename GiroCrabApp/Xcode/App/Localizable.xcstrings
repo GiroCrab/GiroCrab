@@ -20724,6 +20724,17 @@
         }
       }
     },
+    "Kein Klartext – Hinweis ausgeblendet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notice hidden"
+          }
+        }
+      }
+    },
     "Kein Konto zum Einziehen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20863,6 +20874,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not a valid date: %@"
+          }
+        }
+      }
+    },
+    "Kein passender Umsatz gefunden – beim Konto „%@“ abgelegt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No matching transaction found – filed under the account “%@”"
           }
         }
       }

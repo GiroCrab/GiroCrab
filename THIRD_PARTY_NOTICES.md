@@ -25,14 +25,14 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 | **`miniz_oxide`** | `0.9.1` | `MIT OR Zlib OR Apache-2.0` | [https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide](https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide) |
 | **`p256`** | `0.14.0` | `Apache-2.0 OR MIT` | [https://github.com/RustCrypto/elliptic-curves](https://github.com/RustCrypto/elliptic-curves/tree/master/p256) |
 | **`pbkdf2`** | `0.13.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/password-hashes](https://github.com/RustCrypto/password-hashes) |
-| **`qrcode`** (GiroCode / EPC QR matrix, #663) | `0.14.1` | `MIT OR Apache-2.0` | [https://github.com/kennytm/qrcode-rust](https://github.com/kennytm/qrcode-rust) |
+| **`qrcode`** (GiroCode / EPC QR matrix, #663) | `0.15.0` | `MIT OR Apache-2.0` | [https://github.com/kennytm/qrcode-rust](https://github.com/kennytm/qrcode-rust) |
 | **`rand`** | `0.9.5` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
-| **`rand`** | `0.10.3` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
+| **`rand`** | `0.10.4` | `MIT OR Apache-2.0` | [https://github.com/rust-random/rand](https://github.com/rust-random/rand) |
 | **`regex`** | `1.13.1` | `MIT OR Apache-2.0` | [https://github.com/rust-lang/regex](https://github.com/rust-lang/regex) |
 | **`reqwest`** | `0.13.5` | `MIT OR Apache-2.0` | [https://github.com/seanmonstar/reqwest](https://github.com/seanmonstar/reqwest) |
 | **`rsa`** | `0.10.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/RSA](https://github.com/RustCrypto/RSA) |
 | **`ripemd`** (Bitcoin address hashing) | `0.2.0` | `MIT OR Apache-2.0` | [https://github.com/RustCrypto/hashes](https://github.com/RustCrypto/hashes) |
-| **`rusqlite`** | `0.42.0` | `MIT` | [https://github.com/rusqlite/rusqlite](https://github.com/rusqlite/rusqlite) |
+| **`rusqlite`** | `0.43.0` | `MIT` | [https://github.com/rusqlite/rusqlite](https://github.com/rusqlite/rusqlite) |
 | **`rust_decimal`** | `1.43.0` | `MIT` | [https://github.com/paupino/rust-decimal](https://github.com/paupino/rust-decimal) |
 | **`serde`** | `1.0.229` | `MIT OR Apache-2.0` | [https://github.com/serde-rs/serde](https://github.com/serde-rs/serde) |
 | **`serde_json`** | `1.0.154` | `MIT OR Apache-2.0` | [https://github.com/serde-rs/json](https://github.com/serde-rs/json) |
@@ -51,7 +51,7 @@ The macOS user interface uses only native Apple system frameworks (`SwiftUI`, `A
 
 | Crate | Version | License | Repository |
 |---|---|---|---|
-| **`roxmltree`** (dev-dependency of `girocrab-core`: independent XML parser for the payment invariant tests, #947) | `0.20.0` | `MIT OR Apache-2.0` | [https://github.com/RazrFalcon/roxmltree](https://github.com/RazrFalcon/roxmltree) |
+| **`roxmltree`** (dev-dependency of `girocrab-core`: independent XML parser for the payment invariant tests, #947) | `0.21.2` | `MIT OR Apache-2.0` | [https://github.com/RazrFalcon/roxmltree](https://github.com/RazrFalcon/roxmltree) |
 | **`uniffi`** (`uniffi-bindgen`, feature `cli`) | `0.32.2` | `MPL-2.0` | [https://github.com/mozilla/uniffi-rs](https://github.com/mozilla/uniffi-rs) |
 
 ## Linux Direct Dependencies (`GiroCrabLinux`)
@@ -307,7 +307,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | `r-efi` | `5.3.0` | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | [Repo](https://github.com/r-efi/r-efi) |
 | `r-efi` | `6.0.0` | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | [Repo](https://github.com/r-efi/r-efi) |
 | `rand` | `0.9.5` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
-| `rand` | `0.10.3` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
+| `rand` | `0.10.4` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
 | `rand_chacha` | `0.9.0` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers, Th) |
 | `rand_core` | `0.9.5` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand) (The Rand Project Developers, The Rust Project Developers) |
 | `rand_core` | `0.10.1` | `MIT OR Apache-2.0` | [Repo](https://github.com/rust-random/rand_core) (The Rand Project Developers) |
@@ -321,7 +321,7 @@ Own Cargo workspace. Shares `girocrab-core`, `serde`, `serde_json`, `base64`, `z
 | `ripemd` | `0.2.0` | `MIT OR Apache-2.0` | [Repo](https://github.com/RustCrypto/hashes) (RustCrypto Developers) |
 | `rsa` | `0.10.0` | `MIT OR Apache-2.0` | [Repo](https://github.com/RustCrypto/RSA) (RustCrypto Developers, dignifiedquire <dignifiedquire@gmail.) |
 | `rsqlite-vfs` | `0.2.0` | `MIT` | [Repo](https://github.com/Spxg/sqlite-wasm-rs) |
-| `rusqlite` | `0.42.0` | `MIT` | [Repo](https://github.com/rusqlite/rusqlite) (The rusqlite developers) |
+| `rusqlite` | `0.43.0` | `MIT` | [Repo](https://github.com/rusqlite/rusqlite) (The rusqlite developers) |
 | `rust_decimal` | `1.43.0` | `MIT` | [Repo](https://github.com/paupino/rust-decimal) (Paul Mason <paul@form1.co.nz>) |
 | `rustc-hash` | `2.1.3` | `Apache-2.0 OR MIT` | [Repo](https://github.com/rust-lang/rustc-hash) (The Rust Project Developers) |
 | `rustc_version` | `0.4.1` | `MIT OR Apache-2.0` | [Repo](https://github.com/djc/rustc-version-rs) |
