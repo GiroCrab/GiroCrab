@@ -134,9 +134,10 @@ fn load(conn: &Connection, account_id: i64) -> CoreResult<Vec<CryptoPosition>> {
 }
 
 /// Writes the positions of the crypto account `account_id` into `holdings` and
-/// its balance, and records them in the depot value history. A position
-/// without a price shows with value 0; while there is one, the history records
-/// nothing (the total would be too low).
+/// its balance, and records them in the depot value history like a fetch: a
+/// position no longer held gets its closing 0. A position without a price
+/// shows with value 0; while there is one, the history records the priced
+/// positions but no total (it would be too low).
 pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> {
     if !is_crypto(conn, account_id)? {
         return Ok(());
@@ -175,18 +176,44 @@ pub(crate) fn materialize(conn: &Connection, account_id: i64) -> CoreResult<()> 
         "UPDATE accounts SET balance_cents = ?1, balance_date = ?2 WHERE id = ?3",
         params![total, today_iso(), account_id],
     )?;
-    if !all_priced {
-        return Ok(());
-    }
-    let all: Vec<&Holding> = holdings.iter().collect();
+    let priced: Vec<&Holding> = holdings
+        .iter()
+        .zip(&positions)
+        .filter(|(_, p)| p.price_eur.is_some())
+        .map(|(h, _)| h)
+        .collect();
+    // each state its own observation, also for two changes within one millisecond
+    let last: Option<i64> = conn.query_row(
+        "SELECT MAX(observed_ms) FROM depot_observations WHERE account_id = ?1",
+        [account_id],
+        |r| r.get(0),
+    )?;
+    let observed = now_ms().max(last.map_or(0, |l| l + 1));
     crate::depot_values::record_fetch(
         conn,
         account_id,
-        Some(all.as_slice()),
+        Some(priced.as_slice()),
         &previous,
-        true,
-        now_ms(),
+        all_priced,
+        observed,
     )
+}
+
+/// Two devices that each added the same ticker to an account hold two live
+/// positions after a merge: the newest edit stays (on equal stamps the larger
+/// uuid, so every device keeps the same one), the others become tombstones
+/// that a later merge carries along.
+fn resolve_duplicate_tickers(conn: &Connection) -> CoreResult<()> {
+    conn.execute(
+        "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = MAX(changed_ms + 1, ?1)
+          WHERE deleted_ms IS NULL AND EXISTS (
+                SELECT 1 FROM crypto_positions o
+                 WHERE o.account_id = crypto_positions.account_id AND o.symbol = crypto_positions.symbol
+                   AND o.deleted_ms IS NULL AND o.id <> crypto_positions.id
+                   AND (o.changed_ms, o.uuid) > (crypto_positions.changed_ms, crypto_positions.uuid))",
+        [now_ms()],
+    )?;
+    Ok(())
 }
 
 /// Ids of all crypto accounts.
@@ -200,7 +227,8 @@ fn crypto_account_ids(conn: &Connection) -> CoreResult<Vec<i64>> {
 }
 
 /// Takes over positions and prices from an attached vault (`other`): positions
-/// by uuid, the newer edit wins and soft deletes travel along; a price by
+/// by uuid, the newer edit wins and soft deletes travel along (on equal stamps
+/// a deletion wins, then the larger values, so both devices agree); a price by
 /// ticker, the newer fetch wins. Then the crypto accounts are written again.
 pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> CoreResult<()> {
     if !has_table(conn, "other", "crypto_positions")? {
@@ -221,7 +249,11 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
              ON CONFLICT(uuid) DO UPDATE SET symbol = excluded.symbol, quantity = excluded.quantity,
                     purchase_price_cents = excluded.purchase_price_cents,
                     changed_ms = excluded.changed_ms, deleted_ms = excluded.deleted_ms
-              WHERE excluded.changed_ms > crypto_positions.changed_ms",
+              WHERE excluded.changed_ms > crypto_positions.changed_ms
+                 OR (excluded.changed_ms = crypto_positions.changed_ms
+                     AND (excluded.deleted_ms IS NOT NULL, excluded.quantity, IFNULL(excluded.purchase_price_cents, -1), excluded.symbol)
+                       > (crypto_positions.deleted_ms IS NOT NULL, crypto_positions.quantity,
+                          IFNULL(crypto_positions.purchase_price_cents, -1), crypto_positions.symbol))",
             params![oid, acc],
         )?;
     }
@@ -232,6 +264,7 @@ pub(crate) fn merge_attached(conn: &Connection, acc_map: &HashMap<i64, i64>) -> 
           WHERE excluded.fetched_ms > crypto_prices.fetched_ms",
         [],
     )?;
+    resolve_duplicate_tickers(conn)?;
     for id in crypto_account_ids(conn)? {
         materialize(conn, id)?;
     }
@@ -322,7 +355,8 @@ impl Vault {
         }
         match previous {
             Some(id) => tx.execute(
-                "UPDATE crypto_positions SET symbol = ?1, quantity = ?2, purchase_price_cents = ?3, changed_ms = ?4
+                "UPDATE crypto_positions SET symbol = ?1, quantity = ?2, purchase_price_cents = ?3,
+                        changed_ms = MAX(?4, changed_ms + 1)
                   WHERE id = ?5",
                 params![symbol, quantity, purchase_price_cents, now_ms(), id],
             )?,
@@ -345,7 +379,7 @@ impl Vault {
         require_crypto(&tx, account_id)?;
         let id = position_id(&tx, account_id, &symbol)?;
         tx.execute(
-            "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = ?1 WHERE id = ?2",
+            "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = MAX(?1, changed_ms + 1) WHERE id = ?2",
             params![now_ms(), id],
         )?;
         materialize(&tx, account_id)?;

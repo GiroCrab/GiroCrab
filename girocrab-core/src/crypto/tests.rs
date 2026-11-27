@@ -54,7 +54,6 @@ fn positions_show_as_depot_holdings_with_balance_and_history() {
     price(&v, "SHIB", 0.000_012_34);
     v.save_crypto_position(acc, None, "btc".into(), 0.5, Some(30_000_00))
         .unwrap();
-    tick(); // each save is an observation of its own millisecond
     v.save_crypto_position(acc, None, " shib".into(), 10_000_000.0, None)
         .unwrap();
 
@@ -174,4 +173,87 @@ fn vault_merge_brings_positions_and_keeps_deletions() {
         assert_eq!((p[0].symbol.as_str(), p[0].quantity), ("BTC", 1.5));
         assert_eq!(balance(v, acc), 120_000_00);
     }
+}
+
+/// The latest value the depot history holds for position `symbol`.
+fn last_observed(v: &Vault, acc: i64, symbol: &str) -> i64 {
+    v.db()
+        .unwrap()
+        .query_row(
+            "SELECT value_cents FROM depot_observations WHERE account_id = ?1 AND kind = 'position'
+               AND name = ?2 ORDER BY observed_ms DESC LIMIT 1",
+            params![acc, symbol],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_removed_position_is_closed_in_the_history_while_another_lacks_a_price() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    price(&v, "BTC", 80_000.0);
+    v.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    v.save_crypto_position(acc, None, "ETH".into(), 2.0, None)
+        .unwrap();
+    assert_eq!(last_observed(&v, acc, "BTC"), 80_000_00);
+    v.delete_crypto_position(acc, "BTC".into()).unwrap();
+    assert_eq!(last_observed(&v, acc, "BTC"), 0, "closing zero");
+}
+
+#[test]
+fn the_same_ticker_added_on_two_devices_is_one_position_after_a_merge() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    let (b, pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    price(&a, "BTC", 80_000.0);
+    price(&b, "BTC", 80_000.0);
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    tick();
+    b.save_crypto_position(bacc, None, "BTC".into(), 2.0, None)
+        .unwrap();
+    for _ in 0..2 {
+        a.merge_other_vault(pb.to_string_lossy().to_string(), vec![7u8; 32])
+            .unwrap();
+        b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+            .unwrap();
+    }
+    for (v, acc) in [(&a, acc), (&b, bacc)] {
+        let p = v.list_crypto_positions(acc).unwrap();
+        assert_eq!(p.len(), 1, "one BTC");
+        assert_eq!(p[0].quantity, 2.0, "the newer one");
+        assert_eq!(balance(v, acc), 160_000_00);
+    }
+}
+
+#[test]
+fn on_equal_stamps_a_deletion_wins_the_merge() {
+    let (a, pa) = temp_vault();
+    let acc = a.create_crypto_account("Wallet".into()).unwrap();
+    a.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    let (b, _pb) = temp_vault();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    let bacc = b.list_crypto_account_ids().unwrap()[0];
+    let stamp: i64 = a
+        .db()
+        .unwrap()
+        .query_row("SELECT changed_ms FROM crypto_positions", [], |r| r.get(0))
+        .unwrap();
+    a.db()
+        .unwrap()
+        .execute(
+            "UPDATE crypto_positions SET deleted_ms = ?1, changed_ms = ?1",
+            [stamp],
+        )
+        .unwrap();
+    b.merge_other_vault(pa.to_string_lossy().to_string(), vec![7u8; 32])
+        .unwrap();
+    assert!(b.list_crypto_positions(bacc).unwrap().is_empty());
 }
