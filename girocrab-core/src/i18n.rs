@@ -1783,6 +1783,12 @@ fn english(de: &str) -> Option<&'static str> {
         "Ford Money: Kundennummer und Passwort erforderlich." => {
             "Ford Money: Customer number and password required."
         }
+        "Ford Money: Der Kontostand von Konto {0} konnte nicht gelesen werden, das Konto wurde nicht abgerufen." => {
+            "Ford Money: The balance of account {0} could not be read, the account was not synced."
+        }
+        "Ford Money: Die Umsätze von Konto {0} konnten nicht gelesen werden, übernommen wurde nur der Kontostand." => {
+            "Ford Money: The transactions of account {0} could not be read, only the balance was imported."
+        }
         "Kundennummer" => "Customer number",
         // ------------------------------------------------------------ connectors/ffb.rs
         "Web-Kundenbereich (Direkt-Login)" => "Web customer area (direct login)",
