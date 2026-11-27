@@ -47,7 +47,8 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, params};
 use zeroize::Zeroizing;
 
 use super::moneymoney_import::{
-    KnownKeys, MmRow, MmSplit, Stats, find_or_create_category, merge_rows, with_known_parts,
+    KnownKeys, MmRow, MmSplit, Stats, categories_named, find_or_create_category, merge_rows,
+    with_known_parts,
 };
 use crate::asset_classification::{AssetClass, ClassificationValues, InstrumentKind};
 use crate::connectors::bank_directory::{Psd2Bank, match_psd2_bank, psd2_catalog};
@@ -591,6 +592,9 @@ fn moneymoney_classification(value: Option<i64>) -> ClassificationValues {
     }
     result
 }
+
+/// Category of uncategorised bookings to or from another own account (#94).
+const TRANSFERS: &str = "Umbuchungen";
 
 /// Categories as paths of names, outermost group first.
 #[derive(Default)]
@@ -1997,6 +2001,22 @@ impl Source {
     /// only has an account number – by account number (+ bank code / BIC when
     /// both sides have one), also against the BLZ/account number inside an
     /// own German IBAN.
+    /// Whether some booking goes to [`TRANSFERS`]: one to or from another own
+    /// account without a category (the rule of `mm_row`).
+    fn uses_transfer_category(&self) -> bool {
+        self.txs.iter().any(|t| {
+            t.category_key
+                .and_then(|k| self.categories.by_id.get(&k))
+                .is_none()
+                && self.accounts.iter().any(|a| {
+                    a.id == t.account_key
+                        && self
+                            .own_counter_account(a, &t.cp_account, &t.cp_bankcode)
+                            .is_some()
+                })
+        })
+    }
+
     fn own_counter_account(
         &self,
         from: &SrcAccount,
@@ -2180,7 +2200,7 @@ impl Source {
         // also when MoneyMoney only has the account number (pre-SEPA,
         // cards, depots) – uncategorised ones go to "Umbuchungen".
         if own.is_some() && path.is_empty() {
-            path = vec!["Umbuchungen".to_string()];
+            path = vec![TRANSFERS.to_string()];
         }
         let iban = if validate_iban(&t.cp_account) {
             normalize_iban(&t.cp_account)
@@ -2809,7 +2829,8 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
 /// the database share the path (names compared ignoring case, as the import
 /// does), or, when the vault keeps its tree, the path matches several live
 /// categories there (names that differ only in case). The import would put
-/// them together without asking, so it refuses them.
+/// them together without asking, so it refuses them. The vault side also
+/// covers the transfer category of uncategorised own-account bookings.
 fn ambiguous_category_paths(
     conn: &Connection,
     src: &Source,
@@ -2820,9 +2841,14 @@ fn ambiguous_category_paths(
     for path in &src.categories.order {
         *count.entry(key(path)).or_default() += 1;
     }
+    let transfers = vec![TRANSFERS.to_string()];
+    let mut paths: Vec<&Vec<String>> = src.categories.order.iter().collect();
+    if !count.contains_key(&key(&transfers)) && src.uses_transfer_category() {
+        paths.push(&transfers);
+    }
     let (mut out, mut reported) = (Vec::new(), HashSet::new());
-    for path in &src.categories.order {
-        if count[&key(path)] > 1 {
+    for path in paths {
+        if count.get(&key(path)).is_some_and(|&n| n > 1) {
             if reported.insert(key(path)) {
                 out.push(path.join(" › "));
             }
@@ -2834,13 +2860,7 @@ fn ambiguous_category_paths(
         let mut parent: Option<i64> = None;
         for (i, part) in path.iter().enumerate() {
             // the lookup of `find_or_create_category`
-            let ids: Vec<i64> = conn
-                .prepare_cached(
-                    "SELECT id FROM categories
-                      WHERE parent_id IS ?1 AND name = ?2 COLLATE NOCASE AND deleted_ms IS NULL",
-                )?
-                .query_map(params![parent, part], |r| r.get(0))?
-                .collect::<Result<_, _>>()?;
+            let ids = categories_named(conn, parent, part)?;
             match ids.as_slice() {
                 [id] => parent = Some(*id),
                 [] => break,

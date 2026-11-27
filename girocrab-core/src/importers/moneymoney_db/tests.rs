@@ -5915,3 +5915,47 @@ fn case_only_twins_in_the_vault_are_ambiguous() {
     let supermarkt = cats.iter().find(|c| c.name == "Supermarkt").unwrap();
     assert_eq!(supermarkt.parent_id, Some(own));
 }
+
+/// Twins that differ in a non-ASCII letter's case, and twins of the transfer
+/// category that uncategorised own-account bookings go to, are ambiguous too;
+/// the transfer category only when some booking goes there (#1992).
+#[test]
+fn unicode_and_transfer_twins_are_ambiguous() {
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(fake_db(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, false);
+    o.import_categories = false;
+    v.import_moneymoney_database(fake_db(), PW.into(), o)
+        .unwrap();
+    for name in ["Ärzte", "ärzte", "Umbuchungen", "UMBUCHUNGEN"] {
+        v.create_category(name.into(), None, "tag".into(), "#123456".into())
+            .unwrap();
+    }
+    let doctors = "INSERT INTO categories (rowid, name, type, group_key, sort)
+                   VALUES (6, 'Ärzte', 1, 0, 4);";
+    let p = v
+        .preview_moneymoney_database(fake_db_with(false, doctors), PW.into(), None)
+        .unwrap();
+    assert_eq!(p.ambiguous_category_paths, ["Ärzte"]);
+
+    // a transfer from the card to the own current account, without a category
+    let transfer = format!(
+        "{doctors}
+         INSERT INTO transactions (rowid, local_account_key, account, amount, currency, timestamp,
+           booked, unformatted_purpose, name, splitted, split_key, category_key)
+         VALUES (10, 2, 'DE89370400440532013000', -50.0, 'EUR', 1772712000,
+           1, 'Ausgleich', 'Max Mustermann', 0, 10, 1);"
+    );
+    let path = fake_db_with(false, &transfer);
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert_eq!(p.ambiguous_category_paths, ["Ärzte", "Umbuchungen"]);
+    assert!(
+        v.import_moneymoney_database(path, PW.into(), options_from(&p, false))
+            .is_err()
+    );
+    assert_eq!(v.list_categories(None, None).unwrap().len(), 4);
+}
