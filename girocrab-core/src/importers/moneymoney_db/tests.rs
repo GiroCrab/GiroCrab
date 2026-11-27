@@ -5941,14 +5941,21 @@ fn unicode_and_transfer_twins_are_ambiguous() {
     assert_eq!(p.ambiguous_category_paths, ["Ärzte"]);
 
     // a transfer from the card to the own current account, without a category
-    let transfer = format!(
-        "{doctors}
+    let transfer = |booked: u8| {
+        format!(
+            "{doctors}
          INSERT INTO transactions (rowid, local_account_key, account, amount, currency, timestamp,
            booked, unformatted_purpose, name, splitted, split_key, category_key)
          VALUES (10, 2, 'DE89370400440532013000', -50.0, 'EUR', 1772712000,
-           1, 'Ausgleich', 'Max Mustermann', 0, 10, 1);"
-    );
-    let path = fake_db_with(false, &transfer);
+           {booked}, 'Ausgleich', 'Max Mustermann', 0, 10, 1);"
+        )
+    };
+    // still pending: the import skips it, so nothing goes to the transfer category
+    let p = v
+        .preview_moneymoney_database(fake_db_with(false, &transfer(0)), PW.into(), None)
+        .unwrap();
+    assert_eq!(p.ambiguous_category_paths, ["Ärzte"]);
+    let path = fake_db_with(false, &transfer(1));
     let p = v
         .preview_moneymoney_database(path.clone(), PW.into(), None)
         .unwrap();

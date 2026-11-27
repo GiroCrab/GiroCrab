@@ -1996,27 +1996,24 @@ impl Source {
         }
     }
 
+    /// Whether some imported booking or split part goes to [`TRANSFERS`]: one
+    /// to or from another own account without a category (`mm_row`). Built from
+    /// the rows the import stores, so pending and skipped bookings don't count.
+    fn uses_transfer_category(&self) -> bool {
+        let transfers = [TRANSFERS.to_string()];
+        self.accounts.iter().any(|a| {
+            self.rows_for(a).rows.iter().any(|r| {
+                r.category_parts == transfers
+                    || r.splits.iter().any(|p| p.category_parts == transfers)
+            })
+        })
+    }
+
     /// The other own MoneyMoney account a booking's counter account points to:
     /// by IBAN, or – for pre-SEPA bookings, cards and depots where MoneyMoney
     /// only has an account number – by account number (+ bank code / BIC when
     /// both sides have one), also against the BLZ/account number inside an
     /// own German IBAN.
-    /// Whether some booking goes to [`TRANSFERS`]: one to or from another own
-    /// account without a category (the rule of `mm_row`).
-    fn uses_transfer_category(&self) -> bool {
-        self.txs.iter().any(|t| {
-            t.category_key
-                .and_then(|k| self.categories.by_id.get(&k))
-                .is_none()
-                && self.accounts.iter().any(|a| {
-                    a.id == t.account_key
-                        && self
-                            .own_counter_account(a, &t.cp_account, &t.cp_bankcode)
-                            .is_some()
-                })
-        })
-    }
-
     fn own_counter_account(
         &self,
         from: &SrcAccount,
