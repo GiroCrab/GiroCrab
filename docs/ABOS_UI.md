@@ -59,7 +59,9 @@ erkannt wird, verschwindet aus der Liste, behält aber ihre Felder.
 Der Serienschlüssel hängt am typischen Betrag (`…#1299`): eine Preiserhöhung oder ein zweiter Vertrag desselben
 Anbieters ändert ihn. Deshalb speichert jeder Eintrag zusätzlich Basisschlüssel, letzten Betrag und Konto;
 `reconcileSubscriptionKeys()` ordnet einen verwaisten Eintrag der Serie mit demselben Basisschlüssel zu, wenn das
-eindeutig ist (genau ein freier Kandidat, dessen Betrag höchstens die Hälfte vom letzten abweicht und das nicht schon beim Markieren neben dem Eintrag existierte). Alles Unklare bleibt
+eindeutig ist (genau ein freier Kandidat, dessen Betrag höchstens die Hälfte vom letzten abweicht, der nicht schon beim
+Markieren neben dem Eintrag existierte und den kein zweiter verwaister Eintrag beansprucht). Ändert eine solche
+Nachbarserie ihren Betrag und damit den Schlüssel, bleibt sie ausgeschlossen. Alles Unklare bleibt
 unverändert liegen. Ist der gespeicherte Wert nicht lesbar (kaputtes JSON), wird nichts geschrieben.
 
 **Kein iCloud-Abgleich:** `merge_other_vault` übernimmt `subscriptions.v2` nicht; die Abos gelten nur im Tresor,

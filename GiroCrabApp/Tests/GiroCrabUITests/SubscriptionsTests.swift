@@ -359,16 +359,63 @@ final class SubscriptionsTests: XCTestCase {
     }
 
     @MainActor
+    func testSiblingStaysExcludedAfterItsOwnPriceChange() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        var a = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        let others = model.recurring.filter { $0.baseKey != a.baseKey }
+        a.amountCents = -1000; a.seriesKey = a.baseKey + "#-1000"
+        var b = a
+        b.amountCents = -1300; b.seriesKey = a.baseKey + "#-1300"
+        model.recurring = others + [a, b]
+        model.setSubscription(a, marked: true)
+
+        // the unmarked sibling gets more expensive while the marked one is still there
+        b.amountCents = -1400; b.seriesKey = a.baseKey + "#-1400"
+        model.recurring = others + [a, b]
+        model.reconcileSubscriptionKeys()
+
+        // later the marked contract ends
+        model.recurring = others + [b]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[a.seriesKey], "kept for when it is back")
+        XCTAssertNil(model.subscriptionData.entries[b.seriesKey])
+    }
+
+    @MainActor
+    func testTargetClaimedByTwoEntriesGoesToNeither() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        var a = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        let others = model.recurring.filter { $0.baseKey != a.baseKey }
+        a.amountCents = -1000; a.seriesKey = a.baseKey + "#-1000"
+        var b = a
+        b.amountCents = -1400; b.seriesKey = a.baseKey + "#-1400"
+        model.recurring = others + [a, b]
+        model.setSubscription(a, marked: true)
+        model.setSubscription(b, marked: true)
+
+        // both keys vanish at once, one series in between remains
+        var c = a
+        c.amountCents = -1200; c.seriesKey = a.baseKey + "#-1200"
+        model.recurring = others + [c]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[a.seriesKey])
+        XCTAssertNotNil(model.subscriptionData.entries[b.seriesKey])
+        XCTAssertNil(model.subscriptionData.entries[c.seriesKey])
+    }
+
+    @MainActor
     func testAmbiguousSeriesAreNotMatchedByGuessing() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
         model.refreshRecurring()
         let s = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
         model.setSubscription(s, marked: true)
 
-        // the marked key is gone; two unmarked series of the same payee are equally far away
+        // the marked key is gone; two unmarked series of the same payee are both within the amount window
         var a = s, b = s
-        a.seriesKey = s.baseKey + "#1"; a.amountCents = s.amountCents * 5
-        b.seriesKey = s.baseKey + "#2"; b.amountCents = s.amountCents * 6
+        a.seriesKey = s.baseKey + "#1"; a.amountCents = s.amountCents * 8 / 10
+        b.seriesKey = s.baseKey + "#2"; b.amountCents = s.amountCents * 12 / 10
         model.recurring = model.recurring.filter { $0.seriesKey != s.seriesKey } + [a, b]
         model.reconcileSubscriptionKeys()
         XCTAssertNotNil(model.subscriptionData.entries[s.seriesKey], "kept for when it is back")

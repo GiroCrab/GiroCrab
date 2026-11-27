@@ -82,33 +82,55 @@ extension AppModel {
         return String(key[..<r.lowerBound])
     }
 
+    /// The amount a series key carries (`…#-1299`); nil for keys without one.
+    private static func amount(of key: String) -> Int64? {
+        guard let r = key.range(of: #"#-?\d+$"#, options: .regularExpression) else { return nil }
+        return Int64(key[r].dropFirst())
+    }
+
+    /// Unmarked series that are a known sibling under a new key (its price changed too): their amount is at least
+    /// as near to that vanished sibling as to the entry's own. They must stay excluded like the sibling itself.
+    private func renamedSiblings(of d: SubscriptionDetails, base: String, in data: SubscriptionData) -> [String] {
+        guard let own = d.lastAmountCents, let known = d.siblingKeys else { return [] }
+        let live = Set(recurring.map(\.seriesKey))
+        let gone = known.filter { !live.contains($0) }.compactMap(Self.amount(of:))
+        return recurring.filter { s in
+            s.baseKey == base && data.entries[s.seriesKey] == nil && !known.contains(s.seriesKey)
+                && (d.accountId == nil || d.accountId == s.accountId)
+                && gone.contains { abs(s.amountCents - $0) <= abs(s.amountCents - own) }
+        }.map(\.seriesKey)
+    }
+
     /// The series key follows the typical amount, so a price rise or a second contract of the same payee
     /// gives a marked series a new key: the entry would drop out of the list with its contract fields.
     /// Entries whose key is no longer there move to the series with the same base key, when that is
-    /// unambiguous (one unmarked candidate within half of the last known amount).
+    /// unambiguous (one unmarked candidate within half of the last known amount, claimed by no other entry).
     /// Also keeps the identity fields of the live entries current. Only touches what is visible now:
     /// `recurring` covers the selected accounts, so an entry of another account is left alone.
     func reconcileSubscriptionKeys() {
         guard subscriptionDataLoaded, !recurring.isEmpty else { return }
         var data = subscriptionData
         let live = Set(recurring.map(\.seriesKey))
+        // All claims first, then the moves: which entry wins must never depend on the order of the dictionary.
+        var claims: [String: [RecurringSeries]] = [:]
         for (key, d) in subscriptionData.entries where !live.contains(key) {
             let base = Self.baseKey(of: key, d)
-            let free = recurring.filter {
-                $0.baseKey == base && data.entries[$0.seriesKey] == nil
-                    && !(d.siblingKeys ?? []).contains($0.seriesKey)
-                    && (d.accountId == nil || d.accountId == $0.accountId)
-            }
+            let excluded = Set((d.siblingKeys ?? []) + renamedSiblings(of: d, base: base, in: subscriptionData))
             // Never by payee alone: a contract that ended must not hand its fields to another, never marked
             // contract of the same payee. The amount has to stay within half of the last known one
             // (12.99 → 14.99 € is a price rise, 12.99 → 2.99 € is another contract).
-            var target: RecurringSeries?
-            if let last = d.lastAmountCents {
-                let near = free.filter { abs($0.amountCents - last) * 2 <= abs(last) }
-                if near.count == 1 { target = near.first }
+            guard let last = d.lastAmountCents else { continue }
+            claims[key] = recurring.filter {
+                $0.baseKey == base && subscriptionData.entries[$0.seriesKey] == nil && !excluded.contains($0.seriesKey)
+                    && (d.accountId == nil || d.accountId == $0.accountId)
+                    && abs($0.amountCents - last) * 2 <= abs(last)
             }
-            guard let target else { continue }
-            var moved = d
+        }
+        let claimed = Dictionary(claims.values.flatMap { $0 }.map { ($0.seriesKey, 1) }, uniquingKeysWith: +)
+        for (key, near) in claims {
+            // one candidate, and no other orphaned entry claims it
+            guard near.count == 1, let target = near.first, claimed[target.seriesKey] == 1,
+                  var moved = data.entries[key] else { continue }
             moved.siblingKeys = nil
             remember(target, in: &moved)
             data.entries[key] = nil
@@ -119,6 +141,8 @@ extension AppModel {
             guard var d = data.entries[s.seriesKey] else { continue }
             let before = d
             remember(s, in: &d)
+            let renamed = renamedSiblings(of: d, base: s.baseKey, in: data)
+            if !renamed.isEmpty { d.siblingKeys = (d.siblingKeys ?? []) + renamed }
             if d != before { data.entries[s.seriesKey] = d }
         }
         guard data != subscriptionData else { return }
