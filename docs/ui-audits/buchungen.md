@@ -29,7 +29,7 @@
 | KON-1 | P1 | Lesbarkeit | macOS, iPhone | Kennzahlen zeigen bei großer Schrift abgeschnittene Geldbeträge. Auf dem Mac wird in „Alle Konten“ etwa „−4.947,21…“ angezeigt | Issue | `open` |
 | KON-2 | P1 | Lesbarkeit | iPhone | Der verfügbare Betrag im Kopf von „Alle Konten“ ist mit „Accessibility XL“ gekürzt | Issue | `open` |
 | KON-3 | P2 | Adaptivität | iPhone | Datums- und Betragsbeschriftungen im Saldoverlauf überlappen bei „Accessibility XL“ | Issue | `open` |
-| NEU-1 | P2 | Orientierung | iPhone | Bei „Accessibility XL“ ist der erste Kontogruppentitel „Musterbank Girokonto“ nur noch als „Mu…“ erkennbar. Auch die zweite Zeile mit Bank und IBAN trägt kaum noch zur Zuordnung bei | Issue | `open` |
+| NEU-1 | P2 | Orientierung | iPhone | Bei „Accessibility XL“ sind der Kontoname und der darunter angeordnete Saldo vollständig lesbar | Fix [#2046](https://github.com/GiroCrab/GiroCrab/pull/2046) | `fixed` |
 
 ## Impeccable-Bewertung
 
@@ -152,3 +152,5 @@
 - **Beobachtung:** In „Neue Umsätze“ bleibt am iPhone bei „Accessibility XL“ von „Musterbank Girokonto“ nur „Mu…“. Die Zeile mit Bank und IBAN hilft kaum bei der Zuordnung; der Saldo bleibt lesbar.
 - **Vorschlag:** Bei geringer Breite den Namen und den fest dimensionierten Saldo untereinander anordnen.
 - **Prüfung:** Auf dem iPhone mit dem Demo-Einstieg Standard und „Accessibility XL“ vergleichen. Der erste Kontoname ist identifizierbar und der Saldo vollständig sichtbar.
+
+- **Nachprüfung:** 27.11.2026, iPhone 18 Pro (Simulator, iOS 27.0), Deutsch, hell, „Accessibility XL“. Vollständige App mit Demodaten auf Basis von `eb94f16c` vor und nach dem Swift-Patch aus `835828f3`. „Musterbank Girokonto“ und der Saldo sind nachher vollständig lesbar. Bei Standardschrift war der Kontokopf pixelgleich. Bildvergleich in [#2046](https://github.com/GiroCrab/GiroCrab/pull/2046).

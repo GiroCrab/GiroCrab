@@ -13,7 +13,7 @@ beschreibt den Ablauf.
 | [Buchungsinspektor](buchungen.md#buchungsinspektor) | Neun Befunde behoben. INS-12 und INS-13 offen. INS-6 ist eine gemeinsame Designentscheidung. |
 | [Buchungssuche und Filter](buchungen.md#buchungssuche-und-filter) | SUC-1 offen. Weitere Filter bei großer Schrift auffindbar machen. |
 | [Kontoübersicht und Kennzahlen](buchungen.md#kontoübersicht-und-kennzahlen) | KON-1 bis KON-3 offen. Beträge und Achsenwerte bei großer Schrift prüfen. |
-| [Neue Umsätze](buchungen.md#neue-umsätze) | NEU-1 offen. Kontogruppen bei großer Schrift unterscheidbar machen. |
+| [Neue Umsätze](buchungen.md#neue-umsätze) | NEU-1 in [#2046](https://github.com/GiroCrab/GiroCrab/pull/2046) behoben und nachgeprüft. Kontoname und Saldo sind bei großer Schrift lesbar. |
 | [Belege & Postbox](belege-und-postbox.md#belege--postbox) | BEL-1 nach [#1895](https://github.com/GiroCrab/GiroCrab/pull/1895) als `fixed` bestätigt. BEL-2 zu Titel und Datum in den Dokumentzeilen ist in [#2021](https://github.com/GiroCrab/GiroCrab/pull/2021) behoben und nachgeprüft. |
 | [Geplant](zahlungen-und-vertraege.md#geplant) | GPL-1 und GPL-2 offen. Filter, Summen und Detailtitel auf dem iPhone prüfen. |
 | [Lastschriften](zahlungen-und-vertraege.md#lastschriften) | LAS-1 offen. Mandatsliste bei großer Schrift erreichbar halten. Der Detailtitel ist in GPL-2 erfasst. |
