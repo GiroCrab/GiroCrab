@@ -4164,6 +4164,8 @@ fn a_finished_database_import_is_in_the_sync_log() {
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].outcome, crate::sync_log::SyncLogOutcome::Ok);
     assert_eq!(log[0].imported, 5);
+    // no bank login: the import names the entry itself
+    assert_eq!(log[0].connection_name, "Datenimport");
 }
 
 #[test]

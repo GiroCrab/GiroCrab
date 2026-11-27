@@ -60,7 +60,7 @@ use crate::i18n::{tr, trf};
 use crate::iban::{normalize_iban, validate_iban};
 use crate::models::{AccountKind, ConnectorKind, Holding};
 use crate::secret::SecretString;
-use crate::sync_log::{SyncLogOutcome, SyncLogSource};
+use crate::sync_log::SyncLogOutcome;
 use crate::vault::Vault;
 
 mod templates;
@@ -4082,7 +4082,7 @@ impl Vault {
             Err(e) => (SyncLogOutcome::Error, e.to_string(), 0),
         };
         // best effort: the log must not turn a finished import into an error
-        let _ = self.log_sync(None, SyncLogSource::Manual, outcome, message, imported);
+        let _ = self.log_import(tr("Datenimport"), outcome, &message, imported);
         res
     }
 

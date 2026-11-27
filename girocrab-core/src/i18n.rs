@@ -1884,6 +1884,7 @@ fn english(de: &str) -> Option<&'static str> {
             "No header row (date/booking date and amount) found."
         }
         // ------------------------------------------------------------ importers/moneymoney_db.rs
+        "Datenimport" => "Data import",
         "Datenimport: {0} neue Buchungen, {1} Konten neu, {2} zusammengeführt" => {
             "Data import: {0} new transactions, {1} accounts created, {2} merged"
         }
