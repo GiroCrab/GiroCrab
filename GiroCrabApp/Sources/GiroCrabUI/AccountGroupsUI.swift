@@ -205,17 +205,20 @@ struct UserGroupHeader: View {
                     .accessibilityLabel("Nicht in der Gesamtsumme")
             }
             Spacer()
-            // one amount per currency, EUR last, like „Alle Konten“ (#1844)
+            // one amount per currency, EUR last, like „Alle Konten“ (#1844);
+            // stacked, so several currencies never widen the row past the sidebar
             let totals = group.balances.isEmpty
                 ? [CurrencyAmount(currency: "EUR", cents: group.balanceCents)] : group.balances
-            ForEach(totals, id: \.currency) { total in
-                Text(Money.format(total.cents, currency: total.currency))
-                    .sensitive(.amounts)
-                    .appFont(.footnote, weight: .semibold) // same size as in SectionHeader (#602)
-                    .monospacedDigit()
-                    .fixedSize() // the name truncates, never the balance (#343)
-                    .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(total.cents < 0 ? Theme.negative : Theme.secondary))
-                    .opacity(group.inTotal ? 1 : 0.6)
+            VStack(alignment: .trailing, spacing: 1) {
+                ForEach(totals, id: \.currency) { total in
+                    Text(Money.format(total.cents, currency: total.currency))
+                        .sensitive(.amounts)
+                        .appFont(.footnote, weight: .semibold) // same size as in SectionHeader (#602)
+                        .monospacedDigit()
+                        .fixedSize() // the name truncates, never the balance (#343)
+                        .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(total.cents < 0 ? Theme.negative : Theme.secondary))
+                        .opacity(group.inTotal ? 1 : 0.6)
+                }
             }
         }
         .appFont(.body, weight: .semibold) // as big as the account names
