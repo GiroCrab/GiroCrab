@@ -1,6 +1,6 @@
 <#
   Packages the Windows build (run on Windows, e.g. the windows-latest CI runner):
-    dist/girocrab-windows-x86_64.zip           portable: girocrab.exe + THIRD_PARTY_NOTICES.md + README-Windows.txt
+    dist/girocrab-windows-x86_64.zip           portable: girocrab.exe + VERSION.txt + THIRD_PARTY_NOTICES.md + README-Windows.txt
     dist/girocrab-windows-x86_64-setup.exe     Inno Setup installer (Start Menu shortcut, uninstaller, version info)
     dist/SHA256SUMS.txt
 
@@ -21,6 +21,7 @@ if (-not $Version) {
     $Version = $m.Matches[0].Groups[1].Value
 }
 $Version = $Version.TrimStart("v")
+$VersionLabel = $Version
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     # tags such as 0.7.5-nightly.3: Inno Setup wants a numeric version, the zip name stays fixed
     $Version = ($Version -replace '^(\d+\.\d+\.\d+).*$', '$1')
@@ -38,7 +39,26 @@ Copy-Item $exe (Join-Path $stage "girocrab.exe")
 Copy-Item "THIRD_PARTY_NOTICES.md" $stage
 Copy-Item "GiroCrabWindows/packaging/README-Windows.txt" $stage
 
-# portable zip: exactly the three files, flat
+# Build-Ausweis: die erste Rückfrage im Fehlerbericht ist "welcher Stand?". Die Zeile aus dem
+# Protokoll ("app: start v0.9.0 ...") nennt die Version, hier stehen zusätzlich Commit und Bauzeit.
+$commit = ""
+if ($env:GITHUB_SHA -and $env:GITHUB_SHA.Length -ge 8) {
+    $commit = $env:GITHUB_SHA.Substring(0, 8)
+} else {
+    $commit = (git rev-parse --short=8 HEAD 2>$null)
+}
+if (-not $commit) { $commit = "unbekannt" }
+@(
+    "GiroCrab für Windows"
+    ""
+    "Version: $VersionLabel"
+    "Commit:  $commit"
+    "Gebaut:  $((Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm")) UTC"
+    ""
+    "Protokoll: %LOCALAPPDATA%\GiroCrab\girocrab.log"
+) | Set-Content -Path (Join-Path $stage "VERSION.txt") -Encoding utf8
+
+# portable zip: exactly the four files, flat
 $zip = Join-Path $out "girocrab-windows-x86_64.zip"
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 Write-Host "wrote $zip"
