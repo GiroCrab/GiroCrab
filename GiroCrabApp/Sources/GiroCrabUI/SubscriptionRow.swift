@@ -118,6 +118,7 @@ struct SubscriptionExtraLines: View {
 /// bookings are in the inspector on the right. A coloured bar marks a deadline within 30 days (orange) and
 /// a cancelled contract that still runs (green); a contract that is over is struck through.
 struct SubscriptionRow: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.negativeAmountStyle) private var amountStyle
     @Environment(AppModel.self) private var model
     let item: SubscriptionItem
@@ -129,12 +130,31 @@ struct SubscriptionRow: View {
         let attention = item.attention
         VStack(alignment: .leading, spacing: 0) {
             // a button, so the keyboard can reach and select the row
-            Button { model.selectedSubscriptionID = item.id } label: {
+            Button {
+                model.selectedSubscriptionID = item.id
+                #if os(iOS)
+                model.showBookingSheet = true
+                #endif
+            } label: {
+                rowContent(attention)
+            }
+            .buttonStyle(.plain)
+            Divider()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func rowContent(_ attention: SubscriptionAttention) -> some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+        return layout {
             HStack(alignment: .top, spacing: 12) {
                 SubscriptionIcon(item: item).opacity(item.isEnded ? 0.5 : 1)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text(item.name).appFont(.body, weight: .semibold).lineLimit(1).sensitive()
+                        Text(item.name).appFont(.body, weight: .semibold).lineLimit(typeSize.isAccessibilitySize ? nil : 1).sensitive()
                             .strikethrough(item.isEnded, color: Theme.tertiary)
                             .foregroundStyle(item.isEnded ? Theme.secondary : Theme.text)
                         if item.isManual {
@@ -150,23 +170,19 @@ struct SubscriptionRow: View {
                             .lineLimit(1).sensitive()
                     }
                 }
-                Spacer(minLength: 8)
-                amounts
             }
-            .padding(.vertical, 10).padding(.horizontal, 10)
-            .background(background(attention), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(alignment: .leading) {
-                if let color = attention.color {
-                    Capsule().fill(color).frame(width: 3).padding(.vertical, 8).padding(.leading, 2)
-                }
-            }
-            .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            Divider()
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
+            amounts
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10).padding(.horizontal, 10)
+        .background(background(attention), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(alignment: .leading) {
+            if let color = attention.color {
+                Capsule().fill(color).frame(width: 3).padding(.vertical, 8).padding(.leading, 2)
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     private func background(_ attention: SubscriptionAttention) -> Color {
@@ -176,26 +192,43 @@ struct SubscriptionRow: View {
 
     private var amounts: some View {
         let ended = item.isEnded
-        return VStack(alignment: .trailing, spacing: 2) {
-            Text("\(Money.format(item.cents(in: basis), currency: item.currency)) / \(item.period(in: basis))")
+        return VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
+            SubscriptionAmount(text: Money.format(item.cents(in: basis), currency: item.currency), period: item.period(in: basis))
                 .appFont(.body, weight: .semibold, monospacedDigit: true)
                 .foregroundStyle(ended ? Theme.secondary : amountStyle.ink(item.amountCents))
-                .sensitive(.amounts).fixedSize()
+                .sensitive(.amounts)
             if basis == .original {
                 if item.group != .yearly {
-                    Text("\(Money.format(item.yearlyCents, currency: item.currency)) / Jahr")
+                    SubscriptionAmount(text: Money.format(item.yearlyCents, currency: item.currency), period: String(localized: "Jahr"))
                         .appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
-                        .sensitive(.amounts).fixedSize()
+                        .sensitive(.amounts)
                 }
             } else {
                 // the year next to the converted amount (the month next to a yearly one)
                 let second = basis == .yearly ? SubscriptionAmountBasis.monthly : SubscriptionAmountBasis.yearly
-                Text("\(Money.format(item.cents(in: second), currency: item.currency)) / \(second.period ?? "")")
+                SubscriptionAmount(text: Money.format(item.cents(in: second), currency: item.currency), period: second.period ?? "")
                     .appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
-                    .sensitive(.amounts).fixedSize()
+                    .sensitive(.amounts)
             }
             if let due = item.nextDue, item.isActive {
-                Text("nächste am \(DateText.medium(due))").appFont(.caption).foregroundStyle(Theme.tertiary).fixedSize()
+                Text("nächste am \(DateText.medium(due))").appFont(.caption).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+
+// A period can wrap to its own line while the formatted amount stays together.
+struct SubscriptionAmount: View {
+    let text: String
+    let period: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Text("\(text) / \(period)").fixedSize()
+            VStack(alignment: .leading, spacing: 0) {
+                Text(verbatim: text).fixedSize()
+                Text(verbatim: period)
             }
         }
     }

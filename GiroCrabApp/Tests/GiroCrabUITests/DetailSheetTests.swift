@@ -21,6 +21,12 @@ final class DetailSheetTests: XCTestCase {
         XCTAssertFalse(AppModel.keepsDetailSheet(from: .bookings, to: .bookings, presentation: .tangible(1)))
     }
 
+    func testSubscriptionDetailSheetStaysOnlyOnTheSubscriptionsList() {
+        XCTAssertTrue(AppModel.keepsDetailSheet(from: .subscriptions, to: .subscriptions, presentation: .bookings))
+        XCTAssertFalse(AppModel.keepsDetailSheet(from: .subscriptions, to: .planned, presentation: .bookings))
+        XCTAssertFalse(AppModel.keepsDetailSheet(from: .bookings, to: .subscriptions, presentation: .bookings))
+    }
+
     func testStandingOrderEditorClosesDetailSheet() {
         let model = demoModel()
         model.showBookingSheet = true

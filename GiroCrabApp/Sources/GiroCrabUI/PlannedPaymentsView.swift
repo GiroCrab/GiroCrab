@@ -10,6 +10,7 @@ import AppKit
 struct PlannedPaymentsView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var listFocused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private struct ReloadKey: Equatable {
         let account: Int64?
@@ -18,48 +19,21 @@ struct PlannedPaymentsView: View {
     }
 
     var body: some View {
-        @Bindable var model = model
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Geplant").appFont(.title2, weight: .semibold)
-                Text("Zahlungen, die bei der Bank bereits beauftragt, aber noch nicht gebucht sind.")
-                    .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 20)
-            HStack(spacing: 12) {
-                Picker("Konto", selection: $model.plannedAccountFilter) {
-                    Text("Alle Konten").tag(Int64?.none)
-                    Divider()
-                    ForEach(model.allAccounts) { a in
-                        Label(a.name, systemImage: a.sfSymbol).tag(Int64?.some(a.id))
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .sensitive(model.plannedAccountFilter == nil ? [] : .personal) // the selected account's name
-                .frame(minWidth: 150, maxWidth: 240)
-                Picker("Zeitraum", selection: $model.plannedHorizon) {
-                    ForEach(PlannedHorizon.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(maxWidth: 140)
-                Spacer(minLength: 0)
-                #if os(macOS)
-                newStandingOrderButton
-                #endif
-            }
-            .padding(.horizontal, 20)
-            totals.padding(.horizontal, 20)
+            if !typeSize.isAccessibilitySize { overview }
             if model.plannedPayments.isEmpty {
-                ContentUnavailableView(
-                    "Keine geplanten Zahlungen",
-                    systemImage: "calendar.badge.clock",
-                    description: Text("Terminüberweisungen und Daueraufträge deiner Bank erscheinen hier bis zur Ausführung."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if typeSize.isAccessibilitySize {
+                    ScrollView {
+                        overview
+                        emptyState
+                    }
+                } else {
+                    emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
+                        if typeSize.isAccessibilitySize { overview }
                         LazyVStack(spacing: 0) {
                             ForEach(model.plannedMonths) { month in
                                 monthHeader(month)
@@ -109,6 +83,53 @@ struct PlannedPaymentsView: View {
         }
     }
 
+    private var overview: some View {
+        @Bindable var model = model
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Geplant").appFont(.title2, weight: .semibold)
+                Text("Zahlungen, die bei der Bank bereits beauftragt, aber noch nicht gebucht sind.")
+                    .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 20)
+            let filterLayout = typeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 12))
+            filterLayout {
+                Picker("Konto", selection: $model.plannedAccountFilter) {
+                    Text("Alle Konten").tag(Int64?.none)
+                    Divider()
+                    ForEach(model.allAccounts) { a in
+                        Label(a.name, systemImage: a.sfSymbol).tag(Int64?.some(a.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .sensitive(model.plannedAccountFilter == nil ? [] : .personal) // the selected account's name
+                .frame(minWidth: 150, maxWidth: typeSize.isAccessibilitySize ? .infinity : 240, alignment: .leading)
+                Picker("Zeitraum", selection: $model.plannedHorizon) {
+                    ForEach(PlannedHorizon.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : 140, alignment: .leading)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                #if os(macOS)
+                newStandingOrderButton
+                #endif
+            }
+            .padding(.horizontal, 20)
+            totals.padding(.horizontal, 20)
+        }
+    }
+
+    private var emptyState: some View {
+        ContentUnavailableView(
+            "Keine geplanten Zahlungen",
+            systemImage: "calendar.badge.clock",
+            description: Text("Terminüberweisungen und Daueraufträge deiner Bank erscheinen hier bis zur Ausführung."))
+    }
+
     @ViewBuilder private var newStandingOrderButton: some View {
         if model.canEditStandingOrders {
             Button { model.newStandingOrder() } label: {
@@ -119,11 +140,15 @@ struct PlannedPaymentsView: View {
     }
 
     private var totals: some View {
-        HStack(spacing: 24) {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 24))
+        return layout {
             totalCell("Abgehend", model.plannedTotals.outgoingCents)
             totalCell("Eingehend", model.plannedTotals.incomingCents)
-            Spacer(minLength: 0)
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .card(padding: 12)
     }
 
@@ -138,17 +163,22 @@ struct PlannedPaymentsView: View {
     /// Top of a month card, like the day header of the booking stream.
     private func monthHeader(_ month: PlannedMonth) -> some View {
         let sum = month.sumCents
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout())
         return VStack(spacing: 0) {
-            HStack {
+            layout {
                 Text(DateText.date(month.id + "-01")?.formatted(.dateTime.month(.wide).year()) ?? month.id)
                     .appFont(.subheadline, weight: .semibold)
                     .foregroundStyle(Theme.text)
-                Spacer()
+                if !typeSize.isAccessibilitySize { Spacer() }
                 Text(Money.signed(sum))
+                    .fixedSize()
                     .sensitive(.amounts)
                     .appFont(.subheadline, monospacedDigit: true)
                     .foregroundStyle(sum > 0 ? Theme.inflow : Theme.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             Rectangle().fill(Theme.border).frame(height: 1)
@@ -160,30 +190,36 @@ struct PlannedPaymentsView: View {
 /// One planned payment as a slice of a month card (same look as a booking row).
 private struct PlannedRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var typeSize
     let payment: PlannedPayment
     let isLast: Bool
 
     var body: some View {
         let p = payment
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(spacing: 12))
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: p.kindSymbol)
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Theme.accent.opacity(0.12)))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(p.counterparty).appFont(.body, weight: .medium).lineLimit(1).sensitive()
-                    Text(p.purpose.isEmpty ? p.accountName : "\(p.purpose) · \(p.accountName)")
-                        .appFont(.callout).foregroundStyle(Theme.secondary).lineLimit(1).sensitive()
-                    Text(p.kindText).appFont(.caption).foregroundStyle(Theme.tertiary)
+            layout {
+                HStack(spacing: 12) {
+                    Image(systemName: p.kindSymbol)
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.accent.opacity(0.12)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(p.counterparty).appFont(.body, weight: .medium).lineLimit(typeSize.isAccessibilitySize ? nil : 1).sensitive()
+                        Text(p.purpose.isEmpty ? p.accountName : "\(p.purpose) · \(p.accountName)")
+                            .appFont(.callout).foregroundStyle(Theme.secondary).lineLimit(typeSize.isAccessibilitySize ? nil : 1).sensitive()
+                        Text(p.kindText).appFont(.caption).foregroundStyle(Theme.tertiary)
+                    }
                 }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 2) {
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
+                VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 2) {
                     AmountLabel(cents: p.amountCents).lineLimit(1).fixedSize()
                     Text(DateText.medium(p.date)).appFont(.caption, monospacedDigit: true).foregroundStyle(Theme.secondary)
                 }
             }
-            .frame(minHeight: 44, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
             .padding(.horizontal, 14)
             .padding(.vertical, 5)
             .background(model.selectedPlannedID == p.id ? Theme.selection : Color.clear)

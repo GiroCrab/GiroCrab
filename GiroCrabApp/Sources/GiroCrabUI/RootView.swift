@@ -608,9 +608,14 @@ struct MainSplitView: View {
     /// system `.inspector` shows neither column nor sheet there.
     @Environment(\.reportRedaction) private var reportRedaction
 
-    /// iPhone sheet title: the merchant, else the booking text like the list row, else
-    /// "Buchung" (an empty name left the title blank).
+    /// An iPhone inspector title reflects the current detail type. Booking titles use
+    /// the merchant or the same booking text as the list row.
     private var bookingSheetTitle: String {
+        if model.mainColumn == .planned {
+            return model.plannedPayments.first { $0.id == model.selectedPlannedID }?.kindText ?? String(localized: "Geplant")
+        }
+        if model.mainColumn == .directDebits { return String(localized: "Mandat") }
+        if model.mainColumn == .subscriptions { return String(localized: "Vertrag") }
         guard let b = model.selectedBooking else { return String(localized: "Buchung") }
         let name = b.merchant.name.isEmpty ? b.bookingText : b.merchant.name
         return name.isEmpty ? String(localized: "Buchung") : name
@@ -649,11 +654,11 @@ struct MainSplitView: View {
             // same booking once the window is narrow again.
             set: { if !$0, !inspectorShown { model.showBookingSheet = false } }
         )) {
-            // Title + "Fertig" (UI-Audit INS-3); the merchant is personal, so the
-            // title is masked in the bug report (a parameter text, no `.sensitive()`).
+            // The booking title can contain the merchant. Generic detail titles
+            // can stay visible in the bug report.
             NavigationStack {
                 InspectorView()
-                    .navigationTitle(reportRedaction.masking(bookingSheetTitle))
+                    .navigationTitle(model.mainColumn == .bookings ? reportRedaction.masking(bookingSheetTitle) : bookingSheetTitle)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {

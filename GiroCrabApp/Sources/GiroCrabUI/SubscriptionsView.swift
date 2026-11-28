@@ -8,6 +8,10 @@ import GiroCrabCore
 struct SubscriptionsView: View {
     @Environment(\.negativeAmountStyle) private var amountStyle
     @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var typeSize
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     @AppStorage("subscriptions.sort") private var sortRaw = SubscriptionSort.name.rawValue
     @AppStorage("subscriptions.grouping") private var groupingRaw = SubscriptionGrouping.rhythm.rawValue
     @AppStorage("subscriptions.basis") private var basisRaw = SubscriptionAmountBasis.original.rawValue
@@ -38,30 +42,28 @@ struct SubscriptionsView: View {
     var body: some View {
         let all = model.subscriptionItems
         let items = shown(all)
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Abos & Verträge").appFont(.title2, weight: .semibold)
-                Text("Wiederkehrende Ausgaben und Einnahmen, die du als Abo oder Vertrag markiert hast, und selbst angelegte Einträge. Die Beträge stehen im eigenen Turnus oder umgerechnet.")
-                    .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 20)
-            controls.padding(.horizontal, 20)
-            if !items.isEmpty { totals(items).padding(.horizontal, 20) }
-            if all.isEmpty {
-                ContentUnavailableView {
-                    Label("Keine Abos", systemImage: "repeat.circle")
-                } description: {
-                    Text("Wähle erkannte wiederkehrende Buchungen aus oder lege ein Abo von Hand an. Verträge beim selben Anbieter erscheinen nur dann als eigene Einträge, wenn sich ihre Beträge deutlich unterscheiden.")
-                } actions: {
-                    Button("Abo hinzufügen …") { showAdd = true }
+        Group {
+            if scrollsOverview {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        overview(items)
+                        if items.isEmpty {
+                            emptyState(allIsEmpty: all.isEmpty)
+                        } else {
+                            rows(items)
+                        }
+                    }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if items.isEmpty {
-                ContentUnavailableView("Nichts gefunden", systemImage: "magnifyingglass",
-                                       description: Text("Kein Abo passt zu Suche und Filtern."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                list(items)
+                VStack(alignment: .leading, spacing: 12) {
+                    overview(items)
+                    if items.isEmpty {
+                        emptyState(allIsEmpty: all.isEmpty)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView { rows(items) }
+                    }
+                }
             }
         }
         .padding(.top, 16)
@@ -74,10 +76,46 @@ struct SubscriptionsView: View {
         .capturableSheet(isPresented: $showAdd) { SubscriptionAddSheet() }
     }
 
+    private var scrollsOverview: Bool {
+        #if os(iOS)
+        sizeClass == .compact || typeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
+    private func overview(_ items: [SubscriptionItem]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Abos & Verträge").appFont(.title2, weight: .semibold)
+                Text("Wiederkehrende Ausgaben und Einnahmen, die du als Abo oder Vertrag markiert hast, und selbst angelegte Einträge. Die Beträge stehen im eigenen Turnus oder umgerechnet.")
+                    .appFont(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            controls
+            if !items.isEmpty { totals(items) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+    }
+
+    @ViewBuilder private func emptyState(allIsEmpty: Bool) -> some View {
+        if allIsEmpty {
+            ContentUnavailableView {
+                Label("Keine Abos", systemImage: "repeat.circle")
+            } description: {
+                Text("Wähle erkannte wiederkehrende Buchungen aus oder lege ein Abo von Hand an. Verträge beim selben Anbieter erscheinen nur dann als eigene Einträge, wenn sich ihre Beträge deutlich unterscheiden.")
+            } actions: {
+                Button("Abo hinzufügen …") { showAdd = true }
+            }
+        } else {
+            ContentUnavailableView("Nichts gefunden", systemImage: "magnifyingglass",
+                                   description: Text("Kein Abo passt zu Suche und Filtern."))
+        }
+    }
+
     // MARK: controls
 
-    /// One row when it fits, else search and button above, the menus below (the column is narrow
-    /// next to the sidebar and the inspector).
+    /// Use one row when it fits, then split search and add from the menus, then stack each control.
     private var controls: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
@@ -100,6 +138,13 @@ struct SubscriptionsView: View {
                     filterMenu
                     Spacer(minLength: 0)
                 }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                searchField
+                sortMenu
+                basisMenu
+                filterMenu
+                addButton
             }
         }
     }
@@ -189,15 +234,23 @@ struct SubscriptionsView: View {
     private func totals(_ items: [SubscriptionItem]) -> some View {
         let active = items.filter(\.isActive)
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 32) {
-                ForEach([false, true], id: \.self) { income in
-                    let part = active.filter { $0.isIncome == income }
-                    if !part.isEmpty { totalColumn(income, part) }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 32) {
+                    totalColumns(active)
                 }
-                Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 12) {
+                    totalColumns(active)
+                }
             }
             Text("Aktive Abos: \(active.count) · beendete nicht eingerechnet")
                 .appFont(.caption).foregroundStyle(Theme.secondary)
+        }
+    }
+
+    private func totalColumns(_ active: [SubscriptionItem]) -> some View {
+        ForEach([false, true], id: \.self) { income in
+            let part = active.filter { $0.isIncome == income }
+            if !part.isEmpty { totalColumn(income, part) }
         }
     }
 
@@ -208,34 +261,32 @@ struct SubscriptionsView: View {
         return VStack(alignment: .leading, spacing: 3) {
             Text(income ? "Einnahmen" : "Ausgaben").appFont(.callout, weight: .semibold)
             ForEach(AppModel.subscriptionTotals(part) { $0.cents(in: main) }, id: \.currency) { sum in
-                Text("\(Money.format(sum.cents, currency: sum.currency)) / \(main.period ?? "")")
+                SubscriptionAmount(text: Money.format(sum.cents, currency: sum.currency), period: main.period ?? "")
                     .appFont(.title3, weight: .semibold, monospacedDigit: true)
-                    .foregroundStyle(amountStyle.ink(sum.cents)).sensitive(.amounts).fixedSize()
+                    .foregroundStyle(amountStyle.ink(sum.cents)).sensitive(.amounts)
             }
             ForEach(AppModel.subscriptionTotals(part) { $0.cents(in: second) }, id: \.currency) { sum in
-                Text("\(Money.format(sum.cents, currency: sum.currency)) / \(second.period ?? "")")
+                SubscriptionAmount(text: Money.format(sum.cents, currency: sum.currency), period: second.period ?? "")
                     .appFont(.callout, monospacedDigit: true)
-                    .foregroundStyle(Theme.secondary).sensitive(.amounts).fixedSize()
+                    .foregroundStyle(Theme.secondary).sensitive(.amounts)
             }
         }
     }
 
     // MARK: list
 
-    private func list(_ items: [SubscriptionItem]) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach([false, true], id: \.self) { income in
-                    let part = items.filter { $0.isIncome == income }
-                    if !part.isEmpty {
-                        SubscriptionKindHeader(income: income, count: part.count)
-                        sections(part)
-                    }
+    private func rows(_ items: [SubscriptionItem]) -> some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach([false, true], id: \.self) { income in
+                let part = items.filter { $0.isIncome == income }
+                if !part.isEmpty {
+                    SubscriptionKindHeader(income: income, count: part.count)
+                    sections(part)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 18)
         }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 18)
     }
 
     @ViewBuilder private func sections(_ part: [SubscriptionItem]) -> some View {
@@ -284,6 +335,7 @@ private struct SubscriptionKindHeader: View {
 /// "Vierteljährlich (1)" with the sum of its active subscriptions. In the own rhythm a rhythm group
 /// shows its sum per payment and per year; every other combination one converted amount and the year.
 private struct SubscriptionGroupHeader: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     let title: String
     let items: [SubscriptionItem]
     let basis: SubscriptionAmountBasis
@@ -305,17 +357,32 @@ private struct SubscriptionGroupHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(title).appFont(.headline)
-            Text("(\(items.count))").appFont(.caption).foregroundStyle(Theme.secondary)
-            Spacer(minLength: 8)
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+        layout {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title).appFont(.headline)
+                Text("(\(items.count))").appFont(.caption).foregroundStyle(Theme.secondary)
+            }
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
             ForEach(Array(sums.enumerated()), id: \.offset) { index, sum in
-                if index > 0 { Text(verbatim: "·").foregroundStyle(Theme.tertiary) }
-                Text(verbatim: "\(Self.joined(sum.cents)) / \(sum.text)")
-                    .appFont(.callout, monospacedDigit: true).foregroundStyle(Theme.secondary)
-                    .sensitive(.amounts)
+                if typeSize.isAccessibilitySize {
+                    ForEach(sum.cents, id: \.currency) { amount in
+                        SubscriptionAmount(text: Money.format(amount.cents, currency: amount.currency), period: sum.text)
+                            .appFont(.callout, monospacedDigit: true)
+                            .foregroundStyle(Theme.secondary)
+                            .sensitive(.amounts)
+                    }
+                } else {
+                    if index > 0 { Text(verbatim: "·").foregroundStyle(Theme.tertiary) }
+                    Text(verbatim: "\(Self.joined(sum.cents)) / \(sum.text)")
+                        .appFont(.callout, monospacedDigit: true).foregroundStyle(Theme.secondary)
+                        .sensitive(.amounts)
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 14).padding(.bottom, 6)
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .combine)
