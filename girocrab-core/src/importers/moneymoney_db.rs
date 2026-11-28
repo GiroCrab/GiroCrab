@@ -879,6 +879,9 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
         }
         // bunq's German branch code; GiroCrab talks to the bunq Public API.
         BUNQ_DE_BLZ => return Some(ConnectorKind::Bunq),
+        // no FinTS access: GiroCrab's own logins, as the bank search routes them
+        QUIRION_BLZ => return Some(ConnectorKind::Quirion),
+        FNZ_BLZ => return Some(ConnectorKind::Fnz),
         c if c.len() == 8 && crate::connectors::fints_presets::known_fints_blz(c) => {
             return Some(ConnectorKind::FinTsGeneric);
         }
@@ -902,6 +905,10 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
         Some(ConnectorKind::Monefit)
     } else if n.contains("go and grow") || n.contains("go & grow") || n.contains("bondora") {
         Some(ConnectorKind::GoAndGrow)
+    } else if n.contains("quirion") {
+        Some(ConnectorKind::Quirion)
+    } else if n.contains("fnz") || n.contains("ebase") {
+        Some(ConnectorKind::Fnz)
     } else {
         None // incl. any other German bank with an 8-digit code
     }
@@ -909,6 +916,10 @@ fn connector_for_inner(bankcode: &str, name: &str) -> Option<ConnectorKind> {
 
 /// bunq's German bank code (BUNQDE82).
 const BUNQ_DE_BLZ: &str = "37019000";
+/// Quirin Privatbank, quirion's bank (QUBKDEBB).
+const QUIRION_BLZ: &str = "10110600";
+/// FNZ Bank, formerly ebase.
+const FNZ_BLZ: &str = "70013000";
 
 /// Open Bank S.A. (Santander, issuer of the Amazon Visa via Zinia): German
 /// bank code 50034200 (OPENDEFF), or the login's name.
