@@ -334,6 +334,9 @@ public final class CloudSyncManager {
 
     var isAutoBusy: Bool { autoBusy }
 
+    /// Tests only: whether automatic sync holds a vault.
+    var hasAutoVaultForTesting: Bool { autoVault != nil }
+
     // MARK: automatic sync
 
     @ObservationIgnored private var autoVault: Vault?

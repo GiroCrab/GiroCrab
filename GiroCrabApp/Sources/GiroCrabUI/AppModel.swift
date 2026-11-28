@@ -1765,18 +1765,21 @@ public final class AppModel {
 
     @discardableResult
     private func performSyncOrAutoAdopt(vault v: Vault, whenIdle onStart: (@MainActor () -> Void)? = nil) async -> Bool {
+        // Locked before this task ran: a released vault is never synced.
+        guard ownVault === v else { return false }
         let ran: Bool
         if let onStart {
-            guard ownVault === v else { return false }
             // Checked right before the sync starts (no await in between), so a
             // vault locked during the wait is never written (#1090).
             ran = await CloudSyncManager.shared.syncWhenIdle(
                 vault: v, onStart: onStart, isCurrent: { [weak self] in self?.ownVault === v })
-            // locked or swapped meanwhile: don't restart auto sync or reload a released vault
-            guard ownVault === v else { return ran }
         } else {
             ran = await CloudSyncManager.shared.sync(vault: v)
         }
+        // Locked or swapped meanwhile (also the sync after unlocking): don't restart
+        // auto sync or reload a released vault. Each unlock opens a new `Vault`, so a
+        // stale run never matches the next session's vault.
+        guard ownVault === v else { return ran }
         CloudSyncManager.shared.startAutoSync(vault: v) { [weak self] in self?.reloadAllInBackground() }
         if CloudSyncManager.shared.legacyFolderWritten {
             self.toast = String(localized: "Ein anderes Gerät nutzt noch eine ältere GiroCrab-Version und schreibt in den alten Ordner. Bitte alle Geräte aktualisieren.")
