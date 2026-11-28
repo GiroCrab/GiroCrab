@@ -4313,6 +4313,47 @@ fn a_finished_database_import_is_in_the_sync_log() {
 }
 
 #[test]
+fn a_refusal_after_a_merge_takes_that_merge_back_too() {
+    // the EUR wallet merges first, then the USD wallet's target is refused: the import is one
+    // transaction, so the EUR target ends up untouched as well (#1993)
+    let v = vault();
+    let eur = wallet(&v, "Euro", "EUR", false);
+    let gbp = wallet(&v, "Pfund", "GBP", false);
+    // one the import owns: a merge would take MoneyMoney's balance
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET external_ref = 'moneymoney-db:77:abcd', balance_cents = 777 WHERE id = ?1",
+            [eur],
+        )
+        .unwrap();
+    let path = wallets_db(false);
+    let p = v
+        .preview_moneymoney_database(path.clone(), String::new(), None)
+        .unwrap();
+    let mut o = options_from(&p, false);
+    for c in &mut o.accounts {
+        c.target_account_id = Some(if c.mm_id == 1 { eur } else { gbp });
+    }
+    let err = v
+        .import_moneymoney_database(path, String::new(), o)
+        .unwrap_err();
+    assert!(err.to_string().contains("in USD"), "{err}");
+    assert!(booking_currencies(&v, eur).is_empty());
+    assert_eq!(account_by_id(&v, eur).balance_cents, 777);
+    let log = v
+        .list_sync_log(crate::sync_log::SyncLogFilter {
+            connection_id: None,
+            only_errors: false,
+            search: None,
+            limit: 0,
+        })
+        .unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].outcome, crate::sync_log::SyncLogOutcome::Error);
+}
+
+#[test]
 fn wallets_in_two_currencies_never_share_an_account_without_one() {
     // each passes the check alone; together they would mix euro and dollars (#1993)
     let v = vault();
