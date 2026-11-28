@@ -24,6 +24,8 @@ struct ExportSheet: View {
     @State private var showAccountPicker = false
     /// Saved account choice, read once; a context-menu export writes it back unchanged.
     @State private var savedAccountIDs: [Int64] = []
+    /// Privacy mode can be switched on while the dialog is open: the export button then greys out.
+    @AppStorage(PrivacyMode.enabledKey) private var privacyMode = false
 
     /// The three format choices; CAMT.053 has a version of its own.
     private enum FormatFamily: String, CaseIterable, Identifiable {
@@ -127,7 +129,7 @@ struct ExportSheet: View {
     }
 
     private var canExport: Bool {
-        !busy && camtAccountOK && !effectiveAccountIDs.isEmpty && (isBulk || (previewCount ?? 0) > 0)
+        !privacyMode && !busy && camtAccountOK && !effectiveAccountIDs.isEmpty && (isBulk || (previewCount ?? 0) > 0)
     }
 
     /// Accounts used for the export query (selection → accounts of the marked bookings).
@@ -515,6 +517,7 @@ struct ExportSheet: View {
 
     @MainActor
     private func export() async {
+        guard model.exportAllowed else { return }
         busy = true
         defer { busy = false }
         do {
@@ -552,12 +555,21 @@ struct ExportSheet: View {
         finish { model.presentExportFile(data: file.data, format: options.format, filename: file.filename) }
     }
 
-    /// Closes the sheet, then runs `present` (the save panel must not open over the sheet).
+    /// Closes the sheet, then runs `present` (the save panel must not open over the sheet). The file was built
+    /// asynchronously: if privacy mode was switched on or the vault locked meanwhile, it is not handed over.
     private func finish(_ present: @escaping () -> Void) {
         model.exportBookingIDs = nil
         model.exportPreferSelection = false
         dismiss()
-        DispatchQueue.main.async(execute: present)
+        DispatchQueue.main.async {
+            guard model.exportAllowed else {
+                #if os(macOS)
+                NSSound.beep()
+                #endif
+                return
+            }
+            present()
+        }
     }
 
     @MainActor
