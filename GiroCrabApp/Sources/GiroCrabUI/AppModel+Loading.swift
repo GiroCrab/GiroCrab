@@ -31,6 +31,8 @@ extension AppModel {
         reloadTags()
         reloadSettings()
         reloadDashboard()
+        // a sync can bring scheduled transfers: an open „Geplant“ page reloads via its task key (#1745)
+        plannedVersion += 1
     }
 
     /// `reloadAll` for changes nobody asked for in the UI (iCloud merge, scheduled sync): the
@@ -50,6 +52,8 @@ extension AppModel {
         reloadTags()
         reloadSettings()
         reloadDashboard()
+        // iCloud may bring only a new scheduled transfer: reload an open „Geplant“ page (#1745)
+        plannedVersion += 1
         merchantStatsCache = [:]
         loadMerchantStats(keepShown: true)
         startSelectionLoad(keepingShown: true)

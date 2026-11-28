@@ -744,6 +744,7 @@ mod tests {
             id,
             parent_id: parent,
             name: name.into(),
+            edit_name: name.into(),
             sf_symbol: String::new(),
             color_hex: String::new(),
             sort_order: 0,
