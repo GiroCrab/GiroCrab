@@ -214,7 +214,7 @@ pub fn listen(mut on_link: impl FnMut(String) + Send + 'static) {
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     *listening = Some(path);
     std::thread::spawn(move || {
-        let mut failures = 0;
+        let mut failures: u32 = 0;
         for stream in listener.incoming() {
             // A persistent error (EMFILE …) would spin: wait longer after each one in a row.
             let Ok(stream) = stream else {
