@@ -55,14 +55,17 @@ ColumnLayout {
                         spacing: 10
                         RowLayout {
                             Layout.fillWidth: true; spacing: 8
-                            MerchantSignet { merchant: planItem.modelData.merchant; size: 28 }
+                            // names, ISINs and initials of securities: hidden when the report asks for labels
+                            MerchantSignet { merchant: planItem.modelData.merchant; size: 28; Sensitive { labels: true } }
                             ColumnLayout { spacing: 1; Layout.fillWidth: true
-                                Text { text: planItem.modelData.merchant.name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
+                                Text { text: planItem.modelData.merchant.name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true
+                                       Sensitive { labels: true } }
                                 Text { font.family: "monospace"; font.pixelSize: Theme.caption2; color: Theme.secondary; elide: Text.ElideRight; Layout.fillWidth: true
                                        text: { const p = planItem.modelData
                                                const parts = []; if (p.merchant.isin) parts.push(p.merchant.isin); if (p.merchant.wkn) parts.push("WKN " + p.merchant.wkn)
                                                if (!parts.length) parts.push(p.merchant.asset_class || qsTr("Sparplan"))
-                                               parts.push(qsTr("am %1.").arg(p.day_of_month)); return parts.join(" · ") } } }
+                                               parts.push(qsTr("am %1.").arg(p.day_of_month)); return parts.join(" · ") }
+                                       Sensitive { labels: true } } }
                         }
                         Repeater {
                             model: dash.d ? dash.d.months : []

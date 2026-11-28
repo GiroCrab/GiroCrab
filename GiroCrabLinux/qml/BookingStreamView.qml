@@ -809,13 +809,23 @@ Rectangle {
                     Layout.preferredWidth: 80 * Theme.textScale
                     Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop
                 }
-                MerchantSignet {
-                    size: br.signetSize
+                Item {
                     Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop
-                    merchant: br.booking ? br.booking.merchant : null
-                    categorySymbol: br.booking ? br.booking.category_symbol : ""
-                    showNewDot: br.booking ? !br.booking.checked : false
-                    opacity: br.booking && br.booking.is_pending ? 0.7 : 1
+                    implicitWidth: rowSignet.width; implicitHeight: rowSignet.height
+                    MerchantSignet {
+                        id: rowSignet
+                        size: br.signetSize
+                        merchant: br.booking ? br.booking.merchant : null
+                        categorySymbol: br.booking ? br.booking.category_symbol : ""
+                        showNewDot: br.booking ? !br.booking.checked : false
+                        opacity: br.booking && br.booking.is_pending ? 0.7 : 1
+                    }
+                    // not booked yet: dashed outline instead of a solid tile (not dimmed, .overlay after .opacity)
+                    DashedFrame {
+                        anchors.fill: rowSignet
+                        visible: br.booking !== null && !!br.booking.is_pending
+                        radius: br.signetSize * 0.28; lineWidth: 1.5; dash: [3, 3]; strokeColor: Theme.secondary
+                    }
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
