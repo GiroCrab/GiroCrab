@@ -6,7 +6,8 @@ import QtQuick.Layouts
 // form, then a read-only review, then the bank's TAN request (TwoFactorSheet). A deletion
 // starts at the review. State and schedule logic: Payments.qml (StandingDraft); open it
 // with Payments.openStandingOrder(mode, …). Also holds RootView's alert "Status des
-// Dauerauftrags unklar".
+// Dauerauftrags unklar". The recipient is entered as in the transfer form (#1475): suggestions
+// while typing, Umbuchung to an own account, templates, paste and dropped invoices.
 Sheet {
     id: sheet
     readonly property var draft: Payments.standingDraft
@@ -24,7 +25,8 @@ Sheet {
     }
     readonly property bool ibanValid: AppModel.validateIban(draft.iban)
     readonly property var cents: Payments.standingCents(draft)
-    readonly property var intervals: Payments.allowedIntervals(draft, limits)
+    /// Unit and interval in one list: weekly … yearly (what the bank does not offer is left out).
+    readonly property var rhythmChoices: Payments.rhythmChoices(draft, limits)
     readonly property var days: Payments.allowedDays(draft, limits)
     readonly property var firstRange: Payments.firstDateRange(limits)
     /// Choices of the execution day: [{ day, title }].
@@ -38,34 +40,181 @@ Sheet {
                                     : draft.action === "Change" ? (reviewing ? qsTr("Änderung prüfen") : qsTr("Dauerauftrag ändern"))
                                     : qsTr("Dauerauftrag löschen")
 
+    readonly property bool editing: !reviewing && !isDelete
+    readonly property bool ownTransfer: !!draft.ownTransfer
+    readonly property string bicText: draft.bic.trim()
+    readonly property bool bicValid: bicText === "" || AppModel.looksLikeBIC(bicText)
+    /// Own accounts an Umbuchung may go to (not the sending account, the same rules as the transfer).
+    readonly property var ownTargets: AppModel.ownTransferTargets(account)
+    property var ownTargetID: null
+    /// The recipient list under the name field (RecipientSuggestions, shared with the transfer form).
+    property var suggestions: []
+    property int highlighted: -1
+    /// Name just taken from the list: typing it must not reopen the list.
+    property var pickedName: null
+    /// The person changed the name. Until then (a form opened with a name, as "Dauerauftrag
+    /// ändern" does) the list stays closed, although the field gets the focus.
+    property bool nameEdited: false
+    /// What a paste, a template or a dropped invoice filled (#663).
+    property string importNote: ""
+    property bool readingInvoice: false
+    /// .onChange(of: draft.accountID) for every way the sender changes.
+    readonly property int senderID: draft.account_id === null || draft.account_id === undefined ? -1 : draft.account_id
+    onSenderIDChanged: if (visible && editing) Qt.callLater(senderChanged)
+
     visible: Payments.showStandingSheet
-    sheetWidth: 520
+    sheetWidth: 560
     padding: 0
-    closePolicy: AppModel.transferBusy ? Popup.NoAutoClose : Popup.CloseOnEscape
+    // Esc closes the recipient list first.
+    closePolicy: AppModel.transferBusy || suggestions.length > 0 ? Popup.NoAutoClose : Popup.CloseOnEscape
     onAboutToShow: {
         reviewing = Payments.standingDraft.action === "Delete"
             || (AppModel.demoSheet === "standing-order-confirm" && !demoReviewShown) // screenshots
         demoReviewShown = true
+        suggestions = []
+        pickedName = null
+        nameEdited = false
+        importNote = ""
+        ownTargetID = null
+        detectOwnTransfer()
     }
     onClosed: if (Payments.showStandingSheet) Payments.cancelStandingSheet()
 
-    function intervalText(n) {
-        if (draft.unit === "W") return n === 1 ? qsTr("1 Woche") : qsTr("%1 Wochen").arg(n)
-        return n === 1 ? qsTr("1 Monat") : qsTr("%1 Monate").arg(n)
+    /// Fills name and IBAN from the chosen own account (owner, else account name).
+    function applyOwnTarget(id) {
+        const t = ownTargets.find(a => a.id === id)
+        if (!t) return
+        Payments.setStanding({ name: t.owner === "" ? t.name : t.owner, iban: AppModel.groupedIBAN(t.iban), bic: "" })
+        suggestions = []
     }
+    /// Switches between an order to someone else and an Umbuchung: leaving Umbuchung empties the
+    /// fields again, so no own account stays in a field that looks typed.
+    function setOwnTransfer(on) {
+        if (on === ownTransfer) return
+        Payments.setStanding({ ownTransfer: on })
+        if (on) {
+            if (!ownTargets.some(a => a.id === ownTargetID)) ownTargetID = ownTargets.length ? ownTargets[0].id : null
+            applyOwnTarget(ownTargetID)
+        } else {
+            Payments.setStanding({ name: "", iban: "", bic: "" })
+        }
+    }
+    /// An order whose IBAN is an own account opens as Umbuchung (the stored name stays).
+    function detectOwnTransfer() {
+        if (isDelete) return
+        const key = s => (s || "").replace(/\s/g, "").toUpperCase()
+        const own = key(draft.iban) === "" ? null : ownTargets.find(a => key(a.iban) === key(draft.iban))
+        if (!own) return
+        ownTargetID = own.id
+        if (!ownTransfer) Payments.setStanding({ ownTransfer: true })
+    }
+    /// The sending account is no target: keep a valid one, or fall back to an order to someone else.
+    function senderChanged() {
+        if (!ownTransfer) return
+        if (ownTargets.length === 0) { setOwnTransfer(false); return }
+        if (!ownTargets.some(a => a.id === ownTargetID)) {
+            ownTargetID = ownTargets[0].id
+            applyOwnTarget(ownTargetID)
+        }
+    }
+    function refreshSuggestions() {
+        suggestions = nameEdited && nameField.activeFocus && draft.name !== pickedName ? suggestionList.recipients(draft.name) : []
+    }
+    onSuggestionsChanged: highlighted = -1
+    function moveHighlight(by) {
+        if (!suggestions.length) return false
+        highlighted = Math.min(Math.max(highlighted + by, 0), suggestions.length - 1)
+        return true
+    }
+    /// Takes name and IBAN of a known recipient and closes the list.
+    function pick(r) {
+        pickedName = r.name
+        suggestions = []
+        Payments.takeStandingRecipient(r.name, r.iban)
+    }
+    /// "Nicht mehr vorschlagen" (#978): the list is read again in place.
+    function hideRecipient(iban) {
+        AppModel.setRecipientHidden(iban, true)
+        suggestions = suggestionList.recipients(draft.name)
+    }
+    function pasteFromClipboard() { report(PaymentParser.parseText(AppModel.clipboardText())) }
+    function importInvoice(url) {
+        // read now: the sheet may be closed or reopened before the file is read
+        const token = Payments.standingImportToken
+        importNote = qsTr("Lese Rechnung …")
+        const path = decodeURIComponent(url.toString().replace(/^file:\/\//, ""))
+        readingInvoice = true
+        PaymentParser.parseFile(path, p => {
+            readingInvoice = false
+            sheet.report(p || {}, token)
+        })
+    }
+    /// `token`: a dropped invoice, read later; a late result (review begun, sheet closed or
+    /// reopened) changes nothing and leaves no "Lese Rechnung …" behind.
+    function report(p, token) {
+        if (token !== undefined && token !== Payments.standingImportToken) { importNote = ""; return }
+        if (PaymentParser.isEmpty(p)) { importNote = qsTr("Nichts Erkennbares gefunden"); return }
+        if (token !== undefined) {
+            if (!Payments.fillStandingDraftIfToken(PaymentParser.patch(p), token)) { importNote = ""; return }
+        } else {
+            Payments.fillStandingDraft(PaymentParser.patch(p))
+        }
+        importNote = qsTr("Felder ausgefüllt – bitte prüfen")
+    }
+
+    // ⇧Strg+V; Strg+V outside a text field (inside one, normal paste keeps working).
+    Shortcut { sequences: ["Ctrl+Shift+V", StandardKey.Paste]; enabled: sheet.visible && sheet.editing && !templatesButton.dialogOpen
+               onActivated: sheet.pasteFromClipboard() }
+
     function start() { if (!AppModel.transferBusy) Payments.startStandingOrder() }
 
     ColumnLayout {
         width: sheet.availableWidth
         spacing: 0
 
-        Text {
+        // EntryHeader: title left, the helpers of the transfer form (templates, recipients, paste) right
+        RowLayout {
             id: head
             Layout.fillWidth: true
             Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.topMargin: 14; Layout.bottomMargin: 14
-            text: sheet.heading
-            font.pixelSize: Theme.title2; font.weight: Font.DemiBold; color: Theme.text
-            Accessible.role: Accessible.Heading
+            spacing: 12
+            Text {
+                text: sheet.heading
+                font.pixelSize: Theme.title2; font.weight: Font.DemiBold; color: Theme.text
+                Accessible.role: Accessible.Heading
+            }
+            Item { Layout.fillWidth: true }
+            TransferTemplatesMenu {
+                id: templatesButton
+                visible: sheet.editing
+                standing: true
+            }
+            Button {
+                visible: sheet.editing
+                flat: true; icon.name: SF.icon("person.2"); text: qsTr("Empfänger")
+                onClicked: recipientsDialog.open()
+                ToolTip.text: qsTr("Empfänger verwalten: veraltete IBANs nicht mehr vorschlagen")
+                ToolTip.visible: hovered; ToolTip.delay: 600
+            }
+            Button {
+                visible: sheet.editing
+                flat: true; icon.name: SF.icon("doc.on.clipboard"); text: qsTr("Einfügen")
+                onClicked: sheet.pasteFromClipboard()
+                ToolTip.text: qsTr("Erkennt IBAN, Betrag, Empfänger und Zweck (⇧Strg+V; Strg+V außerhalb von Textfeldern). Rechnung (PDF, ZUGFeRD, GiroCode) hierher ziehen.")
+                ToolTip.visible: hovered; ToolTip.delay: 600
+            }
+        }
+        // OwnTransferSwitch: Überweisung ⇄ Umbuchung under the title, as in the transfer form (#1475);
+        // offered when there is an own account to book to
+        Segmented {
+            id: kindSwitch
+            visible: sheet.editing && (sheet.ownTargets.length > 0 || sheet.ownTransfer)
+            Layout.alignment: Qt.AlignHCenter
+            Layout.bottomMargin: 10
+            options: [{ id: "single", title: qsTr("Überweisung") }, { id: "own", title: qsTr("Umbuchung") }]
+            current: sheet.ownTransfer ? "own" : "single"
+            onActivated: id => sheet.setOwnTransfer(id === "own")
+            Accessible.name: qsTr("Art")
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
@@ -73,7 +222,7 @@ Sheet {
             id: scroll
             ScrollBar.vertical: ScrollViewBar {}
             Layout.fillWidth: true
-            readonly property real chrome: head.implicitHeight + 28 + messages.implicitHeight + buttonRow.implicitHeight + 32
+            readonly property real chrome: head.implicitHeight + 28 + (kindSwitch.visible ? kindSwitch.implicitHeight + 10 : 0) + messages.implicitHeight + buttonRow.implicitHeight + 32
             readonly property real body: (sheet.reviewing ? review.implicitHeight : form.implicitHeight) + 40
             Layout.preferredHeight: Math.min(sheet.reviewing ? body : Math.max(body, 420), sheet.maxBodyHeight - chrome)
             contentWidth: availableWidth
@@ -102,18 +251,50 @@ Sheet {
                         }
                     }
                 }
+                // Recipient: an own account (Umbuchung) or name, IBAN and BIC
                 FormSection {
+                    footer: sheet.importNote
                     FormRow {
-                        label: qsTr("Empfänger")
-                        TextField {
-                            Layout.preferredWidth: 280; horizontalAlignment: TextInput.AlignRight
-                            placeholderText: qsTr("Name")
-                            text: sheet.draft.name
-                            onTextEdited: Payments.setStanding({ name: text })
+                        visible: sheet.ownTransfer
+                        label: qsTr("Zielkonto")
+                        AppComboBox {
+                            Layout.preferredWidth: 280
+                            model: sheet.ownTargets.map(a => a.name + " · " + Fmt.iban(a.iban))
+                            currentIndex: sheet.ownTargets.findIndex(a => a.id === sheet.ownTargetID)
+                            onActivated: i => { sheet.ownTargetID = sheet.ownTargets[i].id; sheet.applyOwnTarget(sheet.ownTargetID) }
                             Sensitive {}
                         }
                     }
                     FormRow {
+                        visible: sheet.ownTransfer
+                        label: qsTr("Empfänger")
+                        Text { text: sheet.draft.name; font.pixelSize: Theme.body; color: Theme.text; Sensitive {} }
+                    }
+                    FormRow {
+                        visible: !sheet.ownTransfer
+                        label: qsTr("Empfänger")
+                        TextField {
+                            id: nameField
+                            Layout.preferredWidth: 280; horizontalAlignment: TextInput.AlignRight
+                            placeholderText: qsTr("Name")
+                            text: sheet.draft.name
+                            Accessible.name: qsTr("Empfänger")
+                            onTextEdited: {
+                                if (text !== sheet.pickedName) sheet.pickedName = null
+                                sheet.nameEdited = true
+                                Payments.setStanding({ name: text })
+                                sheet.refreshSuggestions()
+                            }
+                            onActiveFocusChanged: sheet.refreshSuggestions()
+                            // the recipient list: ↑/↓, Return, Esc
+                            Keys.onDownPressed: e => e.accepted = sheet.moveHighlight(1)
+                            Keys.onUpPressed: e => e.accepted = sheet.moveHighlight(-1)
+                            Keys.onEscapePressed: e => { e.accepted = sheet.suggestions.length > 0; sheet.suggestions = [] }
+                            Sensitive {}
+                        }
+                    }
+                    FormRow {
+                        visible: !sheet.ownTransfer
                         label: qsTr("IBAN")
                         // .withBankLine: the bank under field and mark, the line kept while there is none (#1584)
                         ColumnLayout {
@@ -129,18 +310,34 @@ Sheet {
                                     onTextEdited: Payments.setStanding({ iban: AppModel.groupedIBAN(text) })
                                     Sensitive {}
                                 }
-                                SFIcon {
-                                    opacity: sheet.draft.iban !== "" && !sheet.ibanValid ? 1 : 0
-                                    symbol: "xmark.circle.fill"; size: 16; color: Theme.negative
-                                    HoverHandler { id: ibanHover }
-                                    ToolTip.visible: ibanHover.hovered && opacity > 0
-                                    ToolTip.text: qsTr("IBAN ungültig (Prüfsumme/Länge)")
-                                    Accessible.name: qsTr("IBAN ungültig")
-                                }
+                                // FieldValidity: nothing while the field is empty (the place stays)
+                                ValidMark { opacity: sheet.draft.iban !== "" ? 1 : 0; ok: sheet.ibanValid
+                                            ToolTip.text: sheet.ibanValid ? qsTr("Prüfsumme korrekt") : qsTr("IBAN ungültig (Prüfsumme/Länge)") }
                             }
                             IBANBankLine { iban: sheet.draft.iban; Layout.preferredWidth: 1 }
                         }
                     }
+                    FormRow {
+                        visible: !sheet.ownTransfer
+                        label: qsTr("BIC")
+                        RowLayout {
+                            spacing: 8
+                            TextField {
+                                // 8 or 11 characters: as wide as the amount (HIG: size fits the input)
+                                Layout.preferredWidth: 160 * Theme.textScale; horizontalAlignment: TextInput.AlignRight
+                                placeholderText: qsTr("optional")
+                                font.family: "monospace"
+                                inputMethodHints: Qt.ImhNoPredictiveText
+                                text: sheet.draft.bic
+                                onTextEdited: Payments.setStanding({ bic: text })
+                                Sensitive {}
+                            }
+                            ValidMark { opacity: sheet.bicText !== "" ? 1 : 0; ok: sheet.bicValid
+                                        ToolTip.text: sheet.bicValid ? qsTr("BIC gültig") : qsTr("BIC ungültig") }
+                        }
+                    }
+                }
+                FormSection {
                     FormRow {
                         label: qsTr("Betrag")
                         TextField {
@@ -169,35 +366,13 @@ Sheet {
                         label: qsTr("Rhythmus")
                         AppComboBox {
                             Layout.preferredWidth: 200
-                            model: [qsTr("Monate"), qsTr("Wochen")]
-                            currentIndex: sheet.draft.unit === "W" ? 1 : 0
-                            onActivated: i => Payments.setStanding({ unit: i === 1 ? "W" : "M" }, "unit")
-                        }
-                    }
-                    FormRow {
-                        label: qsTr("Alle")
-                        // Stepper(in: 1...99) when the bank names no intervals, else a Picker of them
-                        // one stepper per unit: a SpinBox keeps its text when only the unit changes
-                        Repeater {
-                            model: ["M", "W"]
-                            SpinBox {
-                                required property string modelData
-                                visible: sheet.intervals.length === 0 && sheet.draft.unit === modelData
-                                Layout.preferredWidth: 200
-                                from: 1; to: 99
-                                value: sheet.draft.interval
-                                textFromValue: v => modelData === "W" ? (v === 1 ? qsTr("1 Woche") : qsTr("%1 Wochen").arg(v))
-                                                                      : (v === 1 ? qsTr("1 Monat") : qsTr("%1 Monate").arg(v))
-                                valueFromText: t => parseInt(t) || 1
-                                onValueModified: Payments.setStanding({ interval: value })
+                            model: sheet.rhythmChoices.map(r => Payments.rhythmText(r))
+                            currentIndex: sheet.rhythmChoices.findIndex(r => r.unit === sheet.draft.unit && r.interval === sheet.draft.interval)
+                            // .onChange(of: unit): another unit fits the day to it and to the bank's limits
+                            onActivated: i => {
+                                const r = sheet.rhythmChoices[i]
+                                Payments.setStanding({ unit: r.unit, interval: r.interval }, r.unit !== sheet.draft.unit ? "unit" : undefined)
                             }
-                        }
-                        AppComboBox {
-                            visible: sheet.intervals.length > 0
-                            Layout.preferredWidth: 200
-                            model: sheet.intervals.map(n => sheet.intervalText(n))
-                            currentIndex: sheet.intervals.indexOf(sheet.draft.interval)
-                            onActivated: i => Payments.setStanding({ interval: sheet.intervals[i] })
                         }
                     }
                     FormRow {
@@ -320,7 +495,12 @@ Sheet {
                 visible: !sheet.reviewing
                 text: qsTr("Weiter"); highlighted: true
                 enabled: Payments.standingIsValid(sheet.draft)
-                onClicked: { AppModel.transferError = ""; sheet.reviewing = true }
+                onClicked: {
+                    AppModel.transferError = ""
+                    Payments.invalidateStandingImports()  // an invoice still being read must not change what is under review
+                    sheet.suggestions = []
+                    sheet.reviewing = true
+                }
             }
         }
     }
@@ -328,8 +508,64 @@ Sheet {
     // .keyboardShortcut(.defaultAction) – not for a deletion
     Shortcut {
         sequences: ["Return", "Enter"]
-        enabled: sheet.visible && !sheet.isDelete
-        onActivated: { if (!sheet.reviewing) { if (nextButton.enabled) nextButton.clicked() } else sheet.start() }
+        enabled: sheet.visible && !sheet.isDelete && !templatesButton.dialogOpen && !recipientsDialog.visible
+        onActivated: {
+            // Return takes the recipient chosen with ↑/↓
+            if (sheet.editing && sheet.highlighted >= 0 && sheet.highlighted < sheet.suggestions.length) {
+                sheet.pick(sheet.suggestions[sheet.highlighted])
+                return
+            }
+            if (!sheet.reviewing) { if (nextButton.enabled) nextButton.clicked() } else sheet.start()
+        }
+    }
+
+    RecipientSuggestionList {
+        id: suggestionList
+        parent: sheet.contentItem
+        active: sheet.editing && !sheet.ownTransfer
+        field: nameField
+        scrollView: scroll
+        suggestions: sheet.suggestions
+        highlighted: sheet.highlighted
+        onPicked: r => sheet.pick(r)
+        onHideRequested: iban => sheet.hideRecipient(iban)
+        onHoveredRow: i => sheet.highlighted = i
+    }
+
+    // .capturableSheet { KnownRecipientsSheet() }: what was hidden or shown again there applies to an open list at once
+    KnownRecipientsDialog { id: recipientsDialog; onClosed: sheet.refreshSuggestions() }
+
+    // .onDrop: Rechnung (PDF, ZUGFeRD-XML, Bild oder PDF mit GiroCode) hierher ziehen.
+    DropArea {
+        parent: sheet.contentItem
+        anchors.fill: parent
+        enabled: sheet.editing && !sheet.readingInvoice
+        onDropped: drop => { if (drop.hasUrls) sheet.importInvoice(drop.urls[0]) }
+        Rectangle {
+            anchors.fill: parent; anchors.margins: 4
+            visible: parent.containsDrag
+            radius: 12; color: Theme.withAlpha(Theme.accent, 0.06)
+            border.color: Theme.accent; border.width: 2
+        }
+    }
+
+    // Linux only, as in the transfer form: while a dropped invoice is read, a spinner over the
+    // form says so (the footer text can be scrolled out of view here).
+    Rectangle {
+        parent: sheet.contentItem
+        anchors.fill: parent
+        visible: sheet.readingInvoice
+        z: 10
+        radius: 12; color: Theme.withAlpha(Theme.card, 0.8)
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: w => w.accepted = true }
+        Column {
+            anchors.centerIn: parent
+            spacing: 10
+            BusyIndicator { anchors.horizontalCenter: parent.horizontalCenter; running: parent.parent.visible
+                            implicitWidth: 40; implicitHeight: 40 }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: qsTr("Lese Rechnung …")
+                   font.pixelSize: Theme.body; color: Theme.text }
+        }
     }
 
     // RootView: .alert("Status des Dauerauftrags unklar")
@@ -356,6 +592,18 @@ Sheet {
         }
     }
 
+    /// FieldValidity: the check mark or cross beside the IBAN or BIC field, the tooltip as its label.
+    component ValidMark: SFIcon {
+        property bool ok
+        symbol: ok ? "checkmark.circle.fill" : "xmark.circle.fill"
+        size: 16
+        color: ok ? Theme.inflow : Theme.negative
+        HoverHandler { id: hover }
+        ToolTip.visible: hover.hovered && opacity > 0 && ToolTip.text !== ""
+        Accessible.role: Accessible.Graphic
+        Accessible.name: ToolTip.text
+        Accessible.ignored: opacity === 0
+    }
     component Note: RowLayout {
         property alias text: noteText.text
         property alias symbol: noteIcon.symbol

@@ -266,6 +266,9 @@ QtObject {
     /// The bank's answer was unclear: the alert "Status des Dauerauftrags unklar".
     property var standingUnknown: null
     property int limitsGeneration: 0
+    /// standingDraftToken: changes whenever the sheet opens or closes and when the form goes to the
+    /// review; a result that arrives later (invoice import) checks it (#1475).
+    property int standingImportToken: 0
 
     function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
     function addDays(d, n) { const x = startOfDay(d); x.setDate(x.getDate() + n); return x }
@@ -278,12 +281,17 @@ QtObject {
     function newStandingDraft() {
         const first = tomorrow()
         const last = new Date(first); last.setFullYear(last.getFullYear() + 1)
-        return { action: "Create", orderRowID: null, account_id: null, name: "", iban: "", bic: "", amountText: "", purpose: "",
+        return { action: "Create", orderRowID: null, account_id: null,
+                 /// Umbuchung (#1475): name and IBAN come from an own account.
+                 ownTransfer: false, name: "", iban: "", bic: "", amountText: "", purpose: "",
                  firstDate: first, hasEnd: false, lastDate: last,
                  /// `M` (months) or `W` (weeks).
                  unit: "M", interval: 1,
                  /// Day of the month (31 = last day) or weekday (1 = Monday … 7).
-                 execDay: first.getDate(), pin: "" }
+                 execDay: first.getDate(), pin: "",
+                 /// The rhythm the bank holds for the order being changed ({ unit, interval }): offered
+                 /// and kept for the whole editing session, also when another one was picked in between.
+                 heldRhythm: null }
     }
     function copyDraft(d) { return Object.assign({}, d, { firstDate: new Date(d.firstDate), lastDate: new Date(d.lastDate) }) }
     function standingCents(d) { const c = AppModel.parseCents(d.amountText); return c !== null && c > 0 ? c : null }
@@ -293,7 +301,8 @@ QtObject {
         const d = newStandingDraft()
         Object.assign(d, { action: action, orderRowID: o.id, account_id: o.account_id, name: o.recipient_name,
                            iban: AppModel.groupedIBAN(o.recipient_iban), amountText: Fmt.plain(o.amount_cents), purpose: o.purpose,
-                           firstDate: Fmt.date(o.first_date) || tomorrow(), unit: o.time_unit, interval: o.interval, execDay: o.exec_day })
+                           firstDate: Fmt.date(o.first_date) || tomorrow(), unit: o.time_unit, interval: o.interval, execDay: o.exec_day,
+                           heldRhythm: { unit: o.time_unit, interval: o.interval } })
         const last = o.last_date ? Fmt.date(o.last_date) : null
         if (last) { d.hasEnd = true; d.lastDate = last }
         // the stored start lies in the past: the next date on the order's day
@@ -378,6 +387,23 @@ QtObject {
             d.firstDate = nextOccurrence(d.execDay, before)
         }
     }
+    /// What the rhythm picker offers ([{ unit, interval }]). Without limits from the bank: weekly, monthly,
+    /// every 2 months, quarterly, half-yearly, yearly. With limits: what the bank reports for weeks and for
+    /// months (up to a year of months). The rhythm the bank holds for the order and the current rhythm
+    /// are always in the list; any other rhythm the bank does not list is moved to one it lists by
+    /// `conform`, as the bank refuses it when sending.
+    function rhythmChoices(d, l) {
+        const values = (reported, usual, top) => {
+            const list = (reported || []).filter(n => n >= 1 && n <= top)
+            return list.length ? [...new Set(list)].sort((a, b) => a - b) : usual
+        }
+        const list = values(l ? l.weeks : null, [1], 52).map(n => ({ unit: "W", interval: n }))
+            .concat(values(l ? l.months : null, [1, 2, 3, 6, 12], 12).map(n => ({ unit: "M", interval: n })))
+        const has = r => list.some(x => x.unit === r.unit && x.interval === r.interval)
+        if (d.heldRhythm && !has(d.heldRhythm)) list.push(d.heldRhythm)
+        if (!has(d)) list.push({ unit: d.unit, interval: d.interval })
+        return list
+    }
     /// Intervals the bank offers for the chosen unit (empty = any 1…99).
     function allowedIntervals(d, l) { return l ? (d.unit === "W" ? l.weeks : l.months) : [] }
     /// Execution days the bank offers for the chosen unit (empty = any).
@@ -393,7 +419,10 @@ QtObject {
     /// shows a combination it would refuse.
     function conform(d, l) {
         const intervals = allowedIntervals(d, l)
-        if (intervals.length && intervals.indexOf(d.interval) < 0) d.interval = intervals[0]
+        // keepsInterval: allowed, or the rhythm the bank already holds for this order (picking it
+        // again must not turn "alle 4 Wochen" into "wöchentlich")
+        const held = d.heldRhythm && d.heldRhythm.unit === d.unit && d.heldRhythm.interval === d.interval
+        if (intervals.length && intervals.indexOf(d.interval) < 0 && !held) d.interval = intervals[0]
         const days = allowedDays(d, l)
         if (days.length && days.indexOf(d.execDay) < 0)
             d.execDay = days.reduce((best, x) => Math.abs(x - d.execDay) < Math.abs(best - d.execDay) ? x : best, days[0])
@@ -453,6 +482,30 @@ QtObject {
         standingDraft = d
         if (patch.account_id !== undefined) refreshStandingLimits()
     }
+
+    /// A recipient picked from the suggestions (StandingDraft.takeRecipient): name and IBAN, and no
+    /// BIC of the one before (it belongs to the other bank). The same recipient keeps its BIC.
+    function takeStandingRecipient(name, iban) {
+        const key = s => (s || "").replace(/\s/g, "").toUpperCase()
+        const patch = { name: name, iban: AppModel.groupedIBAN(iban) }
+        if (key(iban) !== key(standingDraft.iban)) patch.bic = ""
+        setStanding(patch)
+    }
+    /// A template, a paste or an invoice names a recipient (#1475): that is an order to someone else,
+    /// so it leaves Umbuchung first, as in the transfer form. A running order keeps its form.
+    /// `patch`: draft fields (PaymentParser.patch).
+    function fillStandingDraft(patch) {
+        if (AppModel.activeTransfer !== null) return
+        setStanding(Object.assign({}, patch, { ownTransfer: false }))
+    }
+    /// The same for a result that arrived later (invoice import): only into the sheet it was started in.
+    function fillStandingDraftIfToken(patch, token) {
+        if (token !== standingImportToken || !showStandingSheet) return false
+        fillStandingDraft(patch)
+        return true
+    }
+    /// The form goes to the review: results of imports that are still running are dropped from now on.
+    function invalidateStandingImports() { ++standingImportToken }
 
     /// FinTS accounts a standing order can be placed on (HKCDE; not bunq or the other connectors).
     readonly property var standingOrderAccounts: batchAccounts
@@ -522,6 +575,7 @@ QtObject {
         openStandingSheet(draftFromOrder(o, "Delete"))
     }
     function openStandingSheet(d) {
+        ++standingImportToken
         standingDraft = d
         standingLimits = null
         AppModel.transferError = ""
@@ -549,6 +603,7 @@ QtObject {
         })
     }
     function cancelStandingSheet() {
+        ++standingImportToken
         showStandingSheet = false
         standingDraft = Object.assign(copyDraft(standingDraft), { pin: "" })
         AppModel.transferError = ""

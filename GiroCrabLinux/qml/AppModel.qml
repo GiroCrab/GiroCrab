@@ -3818,6 +3818,14 @@ QtObject {
         const same = a => a.connection_id !== null && a.connection_id === source.connection_id
         return all.filter(same).concat(all.filter(a => !same(a)))
     }
+    /// AppModel+Transfer.swift › ownTransferTargets(from:): own accounts an Umbuchung may go to,
+    /// shared by the transfer and the standing order form (#547, #1475): any account with an IBAN
+    /// that is not archived and not the sender; a savings account books to its own checking
+    /// accounts only (#582).
+    function ownTransferTargets(source) {
+        if (source && source.kind === "Savings") return internalTransferTargets(source)
+        return allAccounts.filter(a => a.iban !== "" && a.archived_unix === null && (!source || a.id !== source.id))
+    }
     /// Checking accounts GiroCrab cannot send from (e.g. C24 via Enable Banking):
     /// the form ends with a GiroCode to scan in the bank's app instead of a TAN.
     readonly property var giroCodeAccounts: allAccounts.filter(a => a.kind === "Checking" && a.iban !== "" && a.archived_unix === null
@@ -4188,17 +4196,21 @@ QtObject {
 
     // Transfer templates (PlanningUI.swift)
     function transferTemplates() { try { return core("list_transfer_templates") } catch (e) { return [] } }
-    function saveTransferTemplate(name) {
-        const d = transferDraft
+    /// Saves the recipient of the open form as a template: the transfer's, or with `standing` the
+    /// standing order's (#1475).
+    function saveTransferTemplate(name, standing) {
+        const d = standing ? Payments.standingDraft : transferDraft
         const c = parseCents(d.amountText)
         const t = { id: 0, name: name, recipient_name: d.name, recipient_iban: d.iban, recipient_bic: d.bic,
                     default_amount_cents: c !== null && c > 0 ? c : null, default_purpose: d.purpose }
         try { core("save_transfer_template", { template: t }) } catch (e) { transferError = e.message }
     }
-    function applyTransferTemplate(t) {
-        fillTransferDraft({ name: t.recipient_name, iban: groupedIBAN(t.recipient_iban), bic: t.recipient_bic,
-                            amountText: t.default_amount_cents !== null ? Fmt.plain(t.default_amount_cents) : "",
-                            purpose: t.default_purpose.slice(0, 140) })
+    function applyTransferTemplate(t, standing) {
+        const p = { name: t.recipient_name, iban: groupedIBAN(t.recipient_iban), bic: t.recipient_bic,
+                    amountText: t.default_amount_cents !== null ? Fmt.plain(t.default_amount_cents) : "",
+                    purpose: t.default_purpose.slice(0, 140) }
+        if (standing) Payments.fillStandingDraft(p)
+        else fillTransferDraft(p)
     }
     function deleteTransferTemplate(id) { try { core("delete_transfer_template", { id: id }) } catch (e) {} }
 
