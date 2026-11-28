@@ -45,7 +45,6 @@ Sheet {
                      SequentialAnimation on opacity { loops: Animation.Infinite; running: sheet.visible
                          NumberAnimation { to: 0.45; duration: 700 } NumberAnimation { to: 1; duration: 700 } } }
             ChallengeTexts {}
-            TanComparisonHint {}
             Button { visible: sheet.c && !!sheet.c.redirect_url; Layout.alignment: Qt.AlignHCenter
                      text: qsTr("Im Browser anmelden"); highlighted: true; onClicked: Qt.openUrlExternally(sheet.c.redirect_url) }
             RowLayout { Layout.alignment: Qt.AlignHCenter; spacing: 8
@@ -76,7 +75,6 @@ Sheet {
                 Sensitive {}   // photoTAN/QR codes encode the order
             }
             Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: sheet.c ? sheet.c.message : ""; color: Theme.secondary; font.pixelSize: Theme.body; Sensitive {} }   // a transfer TAN names payee and amount
-            TanComparisonHint {}
             TextField {
                 id: code
                 Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 220
@@ -154,36 +152,6 @@ Sheet {
                 ToolTip.visible: skipHover.hovered; ToolTip.delay: 600
                 ToolTip.text: qsTr("Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert.")
             }
-        }
-    }
-    // TanComparisonHint.swift (#949, #1475): before the approval of a single transfer or a standing
-    // order, amount and the end of the recipient IBAN large, to compare on the TAN device.
-    component TanComparisonHint: Rectangle {
-        readonly property var comparison: AppModel.tanComparison
-        visible: comparison !== null
-        Layout.fillWidth: true
-        implicitHeight: visible ? hint.implicitHeight + 24 : 0
-        radius: 10; color: Theme.card; border.color: Theme.border
-        ColumnLayout {
-            id: hint
-            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 12
-            spacing: 8
-            ColumnLayout { Layout.fillWidth: true; spacing: 2
-                Text { Layout.alignment: Qt.AlignHCenter; text: qsTr("Betrag"); font.pixelSize: Theme.caption; color: Theme.secondary }
-                Text { Layout.alignment: Qt.AlignHCenter; text: comparison ? comparison.amount : ""
-                       font.pixelSize: Theme.title; font.weight: Font.Bold; font.features: { "tnum": 1 }; color: Theme.text
-                       Sensitive { amounts: true } } }
-            ColumnLayout { Layout.fillWidth: true; spacing: 2
-                Text { Layout.alignment: Qt.AlignHCenter; text: qsTr("Empfänger-IBAN"); font.pixelSize: Theme.caption; color: Theme.secondary }
-                Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                       text: comparison ? comparison.ibanPrefix : ""; font.family: "monospace"; font.pixelSize: Theme.callout + 1; color: Theme.secondary
-                       Sensitive {} }
-                Text { Layout.alignment: Qt.AlignHCenter; text: comparison ? comparison.endCharacters : ""
-                       font.family: "monospace"; font.pixelSize: Theme.largeTitle; color: Theme.accent
-                       Sensitive {} } }
-            Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; color: Theme.secondary; font.pixelSize: Theme.callout + 1
-                   // „Zeichen“: an IBAN may end in letters
-                   text: qsTr("Bitte gleichen Sie Betrag und die letzten 4 Zeichen der Empfänger-IBAN vor der Freigabe auf Ihrem TAN-Gerät / Smartphone ab.") }
         }
     }
     component ChallengeTexts: ColumnLayout {

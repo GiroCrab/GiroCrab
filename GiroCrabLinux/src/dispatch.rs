@@ -999,15 +999,6 @@ fn call(method: &str, a: &Value) -> R {
         | "session_poll"
         | "session_confirm_payee"
         | "session_skip" => session_step(method, a),
-        // AppModel+Transfer.swift › tanComparison (#949, #1475): true while a payment session
-        // waits for the TAN of the order itself, never during its login SCA or a sync.
-        "transfer_awaits_order_approval" => {
-            let id: u64 = arg(a, "session")?;
-            ok(matches!(
-                crate::sessions::get(id),
-                Ok(crate::sessions::Session::Transfer(t)) if t.awaits_order_approval()
-            ))
-        }
         // AppModel.cancelTransferSession: for a transfer the bank's answer comes back as
         // `{"outcome": CancelOutcome}`. Anything but `Cancelled` keeps the session
         // registered, so "Status erneut prüfen" can call session_cancel again (the core
@@ -4243,11 +4234,6 @@ mod tests {
         }
         let id = session.expect("a demo account accepts a batch transfer");
         assert!(crate::sessions::get(id).is_ok());
-        // not sent yet: no order TAN to compare (#949)
-        assert_eq!(
-            call_ok("transfer_awaits_order_approval", json!({ "session": id })),
-            json!(false)
-        );
         crate::sessions::remove(id);
         *VAULT.lock().unwrap() = None;
         *OWN.lock().unwrap() = None;

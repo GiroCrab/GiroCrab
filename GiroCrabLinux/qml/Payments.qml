@@ -570,8 +570,7 @@ QtObject {
         try { session = AppModel.core("begin_standing_order", { request: request, secret: AppModel.isDemo ? "demo" : d.pin, demo: AppModel.isDemo }) }
         catch (e) { AppModel.transferError = e.message; return }
         showStandingSheet = false
-        // the TAN sheet asks to compare what was sent: amount and the end of the recipient IBAN (#949, #1475)
-        AppModel.runPaymentSession(session, target.connection, "standing", AppModel.makeTanComparison(request.recipient_iban, request.amount_cents))
+        AppModel.runPaymentSession(session, target.connection, "standing")
     }
     /// The bank accepted the order: the list shows the optimistic copy until the next fetch.
     function finishStandingOrder() {

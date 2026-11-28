@@ -196,7 +196,6 @@ QtObject {
     // any other sidebar choice ends the merchant list (#495) before the list reloads
     onSidebarSelectionChanged: {
         MerchantFocus.sidebarChanged(); listLimit = defaultListLimit
-        dropMultiSelection()
         // AppModel.swift › sidebarSelection: a category with its own default period switches
         // to it; that load covers the selection too (#425).
         const saved = sidebarSelection.startsWith("category:") ? categoryPeriod(Number(sidebarSelection.slice(9))) : null
@@ -206,7 +205,7 @@ QtObject {
     property string scope: "All"               // BookingScope
     onScopeChanged: { listLimit = defaultListLimit; if (scope === "Investments") reloadDashboard(); reloadBookings() }
     property string period: "all"
-    onPeriodChanged: { listLimit = defaultListLimit; dropMultiSelection(); reloadSelection(true) }
+    onPeriodChanged: { listLimit = defaultListLimit; reloadSelection(true) }
     property string customPeriodFrom: ""
     property string customPeriodTo: ""
     property string statusFilter: "all"        // all | new | checked
@@ -260,10 +259,7 @@ QtObject {
 
     property var selectedBookingID: null
     property var selectedBookingIDs: ({})
-    // a newer selection (also a Strg-click) supersedes a pending Strg+A (#1696)
-    onSelectedBookingIDsChanged: { isSelectingAllBookings = false; selectAllAfterReload = false }
     onSelectedBookingIDChanged: {
-        isSelectingAllBookings = false; selectAllAfterReload = false
         if (stickyBooking !== null && stickyBooking.id !== selectedBookingID) stickyBooking = null
         if (lingeringBookingID !== null && lingeringBookingID !== selectedBookingID) {
             const gone = lingeringBookingID
@@ -722,17 +718,13 @@ QtObject {
             const calls = [["list_transactions", { filter: f }]]
             const flowInPage = listHasFlow(f) || kpiFollowsList
             if (!flowInPage) calls.push(selectionFlowCall(f))
-            return { calls: calls, ctx: { flowInPage: flowInPage, filter: f } }
+            return { calls: calls, ctx: { flowInPage: flowInPage } }
         }, (r, ctx) => {
-            publish(r[0], ctx.filter)
+            publish(r[0])
             applySelectionFlow(r[0], ctx.flowInPage ? null : r[1])
             // Every edit, sync and import ends up here: cached merchant histories may be stale.
             merchantStatsCache = ({})
             afterListPublished(true)
-        }, err => {
-            // no new list: a Strg+A waiting for it ends with the error (#1696)
-            selectAllAfterReload = false
-            errorMessage = parseCoreError(err).message
         })
     }
     /// Run after the next published booking list (e.g. scroll to a day it had to load).
@@ -750,7 +742,6 @@ QtObject {
     function dropPendingPage() {
         listGeneration++
         isLoadingMoreBookings = false
-        isSelectingAllBookings = false
     }
     /// The list page carries the selection's sums when no list-only filter narrows it.
     function listHasFlow(f) {
@@ -770,16 +761,10 @@ QtObject {
                           : { consumption: page.flow.consumption_cents, invested: page.flow.invested_cents, income: page.flow.income_cents }
     }
     /// Shows a freshly loaded list page. A selected booking the page no longer
-    /// contains falls back to the first row, unless it is sticky. `filter`: the one it was
-    /// loaded with, further pages continue with it (#1696).
-    function publish(p, filter) {
-        shownListFilter = filter
-        // taken first: the fallback selection below would otherwise cancel it
-        const selectAll = selectAllAfterReload
-        selectAllAfterReload = false
+    /// contains falls back to the first row, unless it is sticky.
+    function publish(p) {
         listGeneration++
         isLoadingMoreBookings = false
-        isSelectingAllBookings = false
         page = p
         ListBalances.reset(p)   // running balances (#577)
         bookings = keepingLingeringRow(p.transactions)
@@ -789,17 +774,14 @@ QtObject {
             selectedBookingID = bookings.length && sidebarSelection !== "newBookings" ? bookings[0].id : null
         pruneMultiSelection()
         rebuildStream()
-        if (selectAll) selectAllShownBookings()
     }
     /// The lingering booking (checked while selected) at its old place in a
     /// new page that no longer contains it: before the row that followed it.
     function keepingLingeringRow(rows) {
-        lingeringRowOutsideFilter = false
         const id = lingeringBookingID, kept = stickyBooking
         if (id === null || kept === null || kept.id !== id || rows.some(b => b.id === id)) return rows
         const old = bookings.findIndex(b => b.id === id)
         if (old < 0) return rows
-        lingeringRowOutsideFilter = true
         const ids = {}
         for (const b of rows) ids[b.id] = true
         const next = bookings.slice(old + 1).find(b => ids[b.id])
@@ -887,59 +869,25 @@ QtObject {
     // MARK: paging (loadMoreBookings / loadAllBookings)
     property int listGeneration: 0
     property bool isLoadingMoreBookings: false
-    /// The filter the list on screen was loaded with: further pages continue it, never a newer one (#1696).
-    property var shownListFilter: null
-    /// The lingering row was put back into a list whose filter it no longer matches:
-    /// it does not count towards the loaded pages (offset of the next page, Strg+A).
-    property bool lingeringRowOutsideFilter: false
-    /// The lingering row, when it is on screen without matching the filter.
-    readonly property var lingeringRowOutsideFilterID: lingeringRowOutsideFilter && lingeringBookingID !== null
-        && bookings.some(b => b.id === lingeringBookingID) ? lingeringBookingID : null
-    /// Loaded bookings that match the filter: the core's offset counts only those.
-    readonly property int loadedMatchingCount: bookings.length - (lingeringRowOutsideFilterID === null ? 0 : 1)
     // the previous selection's page may still show during a selection load
-    readonly property bool hasMoreBookings: page !== null && !selectionLoadRunning && loadedMatchingCount < page.total_count
-    readonly property int remainingBookingCount: page ? Math.max(0, page.total_count - loadedMatchingCount) : 0
+    readonly property bool hasMoreBookings: page !== null && !selectionLoadRunning && bookings.length < page.total_count
+    readonly property int remainingBookingCount: page ? Math.max(0, page.total_count - bookings.length) : 0
     function loadMoreBookings(count) {
-        if (isLoadingMoreBookings) return
-        appendBookings(count > 0 ? count : defaultListLimit)
-    }
-    /// Appends up to `limit` further bookings in the background, then runs `done` with the
-    /// error, if any (only when the page belongs to the list still on screen). False: nothing to fetch.
-    function appendBookings(limit, done) {
-        if (!isUnlocked || !hasMoreBookings || selectionLoadRunning || shownListFilter === null) return false
-        // a page still on its way would only fetch part of the rest again
-        if (isLoadingMoreBookings) listGeneration++
-        // the offset counts the list on screen: page on with its filter, never with a newer one
-        const f = Object.assign({}, shownListFilter)
-        f.offset = loadedMatchingCount
-        f.limit = limit
+        if (!isUnlocked || !hasMoreBookings || isLoadingMoreBookings || selectionLoadRunning) return
+        const f = ListBalances.listFilter()
+        f.offset = bookings.length
+        f.limit = count > 0 ? count : defaultListLimit
         const generation = listGeneration
         isLoadingMoreBookings = true
         coreAsync("list_transactions", { filter: f }, next => {
             if (generation !== listGeneration) return
             isLoadingMoreBookings = false
-            if (next.transactions.length) {
-                // the lingering row was put in place without being on the loaded pages: when
-                // it matches after all, its own place in the list takes over (#1696)
-                const outside = lingeringRowOutsideFilterID
-                if (outside !== null && next.transactions.some(b => b.id === outside)) {
-                    bookings = bookings.filter(b => b.id !== outside)
-                    lingeringRowOutsideFilter = false
-                }
-                ListBalances.merge(next)
-                bookings = bookings.concat(next.transactions)
-                // an edit reloads exactly what is on screen
-                listLimit = bookings.length
-                rebuildStream()
-            }
-            if (done) done(null)
-        }, err => {
-            if (generation !== listGeneration) return
-            isLoadingMoreBookings = false
-            if (done) done(err); else errorMessage = err
-        })
-        return true
+            if (!next.transactions.length) return
+            ListBalances.merge(next)
+            bookings = bookings.concat(next.transactions)
+            listLimit = bookings.length
+            rebuildStream()
+        }, err => { isLoadingMoreBookings = false; errorMessage = err })
     }
     function loadAllBookings() {
         listLimit = Math.max(listLimit, page ? page.total_count : listLimit)
@@ -1151,7 +1099,7 @@ QtObject {
             calls.push(["balance_history", { account_ids: h.ids, days: h.days }])
             const categoryChart = categoryHistoryCall()
             if (categoryChart) calls.push(categoryChart)
-            return { calls: calls, ctx: { withCycle: withCycle, flowInPage: flowInPage, parts: parts, range: r, filter: f,
+            return { calls: calls, ctx: { withCycle: withCycle, flowInPage: flowInPage, parts: parts, range: r,
                                           uncategorized: uncategorized !== null, categoryChart: categoryChart !== null } }
         }, (res, ctx) => {
             let i = 0
@@ -1164,7 +1112,7 @@ QtObject {
             const pts = res[i++]
             const categorySums = ctx.categoryChart ? res[i++] : []
             endSelectionLoad()
-            publish(page, ctx.filter)
+            publish(page)
             applySelectionFlow(page, flow)
             if (rec) { applyRecurring(rec); selectionNeeds.recurring = false }
             if (cats) { applyCategories(cats, uncategorized); selectionNeeds.categories = false }
@@ -1179,8 +1127,6 @@ QtObject {
     }
     function failSelectionLoad(err) {
         endSelectionLoad()
-        // no new list: a Strg+A waiting for it ends with the error (#1696)
-        selectAllAfterReload = false
         errorMessage = parseCoreError(err).message
         const queue = afterBookingsQueue
         afterBookingsQueue = []
@@ -1721,73 +1667,13 @@ QtObject {
             if (b && !b.checked) setChecked(true, b)
         }
     }
-    /// Strg+A is loading the rest of the list before it selects everything (#1696).
-    property bool isSelectingAllBookings: false
-    /// Strg+A came while a new list was on its way (edit, search, scope): it runs on that
-    /// list once it is published, not on the rows of the previous one (#1696).
-    property bool selectAllAfterReload: false
-    /// A new list is on its way (selection, edit, scope or search): the rows on screen belong
-    /// to the previous filter, so Strg+A must neither select them nor append to them.
-    function isReloadingList() {
-        return selectionLoadRunning || searchTimer.running || isLoadPending("bookings")
-    }
-    /// Bearbeiten › Alles auswählen (Strg+A) in the booking list: every booking matching the
-    /// filter, not only the loaded pages (#1696). The rest loads in the background first,
-    /// so count, sum and every action on the selection cover all of them.
+    /// Bearbeiten › Alles auswählen (Strg+A) in the booking list.
     function selectAllBookings() {
-        if (sidebarSelection === "documents") return
-        // the previous list may still show while the new one loads: never select its rows,
-        // select the new one's as soon as it is published
-        if (isReloadingList()) { selectAllAfterReload = true; return }
-        selectAllShownBookings()
-    }
-    /// Strg+A on the list as published now (`publish` calls it for a Strg+A that waited for it).
-    function selectAllShownBookings() {
-        if (hasMoreBookings) {
-            if (isSelectingAllBookings) return
-            isSelectingAllBookings = true
-            const started = appendBookings(remainingBookingCount, err => {
-                // superseded by a newer selection or a reload
-                if (!isSelectingAllBookings) return
-                isSelectingAllBookings = false
-                // never a partial selection: the user would act on only some bookings
-                if (err) {
-                    errorTitle = qsTr("Nicht alle Buchungen konnten ausgewählt werden")
-                    errorRetry = () => selectAllBookings()
-                    errorMessage = parseCoreError(err).message
-                } else {
-                    selectLoadedBookings()
-                }
-            })
-            if (!started) isSelectingAllBookings = false
-            return
-        }
-        selectLoadedBookings()
-    }
-    function selectLoadedBookings() {
-        // a checked row kept in place no longer matches the filter (#1696)
-        const outside = lingeringRowOutsideFilterID
-        const list = bookings.filter(b => b.id !== outside)
-        if (!list.length) {
-            // only the lingering row is left: nothing matches, so nothing is selected
-            if (outside !== null) selectedBookingID = null
-            return
-        }
+        if (!bookings.length || sidebarSelection === "documents") return
         const ids = {}
-        for (const b of list) ids[b.id] = true
+        for (const b of bookings) ids[b.id] = true
         selectedBookingIDs = ids
-        if (selectedBookingID === null || !ids[selectedBookingID]) selectedBookingID = list[0].id
-    }
-    /// Another account, group, category or period: a multiple selection made in the previous
-    /// list ends (like a folder change in the file manager). Kept, it would cover only the rows
-    /// of the new list's first page that happen to be in both (#1696).
-    function dropMultiSelection() {
-        isSelectingAllBookings = false
-        selectAllAfterReload = false
-        if (!isMultiSelection) return
-        const ids = {}
-        if (selectedBookingID !== null) ids[selectedBookingID] = true
-        selectedBookingIDs = ids
+        if (selectedBookingID === null || !ids[selectedBookingID]) selectedBookingID = bookings[0].id
     }
     function moveSelection(delta) {
         if (!bookings.length) return
@@ -3906,33 +3792,6 @@ QtObject {
     property bool transferBusy: false
     /// Handle of the running TransferSession (src/sessions.rs).
     property var activeTransfer: null
-    onActiveTransferChanged: activeTransferComparison = null
-    /// TanComparisonHint.swift › TanComparison (#949): amount and recipient IBAN as sent to the
-    /// bank, frozen when the order was sent: { iban, ibanPrefix, endCharacters, amount }.
-    property var activeTransferComparison: null
-    /// What the TAN sheet asks the user to compare (#949): only for the TAN of a single transfer or
-    /// of a standing order that was sent (#1475), never for its login SCA, a batch, a direct debit
-    /// or a sync's challenge.
-    readonly property var tanComparison: activeChallenge !== null && activeChallenge.orderApproval === true
-        && !activeTransferIsBatch && !activeTransferIsDebit ? activeTransferComparison : null
-    /// `TanComparison(iban:amountCents:)`: null for an IBAN shorter than its compared end.
-    function makeTanComparison(iban, cents) {
-        const grouped = groupedIBAN(iban)
-        const compact = grouped.replace(/ /g, "")
-        if (compact.length < 4) return null
-        // the grouped IBAN without its last four characters (spaces do not count)
-        let remaining = 4, prefix = grouped
-        while (remaining > 0 && prefix.length) {
-            if (prefix[prefix.length - 1] !== " ") remaining--
-            prefix = prefix.slice(0, -1)
-        }
-        return { iban: grouped, ibanPrefix: prefix.trimEnd(), endCharacters: compact.slice(-4), amount: Fmt.money(cents) }
-    }
-    /// TransferSession.awaitsOrderApproval: the session waits for the TAN of the order itself.
-    function transferAwaitsOrderApproval() {
-        if (activeTransfer === null) return false
-        try { return core("transfer_awaits_order_approval", { session: activeTransfer }) === true } catch (e) { return false }
-    }
     /// Name check (Verification of Payee) awaiting the user's decision: { connection, check, busy }.
     property var payeeCheck: null
     /// The running session is a Sammelüberweisung / a Dauerauftrag (Payments.qml), not the
@@ -4058,8 +3917,7 @@ QtObject {
     }
     /// Sammelüberweisung / Dauerauftrag (Payments.qml): the TransferSession `session` of the
     /// core runs through the same steps as a single transfer. `kind` = "batch" | "standing".
-    /// `comparison`: a standing order's amount and IBAN for the TAN sheet (#949, #1475).
-    function runPaymentSession(session, connection, kind, comparison) {
+    function runPaymentSession(session, connection, kind) {
         transferError = ""
         transferInstantDeclined = null
         transferBusy = true
@@ -4067,7 +3925,6 @@ QtObject {
         activeTransferIsStanding = kind === "standing"
         activeTransferIsDebit = kind === "debit"
         activeTransfer = session
-        activeTransferComparison = comparison || null
         coreAsync("session_start", { session: session }, step => { if (activeTransfer === session) handleTransfer(step, connection) },
                   err => { if (activeTransfer === session) finishTransfer(err) })
     }
@@ -4110,8 +3967,6 @@ QtObject {
         transferBusy = true
         showTransferSheet = false
         activeTransfer = session
-        // the TAN sheet asks to compare what was sent: amount and the end of the recipient IBAN (#949)
-        activeTransferComparison = makeTanComparison(request.recipient_iban, cents)
         coreAsync("session_start", { session: session }, step => { if (activeTransfer === session) handleTransfer(step, connection) },
                   err => { if (activeTransfer === session) finishTransfer(err) })
     }
@@ -4124,14 +3979,12 @@ QtObject {
             payeeCheck = { connection: connection, check: step.NeedsPayeeConfirmation.check, busy: false }
         } else if (step.NeedsChallenge) {
             const c = step.NeedsChallenge.challenge
-            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "",
-                                orderApproval: transferAwaitsOrderApproval() }
+            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "" }
             if (c.kind === "DecoupledPush" || c.kind === "Progress") schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.StillWaiting) {
             const c = step.StillWaiting.challenge
-            const orderApproval = transferAwaitsOrderApproval()
-            if (activeChallenge === null) activeChallenge = { connection: connection, challenge: c, waiting: true, busy: false, error: "", orderApproval: orderApproval }
-            else activeChallenge = Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false, orderApproval: orderApproval })
+            if (activeChallenge === null) activeChallenge = { connection: connection, challenge: c, waiting: true, busy: false, error: "" }
+            else activeChallenge = Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false })
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             pollTimer.stop()
