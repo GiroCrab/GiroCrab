@@ -239,4 +239,47 @@ final class ConnectionAutoSyncTests: XCTestCase {
         // nothing blocks it any more: no hint
         XCTAssertFalse(model.autoSyncHint(try XCTUnwrap(model.connections.first { $0.id == id }), now: now)?.contains("Freigabe") == true)
     }
+
+    func testAQuietChallengeOfAnotherConnectorRecordsNoBackOffAndAManualSuccessClearsIt() throws {
+        let model = AppModel(options: LaunchOptions(arguments: [], environment: [:]))
+        model.bankingPolicy = BankingPolicy(publicKeys: [], store: MemoryBankingPolicyStore(),
+                                            fetcher: nil, bundled: nil, distribution: .developerID,
+                                            bundleVersion: "1")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let vault = try Vault.open(path: folder.appendingPathComponent("test.girocrab").path,
+                                   key: Data(repeating: 0x54, count: 32))
+        let id = try vault.addBankConnection(connector: .hanseaticBank, displayName: "", loginName: "demo")
+        let attemptKey = AutoSync.attemptKey(id)
+        let scaKey = AutoSync.scaBackOffKey(id)
+        let oldAttempt = AppDefaults.store.object(forKey: attemptKey)
+        let oldSca = AppDefaults.store.object(forKey: scaKey)
+        defer {
+            model.releaseVaultState()
+            AppDefaults.store.set(oldAttempt, forKey: attemptKey)
+            AppDefaults.store.set(oldSca, forKey: scaKey)
+        }
+        model.useVault(vault, demo: true)
+        model.demoActive = false
+        let connection = try XCTUnwrap(model.connections.first { $0.id == id })
+        let challenge = Challenge(kind: .decoupledPush, title: "Freigabe", message: "Bitte freigeben",
+                                  methodName: "App", redirectUrl: nil, image: nil,
+                                  expiresInSeconds: nil, pollIntervalSeconds: 2)
+
+        // A scheduled fetch of a connector that is no FinTS login stops at its
+        // challenge too — but the approval back-off stays a FinTS matter (#1997).
+        model.quietSyncConnectionID = id
+        model.handle(.needsChallenge(challenge: challenge), connection: connection)
+        XCTAssertFalse(AutoSync.scaBackOffActive(connectionID: id, defaults: AppDefaults.store, now: now))
+
+        // A manual sync that went through ends the back-off: the bank allowed
+        // the fetch again, the user saw and answered what the bank wanted.
+        AutoSync.recordScaBlock(connectionID: id, defaults: AppDefaults.store, now: now)
+        model.handle(.finished(summary: SyncSummary(accountsUpdated: 1, transactionsImported: 0,
+                                                    transactionsCategorized: 0, transactionsSkippedArchived: 0,
+                                                    newAccounts: [], revokedAccounts: [], postboxDocuments: nil,
+                                                    warnings: [], hints: [])), connection: connection)
+        XCTAssertFalse(AutoSync.scaBackOffActive(connectionID: id, defaults: AppDefaults.store, now: now))
+    }
 }

@@ -499,7 +499,11 @@ extension AppModel {
                 logSync(connectionID: connection.id, source: .automatic, outcome: .cancelled,
                         message: String(localized: "Automatischer Abruf übersprungen: Die Bank verlangt eine neue Freigabe."))
                 // The bank cannot be fetched without a fresh approval (#1997): back off.
-                AutoSync.recordScaBlock(connectionID: connection.id, defaults: AppDefaults.store, now: Date())
+                // FinTS logins only: another connector's quiet challenge is no
+                // app approval, and the back-off's hint speaks of one.
+                if [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric].contains(connection.connector) {
+                    AutoSync.recordScaBlock(connectionID: connection.id, defaults: AppDefaults.store, now: Date())
+                }
                 quietSyncConnectionID = nil
                 let s = activeSession
                 activeSession = nil
@@ -597,7 +601,12 @@ extension AppModel {
                     AutoSync.clearScaBlock(connectionID: connection.id, defaults: AppDefaults.store)
                 }
                 reloadAllInBackground()
-            } else { reloadAll() }
+            } else {
+                // A manual sync went through (any approval the bank wanted, the
+                // user gave): the bank fetches again, so the back-off ends (#1997).
+                AutoSync.clearScaBlock(connectionID: connection.id, defaults: AppDefaults.store)
+                reloadAll()
+            }
             // A regular BHW sync can bring mailbox PDFs too (automatic statements).
             if connection.connector == .bhw && !statementsFetch {
                 Task { @MainActor in
