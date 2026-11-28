@@ -142,13 +142,13 @@ fn switched_source_candidates(
     } else {
         return Ok(Vec::new());
     };
+    // Purpose and name differ in form between the two formats, so they are
+    // compared normalised here instead of in SQL (`switch_purpose`, `same_party`).
     let mut candidates = tx.prepare_cached(
-        "SELECT id, external_id FROM transactions
+        "SELECT id, external_id, counterparty, purpose FROM transactions
           WHERE account_id = ?1 AND external_id GLOB ?2
             AND booking_date = ?3 AND value_date = ?4 AND amount_cents = ?5
-            AND purpose = ?7
-            AND (counterparty = ?6 OR (?8 != '' AND counterparty = ?8))
-          ORDER BY (?8 != '' AND counterparty = ?8) DESC, (counterparty = ?6) DESC, id",
+          ORDER BY id",
     )?;
     let rows = candidates.query_map(
         params![
@@ -156,21 +156,74 @@ fn switched_source_candidates(
             other,
             t.booking_date,
             t.value_date,
-            t.amount_cents,
-            t.counterparty,
-            t.purpose,
-            t.original_counterparty
+            t.amount_cents
         ],
-        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            ))
+        },
     )?;
+    let purpose = switch_purpose(&t.purpose);
     let mut found = Vec::new();
     for row in rows {
-        let (id, external_id) = row?;
-        if !fetched.contains(&(account_id, external_id.as_str())) {
-            found.push((id, external_id));
+        let (id, external_id, counterparty, stored_purpose) = row?;
+        if fetched.contains(&(account_id, external_id.as_str()))
+            || switch_purpose(&stored_purpose) != purpose
+        {
+            continue;
+        }
+        let by_original = same_party(&counterparty, &t.original_counterparty);
+        let by_name = same_party(&counterparty, &t.counterparty);
+        if by_original || by_name {
+            found.push(((!by_original, !by_name), id, external_id));
         }
     }
-    Ok(found)
+    // Stable: equal ranks keep the id order of the query.
+    found.sort_by_key(|(rank, _, _)| *rank);
+    Ok(found
+        .into_iter()
+        .map(|(_, id, external_id)| (id, external_id))
+        .collect())
+}
+
+/// Lowercase text without whitespace: camt joins parts with spaces, MT940
+/// joins `?2x`/`?3x` parts without a separator (#1715).
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Purpose as both FinTS formats carry it (#1715): camt writes the SEPA tags
+/// (`EREF+… MREF+… SVWZ+text`), MT940 often only the `SVWZ` text. Compares the
+/// text after `SVWZ+` (up to an `ABWA+`/`ABWE+` tag), else the whole purpose.
+fn switch_purpose(purpose: &str) -> String {
+    let text = purpose.find("SVWZ+").map_or(purpose, |i| &purpose[i + 5..]);
+    let end = ["ABWA+", "ABWE+"]
+        .iter()
+        .filter_map(|tag| text.find(tag))
+        .min()
+        .unwrap_or(text.len());
+    squash(&text[..end])
+}
+
+/// Same counterparty across camt and MT940 (#1715): equal without whitespace,
+/// or the name MT940 cut (`?32`+`?33`) is a prefix of at least 20 characters
+/// of the full one. An empty name never matches.
+fn same_party(stored: &str, fetched: &str) -> bool {
+    let (a, b) = (squash(stored), squash(fetched));
+    let (short, long) = if a.len() <= b.len() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    !short.is_empty()
+        && (short == long || (short.chars().count() >= 20 && long.starts_with(short.as_str())))
 }
 
 /// Gives the stored row `(id, id when paired)` that was paired with a fetched
@@ -190,6 +243,174 @@ fn take_switched_row(
         )?
         .execute(params![external_id, *id, old.as_str()])?;
     Ok(n > 0)
+}
+
+/// Pairs fetched bookings `(fetch index, account id, booking)` with stored rows
+/// of the other source (MT940 <-> camt, #1715) one-to-one across the whole
+/// fetch before any of them changes its id; sorted so the fetch order does not
+/// decide which booking gets which row. Legacy content ids are adopted first,
+/// so a booking that takes an `h…` row reserves nothing that could stay unused.
+/// A repeated `(account, id)` is planned once: only its first entry could take
+/// a row. Returns, per fetch index, the row and its id at planning time.
+fn plan_switched_rows<'a>(
+    tx: &rusqlite::Connection,
+    fetch: impl IntoIterator<Item = (usize, i64, &'a RemoteTransaction)>,
+    fetched: &HashSet<(i64, &str)>,
+) -> CoreResult<std::collections::HashMap<usize, (i64, String)>> {
+    let mut known =
+        tx.prepare_cached("SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2")?;
+    let mut open: Vec<((i64, &'a str), usize, Vec<i64>)> = Vec::new();
+    let mut planned: HashSet<(i64, &'a str)> = HashSet::new();
+    let mut old_ids = std::collections::HashMap::new();
+    for (i, acc_id, t) in fetch {
+        if known.exists(params![acc_id, t.external_id])? || adopt_legacy_content_id(tx, acc_id, t)?
+        {
+            continue;
+        }
+        let rows = switched_source_candidates(tx, acc_id, t, fetched)?;
+        if rows.is_empty() || !planned.insert((acc_id, t.external_id.as_str())) {
+            continue;
+        }
+        let ids = rows.iter().map(|(id, _)| *id).collect();
+        old_ids.extend(rows);
+        open.push(((acc_id, t.external_id.as_str()), i, ids));
+    }
+    open.sort_by(|a, b| a.0.cmp(&b.0));
+    let (order, lists): (Vec<usize>, Vec<Vec<i64>>) =
+        open.into_iter().map(|(_, i, ids)| (i, ids)).unzip();
+    Ok(order
+        .into_iter()
+        .zip(assign_one_to_one(&lists))
+        .filter_map(|(i, row)| {
+            let row = row?;
+            Some((i, (row, old_ids.get(&row)?.clone())))
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod switch_planning_tests {
+    use super::*;
+
+    fn content_id(n: u64) -> String {
+        format!("{CONTENT_ID_PREFIX}{n:016x}")
+    }
+
+    fn db(rows: &[&str]) -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
+               external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
+               amount_cents INTEGER, counterparty TEXT, purpose TEXT,
+               UNIQUE(account_id, external_id))",
+        )
+        .unwrap();
+        for id in rows {
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
+                   amount_cents, counterparty, purpose)
+                 VALUES (1, ?1, '2026-11-02', '2026-11-02', -1999, 'Stadtwerke Musterstadt',
+                   'Abschlag November')",
+                [*id],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    fn booking(id: &str) -> RemoteTransaction {
+        RemoteTransaction {
+            account_ref: "giro".into(),
+            external_id: id.into(),
+            booking_date: "2026-11-02".into(),
+            value_date: "2026-11-02".into(),
+            amount_cents: -1999,
+            counterparty: "Stadtwerke Musterstadt".into(),
+            purpose: "Abschlag November".into(),
+            ..Default::default()
+        }
+    }
+
+    fn plan(
+        db: &rusqlite::Connection,
+        fetch: &[RemoteTransaction],
+    ) -> std::collections::HashMap<usize, (i64, String)> {
+        let fetched: HashSet<(i64, &str)> =
+            fetch.iter().map(|t| (1, t.external_id.as_str())).collect();
+        plan_switched_rows(
+            db,
+            fetch.iter().enumerate().map(|(i, t)| (i, 1, t)),
+            &fetched,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn repeated_id_reserves_one_row() {
+        let db = db(&["camt:a", "camt:b"]);
+        let id = content_id(1);
+        let plan = plan(&db, &[booking(&id), booking(&id)]);
+        assert_eq!(plan.len(), 1);
+        assert!(plan.contains_key(&0));
+    }
+
+    #[test]
+    fn legacy_adoption_leaves_switched_row_to_the_other_booking() {
+        for reversed in [false, true] {
+            let db = db(&["h0000000000000001", "camt:a"]);
+            let (one, two) = (content_id(1), content_id(2));
+            let mut fetch = vec![booking(&one), booking(&two)];
+            if reversed {
+                fetch.reverse();
+            }
+            let plan = plan(&db, &fetch);
+            let adopted: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM transactions WHERE external_id IN (?1, ?2)",
+                    params![one, two],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(adopted, 1, "reversed: {reversed}");
+            assert_eq!(plan.len(), 1, "reversed: {reversed}");
+            assert!(
+                plan.values().all(|(_, old)| old == "camt:a"),
+                "reversed: {reversed}"
+            );
+        }
+    }
+
+    #[test]
+    fn purpose_matches_across_camt_and_mt940() {
+        assert_eq!(
+            switch_purpose(
+                "EREF+E2E-1 MREF+M-7 CRED+DE98ZZZ09999999999 SVWZ+Abschlag November Kd 4711"
+            ),
+            switch_purpose("Abschlag NovemberKd 4711")
+        );
+        assert_eq!(
+            switch_purpose("SVWZ+Miete Dezember ABWA+Hausverwaltung"),
+            switch_purpose("Miete Dezember")
+        );
+        assert_ne!(
+            switch_purpose("SVWZ+Abschlag Oktober"),
+            switch_purpose("Abschlag November")
+        );
+    }
+
+    #[test]
+    fn party_matches_a_cut_mt940_name() {
+        assert!(same_party(
+            "Stadtwerke Musterstadt",
+            "Stadtwerke  Musterstadt"
+        ));
+        assert!(same_party(
+            "Stadtwerke Musterstadt Versorgungs GmbH und Co KG Nord",
+            "Stadtwerke Musterstadt Versorgungs GmbHund Co"
+        ));
+        assert!(!same_party("Stadtwerke", "Stadtwerke Nord"));
+        assert!(!same_party("", ""));
+    }
 }
 
 /// Single-booking form for the unit tests below: the best free candidate of
@@ -1084,34 +1305,16 @@ pub(crate) fn store_fetch(
                 .iter()
                 .filter_map(|t| Some((*account_ids.get(&t.account_ref)?, t.external_id.as_str())))
                 .collect();
-            // Stored rows of the other source (MT940 <-> camt, #1715), paired
-            // one-to-one across the whole fetch before any id changes; sorted so
-            // the fetch order does not decide which booking gets which row.
-            let mut open: Vec<((i64, &str), usize, Vec<i64>)> = Vec::new();
-            let mut old_ids = std::collections::HashMap::new();
-            for (i, t) in data.transactions.iter().enumerate() {
-                let Some(&acc_id) = account_ids.get(&t.account_ref) else {
-                    continue;
-                };
-                let rows = switched_source_candidates(&tx, acc_id, t, &fetched)?;
-                if rows.is_empty() || Stored::read(&tx, acc_id, &t.external_id)?.is_some() {
-                    continue;
-                }
-                let ids = rows.iter().map(|(id, _)| *id).collect();
-                old_ids.extend(rows);
-                open.push(((acc_id, t.external_id.as_str()), i, ids));
-            }
-            open.sort_by(|a, b| a.0.cmp(&b.0));
-            let (order, lists): (Vec<usize>, Vec<Vec<i64>>) =
-                open.into_iter().map(|(_, i, ids)| (i, ids)).unzip();
-            let switched: std::collections::HashMap<usize, (i64, String)> = order
-                .into_iter()
-                .zip(assign_one_to_one(&lists))
-                .filter_map(|(i, row)| {
-                    let row = row?;
-                    Some((i, (row, old_ids.get(&row)?.clone())))
-                })
-                .collect();
+            // Legacy content ids, then stored rows of the other source (MT940 <->
+            // camt, #1715), planned before any booking is applied.
+            let switched = plan_switched_rows(
+                &tx,
+                data.transactions
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, t)| Some((i, *account_ids.get(&t.account_ref)?, t))),
+                &fetched,
+            )?;
             for (i, t) in data.transactions.iter().enumerate() {
                 let Some(acc_id) = account_ids.get(&t.account_ref) else {
                     if let Some(id) = archived_ids.get(&t.account_ref)
@@ -1122,10 +1325,9 @@ pub(crate) fn store_fetch(
                     }
                     continue;
                 };
+                // Legacy content ids were adopted while planning (`plan_switched_rows`).
                 let stored = match Stored::read(&tx, *acc_id, &t.external_id)? {
-                    None if adopt_legacy_content_id(&tx, *acc_id, t)?
-                        || take_switched_row(&tx, switched.get(&i), &t.external_id)? =>
-                    {
+                    None if take_switched_row(&tx, switched.get(&i), &t.external_id)? => {
                         Stored::read(&tx, *acc_id, &t.external_id)?
                     }
                     stored => stored,
