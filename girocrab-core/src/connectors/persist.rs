@@ -1803,7 +1803,18 @@ impl Vault {
             secret
         };
         let secret = SecretString::new(secret);
-        let (kind, key_str, login, state, ctx_settings, since, history, skipped, demo) = {
+        let (
+            kind,
+            key_str,
+            login,
+            state,
+            ctx_settings,
+            since,
+            history,
+            bounded_history_from,
+            skipped,
+            demo,
+        ) = {
             let db = self.db()?;
             let (kind, login, state): (String, String, SecretJson) = db
                 .query_row(
@@ -1943,17 +1954,40 @@ impl Vault {
             // an automatic one, one account or statements only.
             let user_full_sync = postbox != PostboxMode::Off;
             let days = super::history::first_fetch_days(&db, kind, user_full_sync)?;
-            let history = if user_full_sync {
+            let pending_history = if user_full_sync || kind == ConnectorKind::EnableBanking {
                 super::history::pending(&db, connection_id)?
+            } else {
+                None
+            };
+            let today = crate::dates::today();
+            let bounded_history_from = pending_history
+                .as_deref()
+                .map(super::HistoryRange::parse)
+                .filter(|range| {
+                    kind == ConnectorKind::EnableBanking
+                        && matches!(range, super::HistoryRange::Days { .. })
+                })
+                .map(|range| crate::dates::iso(today - crate::dates::days(range.days(kind))));
+            let history = if user_full_sync {
+                pending_history
             } else {
                 None
             };
             let full_days = history
                 .as_deref()
                 .map(|v| super::history::HistoryRange::parse(v).days(kind));
-            let since = since_window(crate::dates::today(), days, &newest, full_days);
+            let since = since_window(today, days, &newest, full_days);
             (
-                kind, key_str, login, state, settings, since, history, skipped, demo,
+                kind,
+                key_str,
+                login,
+                state,
+                settings,
+                since,
+                history,
+                bounded_history_from,
+                skipped,
+                demo,
             )
         };
         let (since, since_by_account) = since;
@@ -1975,6 +2009,7 @@ impl Vault {
             since,
             since_by_account,
             full_fetch: history.is_some(),
+            bounded_history_from,
             documents,
             skipped_accounts: skipped.into_iter().collect(),
             only_account,

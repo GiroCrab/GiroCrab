@@ -200,12 +200,19 @@ pub(crate) fn pending(db: &Connection, connection_id: i64) -> CoreResult<Option<
 /// Marks a login the user just added for a full fetch with the period of
 /// `sync.days_back`.
 pub(crate) fn request_default(db: &Connection, connection_id: i64) -> CoreResult<()> {
-    let value = Vault::setting_inner(db, DAYS_BACK_KEY)?.unwrap_or_default();
-    Vault::set_setting_inner(
-        db,
-        &key(connection_id),
-        &HistoryRange::parse(&value).setting_value(),
-    )
+    request_first_fetch(db, connection_id, None)
+}
+
+pub(crate) fn request_first_fetch(
+    db: &Connection,
+    connection_id: i64,
+    range: Option<HistoryRange>,
+) -> CoreResult<()> {
+    let range = match range {
+        Some(range) => range,
+        None => HistoryRange::parse(&Vault::setting_inner(db, DAYS_BACK_KEY)?.unwrap_or_default()),
+    };
+    Vault::set_setting_inner(db, &key(connection_id), &range.setting_value())
 }
 
 /// The full fetch with `value` is stored: later syncs go on incrementally. A

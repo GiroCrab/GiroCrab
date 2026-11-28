@@ -7,8 +7,8 @@ import GiroCrabCore
 /// 2. Zugang – the way to connect (when the bank offers several) and the login,
 /// 3. Einrichten – only when GiroCrab still needs something once (FinTS product
 ///    ID, Enable Banking application).
-/// "Hinzufügen" closes the assistant; the first sync (PIN, TAN, bank consent)
-/// then runs in its usual sheet – no sheet on top of a sheet.
+/// New generic PSD2 connections are saved after the first consent. Other
+/// access methods use the existing first-sync flow after "Hinzufügen".
 struct AddBankSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -85,7 +85,7 @@ struct AddBankSheet: View {
             AssistantFooter(
                 cancel: { dismiss() },
                 back: step == .bank ? nil : { back() },
-                nextTitle: isLastStep ? "Hinzufügen" : "Fortfahren",
+                nextTitle: step == .access && isGenericPsd2 ? "Mit Bank verbinden" : (isLastStep ? "Hinzufügen" : "Fortfahren"),
                 nextDisabled: !canContinue,
                 next: { next() }
             )
@@ -123,6 +123,9 @@ struct AddBankSheet: View {
             if selected?.connector == .advanzia {
                 return String(localized: "Zugangsdaten und Freigabeverfahren festlegen. Danach startet der Abruf im Hintergrund.")
             }
+            if isGenericPsd2 {
+                return String(localized: "Schlüssel wählen und den Kontozugriff bei der Bank freigeben.")
+            }
             return String(localized: "Wie GiroCrab die Umsätze abruft. PIN und TAN fragt GiroCrab erst beim ersten Abruf ab.")
         case .setup:
             return String(localized: "Diese Angaben braucht GiroCrab einmalig, danach gelten sie für alle Banken dieser Art.")
@@ -131,7 +134,7 @@ struct AddBankSheet: View {
 
     /// `--demo-sheet add-bank:…` (screenshots): "search:<text>" shows hits with
     /// the first one selected, "bank:<name>" opens its Zugang step, ":setup"
-    /// on top the Einrichten step.
+    /// opens Einrichten and ":psd2" selects the generic PSD2 access.
     private func applyDemo(_ spec: String) {
         model.demoAddBank = nil
         let parts = spec.split(separator: ":", maxSplits: 2).map(String.init)
@@ -146,14 +149,19 @@ struct AddBankSheet: View {
         choose(selectedID)
         guard parts[0] == "bank", selected != nil else { return }
         next()
-        if parts.count > 2, parts[2] == "setup", !missingSettings.isEmpty { step = .setup }
+        if parts.count > 2 {
+            if parts[2] == "setup", !missingSettings.isEmpty { step = .setup }
+            if parts[2] == "psd2", let psd2 = ways.first(where: { $0.mode == .psd2 && $0.connector == nil }) {
+                selected = psd2
+            }
+        }
     }
 
     // MARK: - Navigation
 
     /// Settings this way to connect still needs (none for the demo bank).
     private var missingSettings: [String] {
-        guard let s = selected else { return [] }
+        guard let s = selected, !isGenericPsd2 else { return [] }
         let kind = s.connector ?? (s.mode == .finTs ? .finTsGeneric : .enableBanking)
         guard let d = bankCatalog().first(where: { $0.kind == kind }) else { return [] }
         // PayPal via API signature (classic NVP API) needs all three fields and no REST app.
@@ -164,6 +172,7 @@ struct AddBankSheet: View {
     }
 
     private var isPayPal: Bool { selected?.connector == .payPal }
+    private var isGenericPsd2: Bool { selected?.mode == .psd2 && selected?.connector == nil }
 
     private var isLastStep: Bool {
         if selected?.id == Self.rah10Bank.id && step == .setup { return false }

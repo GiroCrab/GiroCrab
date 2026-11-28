@@ -856,6 +856,7 @@ public final class AppModel {
     }
 
     var activeSession: SyncSession?
+    @ObservationIgnored var pendingPsd2Enrollment: EnableBankingEnrollment?
     var activeTransfer: TransferSession? {
         // the frozen order data belongs to one session: a new one, the end, a cancel or the lock clears it
         didSet {
@@ -1428,6 +1429,7 @@ public final class AppModel {
     }
 
     private func adoptDemoVault(_ v: Vault) {
+        cancelPsd2Enrollment()
         vault = v
         accountsLoaded = false
         lockPreview = false
@@ -1458,6 +1460,7 @@ public final class AppModel {
         do {
             let v = try Vault.open(path: prepared ?? url.path, key: key)
             if prepared == nil { _ = try v.seedDemoData() }
+            cancelPsd2Enrollment()
             vault = v
             accountsLoaded = false
             lockPreview = false
@@ -1830,6 +1833,7 @@ public final class AppModel {
     }
 
     func useVault(_ v: Vault, demo: Bool) {
+        if vault !== v { cancelPsd2Enrollment() }
         resetSubscriptionState()
         vault = v
         demoActive = demo
@@ -1963,6 +1967,7 @@ public final class AppModel {
     /// Locking ends every bank dialog: no session keeps writing into the vault,
     /// no PIN/TAN prompt comes back after unlocking, no PIN stays in memory.
     private func endBankDialogsForLock() {
+        cancelPsd2Enrollment()
         pollTask?.cancel()
         pollTask = nil
         let session = activeSession

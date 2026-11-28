@@ -947,8 +947,9 @@ impl EnableBankingConnector {
             .await?;
         let balances = bal["balances"].as_array().cloned().unwrap_or_default();
         let (balance_cents, ref_date) = pick_account_balance(&balances);
-        let since_query = format!("date_from={}", ctx.since_for(&acc.ext_ref));
-        let listed = if acc.history_done {
+        let since = booked_history_start(ctx, ctx.since_for(&acc.ext_ref));
+        let since_query = format!("date_from={since}");
+        let listed = if acc.history_done || ctx.bounded_history_from.is_some() {
             self.list_transactions(&acc.uid, &since_query, TX_MAX_PAGES)
                 .await?
         } else {
@@ -1468,7 +1469,7 @@ impl BankConnector for EnableBankingConnector {
                     name: display_name(&a),
                     ..a.clone()
                 };
-                self.fetch_card(ctx, &mut out, &named).await.map(|()| true)
+                self.fetch_card(ctx, &mut out, &named).await
             } else {
                 self.fetch_bank_account(ctx, &a, &mut out).await
             };
@@ -1493,6 +1494,12 @@ impl BankConnector for EnableBankingConnector {
             }
         }
         note_history(&mut self.st.accounts, &listed);
+        if let Some(from) = ctx.bounded_history_from.as_deref() {
+            // A provider can return transactions outside the requested window.
+            out.transactions
+                .retain(|tx| tx.booking_date.as_str() >= from);
+        }
+        out.history_incomplete = history_is_incomplete(ctx, &listed, stopped_early);
         // The vault uses the fetched name when inserting a new account.
         if let Some(label) =
             paypal_account_label(&self.aspsp_default, self.st.accounts.len(), &ctx.login_name)
@@ -1526,7 +1533,7 @@ impl EnableBankingConnector {
         ctx: &ConnectContext,
         out: &mut FetchResult,
         acc: &EbAccount,
-    ) -> CoreResult<()> {
+    ) -> CoreResult<bool> {
         let uid = acc.uid.clone();
         let name = acc.name.clone();
         let iban = acc.iban.clone();
@@ -1584,10 +1591,12 @@ impl EnableBankingConnector {
             let mut skipped_unreadable = 0u32;
             let mut ids = super::ContentIds::default();
             // A later page failing keeps the earlier ones (logged by `list_transactions`).
-            let booked = self
-                .list_transactions(&uid, &format!("date_from={since}"), TX_MAX_PAGES)
-                .await?
-                .items;
+            let booked_since = booked_history_start(ctx, &since);
+            let listed = self
+                .list_transactions(&uid, &format!("date_from={booked_since}"), TX_MAX_PAGES)
+                .await?;
+            let complete = listed.stopped.is_none();
+            let booked = listed.items;
             for t in &booked {
                 if t["status"].as_str().map(|s| s != "BOOK").unwrap_or(false) {
                     skipped_non_book += 1;
@@ -1709,14 +1718,33 @@ impl EnableBankingConnector {
             }
             out.accounts[acct_idx].balance_cents = balance_cents;
             crate::depot_debug::log(&format!(
-                "amex transactions: since={since} raw={} skipped_non_book={skipped_non_book} skipped_unreadable={skipped_unreadable} booked_kept={n} pending={pending_n} pending_sign={} final_balance_sign={}",
+                "amex transactions: since={booked_since} raw={} skipped_non_book={skipped_non_book} skipped_unreadable={skipped_unreadable} booked_kept={n} pending={pending_n} pending_sign={} final_balance_sign={}",
                 booked.len(),
                 pending_sum.signum(),
                 balance_cents.signum()
             ));
+            Ok(complete)
         }
-        Ok(())
     }
+}
+
+/// A pending bounded fetch starts at its selected date, even after a partial
+/// fetch has already advanced the newest local booking past that date.
+fn booked_history_start<'a>(ctx: &'a ConnectContext, ordinary_since: &'a str) -> &'a str {
+    ctx.bounded_history_from
+        .as_deref()
+        .unwrap_or(ordinary_since)
+}
+
+fn history_is_incomplete(
+    ctx: &ConnectContext,
+    listed: &HashMap<String, bool>,
+    stopped_early: bool,
+) -> bool {
+    // Include explicit Maximum requests and finite requests still pending
+    // during a normal sync.
+    (ctx.full_fetch || ctx.bounded_history_from.is_some())
+        && (stopped_early || listed.values().any(|complete| !complete))
 }
 
 /// Records whose booking history is complete after a fetch (`listed`: uid →
@@ -1865,6 +1893,90 @@ pub(crate) fn evaluate_application(v: &Value, redirect: &str) -> EnableBankingAp
 
 #[uniffi::export(async_runtime = "tokio")]
 impl Vault {
+    /// Starts the first PSD2 consent without creating a bank connection.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn begin_enable_banking_enrollment(
+        self: Arc<Self>,
+        aspsp: String,
+        country: String,
+        display_name: String,
+        label: String,
+        application_id: Option<String>,
+        private_key_pem: Option<String>,
+        history_range: Option<super::HistoryRange>,
+    ) -> Result<Arc<EnableBankingEnrollment>, CoreError> {
+        use crate::models::ConnectorKind;
+        use crate::vault::enable_banking_apps::{APP_ID_KEY, PEM_KEY};
+
+        let aspsp = aspsp.trim();
+        let country = country.trim().to_uppercase();
+        let key = ConnectorKind::enable_banking_key(&country, aspsp);
+        if aspsp.is_empty() || ConnectorKind::enable_banking_target(&key).is_none() {
+            return Err(CoreError::invalid(tr("Bank oder Ländercode ungültig.")));
+        }
+        crate::banking_gate::check_connector(&key)?;
+        let label = if label.trim().is_empty() {
+            aspsp.to_string()
+        } else {
+            label
+        };
+        let kind = ConnectorKind::EnableBanking;
+        let label = crate::vault::connections::normalize_login(kind, &label);
+        if crate::demo::is_magic_demo_login(&label) {
+            return Err(CoreError::SessionClosed);
+        }
+        let (app_id, pem, redirect) = {
+            let db = self.db()?;
+            ensure_enrollment_label_available(&db, &key, &label)?;
+            let app = match (application_id, private_key_pem) {
+                (Some(id), Some(pem)) => (id, pem),
+                (None, None) => (
+                    Self::setting_inner(&db, APP_ID_KEY)?.unwrap_or_default(),
+                    Self::setting_inner(&db, PEM_KEY)?.unwrap_or_default(),
+                ),
+                _ => {
+                    return Err(CoreError::invalid(tr(
+                        "Application-ID und privater Schlüssel gehören zusammen: bitte beide angeben.",
+                    )));
+                }
+            };
+            let redirect = Self::setting_inner(&db, "enablebanking.redirect_url")?
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "https://localhost/girocrab/callback".into());
+            (app.0, SecretString::new(app.1), redirect)
+        };
+        if app_id.trim().is_empty() || pem.expose().trim().is_empty() {
+            return Err(CoreError::invalid(tr(
+                "Application-ID und privater Schlüssel gehören zusammen: bitte beide angeben.",
+            )));
+        }
+        let ctx = ConnectContext {
+            login_name: label,
+            settings: HashMap::from([
+                (APP_ID_KEY.into(), app_id.trim().into()),
+                (PEM_KEY.into(), pem),
+                ("enablebanking.redirect_url".into(), redirect.clone().into()),
+            ]),
+            ..Default::default()
+        };
+        let mut connector = EnableBankingConnector::for_aspsp(aspsp, &country);
+        let Phase::Challenge(challenge) = connector.begin(&ctx).await? else {
+            return Err(CoreError::SessionClosed);
+        };
+        let url = challenge.redirect_url.ok_or(CoreError::SessionClosed)?;
+        Ok(Arc::new(EnableBankingEnrollment {
+            vault: self,
+            key,
+            display_name,
+            ctx,
+            url,
+            redirect,
+            history_range,
+            cancelled: std::sync::Mutex::new(false),
+            connector: tokio::sync::Mutex::new(Some(connector)),
+        }))
+    }
+
     /// Checks an Enable Banking application before it is saved / used: the
     /// key and ID must belong together, and the application must be active,
     /// in production and allow `redirect_url`.
@@ -1896,9 +2008,268 @@ impl Vault {
     }
 }
 
+fn enrollment_label_in_use() -> CoreError {
+    CoreError::invalid(tr(
+        "Diese Bezeichnung wird für diese Bank bereits verwendet. Bitte eine andere Bezeichnung eingeben.",
+    ))
+}
+
+fn ensure_enrollment_label_available(
+    db: &rusqlite::Connection,
+    key: &str,
+    label: &str,
+) -> CoreResult<()> {
+    let key = key.to_lowercase();
+    let mut stmt = db.prepare(
+        "SELECT connector, login_name FROM bank_connections
+         WHERE connector LIKE 'enablebanking:%' AND deleted_ms IS NULL",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (connector, login) = row?;
+        if connector.to_lowercase() == key
+            && crate::vault::connections::normalize_login(
+                crate::models::ConnectorKind::EnableBanking,
+                &login,
+            )
+            .eq_ignore_ascii_case(label)
+        {
+            return Err(enrollment_label_in_use());
+        }
+    }
+    Ok(())
+}
+
+/// First consent for an unsaved bank connection. Dropping it leaves the vault alone.
+#[derive(uniffi::Object)]
+pub struct EnableBankingEnrollment {
+    vault: Arc<Vault>,
+    key: String,
+    display_name: String,
+    ctx: ConnectContext,
+    url: String,
+    redirect: String,
+    history_range: Option<super::HistoryRange>,
+    // Cancellation and the local transaction are mutually exclusive. Locking
+    // the app invalidates a pending response before it can start storing.
+    cancelled: std::sync::Mutex<bool>,
+    connector: tokio::sync::Mutex<Option<EnableBankingConnector>>,
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl EnableBankingEnrollment {
+    pub fn authorization_url(&self) -> String {
+        self.url.clone()
+    }
+
+    pub fn redirect_url(&self) -> String {
+        self.redirect.clone()
+    }
+
+    pub fn cancel(&self) {
+        *self.cancelled.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    }
+
+    pub async fn finish(&self, callback: String) -> Result<i64, CoreError> {
+        // A bare code would bypass the state check used for redirect URLs.
+        if reqwest::Url::parse(&callback).is_err() {
+            return Err(CoreError::SessionClosed);
+        }
+        crate::banking_gate::check_connector(&self.key)?;
+        let mut connector = self
+            .connector
+            .lock()
+            .await
+            .take()
+            .ok_or(CoreError::SessionClosed)?;
+        if *self.cancelled.lock().unwrap_or_else(|e| e.into_inner()) {
+            return Err(CoreError::SessionClosed);
+        }
+        let result = connector
+            .respond(&self.ctx, ChallengeResponse::Code(callback.into()))
+            .await
+            .and_then(|phase| {
+                if !matches!(phase, Phase::Ready) || connector.st.session_id.is_empty() {
+                    return Err(CoreError::SessionClosed);
+                }
+                self.store(&SecretJson::encode(&connector.st)?)
+            });
+        if result.is_err() && !connector.st.session_id.is_empty() {
+            let path = format!("/sessions/{}", connector.st.session_id.expose());
+            if connector
+                .call(reqwest::Method::DELETE, &path, None)
+                .await
+                .is_err()
+            {
+                crate::depot_debug::log("enable_banking: cleanup of an unsaved consent failed");
+            }
+        }
+        result
+    }
+}
+
+impl EnableBankingEnrollment {
+    fn store(&self, state: &SecretJson) -> CoreResult<i64> {
+        use crate::models::ConnectorKind;
+        use crate::vault::enable_banking_apps::{APP_ID_KEY, PEM_KEY, own_keys};
+
+        let cancelled = self.cancelled.lock().unwrap_or_else(|e| e.into_inner());
+        if *cancelled {
+            return Err(CoreError::SessionClosed);
+        }
+        let app_id = self.ctx.setting(APP_ID_KEY)?;
+        let pem = self.ctx.setting(PEM_KEY)?;
+        let db = self.vault.db()?;
+        let tx = db.unchecked_transaction()?;
+        ensure_enrollment_label_available(&tx, &self.key, &self.ctx.login_name)?;
+        let (id, created) = Vault::add_bank_connection_keyed(
+            &tx,
+            ConnectorKind::EnableBanking,
+            &self.key,
+            None,
+            self.display_name.clone(),
+            self.ctx.login_name.clone(),
+        )?;
+        if !created {
+            return Err(enrollment_label_in_use());
+        }
+        let [id_key, pem_key] = own_keys(id);
+        Vault::set_setting_inner(&tx, &id_key, app_id)?;
+        Vault::set_setting_inner(&tx, &pem_key, pem)?;
+        // The first successful enrollment also makes its key available to bank search.
+        if Vault::setting_inner(&tx, APP_ID_KEY)?
+            .unwrap_or_default()
+            .is_empty()
+            || Vault::setting_inner(&tx, PEM_KEY)?
+                .unwrap_or_default()
+                .is_empty()
+        {
+            Vault::set_setting_inner(&tx, APP_ID_KEY, app_id)?;
+            Vault::set_setting_inner(&tx, PEM_KEY, pem)?;
+        }
+        if Vault::setting_inner(&tx, "enablebanking.redirect_url")?
+            .unwrap_or_default()
+            .is_empty()
+        {
+            Vault::set_setting_inner(&tx, "enablebanking.redirect_url", &self.redirect)?;
+        }
+        crate::vault::connections::store_state(&tx, id, state)?;
+        super::history::request_first_fetch(&tx, id, self.history_range)?;
+        tx.commit()?;
+        Ok(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_history_starts_at_the_selected_date_during_incremental_sync() {
+        let mut ctx = ConnectContext {
+            bounded_history_from: Some("2025-11-12".into()),
+            ..Default::default()
+        };
+        assert!(!ctx.full_fetch);
+        assert_eq!(booked_history_start(&ctx, "2026-10-31"), "2025-11-12");
+        assert_eq!(booked_history_start(&ctx, "2025-10-01"), "2025-11-12");
+        ctx.bounded_history_from = None;
+        assert_eq!(booked_history_start(&ctx, "2026-10-31"), "2026-10-31");
+    }
+
+    #[test]
+    fn reports_partial_history_for_requested_windows() {
+        for (full_fetch, bounded_from, reports_partial) in [
+            (true, None, true),                // Maximum
+            (true, Some("2025-11-12"), true),  // Requested dates
+            (false, Some("2025-11-12"), true), // Pending dates on a regular sync
+            (false, None, false),              // Regular incremental sync
+        ] {
+            let ctx = ConnectContext {
+                full_fetch,
+                bounded_history_from: bounded_from.map(str::to_owned),
+                ..Default::default()
+            };
+            for (account_complete, stopped_early) in [(true, false), (false, false), (true, true)] {
+                let listed = HashMap::from([("account".to_owned(), account_complete)]);
+                assert_eq!(
+                    history_is_incomplete(&ctx, &listed, stopped_early),
+                    reports_partial && (!account_complete || stopped_early),
+                    "full_fetch={full_fetch}, from={bounded_from:?}, complete={account_complete}, stopped={stopped_early}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn enrollment_stores_only_the_approved_connection_and_its_selected_key() {
+        use crate::vault::enable_banking_apps::{APP_ID_KEY, PEM_KEY};
+
+        let dir = crate::test_support::TempDir::new("girocrab-psd2-enrollment");
+        let vault = Vault::open(
+            dir.join("vault").to_string_lossy().into_owned(),
+            vec![4; 32],
+        )
+        .unwrap();
+        let enrollment = |label: &str, key: &str| EnableBankingEnrollment {
+            vault: vault.clone(),
+            key: "enablebanking:DE:DKB".into(),
+            display_name: "DKB".into(),
+            ctx: ConnectContext {
+                login_name: label.into(),
+                settings: HashMap::from([
+                    (APP_ID_KEY.into(), key.into()),
+                    (PEM_KEY.into(), key.into()),
+                ]),
+                ..Default::default()
+            },
+            url: String::new(),
+            redirect: "https://localhost/girocrab/callback".into(),
+            history_range: Some(super::super::HistoryRange::Days { days: 30 }),
+            cancelled: std::sync::Mutex::new(false),
+            connector: tokio::sync::Mutex::new(None),
+        };
+        drop(enrollment("Cancelled", "unused-key"));
+        assert!(vault.list_bank_connections().unwrap().is_empty());
+        assert!(vault.get_setting(APP_ID_KEY.into()).unwrap().is_none());
+
+        let state = SecretJson::encode(&json!({"session_id": "test-session"})).unwrap();
+        let cancelled = enrollment("Locked", "unused-key");
+        cancelled.cancel();
+        assert!(matches!(
+            cancelled.store(&state),
+            Err(CoreError::SessionClosed)
+        ));
+        assert!(vault.list_bank_connections().unwrap().is_empty());
+        let first = enrollment("DKB", "key-a").store(&state).unwrap();
+        let second = enrollment("DKB 2", "key-b").store(&state).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            vault.pending_full_history(second).unwrap(),
+            Some(super::super::HistoryRange::Days { days: 30 })
+        );
+        assert!(enrollment("DKB", "wrong-key").store(&state).is_err());
+        let mut mixed_case = enrollment("dkb", "wrong-key");
+        mixed_case.key = "enablebanking:DE:dkb".into();
+        assert!(mixed_case.store(&state).is_err());
+        assert_eq!(vault.list_bank_connections().unwrap().len(), 2);
+        assert_eq!(
+            vault.get_setting(APP_ID_KEY.into()).unwrap().as_deref(),
+            Some("key-a")
+        );
+        for (id, expected) in [(first, "key-a"), (second, "key-b")] {
+            assert_eq!(
+                vault
+                    .connection_enable_banking_app(id)
+                    .unwrap()
+                    .unwrap()
+                    .application_id,
+                expected
+            );
+        }
+    }
 
     #[test]
     fn application_check_explains_what_is_missing() {

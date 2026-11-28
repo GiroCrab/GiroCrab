@@ -330,7 +330,14 @@ impl SyncSession {
                     // at its page limit): kept, every sync would ask for the whole period again,
                     // and for a TAN, without ever finishing. The warnings say what is missing;
                     // `request_full_history` asks for the period again.
-                    if let Some(history) = &self.history {
+                    if let Some(history) = &self.history
+                        && !(self.kind == ConnectorKind::EnableBanking
+                            && matches!(
+                                super::HistoryRange::parse(history),
+                                super::HistoryRange::Days { .. }
+                            )
+                            && summary.history_incomplete)
+                    {
                         let db = self.vault.db()?;
                         super::history::finish(&db, f.connection_id, history)?;
                     }

@@ -5135,6 +5135,16 @@
         }
       }
     },
+    "Andere PEM-Datei verwenden" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use a different PEM file"
+          }
+        }
+      }
+    },
     "Andere Quelle …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14907,6 +14917,16 @@
         }
       }
     },
+    "Enable-Banking-Schlüssel" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Banking key"
+          }
+        }
+      }
+    },
     "Ende %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18647,6 +18667,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Help & FAQ"
+          }
+        }
+      }
+    },
+    "Hinweise zur Schlüsseldatei" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About the key file"
           }
         }
       }
@@ -24361,6 +24391,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "With AND, OR, NOT, parentheses, “phrases”, * and ?, /regex/, fields such as name: or purpose: and amounts such as amount<0."
+          }
+        }
+      }
+    },
+    "Mit Bank verbinden" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect to bank"
           }
         }
       }
@@ -30357,6 +30397,16 @@
         }
       }
     },
+    "Schlüssel wählen und den Kontozugriff bei der Bank freigeben." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a key and authorize account access at your bank."
+          }
+        }
+      }
+    },
     "Schlüssel übernommen – Application-ID bitte eintragen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35232,6 +35282,16 @@
         }
       }
     },
+    "Vorhandenen Schlüssel verwenden" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use saved key"
+          }
+        }
+      }
+    },
     "Vorhandenes Konto" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -37182,6 +37242,16 @@
         }
       }
     },
+    "Zugriff bei der Bank freigeben" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Authorize access at your bank"
+          }
+        }
+      }
+    },
     "Zugriff entzogen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38481,6 +38551,16 @@
         }
       }
     },
+    "z. B. Privatkonto" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "e.g. personal account"
+          }
+        }
+      }
+    },
     "z. B. Sparkasse, ING, N26, Revolut, bunq – oder die 8-stellige BLZ / Ihre IBAN" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38730,6 +38810,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Changes are reset when you quit."
+          }
+        }
+      }
+    },
+    "Öffnen Sie Ihren eigenen Tresor, um einen PSD2-Bankzugang einzurichten." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open your own vault to set up a PSD2 bank connection."
           }
         }
       }

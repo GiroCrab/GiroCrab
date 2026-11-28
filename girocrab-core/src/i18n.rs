@@ -2149,6 +2149,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Enable Banking Application-ID" => "Enable Banking application ID",
         "Bank oder Ländercode ungültig." => "Invalid bank or country code.",
+        "Diese Bezeichnung wird für diese Bank bereits verwendet. Bitte eine andere Bezeichnung eingeben." => {
+            "This label is already used for this bank. Please enter a different label."
+        }
         "Bank per PSD2 (Enable Banking)" => "Bank via PSD2 (Enable Banking)",
         "PSD2 über Enable Banking (eigene Anwendung)" => {
             "PSD2 via Enable Banking (your own application)"
