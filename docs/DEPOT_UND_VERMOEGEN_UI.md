@@ -40,7 +40,7 @@ gleich anfühlen:
    ohne Bank: über der Tabelle stehen „Position hinzufügen …“ und „Kurse aktualisieren“, der Stift und das Kontextmenü
    jeder Zeile bieten „Position bearbeiten …“ und „Position löschen …“ (statt „Einstandskurs bearbeiten …“: der
    Einstandskurs gehört zur Position). Vor dem Speichern wird der Euro-Kurs des Kürzels abgerufen
-   (`api.coinbase.com`, nur das Kürzel wird gesendet): ein unbekanntes Kürzel wird abgelehnt, ohne Netz wird die
+   (ein öffentlicher Kursdienst, Adresse in `crypto/prices.rs`; nur das Kürzel wird gesendet): ein unbekanntes Kürzel wird abgelehnt, ohne Netz wird die
    Position ohne neuen Kurs gespeichert (ein schon gespeicherter Kurs des Kürzels bleibt in Gebrauch) und ein
    Hinweis erscheint. Kurse werden nie automatisch abgerufen; jeder Abruf steht
    im Abruf-Protokoll (nur Anzahlen, keine Kürzel).

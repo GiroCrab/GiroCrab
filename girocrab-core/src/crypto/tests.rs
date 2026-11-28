@@ -114,12 +114,13 @@ fn invalid_input_is_rejected() {
     v.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
         .unwrap();
     for (symbol, quantity, purchase) in [
-        ("", 1.0, None),         // no ticker
-        ("BTC-EUR", 1.0, None),  // not a plain ticker
-        ("ETH", 0.0, None),      // no quantity
-        ("ETH", f64::NAN, None), // not a number
-        ("ETH", 1.0, Some(-1)),  // negative purchase price
-        ("btc", 2.0, None),      // already held
+        ("", 1.0, None),                // no ticker
+        ("BTC-EUR", 1.0, None),         // not a plain ticker
+        ("ETH", 0.0, None),             // no quantity
+        ("ETH", f64::NAN, None),        // not a number
+        ("ETH", 1.0, Some(-1)),         // negative purchase price
+        ("btc", 2.0, None),             // already held
+        ("ETH", 1e12, Some(5_000_000)), // cost beyond the value limit
     ] {
         assert!(
             v.save_crypto_position(acc, None, symbol.into(), quantity, purchase)

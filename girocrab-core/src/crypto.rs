@@ -473,6 +473,10 @@ impl Vault {
         }
         // 0 means unknown, as everywhere for depot positions (`holdings.purchase_price_cents`)
         let purchase_price_cents = purchase_price_cents.filter(|c| *c > 0);
+        // the cost of the position stays within the value limit: the depot adds up gains and costs
+        if let Some(c) = purchase_price_cents {
+            value_cents(quantity, c as f64 / 100.0)?;
+        }
         let db = self.db()?;
         let tx = db.unchecked_transaction()?;
         require_crypto(&tx, account_id)?;
