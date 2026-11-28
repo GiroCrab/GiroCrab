@@ -79,7 +79,7 @@ struct AllAccountsRow: View {
                 : AnyLayout(HStackLayout(spacing: DisclosureChevron.gap))
             layout {
                 Text("Alle Konten")
-                    .fontWeight(.medium)
+                    .fontWeight(.semibold)
                     .lineLimit(usesLargeText ? nil : 1)
                     .fixedSize(horizontal: false, vertical: usesLargeText)
                     .appDefaultFont()

@@ -23,8 +23,7 @@ struct SidebarView: View {
     private static let rowInsets = EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 6)
 
     private func groupVerticalPadding(depth: UInt32 = 0) -> CGFloat {
-        if density.usesTighterAccountSpacing { return depth == 0 ? 3 : 2 }
-        return depth == 0 ? 6 : 4
+        depth == 0 ? 3 : 2
     }
 
     private func toggler(_ flag: Binding<Bool>) -> () -> Void {
@@ -67,7 +66,7 @@ struct SidebarView: View {
             // the root of the account tree
             // no system badge here: it took the room of the name („All…“); „Neue Umsätze“ and the accounts show the count
             AllAccountsRow()
-                .modifier(AccountRowHeight(density: density))
+                .modifier(SidebarRowMinHeight())
                 .listRowInsets(Self.rowInsets)
                 .tag(SidebarItem.allAccounts)
                 .contextMenu {
@@ -316,6 +315,7 @@ struct SidebarView: View {
                 open: open, toggle: toggle
             )
                 .padding(.vertical, groupVerticalPadding())
+                .modifier(SidebarRowMinHeight())
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.group(group.id), toggle: toggle)
                 #if os(iOS)
@@ -352,6 +352,7 @@ struct SidebarView: View {
                     open: open, toggle: toggle
                 )
                 .padding(.vertical, groupVerticalPadding())
+                .modifier(SidebarRowMinHeight())
                 .listRowInsets(Self.rowInsets)
                 .groupHeaderTap(SidebarItem.bank(group.id), toggle: toggle)
                 #if os(iOS)
@@ -380,6 +381,7 @@ struct SidebarView: View {
                 // The same room above and below, so the selection pill sits around the text, and a taller
                 // hit area for the drop zones (#1534)
                 .padding(.vertical, groupVerticalPadding(depth: group.depth))
+                .modifier(SidebarRowMinHeight())
                 // an account goes to the top of this group; a group above it
                 // (upper half) or into it as a subgroup (lower half)
                 .modifier(DropSlot(key: "g:" + group.uuid, inset: 0, line: $dropLine, edge: { half in
@@ -483,6 +485,7 @@ struct SidebarView: View {
     /// zones don't cover the row for clicks.
     private func accountRow(_ account: Account, drop: DropSlot? = nil) -> some View {
         AccountRow(account: account, syncing: model.isSyncing(account))
+            .modifier(SidebarRowMinHeight())
             .dropSlot(drop)
             .background {
                 if dialogAccountID == account.id {
@@ -661,15 +664,15 @@ struct SidebarView: View {
     }
 }
 
-/// Sets the minimum height of the "Alle Konten" row for the chosen density,
-/// keeping its text centred in the selection pill (#658).
-private struct AccountRowHeight: ViewModifier {
+/// One minimum height for every one-line row of the account tree (headers, accounts without a
+/// second line, "Alle Konten"), so the rhythm of the list is the same in both densities; an
+/// account with a second line is taller by that line, nothing else. Keeps the text centred in
+/// the selection pill (#658).
+private struct SidebarRowMinHeight: ViewModifier {
     @Environment(\.textScale) private var scale
-    let density: SidebarDensity
 
     func body(content: Content) -> some View {
-        let minHeight: CGFloat = density.usesTighterAccountSpacing ? 26 : 34
-        content.frame(minHeight: minHeight * scale)
+        content.frame(minHeight: 26 * scale)
     }
 }
 
@@ -783,6 +786,7 @@ struct SectionHeader: View {
                 .sensitive(nameRedaction)
                 .lineLimit(2) // a second line instead of "…" at large text sizes (#571)
                 .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(.primary)
             Spacer()
             Text(Money.format(balanceCents))
                 .sensitive(.amounts)
@@ -850,7 +854,7 @@ struct AccountRow: View {
 
     var body: some View {
         let line2 = secondLine
-        VStack(alignment: .leading, spacing: density.usesTighterAccountSpacing ? 0 : 1) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: usesLargeText ? .top : .center, spacing: signetGap) {
                 AccountSignet(account: account, size: signetSize, color: model.accountColor(account.id), onSelection: onSelection)
                 if usesLargeText {
@@ -882,7 +886,8 @@ struct AccountRow: View {
             }
             detailLine(line2)
         }
-        .padding(.vertical, density.usesTighterAccountSpacing ? 0 : 1)
+        // spacious: more air between two-line rows than between name and bank line, so the bank stays with its name
+        .padding(.vertical, density == .spacious ? 1 : 0)
         .opacity(account.isArchived ? 0.55 : (account.showsTotalExclusionIndicator ? 0.6 : 1))
         // reachable explanation (#337): why the account stays out of the totals
         // although its own switch is on — the group that wins, or archiving
@@ -900,7 +905,7 @@ struct AccountRow: View {
     }
 
     @ViewBuilder private func indicators(_ line2: SecondLine) -> some View {
-        if density == .spacious && showsInitials(line2) {
+        if density == .spacious && SidebarDensity.hasSeveralOwners(model.allAccounts.map(\.owner)) && showsInitials(line2) {
             Text(verbatim: SidebarDensity.initials(of: account.owner))
                 .appFont(.caption2, weight: .semibold)
                 .foregroundStyle(.secondary)
@@ -941,6 +946,10 @@ struct AccountRow: View {
 
     @ViewBuilder private func detailLine(_ line: SecondLine) -> some View {
         switch line {
+        case .archived where !density.showsStatusLine:
+            EmptyView()
+        case .loan where !density.showsStatusLine:
+            EmptyView()
         case .archived(let date):
             archivedLabel(date)
                 .padding(.leading, detailIndent)
@@ -967,7 +976,7 @@ struct AccountRow: View {
             }
             .padding(.leading, detailIndent)
         case .subtitle(let text):
-            if !text.isEmpty {
+            if density.showsSubtitle(text, bank: account.sidebarBankName) {
                 subtitle(text)
                     .padding(.leading, detailIndent)
             }
