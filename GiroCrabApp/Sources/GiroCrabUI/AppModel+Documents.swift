@@ -317,7 +317,7 @@ extension AppModel {
             let result = try await pin.run { try $0.resortPortalDocuments(connectionId: id) }
             guard isCurrent(pin) else { return }
             let message = String(localized: "\(Int(result.resorted)) Dokumente neu einsortiert · \(Int(result.linked)) Buchungen verknüpft")
-            toast = message
+            showToast(message)
             logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
             if result.resorted > 0 || result.linked > 0 { documentsChanged() }
         } catch {
@@ -347,7 +347,9 @@ extension AppModel {
             guard let data = try? Data(contentsOf: url) else { continue }
             runCore { _ = try vault.attachDocumentToBooking(bookingId: booking.id, fileName: url.lastPathComponent, bytes: data); n += 1 }
         }
-        if n > 0 { toast = String(localized: "\(n) Belege an „\(booking.merchantName)“ angehängt") }
+        if n > 0 {
+            showToast(String(localized: "\(n) Belege an „\(booking.merchantName)“ angehängt"), hiding: [booking.merchantName])
+        }
         documentsChanged()
         return true
     }
@@ -386,11 +388,13 @@ extension AppModel {
                 showError(String(localized: "Beleg konnte nicht zugeordnet werden"), describe(failure))
             }
             if !linked.isEmpty {
-                toast = String(localized: "Beleg zugeordnet: \(linked.joined(separator: ", "))")
+                showToast(String(localized: "Beleg zugeordnet: \(linked.joined(separator: ", "))"), hiding: linked)
             } else if unmatched > 0 {
-                toast = account.flatMap { accountsByID[$0]?.name }.map {
-                    String(localized: "Kein passender Umsatz gefunden – beim Konto „\($0)“ abgelegt")
-                } ?? String(localized: "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt")
+                if let name = account.flatMap({ accountsByID[$0]?.name }) {
+                    showToast(String(localized: "Kein passender Umsatz gefunden – beim Konto „\(name)“ abgelegt"), hiding: [name])
+                } else {
+                    showToast(String(localized: "Kein passender Umsatz gefunden – in „Belege & Postbox“ abgelegt"))
+                }
             }
             documentsChanged()
         }
@@ -408,7 +412,7 @@ extension AppModel {
         var linked = false
         runCore { try vault.linkDocument(docId: doc.id, bookingId: booking?.id); linked = true }
         documentsChanged()
-        if linked && booking == nil { toast = String(localized: "Zuordnung aufgehoben") }
+        if linked && booking == nil { showToast(String(localized: "Zuordnung aufgehoben")) }
     }
 
     /// Moves a document to another account, or to none (#838).
@@ -437,7 +441,7 @@ extension AppModel {
         guard let url = writeTemporaryFile(for: doc) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.path, forType: .string)
-        toast = String(localized: "Pfad kopiert")
+        showToast(String(localized: "Pfad kopiert"))
     }
     #endif
 
@@ -475,7 +479,7 @@ extension AppModel {
         runCore {
             let n = try vault.exportDocuments(destDir: folder.path, docIds: ids ?? [], subfolder: subfolder ?? "")
             let target = subfolder.map { "\(folder.lastPathComponent)/\($0)" } ?? folder.lastPathComponent
-            toast = String(localized: "\(n) Belege nach „\(target)“ exportiert")
+            showToast(String(localized: "\(n) Belege nach „\(target)“ exportiert"), hiding: [target])
         }
     }
 }

@@ -29,12 +29,25 @@ final class ToastHosts {
 
 /// What the toast shows. It is a plain string drawn over the window and may name an
 /// account, a merchant or a file, so `.sensitive()` cannot cover it: like `WindowTitle`,
-/// a bug report capture or privacy mode shows a neutral notice instead.
+/// a bug report capture or privacy mode masks it. A toast set through `showToast` lists
+/// its names (`hiding`), so only those become a placeholder (#1998); an unchecked toast
+/// (`hiding == nil`) shows a neutral notice instead.
 enum ToastText {
-    static func shown(_ toast: String, redaction: ReportRedaction) -> String {
-        redaction.isDisjoint(with: [.personal, .labels])
-            ? toast
-            : String(localized: "Kein Klartext – Hinweis ausgeblendet")
+    static func shown(_ toast: String, hiding names: [String]? = nil, redaction: ReportRedaction) -> String {
+        guard !redaction.isDisjoint(with: [.personal, .labels]) else { return toast }
+        guard let names else { return String(localized: "Kein Klartext – Hinweis ausgeblendet") }
+        // Longest first: "Muster" must not leave " GmbH" of "Muster GmbH" readable.
+        return names.filter { !$0.isEmpty }.sorted { $0.count > $1.count }
+            .reduce(toast) { $0.replacingOccurrences(of: $1, with: ReportRedaction.placeholder) }
+    }
+}
+
+extension AppModel {
+    /// Shows `text` as toast. `names` are every account, merchant or file name inside it;
+    /// while personal data is hidden only they are masked (#1998).
+    func showToast(_ text: String, hiding names: [String] = []) {
+        toast = text
+        toastHiding = names
     }
 }
 
@@ -53,7 +66,7 @@ private struct ToastOverlay: ViewModifier {
         content
             .overlay(alignment: .bottom) {
                 if isHost, let toast = model.toast {
-                    Label(ToastText.shown(toast, redaction: redaction), systemImage: "checkmark.circle.fill")
+                    Label(ToastText.shown(toast, hiding: model.toastHiding, redaction: redaction), systemImage: "checkmark.circle.fill")
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .background(.regularMaterial, in: Capsule())
                         .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
