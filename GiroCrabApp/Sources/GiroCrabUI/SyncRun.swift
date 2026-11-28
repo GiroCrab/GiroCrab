@@ -52,9 +52,10 @@ struct SyncRun: Equatable {
     func contains(_ id: Int64) -> Bool { entries.contains { $0.connectionID == id } }
     func status(of id: Int64) -> SyncRunEntry.Status? { entries.first { $0.connectionID == id }?.status }
 
-    /// The login's fetch begins (also again after a retry or a prompt).
+    /// The login's fetch begins (also again after a prompt, or after a `retry`). An ended
+    /// login is never reopened here: only `retry` lets it run again.
     mutating func start(_ id: Int64) {
-        update(id) { $0 = .running }
+        updateOpen(id) { $0 = .running }
     }
 
     // finish, skip and fail end only an open login (waiting or running): a late answer never
