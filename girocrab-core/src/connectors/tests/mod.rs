@@ -1226,7 +1226,13 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
             ..Default::default()
         };
     let legacy = card("Vorgemerkt 1 MUSTERSTADT DEU", "Kartenumsatz", "", -4_50);
-    // a booked payment whose merchant happens to start with "Vorgemerkt" stays
+    // without a merchant the marker line became the counterparty
+    let legacy_unnamed = RemoteTransaction {
+        counterparty: "Vorgemerkt 3 MUSTERSTADT DEU".into(),
+        ..card("", "Kartenumsatz", "", -2_50)
+    };
+    // booked payments the stored columns can't tell from old holds: the bank
+    // still reports them, so they stay
     let merchant = RemoteTransaction {
         counterparty: "Vorgemerkt SHOP".into(),
         ..card(
@@ -1234,6 +1240,22 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
             "Kartenumsatz",
             "",
             -2_00,
+        )
+    };
+    let second_line = RemoteTransaction {
+        counterparty: "Kreditkartenumsatz 5 MUSTERSTADT, DEU".into(),
+        ..card("Vorgemerkt am 04.11.", "Kartenumsatz", "", -3_00)
+    };
+    // older than the fetch reaches: left alone
+    let old = RemoteTransaction {
+        counterparty: "Vorgemerkt ALT".into(),
+        booking_date: "2026-10-01".into(),
+        value_date: "2026-10-01".into(),
+        ..card(
+            "Kreditkartenumsatz 7 ALTSTADT, DEU",
+            "Kartenumsatz",
+            "",
+            -1_00,
         )
     };
     let booked = card(
@@ -1273,7 +1295,16 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         &v,
         ConnectorKind::FinTsGeneric,
         conn,
-        fetch(vec![legacy.clone(), merchant], false),
+        fetch(
+            vec![
+                legacy.clone(),
+                legacy_unnamed,
+                merchant.clone(),
+                second_line.clone(),
+                old,
+            ],
+            false,
+        ),
     )
     .unwrap();
     // an incomplete fetch leaves it alone
@@ -1284,13 +1315,16 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         fetch(vec![booked.clone()], false),
     )
     .unwrap();
-    assert_eq!(purposes().len(), 3);
-    // a complete fetch: the old row goes, the booking and the listed hold stay
+    assert_eq!(purposes().len(), 6);
+    // a complete fetch: the old holds go, the bookings and the listed hold stay
     store_fetch(
         &v,
         ConnectorKind::FinTsGeneric,
         conn,
-        fetch(vec![booked.clone(), hold], true),
+        fetch(
+            vec![booked.clone(), merchant.clone(), second_line.clone(), hold],
+            true,
+        ),
     )
     .unwrap();
     assert_eq!(
@@ -1298,7 +1332,9 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         vec![
             "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
             "Kreditkartenumsatz 4 MUSTERSTADT, DEU",
-            "Vorgemerkt 2 MUSTERSTADT DEU"
+            "Kreditkartenumsatz 7 ALTSTADT, DEU",
+            "Vorgemerkt 2 MUSTERSTADT DEU",
+            "Vorgemerkt am 04.11."
         ]
     );
     // the hold is no longer listed: gone
@@ -1306,14 +1342,16 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         &v,
         ConnectorKind::FinTsGeneric,
         conn,
-        fetch(vec![booked], true),
+        fetch(vec![booked, merchant, second_line], true),
     )
     .unwrap();
     assert_eq!(
         purposes(),
         vec![
             "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
-            "Kreditkartenumsatz 4 MUSTERSTADT, DEU"
+            "Kreditkartenumsatz 4 MUSTERSTADT, DEU",
+            "Kreditkartenumsatz 7 ALTSTADT, DEU",
+            "Vorgemerkt am 04.11."
         ]
     );
     std::fs::remove_file(path).ok();

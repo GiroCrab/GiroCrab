@@ -1047,19 +1047,38 @@ pub(crate) fn store_fetch(
                 }
                 // FinTS card holds stored as bookings by older versions (#2113): the
                 // ones still open came again above as holds, the rest are booked or gone.
-                // Only the purpose tells them apart: a counterparty "Vorgemerkt …" may be
-                // the merchant of a booked payment, which must never go.
+                // The stored columns can't tell such a row from a booked payment whose
+                // merchant or second line starts with "Vorgemerkt". So a row goes only
+                // when the bank no longer reports it under its id although the fetch
+                // covers its day: a reported booking never goes.
                 if prefix == super::fints::camt::HOLD_PREFIX {
-                    let legacy: Vec<i64> = {
-                        let mut q = tx.prepare(
-                            "SELECT id FROM transactions
-                             WHERE account_id = ?1 AND deleted_ms IS NULL
-                               AND external_id NOT LIKE 'pending-%'
-                               AND booking_text = 'Kartenumsatz' AND purpose LIKE 'Vorgemerkt%'",
-                        )?;
-                        let rows = q.query_map(params![acc_id], |r| r.get(0))?;
-                        rows.collect::<Result<_, _>>()?
+                    let reported: Vec<&RemoteTransaction> = data
+                        .transactions
+                        .iter()
+                        .filter(|t| &t.account_ref == account_ref)
+                        .collect();
+                    let ids: HashSet<&str> =
+                        reported.iter().map(|t| t.external_id.as_str()).collect();
+                    let from = reported.iter().map(|t| t.booking_date.as_str()).min();
+                    let legacy: Vec<(i64, String)> = match from {
+                        None => Vec::new(),
+                        Some(from) => {
+                            let mut q = tx.prepare(
+                                "SELECT id, external_id FROM transactions
+                                 WHERE account_id = ?1 AND deleted_ms IS NULL
+                                   AND external_id NOT LIKE 'pending-%'
+                                   AND booking_text = 'Kartenumsatz' AND booking_date >= ?2
+                                   AND (purpose LIKE 'Vorgemerkt%' OR counterparty LIKE 'Vorgemerkt%')",
+                            )?;
+                            let rows =
+                                q.query_map(params![acc_id, from], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                            rows.collect::<Result<_, _>>()?
+                        }
                     };
+                    let legacy = legacy
+                        .into_iter()
+                        .filter(|(_, ext)| !ids.contains(ext.as_str()))
+                        .map(|(id, _)| id);
                     for row_id in legacy {
                         crate::sync_merge::soft_delete_booking(&tx, row_id)?;
                     }
