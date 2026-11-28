@@ -30,3 +30,12 @@
 - **Review-Focus:**
 - [ ] **Security-Check:** <!-- Pflicht bei Änderungen an Vault/Secrets/SEPA/Konnektoren/Local-API/Workflows/scripts: abhaken ([x]) und begründen. Required for security-critical paths: tick and explain. -->
 - **Perf-Check:**
+
+## Sichtbare UI-Änderung (nur bei Oberflächen-Änderungen – sonst streichen)
+
+- **Was ändert sich konkret?** 
+- [ ] Vorher- und Nachher-Screenshots (mit `--demo-seed`, ohne echte Kontodaten) sind angehängt:
+
+| Vorher | Nachher |
+| --- | --- |
+| *(Screenshot vorher)* | *(Screenshot nachher)* |
