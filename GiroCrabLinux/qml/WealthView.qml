@@ -61,7 +61,7 @@ Rectangle {
     Connections {
         target: prefs
         function onGroupingChanged() { wv.classFilter = "all"; wv.compositionFilter = null }
-        function onHideDirectPropertyChanged() { wv.classFilter = "all" }
+        function onHideDirectPropertyChanged() { wv.classFilter = "all"; wv.compositionFilter = null }
         function onHideUnclassifiedInChartChanged() { if (prefs.hideUnclassifiedInChart && wv.classFilter === "unclassified") wv.classFilter = "all" }
     }
 

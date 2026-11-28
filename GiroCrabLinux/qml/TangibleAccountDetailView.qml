@@ -56,7 +56,6 @@ AssetAccountFrame {
                 classificationLoaded = true
             })
     }
-    Connections { target: tv; function onAccountChanged() { AppModel.selectAssetItem(null) } }
 
     /// What is held now: sold items are not part of the current inventory.
     readonly property var heldAssets: classified.filter(a => { const it = DepotMetrics.has(a.asset_item_id) ? AppModel.assetItem(a.asset_item_id) : null; return it ? !it.sold : true })
