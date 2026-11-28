@@ -5,7 +5,7 @@ import QtQuick.Layouts
 // DepotKPITiles.swift › DepotMetricGrid / DepotMetricTile (#564): a row of figure tiles – one row
 // when wide, rows of two otherwise, one per row where even two do not fit. The tiles of a row share
 // their height. A missing figure says so; it is never shown as 0. Tiles come from
-// DepotMetrics.securitiesTiles.
+// DepotMetrics.securitiesTiles / tangibleTiles.
 GridLayout {
     id: grid
     property var tiles: []

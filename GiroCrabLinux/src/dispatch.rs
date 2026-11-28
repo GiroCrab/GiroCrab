@@ -3488,8 +3488,8 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    /// Depot view (DepotDetailView.qml, DepotPositionsTable.qml, DepotActivitiesView.qml, #564/#625):
-    /// the fields DepotMetrics.qml reads, round-tripped as JSON.
+    /// Depot and Sachwerte views (DepotDetailView.qml, DepotPositionsTable.qml, DepotActivitiesView.qml,
+    /// TangibleAccountDetailView.qml, #564/#625): the fields DepotMetrics.qml reads, round-tripped as JSON.
     #[test]
     fn depot_view_calls() {
         let path =
@@ -3576,6 +3576,13 @@ mod tests {
         }
         assert!(holdings > 0, "demo depots hold positions");
         assert!(linked > 0, "demo activities link to clearing bookings");
+        // Sachwerte: items as positions, yesterday's unit value of a priced item
+        for c in call("classified_assets", json!({ "account_id": tangible[0] }))
+            .as_array()
+            .unwrap()
+        {
+            assert!(c["asset_item_id"].is_i64());
+        }
         let _ = std::fs::remove_file(path);
     }
 
