@@ -473,10 +473,11 @@ impl BankConnector for FinTsConnector {
             }
         } else {
             let url_key = format!("fints.url.{}", self.blz);
-            // no address to ask the user for: the bank shut down FinTS (#2020)
-            if ctx.setting_or(&url_key, "").is_empty()
-                && crate::connectors::fints_directory::fints_discontinued(&self.blz)
-            {
+            // no address that reaches the bank: it shut down FinTS (#2020)
+            if crate::connectors::fints_directory::fints_discontinued(
+                &self.blz,
+                ctx.setting_or(&url_key, ""),
+            ) {
                 return Err(CoreError::invalid(tr(
                     "Diese Bank bietet kein FinTS mehr an. Über diesen Zugang lassen sich keine Konten abrufen.",
                 )));
