@@ -588,6 +588,7 @@ QtObject {
     /// they are there (the main view can show), the rest fills in off the GUI thread.
     function reloadAll(then, failed) {
         refundLinksRevision++
+        merchantSettingsRevision++   // Einstellungen › Händler reads its list again (#1373)
         reloadSettings()
         reloadAccounts(() => {
             if (then) then()
@@ -1802,7 +1803,8 @@ QtObject {
     // MARK: - Settings (vault/settings.rs)
     property var settings: []
     function reloadSettings() { run(() => { settings = core("list_settings"); fintsProductIDSource = core("fints_product_id_source")
-                                            netRefundsInStats = core("net_refunds_in_stats") }) }
+                                            netRefundsInStats = core("net_refunds_in_stats")
+                                            merchantRecognitionEnabled = core("merchant_recognition_enabled") }) }
     property string fintsProductIDSource: ""
     function settingEntry(key) { return settings.find(e => e.key === key) || null }
     function saveSetting(key, value) { run(() => core("set_setting", { key: key, value: value })); reloadSettings() }
@@ -2500,6 +2502,98 @@ QtObject {
         const e = settingEntry("enablebanking.redirect_url")
         const v = e ? (e.value || "").trim() : ""
         return v || "https://localhost/girocrab/callback"
+    }
+
+    // MARK: - Händlererkennung (AppModel+Merchants.swift, Einstellungen › Händler, #1373)
+    /// Off, bookings show their counterparty without merchant name or logo: no logo domain to
+    /// edit, no logo tip.
+    property bool merchantRecognitionEnabled: true
+    /// Bumped when the merchant settings may have changed (own change, reload, sync):
+    /// Einstellungen › Händler reads its list again.
+    property int merchantSettingsRevision: 0
+    /// Merchant setting changes queued so far; only the newest reloads the views (`changeMerchants`).
+    property int merchantWriteCount: 0
+    /// Changes waiting behind the running one: quick toggles reach the vault in order.
+    property var merchantWrites: []
+    property bool merchantWriteRunning: false
+    /// Master switch, the bundled merchants with their switches and the own merchants, off the
+    /// GUI thread. `done(null)` when the vault was locked or switched meanwhile; `failed(message)`.
+    function merchantRecognition(done, failed) {
+        if (!isUnlocked) { done(null); return }
+        const gen = vaultGeneration
+        coreAsync("merchant_recognition", {}, r => done(gen === vaultGeneration && isUnlocked ? r : null),
+                  err => { if (gen === vaultGeneration) failed(parseCoreError(err).message) })
+    }
+    /// Switches the whole recognition on or off; `failed(message)` for the pane to show (an
+    /// alert of the main window could hide behind the Settings window).
+    function setMerchantRecognitionEnabled(enabled, done, failed) {
+        changeMerchants("set_merchant_recognition_enabled", { enabled: enabled }, done, failed)
+    }
+    /// Switches a bundled merchant on or off.
+    function setBuiltinMerchantEnabled(key, enabled, done, failed) {
+        changeMerchants("set_builtin_merchant_enabled", { key: key, enabled: enabled }, done, failed)
+    }
+    /// Creates (`uuid` null) or changes an own merchant. `basedOn` (creating only) copies a
+    /// bundled merchant, which the copy then replaces while it lives.
+    function saveCustomMerchant(uuid, name, needles, basedOn, done, failed) {
+        changeMerchants("save_custom_merchant", { uuid: uuid, name: name, needles: needles, based_on: basedOn }, done, failed)
+    }
+    /// Deletes an own merchant; once no copy of a bundled merchant is left, that one is
+    /// recognised again (unless switched off).
+    function deleteCustomMerchant(uuid, done, failed) {
+        changeMerchants("delete_custom_merchant", { uuid: uuid }, done, failed)
+    }
+    /// The search words of the editor's text field: separated by commas, semicolons or line
+    /// breaks, blanks dropped.
+    function merchantNeedles(text) { return text.split(/[,;\n\r]/).map(t => t.trim()).filter(t => t !== "") }
+    /// The editor's text for stored search words.
+    function merchantNeedlesText(needles) { return needles.join(", ") }
+    /// One change of the recognition, off the GUI thread and queued behind the ones before it.
+    /// Only the last of several queued changes reloads; a failed last one reloads too, for the
+    /// ones before it. A lock or vault switch meanwhile drops the rest.
+    function changeMerchants(method, args, done, failed) {
+        if (!isUnlocked) { if (failed) failed(qsTr("Tresor ist gesperrt")); return }
+        const number = ++merchantWriteCount, gen = vaultGeneration
+        const finish = (err, result, on) => {
+            merchantWriteRunning = false
+            const next = merchantWrites.shift()
+            if (next) { merchantWriteRunning = true; next() }
+            if (gen !== vaultGeneration) return   // nothing of the old vault to show
+            if (on === true || on === false) merchantRecognitionEnabled = on
+            if (number === merchantWriteCount) merchantsChanged()
+            if (err !== null) { if (failed) failed(parseCoreError(err).message) }
+            else if (done) done(result)
+        }
+        const step = () => {
+            if (gen !== vaultGeneration || !isUnlocked) { finish(qsTr("Tresor ist gesperrt"), null, null); return }
+            coreAsync(method, args, result => {
+                coreAsync("merchant_recognition_enabled", {}, on => finish(null, result, on), () => finish(null, result, null))
+            }, err => finish(err, null, null))
+        }
+        if (merchantWriteRunning) merchantWrites.push(step)
+        else { merchantWriteRunning = true; step() }
+    }
+    /// Everything that shows merchant names, logos or a merchant's history loads again in the
+    /// background; the shown data stays until then. Flows, totals, recurring series and the
+    /// sidebar read the bundled table and stay as they are.
+    function merchantsChanged() {
+        merchantSettingsRevision++
+        reloadDashboard()
+        // a merchant filter that names nobody any more would show an empty list; the list
+        // (with the selected booking's history and a sticky booking) follows
+        leaveStaleMerchantFocus(() => reloadBookings())
+    }
+    /// Leaves the merchant filter when its key names no booking any more (a copy has its own
+    /// key, the recognition off gives `x:` keys); then the list reloads. Otherwise `then()`.
+    function leaveStaleMerchantFocus(then) {
+        const focus = MerchantFocus.focus
+        if (focus === null) { then(); return }
+        const gen = vaultGeneration
+        coreAsync("merchant_history", { merchant_key: focus.key, account_id: 0 }, h => {
+            if (gen !== vaultGeneration) return
+            if (h && h.all.count === 0 && MerchantFocus.focus === focus) MerchantFocus.leave()   // reloads the list
+            else then()
+        }, () => { if (gen === vaultGeneration) then() })
     }
 
     // MARK: - Depot, loans, investment dashboard
@@ -4570,7 +4664,9 @@ QtObject {
                 // the group editor is a sheet of the main window (Swift: showGroupManager)
                 showGroupManager = true
             } else {
-                const tabs = { general: "general", banks: "banks", security: "security", external: "externalAccess" }
+                // "logos": the merchant logos are a section of „Händler“ (#1373)
+                const tabs = { general: "general", banks: "banks", merchants: "merchants", logos: "merchants",
+                               security: "security", external: "externalAccess" }
                 settingsTab = tabs[parts[0]] || "general"
                 demoSettingsSheet = parts.length > 1 ? parts[1] : ""
                 showSettings = true

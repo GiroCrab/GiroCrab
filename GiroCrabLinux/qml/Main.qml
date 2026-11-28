@@ -420,7 +420,9 @@ ApplicationWindow {
                 Layout.preferredWidth: Math.max(220, Math.min(510, window.width * 0.22))
                 // AssetAccountFrame `.searchable`: the holdings views search their own positions (#564)
                 readonly property bool holdings: DepotState.presentation !== "bookings"
-                placeholderText: holdings ? DepotState.searchPrompt : qsTr("Händler, Zweck, IBAN, Betrag")
+                // BookingListView.swift `.searchable(prompt:)`: the short prompt at large text sizes
+                placeholderText: holdings ? DepotState.searchPrompt
+                    : Theme.textScale > 1 ? qsTr("Händler, Zweck, IBAN …") : qsTr("Händler, Zweck, IBAN / Kontonummer, Betrag")
                 text: holdings ? DepotState.query : AppModel.searchText
                 onTextEdited: { if (holdings) DepotState.query = text; else AppModel.searchText = text }
                 leftPadding: 28

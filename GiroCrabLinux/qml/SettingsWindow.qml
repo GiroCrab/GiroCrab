@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// SettingsView.swift: the macOS Settings window with its tabs Allgemein, Banken, Sicherheit, Analyse.
+// SettingsView.swift: the macOS Settings window with its tabs Allgemein, Banken, Händler, Sicherheit, Analyse.
 // Dropped on Linux: Dokumente (document folder), Updates (Sparkle).
 ApplicationWindow {
     id: win
@@ -19,6 +19,8 @@ ApplicationWindow {
         // SettingsView.swift › settingsPane(height:): "Allgemein" 600 since #343/#388 (it scrolls)
         { id: "general", title: qsTr("Allgemein"), symbol: "gearshape", height: 600 },
         { id: "banks", title: qsTr("Banken"), symbol: "building.columns", height: 600 },
+        // MerchantRecognitionSettings (#1373): settingsPane(height: 640), the bundled list scrolls
+        { id: "merchants", title: qsTr("Händler"), symbol: "storefront", height: 640 },
         { id: "security", title: qsTr("Sicherheit"), symbol: "lock.shield", height: 780 },
         // ExternalAccessSettings (#136): settingsPane(height: 640)
         { id: "externalAccess", title: qsTr("Analyse"), symbol: "chart.bar.doc.horizontal", height: 640 }]
@@ -82,6 +84,7 @@ ApplicationWindow {
                 currentIndex: win.tabIndex
                 GeneralSettings {}
                 BankConnectionsSettings { enabled: AppModel.isUnlocked }
+                MerchantRecognitionSettings { enabled: AppModel.isUnlocked }
                 SecuritySettings { id: security }
                 ExternalAccessSettings { enabled: AppModel.isUnlocked }
             }

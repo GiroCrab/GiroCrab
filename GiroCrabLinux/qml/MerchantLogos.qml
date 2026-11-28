@@ -145,6 +145,7 @@ QtObject {
     readonly property bool showTips: AppModel.launchArgs.indexOf("--show-tips") >= 0
     Component.onCompleted: if (showTips) tipDone = false
     /// MerchantLogoTipEligibility: real (non-demo) bookings on screen, online logos off.
-    readonly property bool tipEligible: !tipDone && provider === "off" && AppModel.isUnlocked
+    // with the recognition off no booking has a logo to show (#1373)
+    readonly property bool tipEligible: !tipDone && provider === "off" && AppModel.isUnlocked && AppModel.merchantRecognitionEnabled
         && AppModel.dayGroups.length > 0 && (!AppModel.isDemo || showTips)
 }

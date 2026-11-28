@@ -312,7 +312,8 @@ Rectangle {
                         font.pixelSize: Theme.caption; font.family: counter ? Qt.application.font.family : "monospace"; color: Theme.secondary
                         Sensitive {}
                     }
-                    MerchantDomainRow { merchant: rc.booking.merchant; Layout.fillWidth: true }
+                    // with the recognition off no logo shows, so there is no domain to set (#1373)
+                    MerchantDomainRow { visible: AppModel.merchantRecognitionEnabled; merchant: rc.booking.merchant; Layout.fillWidth: true }
                     Item { Layout.fillHeight: true }
                 }
             }

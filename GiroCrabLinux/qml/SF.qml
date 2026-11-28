@@ -73,7 +73,7 @@ QtObject {
         // rule editor / category menu
         "arrow.turn.down.right": "go-next", "arrow.up.to.line": "go-top", "pause": "media-playback-pause",
         "plus.circle": "list-add",
-        "bolt.slash": "dialog-cancel", "xmark.octagon": "dialog-error", "camera.viewfinder": "camera-photo",
+        "bolt.slash": "dialog-cancel", "nosign": "dialog-cancel", "xmark.octagon": "dialog-error", "camera.viewfinder": "camera-photo",
         // settings & recurring dialogs
         "keyboard": "help-keybord-shortcuts", "network": "network-wired", "flag.checkered": "flag",
         "ladybug": "tools-report-bug", "bubble.left.and.bubble.right": "dialog-messages", "hand.point.up.left": "transform-browse",

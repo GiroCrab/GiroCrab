@@ -46,7 +46,7 @@ Rectangle {
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.border }
         // opens the settings; the tip stays until a provider is chosen there
-        TipAction { text: qsTr("Einstellungen …"); onClicked: AppModel.openSettings("general") }
+        TipAction { text: qsTr("Einstellungen …"); onClicked: AppModel.openSettings("merchants") }
     }
 
     component TipAction: Text {

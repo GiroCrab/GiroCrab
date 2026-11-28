@@ -1902,6 +1902,10 @@ vault_methods! {
     set_asset_class_override(security_key, value) set_instrument_override(security_key, value)
     // --- Händler-Logos (AppModel+Logos, MerchantLogoSettingsSection); logos: `merchant_logo` ---
     online_logo_provider() clear_logo_cache() set_merchant_domain(merchant_key, domain)
+    // --- Händlererkennung (AppModel+Merchants, MerchantRecognitionSettings, #1373) ---
+    merchant_recognition() merchant_recognition_enabled()
+    set_merchant_recognition_enabled(enabled) set_builtin_merchant_enabled(key, enabled)
+    save_custom_merchant(uuid, name, needles, based_on) delete_custom_merchant(uuid)
 }
 
 #[cfg(test)]
@@ -2433,6 +2437,112 @@ mod tests {
         assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(true));
         call_ok("set_net_refunds_in_stats", json!({ "on": false }));
         assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(false));
+    }
+
+    /// Einstellungen › Händler (#1373): master switch and a bundled merchant off and on, an
+    /// own merchant created, changed and deleted; a copy replaces its original while it lives.
+    #[test]
+    fn merchant_recognition_round_trips() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let r = call_ok("merchant_recognition", json!({}));
+        assert_eq!(r["enabled"], json!(true));
+        assert_eq!(r["custom"], json!([]));
+        let rewe = r["builtin"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["key"] == json!("rewe"))
+            .expect("REWE is bundled")
+            .clone();
+        assert_eq!(rewe["enabled"], json!(true));
+        assert_eq!(rewe["replaced"], json!(false));
+        assert!(rewe["kind"].is_string());
+
+        // master switch off and on
+        call_ok(
+            "set_merchant_recognition_enabled",
+            json!({ "enabled": false }),
+        );
+        assert_eq!(
+            call_ok("merchant_recognition_enabled", json!({})),
+            json!(false)
+        );
+        call_ok(
+            "set_merchant_recognition_enabled",
+            json!({ "enabled": true }),
+        );
+        assert_eq!(
+            call_ok("merchant_recognition_enabled", json!({})),
+            json!(true)
+        );
+
+        // a bundled merchant off and on; an unknown key is refused
+        let builtin = |key: &str| {
+            call_ok("merchant_recognition", json!({}))["builtin"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["key"] == json!(key))
+                .unwrap()
+                .clone()
+        };
+        call_ok(
+            "set_builtin_merchant_enabled",
+            json!({ "key": "rewe", "enabled": false }),
+        );
+        assert_eq!(builtin("rewe")["enabled"], json!(false));
+        call_ok(
+            "set_builtin_merchant_enabled",
+            json!({ "key": "rewe", "enabled": true }),
+        );
+        assert_eq!(builtin("rewe")["enabled"], json!(true));
+        let unknown: Value = serde_json::from_str(&call_json(
+            "set_builtin_merchant_enabled",
+            &json!({ "key": "no-such-merchant", "enabled": false }).to_string(),
+        ))
+        .unwrap();
+        assert!(unknown.get("err").is_some());
+
+        // own merchant: created (missing uuid / based_on = None), changed, deleted
+        let own = call_ok(
+            "save_custom_merchant",
+            json!({ "name": "Supermarkt Ecke", "needles": ["muster markt", "ecke"] }),
+        );
+        let uuid = own["uuid"].as_str().unwrap().to_string();
+        assert_eq!(own["name"], json!("Supermarkt Ecke"));
+        assert_eq!(own["based_on"], json!(""));
+        let changed = call_ok(
+            "save_custom_merchant",
+            json!({ "uuid": uuid, "name": "Laden Ecke", "needles": ["ecke"], "based_on": null }),
+        );
+        assert_eq!(changed["uuid"], json!(uuid));
+        assert_eq!(changed["needles"], json!(["ecke"]));
+        let custom = call_ok("merchant_recognition", json!({}))["custom"].clone();
+        assert_eq!(custom.as_array().unwrap().len(), 1);
+        assert_eq!(custom[0]["name"], json!("Laden Ecke"));
+        // no search word: the core's message, nothing stored
+        let empty: Value = serde_json::from_str(&call_json(
+            "save_custom_merchant",
+            &json!({ "uuid": null, "name": "Leer", "needles": [], "based_on": null }).to_string(),
+        ))
+        .unwrap();
+        assert!(empty.get("err").is_some());
+        call_ok("delete_custom_merchant", json!({ "uuid": uuid }));
+        assert_eq!(
+            call_ok("merchant_recognition", json!({}))["custom"],
+            json!([])
+        );
+
+        // a copy of a bundled merchant replaces it until it is deleted
+        let copy = call_ok(
+            "save_custom_merchant",
+            json!({ "name": "Mein REWE", "needles": rewe["needles"], "based_on": "rewe" }),
+        );
+        assert_eq!(copy["based_on"], json!("rewe"));
+        assert_eq!(builtin("rewe")["replaced"], json!(true));
+        call_ok("delete_custom_merchant", json!({ "uuid": copy["uuid"] }));
+        assert_eq!(builtin("rewe")["replaced"], json!(false));
     }
 
     /// AppModel.decodeLogo: PNG width, the largest image of an ICO, unknown formats.
