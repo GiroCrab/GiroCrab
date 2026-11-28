@@ -369,7 +369,7 @@ struct DocumentsView: View {
             unseenOnly = false
             typeFilter = nil
             yearFilter = nil
-            return model.dropAnywhere(urls)
+            return model.dropAnywhere(urls, account: model.documentsAccountFilter)
         } isTargeted: { targeted = $0 }
         .fileImporter(isPresented: $exporting, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportAllDocuments(to: url, ids: exportIDs, subfolder: exportSubfolder) }
@@ -382,18 +382,21 @@ struct DocumentsView: View {
                     switch result {
                     case .success(let urls):
                         guard !urls.isEmpty else { return }
-                        // An unmatched upload has no account. Make it visible even when
-                        // the dialog was opened from Postbox or a filtered account.
+                        // An unmatched upload stays on the chosen account (#1967), else it has
+                        // none. Make it visible even when the dialog was opened from Postbox.
+                        let account = model.documentsAccountFilter
                         model.documentsScope = .receipts
-                        model.documentsAccountFilter = nil
-                        model.documentsConnectionFilter = nil
+                        if account == nil || account == AppModel.documentsWithoutAccount {
+                            model.documentsAccountFilter = nil
+                            model.documentsConnectionFilter = nil
+                        }
                         search = ""
                         unlinkedOnly = false
                         // a new receipt is stored as read, with today's type and year: no filter may hide it
                         unseenOnly = false
                         typeFilter = nil
                         yearFilter = nil
-                        model.dropAnywhere(urls)
+                        model.dropAnywhere(urls, account: account)
                     case .failure(let error):
                         guard (error as NSError).code != NSUserCancelledError else { return }
                         model.showError(String(localized: "Beleg konnte nicht importiert werden"), error.localizedDescription)
@@ -758,6 +761,9 @@ private struct DocumentRow: View {
     @Environment(\.backgroundProminence) private var prominence
     #if os(macOS)
     @Environment(\.controlActiveState) private var controlActiveState
+    #elseif os(iOS)
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
     let doc: DocumentInfo
     let account: String
@@ -780,10 +786,20 @@ private struct DocumentRow: View {
         onAccentHighlight ? AnyShapeStyle(highlighted) : AnyShapeStyle(normal)
     }
 
+    private var stacksDate: Bool {
+        #if os(iOS)
+        horizontalSizeClass == .compact && dynamicTypeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         let secondary = tint(Theme.secondary, highlighted: .secondary)
-        HStack(spacing: 10) {
-            Image(systemName: docSymbol(doc)).foregroundStyle(tint(Theme.accent)).frame(width: 22)
+        let date = Text(DateText.medium(doc.docDate)).appFont(.caption, monospacedDigit: true).foregroundStyle(secondary)
+        HStack(alignment: stacksDate ? .top : .center, spacing: 10) {
+            Image(systemName: docSymbol(doc)).foregroundStyle(tint(Theme.accent))
+                .frame(width: stacksDate ? nil : 22)
                 .overlay(alignment: .topLeading) {
                     if !doc.seen {
                         Circle().fill(tint(Color.blue)).frame(width: 8, height: 8).offset(x: -4, y: -3)
@@ -791,10 +807,11 @@ private struct DocumentRow: View {
                     }
                 }
             VStack(alignment: .leading, spacing: 2) {
-                Text(doc.title).fontWeight(doc.seen ? .medium : .bold).lineLimit(2)
+                Text(doc.title).fontWeight(doc.seen ? .medium : .bold).lineLimit(stacksDate ? nil : 2)
                     .frame(maxWidth: .infinity, alignment: .leading).sensitive()
                 Text("\(doc.originTitle) · \(account)")
                     .appFont(.caption).foregroundStyle(secondary).lineLimit(1).sensitive()
+                if stacksDate { date }
                 if !doc.bookingLabel.isEmpty {
                     Text(doc.bookingLabel)
                         .appFont(.caption).foregroundStyle(secondary).lineLimit(1)
@@ -810,7 +827,7 @@ private struct DocumentRow: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .multilineTextAlignment(.leading)
-            Text(DateText.medium(doc.docDate)).appFont(.caption, monospacedDigit: true).foregroundStyle(secondary)
+            if !stacksDate { date }
         }
     }
 }

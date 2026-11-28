@@ -181,6 +181,30 @@ struct RecipientSuggestionList: View {
     }
 }
 
+/// Top of the transfer and standing order forms: title left, the helpers (templates, recipients,
+/// paste) right; below the title where they do not fit beside it (iPhone, large text, #1527).
+struct EntryHeader<Actions: View>: View {
+    let title: LocalizedStringKey
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        let title = Text(title).appFont(.title2, weight: .semibold)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                title
+                Spacer()
+                actions
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                title
+                HStack(spacing: 12) { actions }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
+    }
+}
+
 /// Umbuchung: the own account to book to; name and IBAN follow from it.
 struct OwnTargetFields: View {
     let targets: [Account]
@@ -190,10 +214,9 @@ struct OwnTargetFields: View {
     let select: (Int64?) -> Void
 
     var body: some View {
-        Picker("Zielkonto", selection: Binding(get: { selection }, set: { selection = $0; select($0) })) {
-            ForEach(targets) { a in
-                Text("\(a.name) · \(formatIBAN(a.iban))").tag(Optional(a.id)).sensitive()
-            }
+        LabeledContent("Zielkonto") {
+            SourceAccountPicker(label: "Zielkonto", selection: Binding(get: { selection }, set: { selection = $0; select($0) }),
+                                accounts: targets)
         }
         LabeledContent("Empfänger") {
             Text(name).appFont(.body).sensitive()

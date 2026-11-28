@@ -68,9 +68,12 @@ final class PortalCardsTests: XCTestCase {
         XCTAssertTrue(AppModel.portalLoginKey(7).hasPrefix("pin."))
     }
 
-    func testBothCardPortalsSupportStoredLogin() {
+    func testPortalsSupportStoredLogin() {
         XCTAssertTrue(AppModel.supportsStoredPortalLogin(.americanExpress))
         XCTAssertTrue(AppModel.supportsStoredPortalLogin(.amazonVisa))
+        // Schwäbisch Hall fills in the vault-stored login like the card portals (#1946).
+        XCTAssertTrue(AppModel.supportsStoredPortalLogin(.schwaebischHall))
         XCTAssertFalse(AppModel.supportsStoredPortalLogin(.tradeRepublic))
+        XCTAssertFalse(AppModel.supportsStoredPortalLogin(.edenred))
     }
 }

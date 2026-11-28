@@ -86,6 +86,13 @@ pub fn fints_presets() -> Vec<FinTsPreset> {
         ),
         p("gls", "GLS Gemeinschaftsbank", "43060967", ATRUVIA, ""),
         p(
+            "flatex",
+            "flatexDEGIRO Bank (flatex)",
+            "10130800",
+            super::fints_directory::FLATEX_FINTS_URL,
+            "Die Bank führt die Marken flatex, DEGIRO und ViTrade – nutzen Sie die BLZ aus Ihrer IBAN (auch 30330800 oder 76030800). FinTS-Server: banking.flatexdegiro.com.",
+        ),
+        p(
             "consorsbank",
             "Consorsbank",
             "76030080",
@@ -250,6 +257,7 @@ mod tests {
             "ethikbank",
             "dkb",
             "1822direkt",
+            "flatex",
         ] {
             let pr = fints_presets().into_iter().find(|p| p.id == id).unwrap();
             let d = crate::connectors::fints_directory::lookup(&pr.blz).unwrap();

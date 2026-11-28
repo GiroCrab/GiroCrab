@@ -27,6 +27,19 @@ final class AddBankWaySwitchTests: XCTestCase {
         }
     }
 
+    func testFinTsBankNameFollowsTheBlz() {
+        let db = "Deutsche Bank", pb = "Postbank Ndl der Deutsche Bank"
+        // a BLZ missing from the directory drops the name the directory filled in
+        XCTAssertEqual(FinTsAddForm.bankName(db, filled: db, found: nil, presetName: nil, custom: true), "")
+        // another known BLZ replaces it, also outside "Andere FinTS-Bank"
+        XCTAssertEqual(FinTsAddForm.bankName(db, filled: db, found: pb, presetName: "Postbank", custom: false), pb)
+        // a preset's or search hit's own name stays
+        XCTAssertEqual(FinTsAddForm.bankName("Postbank", filled: pb, found: nil, presetName: "Postbank", custom: false), "Postbank")
+        XCTAssertEqual(FinTsAddForm.bankName("Meine Bank", filled: nil, found: db, presetName: "Postbank", custom: false), "Meine Bank")
+        // first hit fills an empty name
+        XCTAssertEqual(FinTsAddForm.bankName("", filled: nil, found: db, presetName: nil, custom: false), db)
+    }
+
     func testEveryBankWithItsOwnConnectorHasACatalogEntry() {
         // without one the add form stays empty (Hanseatic in 0.8.7)
         let catalog = Set(bankCatalog().map(\.kind))

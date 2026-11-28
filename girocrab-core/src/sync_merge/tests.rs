@@ -4549,6 +4549,153 @@ fn bank_label_of_a_twin_goes_with_the_fold() {
     );
 }
 
+/// Archive time, stamp and #998 mark of account `id` as `unix:ms:unknown`
+/// (`-` = active).
+fn archive_state(v: &Vault, id: i64) -> String {
+    text(
+        v,
+        &format!(
+            "SELECT IFNULL(archived_unix, '-') || ':' || archived_ms || ':' || archive_unknown
+               FROM accounts WHERE id = {id}"
+        ),
+    )
+}
+
+/// #1691: folding a twin carries its archive state to the bank account by the
+/// merge's rule (newer stamp; equal stamps: known over marked, then archived
+/// over active), in both directions and with the #998 mark.
+#[test]
+fn twin_fold_passes_the_archive_state_on_like_a_merge() {
+    // (case, twin, bank, bank afterwards); a state is (archived_unix, archived_ms, archive_unknown)
+    for (case, twin_state, bank_state, expected) in [
+        (
+            "twin archived later",
+            "100, 20, 0",
+            "NULL, 10, 0",
+            "100:20:0",
+        ),
+        (
+            "bank archived later",
+            "NULL, 10, 0",
+            "100, 20, 0",
+            "100:20:0",
+        ),
+        (
+            "twin reactivated later",
+            "NULL, 20, 0",
+            "100, 10, 0",
+            "-:20:0",
+        ),
+        (
+            "equal stamps, known wins",
+            "100, 10, 1",
+            "NULL, 10, 0",
+            "-:10:0",
+        ),
+        ("twin marked later", "NULL, 20, 1", "100, 10, 0", "-:20:1"),
+    ] {
+        let dir = temp_dir("twin-archive");
+        let v = open(&dir, "a.db");
+        let c = comdirect(&v);
+        let twin = giro(&v, c, MM_GIRO, &["mm-1", "mm-2"]);
+        let bank = giro(&v, c, "API1", &["mm-1", "mm-2", "b1"]);
+        for (id, state) in [(twin, twin_state), (bank, bank_state)] {
+            exec(
+                &v,
+                &format!(
+                    "UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = ({state})
+                      WHERE id = {id}"
+                ),
+            );
+        }
+        assert_eq!(
+            super::twins::fold_twins(&v.db().unwrap()).unwrap(),
+            1,
+            "{case}"
+        );
+        assert_eq!(archive_state(&v, bank), expected, "{case}");
+    }
+}
+
+/// #1691: an archive choice made on the twin by a device that hadn't folded it
+/// yet reaches the bank account the twin was folded into, like the note, and
+/// both devices end with the same archive state, whichever merges first.
+#[test]
+fn archive_on_an_already_folded_twin_reaches_the_bank_account() {
+    for a_first in [true, false] {
+        let dir = temp_dir("twin-archive-merge");
+        let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+        let ca = comdirect(&a);
+        let cb = comdirect(&b);
+        giro(&a, ca, MM_GIRO, &["mm-1", "mm-2"]);
+        let bank = giro(&a, ca, "API1", &["mm-1", "mm-2", "b1"]);
+        let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+        for v in [&a, &b] {
+            exec(v, "UPDATE bank_connections SET created_ms = 1");
+            exec(v, "UPDATE accounts SET created_ms = 1");
+        }
+        drop(a);
+        let a = open(&dir, "a.db");
+        assert_eq!(archive_state(&a, bank), "-:0:0", "folded, still active");
+        b.set_account_archived(twin, true).unwrap();
+        let chosen = archive_state(&b, twin);
+        if a_first {
+            merge(&a, &b);
+            assert_eq!(archive_state(&a, bank), chosen);
+            merge(&b, &a);
+        } else {
+            merge(&b, &a);
+            merge(&a, &b);
+        }
+        for v in [&a, &b] {
+            let live = n(v, "SELECT id FROM accounts WHERE deleted_ms IS NULL");
+            assert_eq!(archive_state(v, live), chosen, "a_first: {a_first}");
+        }
+    }
+}
+
+/// #1691 review: a device that gets a folded pair by merge (both accounts new
+/// there) passes the twin's archive state on after the bank's own is written,
+/// whichever of the two rows comes first; a newer bank state stays.
+#[test]
+fn folded_pair_new_on_a_device_gets_the_twin_archive_state() {
+    for twin_first in [true, false] {
+        for (bank_state, expected) in [("NULL, 10, 0", "100:20:0"), ("NULL, 30, 0", "-:30:0")] {
+            let dir = temp_dir("twin-archive-new");
+            let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+            let cb = comdirect(&b);
+            let (twin, bank) = if twin_first {
+                let twin = giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]);
+                (twin, giro(&b, cb, "API1", &["mm-1", "mm-2", "b1"]))
+            } else {
+                let bank = giro(&b, cb, "API1", &["mm-1", "mm-2", "b1"]);
+                (giro(&b, cb, MM_GIRO, &["mm-1", "mm-2"]), bank)
+            };
+            assert_eq!(super::twins::fold_twins(&b.db().unwrap()).unwrap(), 1);
+            // what a fold before #1691 left: the twin's archive state stayed behind
+            exec(
+                &b,
+                &format!(
+                    "UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = (100, 20, 0)
+                      WHERE id = {twin};
+                     UPDATE accounts SET (archived_unix, archived_ms, archive_unknown) = ({bank_state})
+                      WHERE id = {bank};"
+                ),
+            );
+            merge(&a, &b);
+            merge(&b, &a);
+            for v in [&a, &b] {
+                let live = n(v, "SELECT id FROM accounts WHERE deleted_ms IS NULL");
+                assert_eq!(
+                    archive_state(v, live),
+                    expected,
+                    "twin_first: {twin_first}, bank: {bank_state}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn twin_refund_links_use_the_exact_booking_map_and_full_row_collision_rank() {
     for tombstone_wins in [false, true] {
@@ -4961,6 +5108,273 @@ fn booking(v: &Vault, account: i64, ext: &str, fp: &str) {
             params![account, ext, fp],
         )
         .unwrap();
+}
+
+#[test]
+fn offline_loan_source_links_follow_a_folded_moneymoney_account() {
+    let dir = temp_dir("loan-payment-folded-twin");
+    let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+    let twin = wallet(&a, None, "moneymoney-db:25:ba5a6b58", FINOM_IBAN, "EUR");
+    booking(&a, twin, "mm-rate-1", "rate-1");
+    let loan = a
+        .create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+        .unwrap();
+    let source = n(
+        &a,
+        "SELECT id FROM transactions WHERE external_id = 'mm-rate-1'",
+    );
+    a.mirror_offline_loan_payment(source, loan, 80).unwrap();
+    merge(&b, &a);
+
+    let c = comdirect(&a);
+    let bank = wallet(&a, Some(c), FINOM_IBAN, FINOM_IBAN, "EUR");
+    booking(&a, bank, "bank-rate-1", "rate-1");
+    let new_source = n(
+        &a,
+        "SELECT id FROM transactions WHERE external_id = 'bank-rate-1'",
+    );
+    a.mirror_offline_loan_payment(new_source, loan, 80).unwrap();
+    assert_eq!(super::twins::fold_twins(&a.db().unwrap()).unwrap(), 1);
+    assert!(a.mirror_offline_loan_payment(new_source, loan, 80).is_err());
+
+    both_ways(&a, &b);
+    for v in [&a, &b] {
+        let loan = n(v, "SELECT id FROM accounts WHERE kind = 'loan'");
+        assert_eq!(
+            n(
+                v,
+                &format!("SELECT balance_cents FROM accounts WHERE id = {loan}")
+            ),
+            -420
+        );
+        assert_eq!(
+            n(
+                v,
+                &format!(
+                    "SELECT count(*) FROM transactions WHERE account_id = {loan} AND deleted_ms IS NULL"
+                )
+            ),
+            1
+        );
+        let source = n(
+            v,
+            "SELECT id FROM transactions WHERE external_id = 'bank-rate-1' AND deleted_ms IS NULL",
+        );
+        assert!(v.mirror_offline_loan_payment(source, loan, 80).is_err());
+    }
+}
+
+#[test]
+fn offline_loan_converges_when_two_devices_fold_the_same_rate_into_different_bank_accounts() {
+    for reverse in [false, true] {
+        let dir = temp_dir("loan-payment-competing-folds");
+        let (a, b) = (open(&dir, "a.db"), open(&dir, "b.db"));
+        let imported = wallet(&a, None, "moneymoney-db:25:ba5a6b58", FINOM_IBAN, "EUR");
+        booking(&a, imported, "mm-rate-1", "rate-1");
+        a.create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+            .unwrap();
+        merge(&b, &a);
+
+        // Two real login identities keep the bank bookings distinct on merge.
+        // The same imported booking is the explicit match on each device.
+        for (vault, suffix) in [(&a, "a"), (&b, "b")] {
+            let connection = vault
+                .add_bank_connection(
+                    ConnectorKind::Comdirect,
+                    String::new(),
+                    format!("login-{suffix}"),
+                )
+                .unwrap();
+            let bank = wallet(
+                vault,
+                Some(connection),
+                &format!("bank-{suffix}"),
+                FINOM_IBAN,
+                "EUR",
+            );
+            booking(vault, bank, &format!("rate-{suffix}"), "rate-1");
+            assert_eq!(super::twins::fold_twins(&vault.db().unwrap()).unwrap(), 1);
+            let source = n(
+                vault,
+                &format!("SELECT id FROM transactions WHERE external_id='rate-{suffix}'"),
+            );
+            let loan = n(vault, "SELECT id FROM accounts WHERE kind='loan'");
+            vault.mirror_offline_loan_payment(source, loan, 80).unwrap();
+        }
+
+        if reverse {
+            both_ways(&b, &a);
+        } else {
+            both_ways(&a, &b);
+        }
+        for vault in [&a, &b] {
+            assert_eq!(
+                n(
+                    vault,
+                    "SELECT balance_cents FROM accounts WHERE kind='loan'"
+                ),
+                -420
+            );
+            assert_eq!(
+                n(
+                    vault,
+                    "SELECT COUNT(DISTINCT source_id) FROM offline_loan_payments"
+                ),
+                1
+            );
+            assert_eq!(
+                text(
+                    vault,
+                    "SELECT DISTINCT t.external_id FROM offline_loan_payments p JOIN transactions t ON t.id=p.source_id"
+                ),
+                "rate-a"
+            );
+            let loan = n(vault, "SELECT id FROM accounts WHERE kind='loan'");
+            for external_id in ["rate-a", "rate-b"] {
+                let source = n(
+                    vault,
+                    &format!("SELECT id FROM transactions WHERE external_id='{external_id}'"),
+                );
+                assert!(vault.mirror_offline_loan_payment(source, loan, 80).is_err());
+            }
+        }
+
+        // The active copy of the source changes if the first bank booking is removed.
+        // Keep a second loan with no mirrored copy under the fallback source's key.
+        let single_copy = a
+            .create_offline_loan("Single copy".into(), "EUR".into(), 1000, 500)
+            .unwrap();
+        let preferred = n(&a, "SELECT id FROM transactions WHERE external_id='rate-a'");
+        a.mirror_offline_loan_payment(preferred, single_copy, 80)
+            .unwrap();
+        exec(
+            &a,
+            "UPDATE transactions SET deleted_ms=1 WHERE external_id='rate-a'",
+        );
+        let fallback = n(&a, "SELECT id FROM transactions WHERE external_id='rate-b'");
+        assert!(
+            a.mirror_offline_loan_payment(fallback, single_copy, 80)
+                .is_err()
+        );
+        both_ways(&a, &b);
+        for vault in [&a, &b] {
+            assert_eq!(
+                text(
+                    vault,
+                    "SELECT DISTINCT t.external_id FROM offline_loan_payments p JOIN transactions t ON t.id=p.source_id"
+                ),
+                "rate-b"
+            );
+            assert_eq!(
+                n(
+                    vault,
+                    "SELECT COUNT(*) FROM accounts WHERE kind='loan' AND balance_cents=-420"
+                ),
+                2
+            );
+        }
+    }
+}
+
+#[test]
+fn physical_account_dedup_preserves_loan_sources_and_incoming_aliases() {
+    for (retained_deleted, retained_was_alias) in [(false, false), (true, false), (true, true)] {
+        let dir = temp_dir("physical-dedup-loan-sources");
+        let (local, stale) = (open(&dir, "local.db"), open(&dir, "stale.db"));
+        let imported = wallet(&local, None, "imported", "", "EUR");
+        booking(&local, imported, "mm-rate", "rate");
+        let loan = local
+            .create_offline_loan("Loan".into(), "EUR".into(), 1000, 500)
+            .unwrap();
+        let original_sql = "SELECT id FROM transactions WHERE external_id='mm-rate'";
+        let original = n(&local, original_sql);
+        merge(&stale, &local);
+        let stale_loan = n(&stale, "SELECT id FROM accounts WHERE kind='loan'");
+        stale
+            .mirror_offline_loan_payment(n(&stale, original_sql), stale_loan, 80)
+            .unwrap();
+
+        let keep_login = comdirect(&local);
+        exec(
+            &local,
+            &format!(
+            "INSERT INTO bank_connections(connector, display_name, login_name)
+             SELECT connector, display_name, login_name FROM bank_connections WHERE id={keep_login}"
+        ),
+        );
+        let duplicate_login = n(&local, "SELECT MAX(id) FROM bank_connections");
+        let add_source = |connection| {
+            let account = wallet(&local, Some(connection), "bank-account", "", "EUR");
+            booking(&local, account, "bank-rate", "rate");
+            n(
+                &local,
+                &format!("SELECT id FROM transactions WHERE account_id={account}"),
+            )
+        };
+        let retained = add_source(keep_login);
+        let duplicate = add_source(duplicate_login);
+        if retained_deleted {
+            exec(
+                &local,
+                &format!("UPDATE transactions SET deleted_ms=3 WHERE id={retained}"),
+            );
+        }
+        {
+            let db = local.db().unwrap();
+            crate::offline::loan_payments::move_source(&db, original, duplicate).unwrap();
+            if retained_was_alias {
+                crate::offline::loan_payments::move_source(&db, retained, duplicate).unwrap();
+            }
+        }
+        exec(
+            &local,
+            &format!("UPDATE transactions SET deleted_ms=2 WHERE id={original}"),
+        );
+        let payment = local
+            .mirror_offline_loan_payment(duplicate, loan, 80)
+            .unwrap();
+
+        assert_eq!(local.deduplicate_bank_connections().unwrap(), 1);
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT COUNT(*) FROM transactions WHERE id={duplicate}")
+            ),
+            0
+        );
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT source_id FROM offline_loan_payments WHERE payment_id={payment}")
+            ),
+            retained
+        );
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT new_id FROM offline_loan_source_moves WHERE old_id={original}")
+            ),
+            retained
+        );
+
+        // The stale peer supplies a separate mirrored copy using the old ID.
+        merge(&local, &stale);
+        assert_eq!(
+            n(
+                &local,
+                &format!("SELECT balance_cents FROM accounts WHERE id={loan}")
+            ),
+            -420
+        );
+        assert_eq!(n(&local, "SELECT COUNT(*) FROM offline_loan_payments"), 2);
+        assert_eq!(
+            n(
+                &local,
+                "SELECT COUNT(DISTINCT source_id) FROM offline_loan_payments"
+            ),
+            1
+        );
+    }
 }
 
 /// A login set up after the MoneyMoney import (Enable Banking) took over an

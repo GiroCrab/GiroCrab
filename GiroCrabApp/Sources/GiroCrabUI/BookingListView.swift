@@ -182,7 +182,8 @@ struct BookingStreamView: View {
         .focusEffectDisabled()
         .focused($focused)
         .onAppear {
-            focused = model.options.screenshotPath == nil
+            // also runs when a sidebar selection brings the list back, e.g. after a depot
+            if model.listMayTakeFocusOnAppear { focused = true }
             #if os(macOS)
             ClickModifiers.install()
             #endif
@@ -254,7 +255,8 @@ struct BookingStreamView: View {
                         DemoBanner()
                     }
                     #if os(iOS)
-                    Picker("Ansicht", selection: scope) {
+                    // writes through `selectScope` like the macOS toolbar picker: a chosen category ends
+                    Picker("Ansicht", selection: Binding(get: { scope.wrappedValue }, set: { model.selectScope($0) })) {
                         ForEach(BookingScope.ordered, id: \.self) { Text($0.shortTitle).tag($0) }
                     }
                     .pickerStyle(.segmented)
@@ -387,7 +389,7 @@ private struct BookingScopePicker: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Picker("Ansicht", selection: Binding(get: { model.scope }, set: { model.scope = $0 })) {
+        Picker("Ansicht", selection: Binding(get: { model.scope }, set: { model.selectScope($0) })) {
             ForEach(BookingScope.ordered, id: \.self) { Text($0.title).tag($0) }
         }
         .pickerStyle(.segmented)
@@ -1228,9 +1230,19 @@ private struct SelectionScroller: View {
         // Without animation for the keyboard: while an arrow key is held down each step restarted
         // it, and the list fell behind the selection until the key was released.
         withAnimation(byKeyboard ? nil : Motion.animation(.easeOut(duration: 0.15))) {
-            // Expanded rows can exceed the viewport: keep their title visible.
-            proxy.scrollTo(slot, anchor: density == .standard ? nil : .top)
+            proxy.scrollTo(slot, anchor: SelectionScrollAnchor.anchor(density: density, byKeyboard: byKeyboard))
         }
+    }
+}
+
+/// Where the stream scrolls a newly selected booking to (#993).
+enum SelectionScrollAnchor {
+    /// Keyboard moves in a dense list pin the row to the top: an expanded row can exceed
+    /// the viewport, and its title must stay visible. A click hits a row that is already
+    /// visible: scroll only as far as needed (usually not at all), so the row expands in
+    /// place instead of the whole list jumping.
+    static func anchor(density: BookingDensity, byKeyboard: Bool) -> UnitPoint? {
+        density != .standard && byKeyboard ? .top : nil
     }
 }
 

@@ -365,7 +365,7 @@ impl Vault {
     /// A new access token for external tools, shown once: only its hash is
     /// stored, and it replaces (revokes) the previous one.
     pub fn create_local_api_token(&self) -> Result<String, CoreError> {
-        use rand::RngCore;
+        use rand::Rng;
         let mut raw = [0u8; 32];
         rand::rng().fill_bytes(&mut raw);
         let token = format!("gcapi_{}", hex::encode(raw));
@@ -684,7 +684,7 @@ impl Vault {
                FROM {} e
                LEFT JOIN categories c ON c.id = e.category_id AND c.deleted_ms IS NULL
               GROUP BY c.id, e.currency",
-            crate::planning::effective_sql(
+            crate::planning::stored_effective_sql(
                 ", t.currency AS currency",
                 &format!(
                     " AND t.account_id IN ({}) AND t.booking_date BETWEEN ?1 AND ?2",

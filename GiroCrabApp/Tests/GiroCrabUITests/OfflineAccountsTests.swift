@@ -116,12 +116,70 @@ final class OfflineAccountsTests: XCTestCase {
         try await awaitBalance(of: id, 95_00)
     }
 
-    func testSheetOffersCashAndSavingsWithEuroFirst() {
-        XCTAssertEqual(OfflineAccountOptions.kinds, [.cash, .savings, .timeDeposit])
+    func testSheetOffersOfflineLoansWithEuroFirst() {
+        XCTAssertEqual(OfflineAccountOptions.kinds, [.cash, .savings, .timeDeposit, .loan])
         XCTAssertEqual(OfflineAccountOptions.currencies.first, "EUR")
         XCTAssertEqual(OfflineAccountOptions.defaultCurrency, "EUR")
         XCTAssertNotEqual(OfflineAccountOptions.title(.cash), OfflineAccountOptions.title(.savings))
         XCTAssertNotEqual(OfflineAccountOptions.title(.timeDeposit), OfflineAccountOptions.title(.savings))
+    }
+
+    func testLoanPaymentCopiesOnlyPrincipalIntoTheOfflineAccount() async throws {
+        let vault = try XCTUnwrap(model.vault)
+        let loan = try vault.createOfflineLoan(
+            name: "Autokredit", currency: "EUR", originalCents: 100_000_00, remainingCents: 40_000_00)
+        model.reloadAccounts()
+        try await awaitBalance(of: loan, -40_000_00)
+        let account = try XCTUnwrap(model.account(for: loan))
+        XCTAssertTrue(model.isOffline(loan))
+        XCTAssertEqual(account.initialBalanceCents, 100_000_00)
+        model.openManualBooking(accountId: loan)
+        XCTAssertEqual(model.offlineStore.bookingRequest?.accountId, loan)
+
+        let payment = try model.saveManualBooking(accountId: cash.id, bookingId: nil, setup: setup(-1_200_00, "Rate"))
+        let booking = try XCTUnwrap(try bookings(of: cash.id).first { $0.id == payment })
+        model.mirror(booking, to: account)
+        let request = try XCTUnwrap(model.offlineStore.loanPaymentRequest)
+        XCTAssertEqual(request.booking.id, payment)
+        XCTAssertTrue(try bookings(of: loan).isEmpty)
+        try model.mirrorLoanPayment(request, principalCents: 1_000_00)
+        try await awaitBalance(of: loan, -39_000_00)
+        XCTAssertEqual(try bookings(of: loan).map(\.amountCents), [1_000_00])
+        XCTAssertEqual(try bookings(of: cash.id).first { $0.id == payment }?.amountCents, -1_200_00)
+    }
+
+    func testPendingLoanPaymentIsInvalidatedByVaultSwitchAndLock() async throws {
+        let original = try XCTUnwrap(model.vault)
+        let cashID = cash.id
+        let loanID = try original.createOfflineLoan(
+            name: "Autokredit", currency: "EUR", originalCents: 100_000_00, remainingCents: 40_000_00)
+        model.reloadAccounts()
+        try await awaitBalance(of: loanID, -40_000_00)
+        let sourceID = try model.saveManualBooking(accountId: cashID, bookingId: nil, setup: setup(-1_200_00, "Rate"))
+        let booking = try XCTUnwrap(try bookings(of: cashID).first { $0.id == sourceID })
+        let loan = try XCTUnwrap(model.account(for: loanID))
+
+        // The snapshot has the same numeric account and booking IDs as the original.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appendingPathComponent("copy.girocrab").path
+        try original.writeSnapshot(destPath: path)
+        let key = Data((0..<32).map { UInt8(($0 * 7 + 3) & 0xFF) })
+        let copy = try Vault.open(path: path, key: key)
+
+        model.mirror(booking, to: loan)
+        let request = try XCTUnwrap(model.offlineStore.loanPaymentRequest)
+        model.useVault(copy, demo: true)
+        XCTAssertNil(model.offlineStore.loanPaymentRequest)
+        XCTAssertThrowsError(try model.mirrorLoanPayment(request, principalCents: 1_000_00))
+        XCTAssertTrue(try bookings(of: loanID).isEmpty)
+
+        model.mirror(booking, to: loan)
+        let newRequest = try XCTUnwrap(model.offlineStore.loanPaymentRequest)
+        model.releaseVaultState()
+        XCTAssertNil(model.offlineStore.loanPaymentRequest)
+        XCTAssertThrowsError(try model.mirrorLoanPayment(newRequest, principalCents: 1_000_00))
     }
 
     /// #1049: header, chart axis and bookings of a USD account show dollars, not euros.

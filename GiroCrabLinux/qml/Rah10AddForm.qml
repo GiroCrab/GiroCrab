@@ -69,11 +69,16 @@ ColumnLayout {
         const args = { path: path, password: password.text, display_name: name.text,
                        bank_keys: candidates, expected_fingerprints: candidates.map(k => expected[k.key_type] || "") }
         const secret = password.text
+        // taken now: adding may wait for the policy, after the assistant closed
+        const history = AppModel.newLoginHistory
         AppModel.withFreshBankingPolicy(() => {
             if (!AppModel.bankingAllowsAdding(AppModel.bankingGateForNew("FinTsGeneric"))) { busy = false; return }
             if (AppModel.demoActive && AppModel.hasOwnVault) AppModel.useVault(false)
             AppModel.coreAsync("add_rah10_connection_with_bank_keys", args, id => {
                 busy = false
+                // the login exists now: show the error but finish, a second click would add it again
+                try { AppModel.requestNewLoginHistory(history, id) }
+                catch (e) { AppModel.errorMessage = e.message }
                 password.text = ""; path = ""
                 AppModel.reloadSettings()
                 if (form.host) form.host.close()

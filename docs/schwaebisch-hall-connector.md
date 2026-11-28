@@ -1,8 +1,8 @@
 # Schwäbisch-Hall-Anbindung („Mein Konto“)
 
 <!-- sync:connector-note:start -->
-> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur Schwäbisch Hall. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
-> This connector is an independent community project and is not affiliated with Schwäbisch Hall. Interface: unofficial. Using unofficial interfaces may violate the bank's terms of service.
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Schwäbisch Hall. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Schwäbisch Hall. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
 
 Status: **Rückmeldungen mit echten Verträgen erwünscht** – `ConnectorKind::SchwaebischHall`
@@ -21,9 +21,16 @@ die das Portal selbst lädt. Unten stehen nur Pfade, Feldnamen und Regeln, keine
 ## Zugang
 
 * Im Assistenten „Bank hinzufügen“ per „Schwäbisch Hall“, „Bausparvertrag“, „BSH“ oder BLZ zu finden.
-* Der Name der Verbindung ist frei wählbar. Zugangsdaten speichert GiroCrab nicht: Die Anmeldung
-  (Benutzername, Passwort und gegebenenfalls ein zweiter Faktor) läuft im eingebetteten Browser
-  auf den Seiten der Bausparkasse.
+* Der Name der Verbindung ist frei wählbar. Die Anmeldung (Benutzername, Passwort und
+  gegebenenfalls ein zweiter Faktor) läuft im eingebetteten Browser auf den Seiten der
+  Bausparkasse.
+* macOS/iOS: Optional schaltet man in den Einstellungen der Verbindung
+  „Anmeldedaten im Tresor speichern“ ein: GiroCrab legt Benutzername und Passwort dann
+  verschlüsselt im Tresor ab und tippt sie beim nächsten Öffnen des Fensters in das
+  Anmeldeformular ein (nur leere Felder, kein Absenden – „Anmelden“ und der zweite Faktor
+  bleiben eine bewusste Handlung). Nach dem Login stößt das Fenster den Abruf selbst an und
+  schließt sich nach vollständigem Erfolg. Unter Linux gibt es diese Speicherung und das
+  Vorbefüllen bisher nicht (dort meldet man sich weiterhin von Hand an).
 * Die Sitzungs-Cookies bleiben wie bei den anderen Portal-Anbindungen im Browser-Datenspeicher
   der App; das Portal beendet die Sitzung nach einiger Zeit selbst. „Web-Sitzung (Cookies)
   löschen …“ in den Einstellungen der Verbindung entfernt sie sofort.

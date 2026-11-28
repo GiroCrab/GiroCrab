@@ -108,20 +108,22 @@ fn unescape(s: &str) -> String {
 }
 
 impl FinTsConnector {
-    /// HKCDB: the standing orders of an account (all pages). Orders the client
-    /// cannot read (no payment in the pain.001) are left out.
+    /// HKCDB: the standing orders of an account (all pages) and how many HICDB
+    /// the client could not read (no schedule or no payment in the pain.001).
+    /// Those are left out of the list; the caller says so (#1902).
     pub(super) async fn standing_orders(
         &mut self,
         ctx: &ConnectContext,
         acc: &SepaAccount,
         label: &str,
-    ) -> CoreResult<Vec<RemoteStandingOrder>> {
+    ) -> CoreResult<(Vec<RemoteStandingOrder>, usize)> {
         let v = self.version("HKCDB");
         let descriptor = self
             .pain_version("HKCDB")
             .unwrap_or(sepa::PainVersion::V03)
             .descriptor();
         let mut out = Vec::new();
+        let mut unreadable = 0;
         let mut touchdown: Option<String> = None;
         for _ in 0..20 {
             let mut seg = SegmentBuilder::new("HKCDB", 3, v)
@@ -133,13 +135,14 @@ impl FinTsConnector {
             }
             let r = self.request(ctx, "HKCDB", seg.build()).await?;
             for s in r.all("HICDB") {
-                if let Some(o) = parse_hicdb(s, label) {
-                    out.push(o);
+                match parse_hicdb(s, label) {
+                    Some(o) => out.push(o),
+                    None => unreadable += 1,
                 }
             }
             touchdown = r.code("3040").and_then(|c| c.3.first().cloned());
             if touchdown.is_none() {
-                return Ok(out);
+                return Ok((out, unreadable));
             }
         }
         // 20 pages and the bank still has more: not complete, so the caller keeps the stored list

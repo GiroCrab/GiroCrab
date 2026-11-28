@@ -14,6 +14,11 @@ stehen in `scripts/sync_docs.py` (Tests: `python3 -m unittest scripts/test_sync_
   erzwingt eine Zeile pro `ConnectorKind`); die Website-Tabelle braucht kein JS und keine Inline-Styles (CSP).
   Die Schnittstellen-Gruppen behalten die Katalogreihenfolge; innerhalb jeder Gruppe werden die angezeigten
   Banknamen alphabetisch sortiert (ohne Unterscheidung zwischen Groß- und Kleinschreibung).
+- Der Hinweis zwischen `<!-- sync:connector-note:start -->` und `<!-- sync:connector-note:end -->` oben in jedem
+  `docs/<key>-connector.md` (Liste `CONNECTOR_DOCS` in `sync_docs.py`, alphabetisch): keine Verbindung zum Anbieter,
+  Schnittstelle offiziell oder inoffiziell laut Feld `official` in `BANK_MATRIX`. Nur diese Blöcke neu erzeugen:
+  `python3 scripts/sync_docs.py notes .`. Die Tests verlangen für jede Konnektor-Doku einen Eintrag und den aktuellen
+  Hinweis, er gehört also schon in den PR des Konnektors.
 - Alles andere (Prosa, Screenshots, „Neu in v…“) bleibt Handarbeit.
 
 ## Aufruf

@@ -41,6 +41,7 @@ Befehle aus dem Wurzelverzeichnis des Repos. `cargo`-Befehle brauchen `GIROCRAB_
 | 14 | Direkte Abhängigkeiten stehen in den Lizenzhinweisen | `scripts/check-third-party-notices.sh` | Indirekte Abhängigkeiten, Richtigkeit der Lizenzangabe ([#1800](https://github.com/GiroCrab/GiroCrab/issues/1800)) |
 | 15 | Portal-Skripte lesen die erwarteten Daten | `node --test` mit den Dateien aus dem Schritt „Test FNZ portal browser scripts“ in `ci.yml` | Domain-Prüfung und Navigation der WebViews haben keine eigenen Tests ([#1797](https://github.com/GiroCrab/GiroCrab/issues/1797)) |
 | 16 | Schlüsselbund-Regeln (Biometrie, nur auf diesem Gerät) | Swift `KeychainBypassTests`, `KeychainSyncAvailabilityTests` (Einstellungen und Entwicklerschalter); die Schutzklassen selbst nur per Code-Review (`VaultKeyManager.swift`) | Das Verhalten des Schlüsselbunds auf einem echten Gerät ([#1795](https://github.com/GiroCrab/GiroCrab/issues/1795), [#1798](https://github.com/GiroCrab/GiroCrab/issues/1798)) |
+| 17 | Änderungen am Zahlungspfad sind Code-Ownern zugewiesen, ohne Umgehungsmuster, mit angehakter Zahlungspfad-Checkliste im PR | `scripts/lint-transfer-integrity.sh` (Workflow `pr-checklist.yml`) | Ob das Repository Code-Owner-Reviews erzwingt; Umgehungen nur als Textsuche; der Haken ist eine Selbstauskunft |
 
 Swift-Tests einzeln: `cd GiroCrabApp && swift test -q --filter BankingPolicyTests`.
 
@@ -102,8 +103,7 @@ sha256sum --check --ignore-missing SHA256SUMS-linux.txt
 - Es gab kein externes Audit.
 - Builds sind nicht reproduzierbar dokumentiert: Wer selbst baut, kann das Ergebnis nicht bitgenau mit dem Release vergleichen.
 - Actions sind erst teilweise auf Commit-SHAs festgelegt ([#1802](https://github.com/GiroCrab/GiroCrab/issues/1802)),
-  Dependabot ([#1801](https://github.com/GiroCrab/GiroCrab/issues/1801)), CODEOWNERS
-  ([#1799](https://github.com/GiroCrab/GiroCrab/issues/1799)), SBOM
+  Dependabot ([#1801](https://github.com/GiroCrab/GiroCrab/issues/1801)), SBOM
   ([#1805](https://github.com/GiroCrab/GiroCrab/issues/1805)) und Tag-Rulesets
   ([#1804](https://github.com/GiroCrab/GiroCrab/issues/1804)) stehen aus.
 - Die Transparenzkarte an Pull Requests ist eine Selbstauskunft ([`ai-transparency.md`](ai-transparency.md),

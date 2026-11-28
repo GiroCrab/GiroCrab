@@ -78,7 +78,7 @@ PERF_BENCH_RE = re.compile(r"\bcategory_perf\b", re.I)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 REFLECTION_HEAD_RE = re.compile(r"^#{1,6}\s*(?:🤖\s*)?AI Process Reflection\b.*$", re.I | re.M)
 REFLECTION_ITEM_RE = re.compile(
-    r"^\s*(?:[-*]\s*)?\**(Human-Steering|AI-Agency|Review-Focus|Security-Check|Perf-Check)[ \t]*:\**[ \t]*(\S.*?)?[ \t\r]*$", re.I | re.M)
+    r"^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?\**(Human-Steering|AI-Agency|Review-Focus|Security-Check|Perf-Check)[ \t]*:\**[ \t]*(\S.*?)?[ \t\r]*$", re.I | re.M)
 # Indented answer below a label that stands alone (`- **AI-Agency:**` + `  - …` / `  1. …`).
 REFLECTION_SUB_RE = re.compile(r"^[ \t]+(?:[-*+]|\d+[.)])?[ \t]*(\S.*?)[ \t\r]*$")
 

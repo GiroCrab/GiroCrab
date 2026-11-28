@@ -123,10 +123,10 @@ QtObject {
         }
         function copy(c, parent, name, depth) {
             const created = AppModel.core("create_category", { name: name, parent_id: parent, sf_symbol: c.sf_symbol, color_hex: c.color_hex })
-            if (depth < 16) for (const child of (children[c.id] || [])) copy(child, created, child.name, depth + 1)
+            if (depth < 16) for (const child of (children[c.id] || [])) copy(child, created, child.edit_name, depth + 1)
             return created
         }
-        const newRoot = AppModel.run(() => copy(root, root.parent_id, root.name + " " + qsTr("Kopie"), 0))
+        const newRoot = AppModel.run(() => copy(root, root.parent_id, root.edit_name + " " + qsTr("Kopie"), 0))
         AppModel.reloadCategories()
         if (root.parent_id !== null && root.parent_id !== undefined) expandCategoryPath(root.parent_id)
         return newRoot === undefined ? null : newRoot

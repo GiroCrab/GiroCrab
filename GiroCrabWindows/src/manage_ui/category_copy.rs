@@ -26,7 +26,7 @@ impl<'a> From<&'a Category> for Node<'a> {
         Node {
             id: c.id,
             parent: c.parent_id,
-            name: &c.name,
+            name: &c.edit_name,
             symbol: &c.sf_symbol,
             color: &c.color_hex,
         }

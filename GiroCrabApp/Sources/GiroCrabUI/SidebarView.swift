@@ -39,7 +39,7 @@ struct SidebarView: View {
             // „Neue Umsätze“ (#352)
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
-                Image(systemName: "tray.full").foregroundStyle(Theme.secondary).frame(width: 20)
+                SidebarNavigationIcon(systemName: "tray.full")
                 Text("Neue Umsätze").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
@@ -53,7 +53,7 @@ struct SidebarView: View {
             // „Vermögen“ (#348): the counterpart of „Alle Konten“
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
-                Image(systemName: "chart.pie").foregroundStyle(Theme.secondary).frame(width: 20)
+                SidebarNavigationIcon(systemName: "chart.pie")
                 Text("Vermögen").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
@@ -90,7 +90,7 @@ struct SidebarView: View {
             // „Geplant“ (#240): ordered at the bank, not booked yet
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
-                Image(systemName: "calendar.badge.clock").foregroundStyle(Theme.secondary).frame(width: 20)
+                SidebarNavigationIcon(systemName: "calendar.badge.clock")
                 Text("Geplant").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
@@ -100,7 +100,7 @@ struct SidebarView: View {
             // „Lastschriften“ (#143): mandates and collections
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
-                Image(systemName: "arrow.down.left.arrow.up.right.square").foregroundStyle(Theme.secondary).frame(width: 20)
+                SidebarNavigationIcon(systemName: "arrow.down.left.arrow.up.right.square")
                 Text("Lastschriften").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
@@ -110,7 +110,7 @@ struct SidebarView: View {
             // „Abos“ (#1787): marked recurring expenses
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
-                Image(systemName: "repeat.circle").foregroundStyle(Theme.secondary).frame(width: 20)
+                SidebarNavigationIcon(systemName: "repeat.circle")
                 Text("Abos & Verträge").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
@@ -121,7 +121,7 @@ struct SidebarView: View {
             if !documentsCollapsed {
             HStack(spacing: DisclosureChevron.gap) {
                 SidebarLeadingSlot()
-                Image(systemName: "doc.on.doc").foregroundStyle(Theme.secondary).frame(width: 20)
+                SidebarNavigationIcon(systemName: "doc.on.doc")
                 Text("Belege & Postbox").fontWeight(.medium).appDefaultFont()
                 Spacer()
             }
@@ -175,26 +175,47 @@ struct SidebarView: View {
                     .listRowInsets(Self.rowInsets)
                     .selectionDisabled()
             }
+            if !model.categoriesCollapsed, model.scope != .all {
+                Text("Diese Kategorien gehören zu „\(model.scope.title)“.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, DisclosureChevron.iconInset)
+                    .listRowInsets(Self.rowInsets)
+                    .selectionDisabled()
+            }
             if !model.categoriesCollapsed {
                 Group {
-                    HStack(spacing: DisclosureChevron.gap) {
-                        SidebarLeadingSlot()
-                        HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
-                            Image(systemName: "questionmark.folder").foregroundStyle(Theme.warning).frame(width: 20)
-                            Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
-                            Spacer()
+                    // with a booking filter on, only that filter's categories are listed (no "Ohne Kategorie")
+                    if model.scope == .all {
+                        HStack(spacing: DisclosureChevron.gap) {
+                            SidebarLeadingSlot()
+                            HStack(spacing: CategoryRow.symbolGap) { // same gap as the rows below (#1534)
+                                Image(systemName: "questionmark.folder")
+                                    .foregroundStyle(Theme.warning)
+                                    .modifier(SidebarIconColumn())
+                                Text(model.uncategorizedLabel).appDefaultFont().sensitive(.labels)
+                                Spacer()
+                            }
                         }
-                    }
-                    .contextMenu {
-                        Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
-                        if !model.uncategorizedName.isEmpty {
-                            Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                        .contextMenu {
+                            Button("Umbenennen …", systemImage: "pencil") { model.groupDialog = .renameUncategorized }
+                            if !model.uncategorizedName.isEmpty {
+                                Button("Standardbezeichnung", systemImage: "arrow.uturn.backward") { model.setUncategorizedName("") }
+                            }
                         }
+                        .badge(model.uncategorizedCount)
+                        .tag(SidebarItem.uncategorized)
+                        .listRowInsets(Self.rowInsets)
                     }
-                    .badge(model.uncategorizedCount)
-                    .tag(SidebarItem.uncategorized)
-            .listRowInsets(Self.rowInsets)
-                    categoryRows(model.categoryTree, depth: 0)
+                    // Only `.all` shows the full tree. With a filter on, a missing set (still loading or
+                    // the load failed) must not fall back to every category, so the list stays empty.
+                    categoryRows(
+                        model.scope == .all
+                            ? model.categoryTree
+                            : (model.scopeCategoryIDs.map { model.categoryTree.limited(to: $0) } ?? []),
+                        depth: 0
+                    )
                 }
             }
         }
@@ -566,9 +587,10 @@ struct SidebarView: View {
                 .padding(.leading, indent)
                 .listRowInsets(Self.rowInsets)
                 #if os(macOS)
-                // only leaves take dragged bookings, as only leaves are assigned;
-                // a dragged category goes above or below, or into a main category (#977)
-                .modifier(categoryDropSlot(node, indent: indent, takesBookings: true))
+                // only leaves of the full tree take dragged bookings, as only those are assigned;
+                // a booking filter may hide the children of a parent, which must not make it a leaf here.
+                // A dragged category goes above or below, or into a main category (#977)
+                .modifier(categoryDropSlot(node, indent: indent, takesBookings: model.categoryTree.node(node.id)?.children == nil))
                 #endif
                 .tag(SidebarItem.category(node.id))
                 .contextMenu { categoryMenu(node.category) }
@@ -657,6 +679,9 @@ private struct AccountRowHeight: ViewModifier {
 /// so they stay as they are and only the selection highlight moves.
 private struct SidebarSelectionList<Content: View>: View {
     @Environment(AppModel.self) private var model
+    #if os(macOS)
+    @FocusState private var focused: Bool
+    #endif
     @Environment(\.textScale) private var textScale
     let density: SidebarDensity
     let content: Content
@@ -678,6 +703,10 @@ private struct SidebarSelectionList<Content: View>: View {
             content.listRowSeparator(.hidden)
         }
         .contentMargins(.top, 14, for: .scrollContent)
+        .focused($focused)
+        .onChange(of: focused) { _, focused in model.sidebarHasKeyboardFocus = focused }
+        // locked: the state goes with the view, without a change
+        .onDisappear { model.sidebarHasKeyboardFocus = false }
         if density.usesTighterAccountSpacing {
             // The macOS sidebar style has its own minimum height.
             list.listStyle(.inset)
@@ -748,7 +777,7 @@ struct SectionHeader: View {
             Image(systemName: sfSymbol)
                 .appFont(.body, weight: .semibold)
                 .foregroundStyle(.secondary)
-                .frame(width: 20)
+                .modifier(SidebarIconColumn())
                 .accessibilityHidden(true)
             Text(name)
                 .sensitive(nameRedaction)
@@ -767,6 +796,36 @@ struct SectionHeader: View {
     }
 }
 
+struct SidebarNavigationIcon: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .foregroundStyle(Theme.secondary)
+            .modifier(SidebarIconColumn())
+            .accessibilityHidden(true)
+    }
+}
+
+/// Reserves at least the symbol’s intrinsic width when text scaling outgrows the column.
+struct SidebarIconColumn: ViewModifier {
+    @Environment(\.textScale) private var textScale
+
+    func body(content: Content) -> some View {
+        content.fixedSize().frame(minWidth: 20 * textScale)
+    }
+}
+
+extension EnvironmentValues {
+    var sidebarUsesLargeText: Bool {
+        #if os(macOS)
+        textScale > 1
+        #else
+        dynamicTypeSize.isAccessibilitySize
+        #endif
+    }
+}
+
 struct AccountRow: View {
     @Environment(AppModel.self) private var model
     /// Selected row: the amount uses the hierarchical `.primary` style, which
@@ -775,13 +834,14 @@ struct AccountRow: View {
     private var onSelection: Bool { model.sidebarRowSelection(for: .account(account.id)).isSelected }
     @Environment(\.reportRedaction) private var redaction
     @Environment(\.textScale) private var textScale
+    @Environment(\.sidebarUsesLargeText) private var usesLargeText
     @AppStorage(SidebarDensity.defaultsKey) private var density: SidebarDensity = .defaultValue
     let account: Account
     var syncing: Bool = false
 
     private var repaid: Double? {
         guard account.kind == .loan, let p = account.initialBalanceCents, p > 0 else { return nil }
-        return max(0, min(1, 1 - Double(-account.balanceCents) / Double(p)))
+        return max(0, min(1, 1 - -Double(account.balanceCents) / Double(p)))
     }
 
     private var signetSize: CGFloat { density == .compact ? 20 : 24 }
@@ -791,38 +851,32 @@ struct AccountRow: View {
     var body: some View {
         let line2 = secondLine
         VStack(alignment: .leading, spacing: density.usesTighterAccountSpacing ? 0 : 1) {
-            HStack(spacing: signetGap) {
+            HStack(alignment: usesLargeText ? .top : .center, spacing: signetGap) {
                 AccountSignet(account: account, size: signetSize, color: model.accountColor(account.id), onSelection: onSelection)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text(account.name)
-                            .appFont(density == .compact ? .callout : .body, weight: .medium)
-                            .lineLimit(1)
-                            .sensitive()
-                            .help(redaction.masking(account.owner))
-                        if density == .spacious && showsInitials(line2) {
-                            Text(verbatim: SidebarDensity.initials(of: account.owner))
-                                .appFont(.caption2, weight: .semibold)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 4)
-                                .background(.secondary.opacity(0.15), in: Capsule())
-                                .fixedSize()
-                                .sensitive()
+                if usesLargeText {
+                    VStack(alignment: .leading, spacing: 2) {
+                        accountName
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 4) {
+                                indicators(line2)
+                                Spacer(minLength: 0)
+                                accountBalance
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 4) { indicators(line2) }
+                                accountBalance.frame(maxWidth: .infinity, alignment: .trailing)
+                            }
                         }
-                        revokedIcon
-                        NewCountBadge(count: Int(account.newCount), onSelection: onSelection)
-                            .layoutPriority(1)
-                        if syncing {
-                            ProgressView().controlSize(.mini)
-                                .accessibilityLabel(Text("Wird synchronisiert"))
-                        }
-                        exclusionIndicator
                     }
-                    Spacer(minLength: 4)
-                    // Archived accounts show no balance (#667).
-                    if !account.isArchived {
-                        balance(density == .compact ? .subheadline : .callout)
-                            .layoutPriority(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        HStack(spacing: 4) {
+                            accountName
+                            indicators(line2)
+                        }
+                        Spacer(minLength: 4)
+                        accountBalance
                     }
                 }
             }
@@ -834,6 +888,43 @@ struct AccountRow: View {
         // although its own switch is on — the group that wins, or archiving
         .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
         .accessibilityElement(children: .combine)
+    }
+
+    private var accountName: some View {
+        Text(account.name)
+            .appFont(density == .compact ? .callout : .body, weight: .medium)
+            .lineLimit(usesLargeText ? nil : 1)
+            .fixedSize(horizontal: false, vertical: usesLargeText)
+            .sensitive()
+            .help(redaction.masking(account.owner))
+    }
+
+    @ViewBuilder private func indicators(_ line2: SecondLine) -> some View {
+        if density == .spacious && showsInitials(line2) {
+            Text(verbatim: SidebarDensity.initials(of: account.owner))
+                .appFont(.caption2, weight: .semibold)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+                .background(.secondary.opacity(0.15), in: Capsule())
+                .fixedSize()
+                .sensitive()
+        }
+        revokedIcon
+        NewCountBadge(count: Int(account.newCount), onSelection: onSelection)
+            .layoutPriority(1)
+        if syncing {
+            ProgressView().controlSize(.mini)
+                .accessibilityLabel(Text("Wird synchronisiert"))
+        }
+        exclusionIndicator
+    }
+
+    @ViewBuilder private var accountBalance: some View {
+        // Archived accounts show no balance (#667).
+        if !account.isArchived {
+            balance(density == .compact ? .subheadline : .callout)
+                .layoutPriority(1)
+        }
     }
 
     private enum SecondLine {
@@ -912,14 +1003,15 @@ struct AccountRow: View {
             .help("Archiviert – wird nicht mehr abgerufen")
     }
 
-    /// Bank, note or search hit below the name. Only the plain bank name stays
+    /// Bank, account distinction or search hit below the name. Only the plain bank name stays
     /// visible in reports: owner / IBAN hits and the user's own bank label are personal.
     private func subtitle(_ text: String) -> some View {
         Text(text)
             .sensitive(text == account.bankName && account.bankLabel == nil ? [] : .personal)
             .appFont(.caption2, design: model.isSidebarAccountSearching && text == formatIBAN(account.iban) ? .monospaced : .default)
             .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .lineLimit(usesLargeText ? nil : 1)
+            .fixedSize(horizontal: false, vertical: usesLargeText)
     }
 
     private func balance(_ style: Font.TextStyle) -> some View {
@@ -941,15 +1033,11 @@ struct AccountRow: View {
         return !(model.accountDistinction(account) == account.owner && text.contains(account.owner))
     }
 
-    /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
-    /// Bank name (or the user's label for it, #1467) and the account note (#679), e.g. "Bargeld" without a bank shows just its note.
     private var baseSubtitle: String {
-        let note = model.accountNote(for: account.id).replacingOccurrences(of: "\n", with: " ")
-        // the owner tells accounts of the same name apart
-        let owner = model.accountDistinction(account)
-        return [account.sidebarBankName, owner, note].filter { !$0.isEmpty }.joined(separator: " · ")
+        account.sidebarSubtitle(distinction: model.accountDistinction(account))
     }
 
+    /// While searching, prefer Kontoinhaber or IBAN so the hit is obvious.
     private var searchAwareSubtitle: String {
         guard model.isSidebarAccountSearching else { return baseSubtitle }
         let q = model.sidebarAccountSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -980,7 +1068,7 @@ struct CategoryRow: View {
         HStack(spacing: Self.symbolGap) {
             Image(systemName: category.sfSymbol)
                 .foregroundStyle(Color.readable(hex: category.colorHex).opacity(0.85))
-                .frame(width: 20)
+                .modifier(SidebarIconColumn())
             Text(category.name).lineLimit(1).appDefaultFont().sensitive(.labels)
             Spacer(minLength: 4)
             if category.totalCents != 0 || !other.isEmpty {

@@ -8,6 +8,32 @@ extension AppModel {
     /// Starts a sync (or the login it needs) once the banking policy is fresh
     /// and allows this login; otherwise explains why not.
     func requestSync(_ connection: BankConnection) {
+        // iOS: the main view presents what a sync asks or reports (PIN, TAN, setup form,
+        // browser login, error), and none of it can appear over the Einstellungen sheet
+        // (#1831). Close the sheet; the sync starts once it is gone.
+        if showSettings {
+            let id = connection.id
+            let current = vault
+            // What this request asked for besides the bookings (statements, Postbox, one
+            // account): another login's sync while the sheet closes would clear it.
+            let statements = statementsAccountID
+            let statementsBefore = statementsCountBefore
+            let postbox = postboxConnectionID
+            let accountOnly = syncAccountID
+            afterSettingsDismiss = { [weak self] in
+                // locked or another vault meanwhile: the id may name another login there
+                guard let self, let current, self.vault === current,
+                      let c = self.connections.first(where: { $0.id == id }) else { return }
+                // startSync still drops a target that is not of exactly this login
+                self.statementsAccountID = statements
+                self.statementsCountBefore = statementsBefore
+                self.postboxConnectionID = postbox
+                self.syncAccountID = accountOnly
+                self.requestSync(c)
+            }
+            showSettings = false
+            return
+        }
         withFreshBankingPolicy { [self] in
             if let gate = bankingGate(for: connection) {
                 clearSyncTargets()
@@ -24,6 +50,13 @@ extension AppModel {
             }
             requestSyncChecked(connection)
         }
+    }
+
+    /// The Einstellungen sheet is gone (its `onDismiss`): starts the sync that waited for it.
+    func settingsDismissed() {
+        let next = afterSettingsDismiss
+        afterSettingsDismiss = nil
+        next?()
     }
 
     private func requestSyncChecked(_ connection: BankConnection) {

@@ -25,6 +25,7 @@ public final class AppModel {
             vaultRevision &+= 1
             refundPickerBooking = nil
             refundUndo = nil
+            offlineStore.loanPaymentRequest = nil
             showRuleEditor = false
             ruleDraft = nil
             advanziaWorkflow?.cancel()
@@ -285,9 +286,17 @@ public final class AppModel {
     var assetClassificationVersion = 0
     var wealthScope: WealthScope = .all
 
+    /// Categories that hold bookings of `scope` (nil = the filter shows every category); the sidebar
+    /// lists only these while a filter is on, so no category is picked that leaves the list empty.
+    var scopeCategoryIDs: Set<Int64>?
+    @ObservationIgnored var scopeCategoryTask: Task<Void, Never>?
+
     var scope: BookingScope = .all {
         didSet {
             guard scope != oldValue else { return }
+            // The previous filter's categories must not stay listed until the new set has loaded.
+            if scopeCategoryIDs != nil { scopeCategoryIDs = nil }
+            loadScopeCategories()
             listLimit = Self.defaultListLimit
             if scope == .investments, dashboardStale { loadDashboard() }
             // A selection still loading in the background has to pick up the new scope.
@@ -680,7 +689,10 @@ public final class AppModel {
     // Opening commands also raise an editor that is already open.
     var ruleEditorRequest = 0
     #endif
+    /// iOS: Einstellungen as a sheet over the main view (macOS opens its own window, `openSettings`).
     var showSettings = false
+    /// A sync started in the Einstellungen sheet, run once the sheet is gone (#1831).
+    @ObservationIgnored var afterSettingsDismiss: (@MainActor () -> Void)?
     var showCommandPalette = false
     /// macOS: the "Problem melden" window is open. Greys out its menu item
     /// (a second report would silently discard the markings of this one).
@@ -705,6 +717,11 @@ public final class AppModel {
     /// The balance chart has keyboard focus (Return there jumps to its day,
     /// instead of editing the selected booking's note).
     @ObservationIgnored var chartHasKeyboardFocus = false
+    /// The sidebar has keyboard focus (macOS): a list that appears because of a sidebar
+    /// selection then leaves it there, so ↑/↓ go on through the sidebar (#1779).
+    @ObservationIgnored var sidebarHasKeyboardFocus = false
+    /// A list in the main column may take the keyboard focus when it appears.
+    var listMayTakeFocusOnAppear: Bool { options.screenshotPath == nil && !sidebarHasKeyboardFocus }
     /// Run after the command palette sheet has been dismissed (opens the next sheet).
     @ObservationIgnored var afterPaletteDismiss: (@MainActor () -> Void)?
     var showCategorizer = false
@@ -914,6 +931,11 @@ public final class AppModel {
     var refundHistoryTask: Task<Void, Never>?
     var refundHistoryPending = 0
     var refundRevision = 0
+    /// Einstellungen › Allgemein › Auswertungen „Erstattungen mit der Ursprungsbuchung verrechnen“ (#714):
+    /// linked refunds are netted against their originals in every statistic; bookings stay as they are.
+    var netRefundsInStats = false
+    /// Bumped by every toggle of `netRefundsInStats`: only the newest write publishes its result.
+    var netRefundsWriteGeneration = 0
     var transferBusy = false
     var syncQueue: [BankConnection] = []
     /// "Alle abrufen": number of logins in the running batch (0 = single sync).
@@ -1951,6 +1973,8 @@ public final class AppModel {
         payeeCheck = nil
         pendingLogin = nil
         setupRequest = nil
+        // the sheet may go without its onDismiss: a stale wait would block scheduled syncs (#1831)
+        afterSettingsDismiss = nil
         webLoginConnection = nil
         syncingConnectionID = nil
         historyIncomplete = [:]
