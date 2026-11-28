@@ -9,11 +9,11 @@
 
 | ID | Priorität | Kriterium | Plattform | Beobachtung | Weg | Status |
 |---|---|---|---|---|---|---|
-| GPL-1 | P1 | Adaptivität | iPhone | Bei „Accessibility XL“ ragt „Geplant“ links aus dem Bildschirm. Der Monatsbetrag ist rechts abgeschnitten und „3 Monate“ zerfällt mitten im Wort | Issue | `open` |
-| GPL-2 | P2 | Orientierung | iPhone | Das Detail eines künftigen Dauerauftrags und das Mandatsdetail heißen im Sheet jeweils „Buchung“ | Issue | `open` |
-| LAS-1 | P1 | Adaptivität | iPhone | Bei „Accessibility XL“ füllen Kopf und Aktionen den sichtbaren Bereich. Beim Öffnen ist keine Mandatszeile sichtbar. Der Kontoname bricht mitten im Wort um und Import/Export werden gekürzt | Issue | `open` |
-| ABO-1 | P1 | Adaptivität | iPhone | Die Ansicht ragt links und rechts aus dem Bildschirm. Schon bei Standardgröße fehlen Teile des Titels und Zeileninhalte. Mit „Accessibility XL“ sind Ein- und Ausgabensummen abgeschnitten | Issue | `open` |
-| ABO-2 | P1 | Bedienung | iPhone | Tippen auf einen Vertrag markiert die Zeile, öffnet aber das Vertragsdetail nicht | Issue | `open` |
+| GPL-1 | P1 | Adaptivität | iPhone | Bei „Accessibility XL“ ragt „Geplant“ links aus dem Bildschirm. Der Monatsbetrag ist rechts abgeschnitten und „3 Monate“ zerfällt mitten im Wort | Fix | `fixed` |
+| GPL-2 | P2 | Orientierung | iPhone | Das Detail eines künftigen Dauerauftrags und das Mandatsdetail heißen im Sheet jeweils „Buchung“ | Fix | `fixed` |
+| LAS-1 | P1 | Adaptivität | iPhone | Bei „Accessibility XL“ füllen Kopf und Aktionen den sichtbaren Bereich. Beim Öffnen ist keine Mandatszeile sichtbar. Der Kontoname bricht mitten im Wort um und Import/Export werden gekürzt | Fix | `fixed` |
+| ABO-1 | P1 | Adaptivität | iPhone | Die Ansicht ragt links und rechts aus dem Bildschirm. Schon bei Standardgröße fehlen Teile des Titels und Zeileninhalte. Mit „Accessibility XL“ sind Ein- und Ausgabensummen abgeschnitten | Fix | `fixed` |
+| ABO-2 | P1 | Bedienung | iPhone | Tippen auf einen Vertrag markiert die Zeile, öffnet aber das Vertragsdetail nicht | Fix | `fixed` |
 
 ## Impeccable-Bewertung
 
@@ -29,47 +29,16 @@
 
 - **Demo-Einstieg:** `--demo-seed --view geplant`, „Alle Konten“ und „3 Monate“.
 
-#### GPL-1 · Geplante Zahlungen laufen aus dem sichtbaren Bereich
-
-- **Ort:** `PlannedPaymentsView.swift`, Filter mit festen Breitenbereichen und Monatskopf.
-- **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ ragt „Geplant“ links aus dem Bild, der Monatsbetrag rechts. „3 Monate“ bricht mitten im Wort um.
-- **Vorschlag:** Filter bei beengter Breite stapeln. Monatsbeträge auf eine eigene Zeile setzen, wenn Beschriftung und Summe nebeneinander keinen Platz haben.
-- **Prüfung:** „Alle Konten“ und „3 Monate“ mit der genannten Schriftstufe prüfen. Filter, Titel, Monatsbetrag und erste Zeile bleiben lesbar.
-
-#### GPL-2 · Detailtitel „Buchung“ bezeichnet zwei andere Vorgänge
-
-- **Ort:** `RootView.swift`, `MainSplitView.bookingSheetTitle`.
-- **Beobachtung:** Auf dem iPhone bei Standardgröße heißen die Details der geplanten Zahlung „Fitnessstudio Mitte“ und des Mandats „Jan Muster“ jeweils „Buchung“.
-- **Vorschlag:** Titel nach dem dargestellten Vorgang wählen, etwa „Geplante Zahlung“ und „Lastschriftmandat“. Personenbezogene Titelanteile müssen bei Schwärzung verdeckt bleiben.
-- **Prüfung:** Beide Details öffnen und die Titel in Standardgröße sowie mit Schwärzung prüfen.
+- **Nachprüfung (27.11.2026):** GPL-1 und GPL-2 auf iPhone 18 Pro (iOS 27.2) vor und nach dem Fix auf Basis von `bfc5c262` geprüft. Bei „Accessibility XL“ sind Kontofilter, Zeitraum und Beträge lesbar. Das Detail zu „Fitnessstudio Mitte“ heißt „Dauerauftrag · wöchentlich“. Der Titel bleibt bei Schwärzung lesbar, die persönlichen Felder sind verdeckt.
 
 ### Lastschriften
 
 - **Demo-Einstieg:** `--demo-seed --view lastschriften`, Gläubigerkonto „Musterbank Girokonto“. Im iPhone-Simulator von Standardgröße auf „Accessibility XL“ wechseln.
 
-- **Detail und Schwärzung:** Bei Standardgröße „Jan Muster“ öffnen. Der Rücklastschrift-Hinweis steht auch im Detail. Der Titel „Buchung“ ist in [GPL-2](#befunde) erfasst. Die Liste verdeckt in der geschwärzten Variante Namen und Beträge.
-
-#### LAS-1 · Mandate sind bei großer Schrift unter dem festen Kopf verborgen
-
-- **Ort:** `DirectDebitsView.swift`, `controls`, `accountPicker` und die separate Listen-`ScrollView`.
-- **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ füllen Kopf und Aktionen die sichtbare Fläche. Beim Öffnen ist kein Mandat sichtbar. Kontoname und Dateiaktionen werden umgebrochen oder gekürzt.
-- **Vorschlag:** Kopf und Mandate gemeinsam scrollen lassen und schmale Aktionsgruppen stapeln.
-- **Prüfung:** „Musterbank Girokonto“ bei „Accessibility XL“ öffnen, bis zum ersten Mandat scrollen und es öffnen. Konto- und Aktionsbeschriftungen sind vollständig lesbar.
+- **Nachprüfung (27.11.2026):** LAS-1 und GPL-2 auf dem iPhone 18 Pro (iOS 27.2) auf Basis von `bfc5c262` geprüft. Bei „Accessibility XL“ ist die Kontowahl lesbar und bedienbar. Nach dem Scrollen lässt sich „Jan Muster“ öffnen. Das Sheet heißt „Mandat“.
 
 ### Abos & Verträge
 
 - **Demo-Einstieg:** `--demo-seed --view abos`. „Original“ als Betragsbasis belassen. Vertragskopf und erste Ausgabenzeile auf iPhone bei Standardgröße und „Accessibility XL“ vergleichen.
 
-#### ABO-1 · Vertragsansicht ist breiter als der Bildschirm
-
-- **Ort:** `SubscriptionsView.swift`, `totals` und `controls`.
-- **Beobachtung:** Ein- und Ausgaben stehen nebeneinander und halten Betrag und Turnus per `.fixedSize()` zusammen. Mehrere Menüs bleiben auch im schmalen Zweig nebeneinander. Bei Standardgröße sind Titel und Zeilen angeschnitten, bei „Accessibility XL“ auch die Summen.
-- **Vorschlag:** Summenspalten und Filter auf kleinen Breiten stapeln. Währungsbeträge zusammenhalten und die Zeilenbreite begrenzen.
-- **Prüfung:** Auf dem iPhone mit „Original“ bei Standard und „Accessibility XL“ Titel, erste Zeile, Such- und Filteraktionen sowie vollständige Summen pro Währung prüfen.
-
-#### ABO-2 · Tippen auf Vertrag öffnet kein Detail
-
-- **Ort:** `SubscriptionRow.swift`, `SubscriptionRow`, sowie `RootView.swift`, `MainSplitView.showBookingSheet`.
-- **Beobachtung:** Auf dem iPhone „Autobank“ antippen. Die Zeile wird ausgewählt. Das kompakte Detail bleibt zu, während der Mac die Darlehensrate im Inspektor zeigt.
-- **Vorschlag:** Beim Antippen in der kompakten Darstellung zusätzlich das Detail-Sheet öffnen und den bestehenden Auswahlpfad beibehalten.
-- **Prüfung:** Auf dem iPhone „Autobank“ öffnen, Rate und Kündigungsfrist prüfen und das Detail schließen. Auf dem Mac die Auswahl im Inspektor nachprüfen. Die iCloud-Synchronisierung bleibt in [#1918](https://github.com/GiroCrab/GiroCrab/issues/1918) erfasst.
+- **Nachprüfung (27.11.2026):** ABO-1 und ABO-2 auf dem iPhone 18 Pro (iOS 27.2) vor und nach dem Fix auf Basis von `bfc5c262` geprüft. Bei Standard und „Accessibility XL“ bleiben Titel, Filter und Beträge im sichtbaren Bereich. Bei „Original“ sind die Währungsbeträge vollständig lesbar. „Autobank“ öffnet und schließt das Sheet „Vertrag“. Der separate iCloud-Sync-Fall ist in [#1918](https://github.com/GiroCrab/GiroCrab/issues/1918) erfasst.
