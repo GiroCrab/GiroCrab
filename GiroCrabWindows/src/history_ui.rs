@@ -11,8 +11,9 @@ const DAYS: [u32; 3] = [90, 365, 730];
 pub const MAX_INDEX: i32 = 3;
 
 /// Vorbelegung aus dem Wert von `sync.days_back`: fehlt er oder ist er `max`, gilt „Maximum“.
-/// Tage zwischen den Stufen ergeben die größte Stufe, die sie nicht überschreitet;
-/// ungültige Werte gelten wie im Core als 90 Tage.
+/// Tage ab 90 ergeben die größte Stufe, die sie nicht überschreitet (abgerundet, nie länger).
+/// Ausnahme: Unter 90 Tagen gibt es keine kürzere Stufe, dann gilt die kürzeste (90 Tage),
+/// also mehr als eingestellt. Ungültige Werte gelten wie im Core als 90 Tage.
 pub fn index_of_setting(value: Option<&str>) -> i32 {
     match value.map(str::trim) {
         None | Some("" | "max") => MAX_INDEX,
@@ -64,10 +65,23 @@ mod tests {
         assert_eq!(index_of_setting(Some("90")), 0);
         assert_eq!(index_of_setting(Some("365")), 1);
         assert_eq!(index_of_setting(Some("730")), 2);
-        // ein Wert zwischen den Stufen (z. B. von einem anderen Gerät) überschreitet ihn nie
+        // ein Wert zwischen den Stufen (z. B. von einem anderen Gerät) wird abgerundet, nie verlängert
         assert_eq!(index_of_setting(Some("180")), 0);
+        assert_eq!(index_of_setting(Some("364")), 0);
+        assert_eq!(index_of_setting(Some("729")), 1);
         assert_eq!(index_of_setting(Some("1000")), 2);
+    }
+
+    #[test]
+    fn day_settings_below_shortest_step_preselect_ninety_days() {
+        // keine kürzere Stufe vorhanden: die kürzeste (90 Tage) reicht hier weiter zurück als eingestellt
         assert_eq!(index_of_setting(Some("30")), 0);
+        assert_eq!(index_of_setting(Some("1")), 0);
+        assert_eq!(index_of_setting(Some("89")), 0);
+        assert_eq!(
+            range_of(index_of_setting(Some("30"))),
+            HistoryRange::Days { days: 90 }
+        );
     }
 
     #[test]
