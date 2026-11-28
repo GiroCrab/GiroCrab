@@ -2050,6 +2050,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Suchausdruck ist leer." => "The search expression is empty.",
         "Das Feld „{0}“ wird nicht unterstützt." => "The field “{0}” isn't supported.",
         "{0} (nur für bestimmte Konten)" => "{0} (specific accounts only)",
+        "Nicht eindeutige Kategorien: {0}. Dort haben mehrere Kategorien denselben Namen, auch bei anderer Groß- und Kleinschreibung. Benennen Sie sie in GiroCrab oder in dem Programm, das die Datenbank erstellt hat, eindeutig um, oder übernehmen Sie die Kategorien nicht. Es wurde nichts importiert." => {
+            "Ambiguous categories: {0}. Several categories there have the same name, also with different capitalization. Give them distinct names in GiroCrab or in the program that created the database, or don't import the categories. Nothing was imported."
+        }
         "Der Suchausdruck ist unvollständig." => "The search expression is incomplete.",
         "Unerwartete schließende Klammer." => "Unexpected closing parenthesis.",
         "Klammer nicht geschlossen." => "Parenthesis not closed.",
