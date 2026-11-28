@@ -1230,9 +1230,19 @@ private struct SelectionScroller: View {
         // Without animation for the keyboard: while an arrow key is held down each step restarted
         // it, and the list fell behind the selection until the key was released.
         withAnimation(byKeyboard ? nil : Motion.animation(.easeOut(duration: 0.15))) {
-            // Expanded rows can exceed the viewport: keep their title visible.
-            proxy.scrollTo(slot, anchor: density == .standard ? nil : .top)
+            proxy.scrollTo(slot, anchor: SelectionScrollAnchor.anchor(density: density, byKeyboard: byKeyboard))
         }
+    }
+}
+
+/// Where the stream scrolls a newly selected booking to (#993).
+enum SelectionScrollAnchor {
+    /// Keyboard moves in a dense list pin the row to the top: an expanded row can exceed
+    /// the viewport, and its title must stay visible. A click hits a row that is already
+    /// visible: scroll only as far as needed (usually not at all), so the row expands in
+    /// place instead of the whole list jumping.
+    static func anchor(density: BookingDensity, byKeyboard: Bool) -> UnitPoint? {
+        density != .standard && byKeyboard ? .top : nil
     }
 }
 

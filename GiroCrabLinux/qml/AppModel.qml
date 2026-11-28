@@ -3383,10 +3383,10 @@ QtObject {
         if (!c0) return
         const c = Object.assign({}, c0)
         change(c)
-        if (!run(() => { core("update_category", { id: c.id, name: c.name, parent_id: c.parent_id, sf_symbol: c.sf_symbol, color_hex: c.color_hex }); return true })) return
+        if (!run(() => { core("update_category", { id: c.id, name: c.edit_name, parent_id: c.parent_id, sf_symbol: c.sf_symbol, color_hex: c.color_hex }); return true })) return
         // categories reload off the GUI thread: patch the local copy at once, so a second quick
         // edit (symbol, then colour) starts from this one and does not write the old value back
-        categories = categories.map(x => x.id === c.id ? Object.assign({}, x, { name: c.name, parent_id: c.parent_id, sf_symbol: c.sf_symbol, color_hex: c.color_hex }) : x)
+        categories = categories.map(x => x.id === c.id ? Object.assign({}, x, { name: c.edit_name !== c0.edit_name ? c.edit_name : x.name, edit_name: c.edit_name, parent_id: c.parent_id, sf_symbol: c.sf_symbol, color_hex: c.color_hex }) : x)
         reloadCategories()
         reloadBookings() // the booking list shows a category's name, symbol and colour
         reloadPlanning() // budget cards show name, symbol, colour and the parent
@@ -3394,7 +3394,7 @@ QtObject {
     function renameCategory(id, name) {
         const t = (name || "").trim()
         if (t === "") return
-        editCategory(id, c => { c.name = t })
+        editCategory(id, c => { c.edit_name = t })
     }
     /// "Verschieben nach ▸": under another category, or to the top level (null).
     function moveCategory(id, parent) {

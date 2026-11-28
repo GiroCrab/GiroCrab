@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use rusqlite::params;
 
 use crate::error::CoreError;
-use crate::i18n::{role_name, tr, trf};
+use crate::i18n::{tr, trf};
 use crate::iban::normalize_iban;
 use crate::models::*;
 use crate::vault::Vault;
@@ -174,52 +174,18 @@ impl Vault {
                 own.insert(c, s);
             }
         }
-        let mut stmt = db.prepare(
-            "SELECT id, parent_id, name, sf_symbol, color_hex, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL ORDER BY sort_order, name",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, Option<i64>>(1)?,
-                    role_name(
-                        &r.get::<_, String>(2)?,
-                        r.get::<_, Option<String>>(6)?.as_deref(),
-                    ),
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, Option<i64>>(5)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut rows = Self::category_rows(&db)?;
+        rows.sort_by(|a, b| a.5.cmp(&b.5).then(a.2.cmp(&b.2)));
         let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
-        let mut by_id = HashMap::new();
+        let paths = Self::category_paths_from_rows(&rows);
         for r in &rows {
-            by_id.insert(r.0, r);
             if let Some(p) = r.1 {
                 children.entry(p).or_default().push(r.0);
             }
         }
-        let path_of = |id: i64| {
-            let mut parts = Vec::new();
-            let mut cur = Some(id);
-            let mut guard = 0;
-            while let Some(c) = cur {
-                guard += 1;
-                match by_id.get(&c) {
-                    Some(r) if guard < 32 => {
-                        parts.push(r.2.clone());
-                        cur = r.1;
-                    }
-                    _ => break,
-                }
-            }
-            parts.reverse();
-            parts.join(" › ")
-        };
         let mut out = Vec::new();
-        for r in rows.iter().filter(|r| r.5.is_some()) {
-            let budget = r.5.unwrap_or(0);
+        for r in rows.iter().filter(|r| r.6.is_some()) {
+            let budget = r.6.unwrap_or(0);
             let mut stack = vec![r.0];
             let mut sum = 0i64;
             let mut guard = 0;
@@ -237,7 +203,7 @@ impl Vault {
             out.push(CategoryBudgetStatus {
                 category_id: r.0,
                 name: r.2.clone(),
-                path: path_of(r.0),
+                path: paths[&r.0].1.clone(),
                 sf_symbol: r.3.clone(),
                 color_hex: r.4.clone(),
                 budget_cents: budget,

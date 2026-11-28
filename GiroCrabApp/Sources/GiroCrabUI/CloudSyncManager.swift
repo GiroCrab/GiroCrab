@@ -529,8 +529,9 @@ public final class CloudSyncManager {
                 lastStats = kept
                 defaults.set(kept, forKey: K.stats)
             }
+            // `changes` also counts attached data the counters miss, e.g. a planned payment alone (#1745)
             let changed = merge.stats.contains {
-                $0.accountsAdded + $0.categoriesAdded + $0.rulesAdded + $0.bookingsAdded + $0.bookingsUpdated + $0.groupsUpdated > 0
+                $0.accountsAdded + $0.categoriesAdded + $0.rulesAdded + $0.bookingsAdded + $0.bookingsUpdated + $0.groupsUpdated > 0 || $0.changes > 0
             }
             if changed { onMerged?() }
         }

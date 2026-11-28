@@ -15,13 +15,13 @@ extension AppModel {
                 let new = try vault.createCategory(name: name, parentId: parent, sfSymbol: c.sfSymbol, colorHex: c.colorHex)
                 if depth < 16 {
                     for child in children[c.id] ?? [] {
-                        _ = try copy(child, under: new, name: child.name, depth: depth + 1)
+                        _ = try copy(child, under: new, name: child.editName, depth: depth + 1)
                     }
                 }
                 return new
             }
             let suffix = String(localized: "Kopie")
-            newRoot = try copy(root, under: root.parentId, name: "\(root.name) \(suffix)", depth: 0)
+            newRoot = try copy(root, under: root.parentId, name: "\(root.editName) \(suffix)", depth: 0)
         }
         reloadCategories()
         if let parent = root.parentId { expandCategoryPath(to: parent) }
