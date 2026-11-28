@@ -96,6 +96,68 @@ class FlowTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):
             self.run_main(Api([thread("a", False)], comment_status=500))
 
+    def test_summarizes_and_extracts_prompt_from_picture_badge_format(self):
+        body = (
+            "<!-- coderabbit-ai-generated:v1 -->\n\n"
+            '**<picture><img src="https://storage.googleapis.com/coderabbit_public_assets/review-comment-icons-v1/amber-16.svg" '
+            'width="16" height="16" align="absmiddle" alt=""></picture> Minor** · **Data Integrity** · **Quick win**\n\n'
+            "**Record the failure properly.**\n\n"
+            "Explanation paragraph.\n\n"
+            "<details>\n"
+            '<summary><picture><img src="https://example.com/bot.svg" alt=""></picture> Prompt to fix issue</summary>\n'
+            "<dl>\n<dd>\n\n"
+            "```\nFix the bug in foo.rs.\n```\n\n"
+            "</dd>\n</dl>\n</details>\n"
+        )
+        self.assertEqual(coderabbit_flow.summarize_comment(body), "**Record the failure properly.**")
+        self.assertEqual(coderabbit_flow.extract_ai_prompt(body), "Fix the bug in foo.rs.")
+
+    def test_extracts_legacy_prompt_and_does_not_cross_details_boundary(self):
+        legacy = (
+            "**Fix null check.**\n\n"
+            "<details>\n<summary>🤖 Prompt for AI Agents</summary>\n\n"
+            "```text\nCheck for None before unwrap.\n```\n</details>\n"
+        )
+        self.assertEqual(coderabbit_flow.summarize_comment(legacy), "**Fix null check.**")
+        self.assertEqual(coderabbit_flow.extract_ai_prompt(legacy), "Check for None before unwrap.")
+
+        no_code_in_details = (
+            "<details><summary>Prompt to fix issue</summary>No fence here.</details>\n"
+            "```\nUnrelated later snippet\n```\n"
+        )
+        self.assertEqual(coderabbit_flow.extract_ai_prompt(no_code_in_details), "")
+
+        unclosed_fence_in_details = (
+            "<details><summary>Prompt to fix issue</summary>\n"
+            "```\nUnclosed prompt body\n</details>\n"
+            "Outside text\n```\n"
+        )
+        self.assertEqual(coderabbit_flow.extract_ai_prompt(unclosed_fence_in_details), "")
+
+        literal_closing_tag_and_nested_fence = (
+            "<details><summary>🤖 Prompt for AI Agents</summary>\n\n"
+            "````markdown\n"
+            "Replace the literal </details> tag with escaped text.\n"
+            "```python\nx = 1\n```\n"
+            "Keep tests green.\n"
+            "````\n"
+            "</details>\n"
+        )
+        self.assertEqual(
+            coderabbit_flow.extract_ai_prompt(literal_closing_tag_and_nested_fence),
+            "Replace the literal </details> tag with escaped text.\n```python\nx = 1\n```\nKeep tests green.",
+        )
+
+    def test_preserves_inline_code_and_comparisons_when_stripping_html(self):
+        body = (
+            '**<picture><img src="https://example.com/amber.svg" alt=""></picture> Minor** · **Correctness**\n\n'
+            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b, c > d, and a<b.length and c>d.length.**\n"
+        )
+        self.assertEqual(
+            coderabbit_flow.summarize_comment(body),
+            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b, c > d, and a<b.length and c>d.length.**",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

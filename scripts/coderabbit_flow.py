@@ -49,19 +49,60 @@ def gh_graphql(query: str, variables: dict) -> dict:
     return res.get("data", {}) if isinstance(res, dict) else {}
 
 
+SEVERITY_BADGE_RE = re.compile(
+    r"^\*{0,2}\s*(?:Critical|Major|Minor|Trivial|Nitpick|Potential issue|Refactor suggestion|Warning)\s*\*{0,2}\s*·",
+    re.IGNORECASE,
+)
+INLINE_CODE_OR_HTML_RE = re.compile(
+    r"(`+)(?:(?!\1)[\s\S])*\1|</?(?:picture|source|img|br)(?=[\s/>])[^>]*>",
+    re.IGNORECASE,
+)
+PROMPT_SUMMARY_RE = re.compile(
+    r"<summary>(?:(?!</summary>)[\s\S])*?Prompt (?:for (?:AI Agents|all issues)|to fix (?:issue|all issues))</summary>",
+)
+
+
+def strip_html_outside_code(text: str) -> str:
+    return INLINE_CODE_OR_HTML_RE.sub(lambda m: m.group(0) if m.group(1) else "", text)
+
+
 def extract_ai_prompt(body: str) -> str:
-    m = re.search(
-        r"<summary>🤖 Prompt for (?:AI Agents|all issues)</summary>\s*```[^\n]*\n([\s\S]*?)\n```",
-        body or "",
-    )
-    return m.group(1).strip() if m else ""
+    text = body or ""
+    summary = PROMPT_SUMMARY_RE.search(text)
+    if not summary:
+        return ""
+    rest = text[summary.end():]
+    open_match = re.match(r"(?:(?!</details>)[\s\S])*?^[ \t]*(`{3,})[^\n]*\n", rest, re.MULTILINE | re.IGNORECASE)
+    if not open_match:
+        return ""
+    fence_len = len(open_match.group(1))
+    after_open = rest[open_match.end():]
+    close_re = re.compile(rf"^[ \t]*`{{{fence_len},}}[ \t]*$")
+    lines: list[str] = []
+    for line in after_open.splitlines():
+        if close_re.match(line):
+            return "\n".join(lines).strip()
+        if line.strip().lower() == "</details>":
+            return ""
+        lines.append(line)
+    return ""
 
 
 def summarize_comment(body: str) -> str:
     cleaned = re.sub(r"<!--[\s\S]*?-->", "", body or "")
-    cleaned = cleaned.split("<details>")[0].strip()
-    lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip() and not ln.strip().startswith("_")]
-    title = lines[0] if lines else "CodeRabbit review note"
+    cleaned = cleaned.split("<details>")[0]
+    cleaned = strip_html_outside_code(cleaned).strip()
+    lines = []
+    for ln in cleaned.splitlines():
+        normalized = re.sub(r"\s+", " ", ln).strip()
+        if normalized and not normalized.startswith("_"):
+            lines.append(normalized)
+    if len(lines) >= 2 and SEVERITY_BADGE_RE.match(lines[0]):
+        title = lines[1]
+    elif lines:
+        title = lines[0]
+    else:
+        title = "CodeRabbit review note"
     return title[:140]
 
 
