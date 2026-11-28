@@ -28,4 +28,11 @@ final class CryptoHoldingTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
         XCTAssertTrue(try XCTUnwrap(model.vault).listCryptoPositions(accountId: id).isEmpty)
     }
+
+    func testAPriceFetchReloadsAnOpenSyncLog() {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let version = model.syncLogVersion
+        model.cryptoPricesLogged()
+        XCTAssertEqual(model.syncLogVersion, version &+ 1)
+    }
 }

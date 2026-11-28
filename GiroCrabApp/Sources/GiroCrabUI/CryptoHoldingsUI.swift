@@ -91,6 +91,7 @@ private struct CryptoHoldingSheetsModifier: ViewModifier {
             .onChange(of: model.vaultRevision) {
                 model.cryptoStore.editor = nil
                 model.cryptoStore.deleting = nil
+                model.cryptoStore.refreshing = false
             }
     }
 }
@@ -234,11 +235,14 @@ struct CryptoPositionSheet: View {
             var priceMissing = false
             do {
                 _ = try await pin.runAsync { try await $0.fetchCryptoPrice(symbol: ticker) }
+                model.cryptoPricesLogged()
             } catch CoreError.InvalidInput(let message) {
+                model.cryptoPricesLogged()
                 busy = false
                 error = message
                 return
             } catch {
+                model.cryptoPricesLogged()
                 priceMissing = true
             }
             do {

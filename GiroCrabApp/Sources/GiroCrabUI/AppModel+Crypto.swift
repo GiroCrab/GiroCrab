@@ -37,9 +37,12 @@ extension AppModel {
         guard let pin = pinVault(), !cryptoStore.refreshing else { return }
         cryptoStore.refreshing = true
         Task {
-            defer { self.cryptoStore.refreshing = false }
+            // the flag belongs to this vault: a switch resets it (`cryptoHoldingSheets`), and a refresh
+            // of the previous vault finishing later must not clear one running in the new vault
+            defer { if self.isCurrent(pin) { self.cryptoStore.refreshing = false } }
             do {
                 let r = try await pin.runAsync { try await $0.refreshCryptoPrices() }
+                self.cryptoPricesLogged()
                 guard self.isCurrent(pin) else { return }
                 self.cryptoChanged()
                 if !r.unknown.isEmpty {
@@ -53,6 +56,11 @@ extension AppModel {
                 if self.isCurrent(pin) { self.toast = describe(error) }
             }
         }
+    }
+
+    /// A price fetch wrote to the Abrufprotokoll (the core logs it): an open protocol window reloads.
+    func cryptoPricesLogged() {
+        syncLogVersion &+= 1
     }
 
     func deleteCryptoPosition(_ request: CryptoPositionRequest) {
