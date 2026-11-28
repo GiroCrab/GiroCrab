@@ -50,7 +50,8 @@ and `migrate` runs the missing ones in a single transaction.
 | 43 | `planned_transfers.settled_ms`: settled scheduled orders (NULL = open), date index over `(execution_date, settled_ms)` (#1900) |
 | 44 | offline loan compatibility (#1970): older readers must refuse vaults whose offline loans they cannot reconcile. No tables change. |
 | 45 | `offline_loan_payments` (#1970): source links between original bookings and mirrored principal payments, and `offline_loan_source_moves` for booking replacements. |
-| 46+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
+| 46 | crypto holdings (#1836): `crypto_positions` (ticker, quantity, purchase price per unit; merged by uuid, newest edit wins) and `crypto_prices` (the last EUR price per ticker). The positions are written into `holdings` of their depot. |
+| 47+ | future changes; the tables of securities depots are described in `docs/DEPOT_DATENMODELL.md` |
 
 **Changing the schema**
 

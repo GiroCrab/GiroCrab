@@ -29,6 +29,7 @@ pub mod assets;
 pub mod banking_gate;
 pub mod batch_csv;
 pub mod connectors;
+pub mod crypto;
 mod data_tables;
 mod dates;
 pub mod demo;
