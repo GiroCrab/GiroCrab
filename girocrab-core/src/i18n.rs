@@ -270,6 +270,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "Ungültige Konto-Zuordnung." => "Invalid account mapping.",
         "Bankzugang nicht gefunden." => "Bank connection not found.",
+        "Der Einstandskurs darf nicht negativ sein." => "The purchase price must not be negative.",
+        "Die Position hat weder ISIN noch WKN." => "The position has neither an ISIN nor a WKN.",
+        "Depotposition" => "Depot position",
         "Falscher Bankzugang." => "Wrong bank connection.",
         "Ungültiger Sitzungszustand." => "Invalid session state.",
         "Die Konto-Zuordnung hat sich geändert. Bitte erneut anmelden." => {
@@ -332,6 +335,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Ungültiges Datum: {0}" => "Invalid date: {0}",
         "Die Bank lieferte die Daueraufträge nicht vollständig (zu viele Seiten)." => {
             "The bank did not return the standing orders completely (too many pages)."
+        }
+        "{0} von {1} Aufträgen der Bank konnten nicht gelesen werden." => {
+            "{0} of {1} orders from the bank could not be read."
         }
         "Der Betrag ist größer als SEPA erlaubt (999.999.999,99 €)." => {
             "The amount exceeds what SEPA allows (999,999,999.99 EUR)."
@@ -689,6 +695,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Die Empfänger-IBAN ist ungültig." => "The recipient IBAN is invalid.",
         "Die BIC ist ungültig." => "The BIC is invalid.",
         "Der Empfängername fehlt." => "The recipient name is missing.",
+        "Vom Tagesgeldkonto sind nur Umbuchungen auf eigene Girokonten möglich." => {
+            "Only transfers to your own current accounts are possible from a savings account."
+        }
         "Zahlung {0}: {1}" => "Payment {0}: {1}",
         "Lastschrift {0}: {1}" => "Direct debit {0}: {1}",
         "Der Name des Zahlungspflichtigen fehlt." => "The debtor's name is missing.",
@@ -844,6 +853,22 @@ fn english(de: &str) -> Option<&'static str> {
         "Eine Buchung lässt sich nicht in ihr eigenes Konto spiegeln." => {
             "A booking cannot be mirrored into its own account."
         }
+        "Darlehen / Kredit" => "Loan / credit",
+        "Der ursprüngliche Kreditbetrag muss größer als 0 sein." => {
+            "The original loan amount must be greater than 0."
+        }
+        "Buchung und Darlehenskonto müssen dieselbe Währung haben." => {
+            "The booking and the loan account must use the same currency."
+        }
+        "Der Tilgungsanteil muss größer als 0 und höchstens so hoch wie die Abbuchung sein." => {
+            "The principal must be greater than 0 and cannot exceed the debit."
+        }
+        "Beim Spiegeln auf ein Darlehenskonto bitte den Tilgungsanteil angeben." => {
+            "Enter the principal when mirroring a booking to a loan account."
+        }
+        "Für diese Rate wurde bereits eine Tilgung auf dieses Darlehenskonto übernommen." => {
+            "A principal payment for this instalment has already been recorded in this loan account."
+        }
         "Saldokorrektur" => "Balance correction",
         // ------------------------------------------------------ user_groups.rs
         "Gruppe {0}" => "group {0}",
@@ -976,6 +1001,9 @@ fn english(de: &str) -> Option<&'static str> {
         }
         "{0}: Die Freigabe in der Banking-App ist nicht rechtzeitig erfolgt. Bitte erneut abrufen und in der App bestätigen." => {
             "{0}: the approval in the banking app did not arrive in time. Please fetch again and confirm in the app."
+        }
+        "Anmeldename oder PIN wurden abgelehnt. Bei manchen Banken ist die PIN das Kennwort des Online-Bankings (z. B. Deutsche Bank: Kennwort der Deutsche Bank ID). Bitte prüfen, bevor Sie es erneut versuchen: Nach mehreren Fehlversuchen sperrt die Bank den Zugang." => {
+            "Login name or PIN was refused. At some banks the PIN is the online banking password (e.g. Deutsche Bank: the password of the Deutsche Bank ID). Please check before trying again: after several failed attempts the bank locks the access."
         }
         "Die Bank verlangt den Namen Ihres TAN-Mediums (z. B. den Gerätenamen aus der BestSign-Verwaltung). Tragen Sie ihn im Bankzugang unter „TAN-Medium“ ein und rufen Sie erneut ab." => {
             "The bank requires the name of your TAN medium (e.g. the device name from your BestSign management). Enter it under “TAN medium” in the bank connection and fetch again."
@@ -1754,6 +1782,12 @@ fn english(de: &str) -> Option<&'static str> {
         "Ford Money: Die Anfrage wurde abgelehnt." => "Ford Money: The request was rejected.",
         "Ford Money: Kundennummer und Passwort erforderlich." => {
             "Ford Money: Customer number and password required."
+        }
+        "Ford Money: Der Kontostand von Konto {0} konnte nicht gelesen werden, das Konto wurde nicht abgerufen." => {
+            "Ford Money: The balance of account {0} could not be read, the account was not synced."
+        }
+        "Ford Money: Die Umsätze von Konto {0} konnten nicht gelesen werden, übernommen wurde nur der Kontostand." => {
+            "Ford Money: The transactions of account {0} could not be read, only the balance was imported."
         }
         "Kundennummer" => "Customer number",
         // ------------------------------------------------------------ connectors/ffb.rs

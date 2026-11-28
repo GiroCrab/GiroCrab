@@ -38,6 +38,9 @@ struct FinTsAddForm: View {
     private var isConsors: Bool { blz == "76030080" || blz == "70120400" || bankName_lc.contains("consors") }
     /// Miles & More credit card: Deutsche Bank's own bank code for the cards.
     private var isMilesAndMore: Bool { blz == "50070439" }
+    /// Deutsche Bank accounts (not the Miles & More cards): login with the Deutsche Bank
+    /// ID, and wherever the app asks for the "PIN" it means that ID's password.
+    private var isDeutscheBank: Bool { !isMilesAndMore && bankName_lc.contains("deutsche bank") }
     private var needsMediumHint: Bool {
         isPostbank || bankName_lc.contains("deutsche bank") || bankName_lc.contains("norisbank")
     }
@@ -69,6 +72,8 @@ struct FinTsAddForm: View {
                     .onChange(of: presetID) { _, _ in
                         guard let p = preset else { return }
                         bankName = p.id == "custom" ? "" : p.name
+                        // the directory hit belongs to the previous BLZ: the preset's name is not its name
+                        found = nil
                         urlEdited = false
                         autoURL = p.url
                         url = p.url
@@ -96,7 +101,7 @@ struct FinTsAddForm: View {
         .onChange(of: canAdd, initial: true) { _, ok in submit?.update(ok, commit) }
 
         Section {
-            TextField("Anmeldename", text: $login, prompt: Text(isPostbank ? "Postbank ID" : isMilesAndMore ? "Deutsche Bank ID" : isConsors ? "Kontonummer (10-stellig) + 001" : "z. B. VR-NetKey oder Kontonummer"))
+            TextField("Anmeldename", text: $login, prompt: Text(isPostbank ? "Postbank ID" : isMilesAndMore || isDeutscheBank ? "Deutsche Bank ID" : isConsors ? "Kontonummer (10-stellig) + 001" : "z. B. VR-NetKey oder Kontonummer"))
                 .autocorrectionDisabled()
             TextField("TAN-Medium", text: $tanMedium, prompt: Text(isMilesAndMore ? "Gerätename aus BestSign" : "Optional"))
                 .autocorrectionDisabled()
@@ -115,6 +120,7 @@ struct FinTsAddForm: View {
                     isConsors ? String(localized: "Consorsbank: Als Anmeldename die 10-stellige Kontonummer des Verrechnungskontos (mit führenden Nullen) gefolgt von 001 verwenden, z. B. 0001234567001 – nicht den Anmeldenamen der Website. Ein falscher Anmeldename wird als „PIN ungültig“ gemeldet.") : "",
                     isMilesAndMore ? String(localized: "Miles & More: Mit der Deutsche Bank ID und dem Passwort der Kreditkarte anmelden. Als TAN-Medium den Gerätenamen aus der BestSign-Verwaltung eintragen – ohne ihn lehnt die Bank die Anmeldung ab.") : "",
                     isPostbank ? String(localized: "Postbank: Als Anmeldename die Postbank ID verwenden, nicht die Kontonummer.") : "",
+                    isDeutscheBank ? String(localized: "Deutsche Bank: Als Anmeldename die Deutsche Bank ID verwenden. Wo GiroCrab nach der PIN fragt, das Kennwort der Deutsche Bank ID eingeben, nicht die Online Banking PIN.") : "",
                     isMilesAndMore ? "" : needsMediumHint
                         ? String(localized: "Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein.")
                         : String(localized: "Das TAN-Medium brauchen Sie nur, wenn die Bank danach fragt."),
@@ -183,18 +189,27 @@ struct FinTsAddForm: View {
         lookup()
     }
 
+    /// The bank name after a BLZ change. A name the directory filled in (`filled`) follows the
+    /// directory: the new hit's name, or empty once the BLZ is unknown, so no hint or connection
+    /// name of the previous bank stays. A preset's or search hit's own name stays.
+    static func bankName(_ name: String, filled: String?, found: String?, presetName: String?, custom: Bool) -> String {
+        guard let found else { return name == filled ? "" : name }
+        return name.isEmpty || name == filled || name == presetName || custom ? found : name
+    }
+
     /// Fills in name and URL from the directory once a full BLZ is typed.
     private func lookup() {
         guard blzValid, let info = lookupFintsBankByBlz(blz: blz) else {
             // BLZ no longer matches: drop what we filled in ourselves
             if found != nil {
+                bankName = Self.bankName(bankName, filled: found?.name, found: nil, presetName: preset?.name, custom: presetID == "custom")
                 found = nil
                 if !urlEdited, url == autoURL { url = ""; autoURL = "" }
             }
             return
         }
+        bankName = Self.bankName(bankName, filled: found?.name, found: info.name, presetName: preset?.name, custom: presetID == "custom")
         found = info
-        if bankName.isEmpty || preset?.name == bankName || presetID == "custom" { bankName = info.name }
         if !urlEdited || url.isEmpty {
             autoURL = info.url
             url = info.url

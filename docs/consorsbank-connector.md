@@ -1,9 +1,12 @@
 # Consorsbank connector – research and plan
 
 <!-- sync:connector-note:start -->
-> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur Consorsbank. Schnittstelle: offiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
-> This connector is an independent community project and is not affiliated with Consorsbank. Interface: official. Using unofficial interfaces may violate the bank's terms of service.
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Consorsbank. Schnittstelle: offiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Consorsbank. Interface: official. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
+
+> **PDF-Dokumente / Documents:** „Offiziell“ gilt nur für FinTS (Umsätze, Salden, Depot). Die PDF-Dokumente kommen aus dem Online-Archiv über eine **inoffizielle** Portal-Schnittstelle und brauchen eine eigene Freigabe in der Consorsbank-App.
+> "Official" covers FinTS only (transactions, balances, securities). PDF documents come from the Online-Archiv via an **unofficial** portal interface and need a separate approval in the Consorsbank app.
 
 Living document. Update the **Status** table and the **Change log** whenever work
 on this connector advances.

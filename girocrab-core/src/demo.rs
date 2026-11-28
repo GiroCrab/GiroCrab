@@ -589,20 +589,94 @@ fn categories(conn: &Connection) -> CoreResult<std::collections::HashMap<&'stati
             map.insert(*kid, conn.last_insert_rowid());
         }
     }
-    conn.execute(
-        "UPDATE categories SET budget_cents = 60000 WHERE name = 'Supermarkt'",
-        [],
-    )?;
-    conn.execute(
-        "UPDATE categories SET budget_cents = 15000 WHERE name = 'Restaurants & Cafés'",
-        [],
-    )?;
+    for (name, cents) in STARTER_BUDGETS {
+        conn.execute(
+            "UPDATE categories SET budget_cents = ?2 WHERE name = ?1",
+            params![name, cents],
+        )?;
+    }
     Ok(map)
 }
 
-fn rules(conn: &Connection, cat: &std::collections::HashMap<&'static str, i64>) -> CoreResult<()> {
-    // (name, category, field, kind, pattern, min, max)
-    let rules: &[(&str, &str, &str, &str, &str, Option<i64>, Option<i64>)] = &[
+/// Monthly budgets the starter tree comes with.
+const STARTER_BUDGETS: &[(&str, i64)] = &[("Supermarkt", 60000), ("Restaurants & Cafés", 15000)];
+
+/// Whether the live categories and rules are exactly the untouched starter seed
+/// (#1992): every live row is a starter row (`builtin_role` = name) without an
+/// edit stamp and with the seeded values, and nothing else is live. Anything
+/// uncertain (custom rows, edits, legacy rows without provenance) is `false`.
+pub(crate) fn is_untouched_starter(conn: &Connection) -> CoreResult<bool> {
+    // one key per row, fields joined by tabs; the last field is "untouched"
+    let opt = |v: Option<i64>| v.map(|v| v.to_string()).unwrap_or_default();
+    let mut want = Vec::new();
+    for (i, (name, sym, color, kids)) in STARTER_TREE.iter().enumerate() {
+        let rows = std::iter::once((i, *name, "", *sym))
+            .chain(kids.iter().enumerate().map(|(j, k)| (j, k.0, *name, k.1)));
+        for (order, cat, parent, sym) in rows {
+            let budget = opt(STARTER_BUDGETS.iter().find(|b| b.0 == cat).map(|b| b.1));
+            want.push(format!(
+                "{cat}\t{parent}\t{sym}\t{color}\t{order}\t{budget}\t1"
+            ));
+        }
+    }
+    let cats = "SELECT c.name || char(9) || IFNULL(p.name, '') || char(9) || c.sf_symbol
+                || char(9) || c.color_hex || char(9) || c.sort_order
+                || char(9) || IFNULL(c.budget_cents, '') || char(9)
+                || (c.builtin_role IS c.name AND c.merged_into IS NULL AND c.name_ms = 0
+                    AND c.parent_ms = 0 AND c.symbol_ms = 0 AND c.color_ms = 0
+                    AND c.budget_ms = 0 AND c.order_ms = 0)
+           FROM categories c LEFT JOIN categories p ON p.id = c.parent_id
+          WHERE c.deleted_ms IS NULL";
+    if !same_keys(conn, cats, want)? {
+        return Ok(false);
+    }
+    let want = starter_rules()
+        .iter()
+        .enumerate()
+        .map(|(i, (name, cat, field, kind, pattern, min, max))| {
+            let (min, max, prio) = (opt(*min), opt(*max), (i + 1) * 10);
+            format!("{name}\t{cat}\t{field}\t{kind}\t{pattern}\t{min}\t{max}\t{prio}\t1")
+        })
+        .collect();
+    let rules = "SELECT r.name || char(9) || IFNULL(c.name, '') || char(9) || r.field
+                || char(9) || r.match_kind || char(9) || r.pattern
+                || char(9) || IFNULL(r.min_amount_cents, '') || char(9) || IFNULL(r.max_amount_cents, '')
+                || char(9) || r.priority || char(9)
+                || (r.enabled = 1 AND r.case_sensitive = 0 AND r.account_id IS NULL
+                    AND r.updated_ms = 0 AND r.tag_uuids = '' AND r.merged_into IS NULL
+                    AND c.builtin_role IS c.name AND c.deleted_ms IS NULL)
+           FROM rules r LEFT JOIN categories c ON c.id = r.category_id
+          WHERE r.deleted_ms IS NULL";
+    same_keys(conn, rules, want)
+}
+
+/// Whether `sql` yields exactly the keys in `want` (in any order).
+fn same_keys(conn: &Connection, sql: &str, mut want: Vec<String>) -> CoreResult<bool> {
+    let mut live: Vec<String> = conn
+        .prepare(sql)?
+        .query_map([], |r| {
+            Ok(r.get::<_, Option<String>>(0)?.unwrap_or_default())
+        })?
+        .collect::<Result<_, _>>()?;
+    live.sort();
+    want.sort();
+    Ok(live == want)
+}
+
+/// (name, category, field, kind, pattern, min, max) of a starter rule.
+type StarterRule = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<i64>,
+    Option<i64>,
+);
+
+/// The starter rules, in priority order.
+fn starter_rules() -> &'static [StarterRule] {
+    &[
         (
             "Saveback & Round up",
             "Saveback & Round up",
@@ -927,8 +1001,11 @@ fn rules(conn: &Connection, cat: &std::collections::HashMap<&'static str, i64>) 
             None,
             None,
         ),
-    ];
-    for (i, (name, c, field, kind, pattern, min, max)) in rules.iter().enumerate() {
+    ]
+}
+
+fn rules(conn: &Connection, cat: &std::collections::HashMap<&'static str, i64>) -> CoreResult<()> {
+    for (i, (name, c, field, kind, pattern, min, max)) in starter_rules().iter().enumerate() {
         conn.execute(
             "INSERT INTO rules(name, category_id, field, match_kind, pattern, min_amount_cents, max_amount_cents, priority, enabled)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)",
@@ -2797,14 +2874,14 @@ impl Vault {
         ] {
             let day = crate::dates::iso(today - crate::dates::days(days_ago));
             let setup = crate::offline::ManualBookingSetup {
-                booking_date: day.clone(),
+                booking_date: day,
                 amount_cents: cents,
                 counterparty: who.into(),
                 purpose: purpose.into(),
                 category_id: None,
                 note: String::new(),
             };
-            crate::offline::insert_booking(&tx, cash, &day, &setup, who, purpose, "")?;
+            crate::offline::insert_booking(&tx, cash, &setup, None)?;
             n += 1;
         }
         crate::opening_balance::refresh(&tx, cash)?;

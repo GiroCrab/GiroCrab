@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use rusqlite::params;
 
 use crate::error::CoreError;
-use crate::i18n::{role_name, tr, trf};
+use crate::i18n::{tr, trf};
 use crate::iban::normalize_iban;
 use crate::models::*;
 use crate::vault::Vault;
@@ -61,20 +61,52 @@ pub(crate) fn has_other_currencies(conn: &rusqlite::Connection) -> rusqlite::Res
     )
 }
 
-/// Bookings as (category_id, amount_cents, booking_date) rows where a split
-/// booking contributes its split amounts instead of the parent category.
-/// `extra`: more columns of `t` (e.g. ", t.currency AS currency"); `condition`:
-/// more conditions on `t` (e.g. " AND t.account_id = ?1"). Both appear in both
-/// halves of the UNION, so `condition` must use numbered parameters.
-pub(crate) fn effective_sql(extra: &str, condition: &str) -> String {
+impl Vault {
+    /// Bookings as (category_id, amount_cents, booking_date) rows where a split
+    /// booking contributes its split amounts instead of the parent category.
+    /// `extra`: more columns of `t` (e.g. ", t.currency AS currency"); `condition`:
+    /// more conditions on `t` (e.g. " AND t.account_id = ?1"). Both appear in both
+    /// halves of the UNION, so `condition` must use numbered parameters.
+    /// Amounts net linked refunds against their originals when the user chose so
+    /// (`refund_offset`, #714), for links whose other booking lies in `accounts` (the
+    /// aggregate's accounts, empty = all). Only this method hands out that SQL: it brings the
+    /// offsets up to date with `db` first, so no aggregate can read a stale map.
+    pub(crate) fn effective_sql(
+        &self,
+        db: &rusqlite::Connection,
+        extra: &str,
+        condition: &str,
+        accounts: &[i64],
+    ) -> Result<String, CoreError> {
+        let scope = self
+            .refund_offsets_ready(db)?
+            .then(|| crate::refunds::scope_sql(accounts));
+        Ok(effective_rows(extra, condition, scope.as_deref()))
+    }
+}
+
+/// `effective_sql` with the stored amounts, whatever the refund setting (local interface).
+pub(crate) fn stored_effective_sql(extra: &str, condition: &str) -> String {
+    effective_rows(extra, condition, None)
+}
+
+/// `scope`: the `refund_offset` scope literal when refunds are netted, `None` for plain amounts.
+fn effective_rows(extra: &str, condition: &str, scope: Option<&str>) -> String {
+    let (whole, part) = match scope {
+        Some(scope) => (
+            format!(" - refund_offset(t.id, '', {scope})"),
+            format!(" - refund_offset(t.id, s.uuid, {scope})"),
+        ),
+        None => (String::new(), String::new()),
+    };
     format!(
         "(
-    SELECT t.category_id AS category_id, t.amount_cents AS amount_cents, t.booking_date AS booking_date{extra}
+    SELECT t.category_id AS category_id, t.amount_cents{whole} AS amount_cents, t.booking_date AS booking_date{extra}
       FROM transactions t
      WHERE t.deleted_ms IS NULL{condition}
        AND NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)
     UNION ALL
-    SELECT s.category_id, s.amount_cents, t.booking_date{extra}
+    SELECT s.category_id, s.amount_cents{part}, t.booking_date{extra}
       FROM transaction_splits s JOIN transactions t ON t.id = s.transaction_id
      WHERE t.deleted_ms IS NULL{condition}
 )"
@@ -133,7 +165,7 @@ impl Vault {
                 "SELECT category_id, SUM(amount_cents) FROM {}
                  WHERE booking_date >= ?1 AND booking_date <= ?2 GROUP BY category_id",
                 // budgets are amounts in EUR: other currencies are never added to them (#1049)
-                effective_sql("", sums_condition(0))
+                self.effective_sql(&db, "", sums_condition(0), &[])?
             ))?;
             for row in stmt.query_map(params![from, to], |r| {
                 Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, i64>(1)?))
@@ -142,52 +174,18 @@ impl Vault {
                 own.insert(c, s);
             }
         }
-        let mut stmt = db.prepare(
-            "SELECT id, parent_id, name, sf_symbol, color_hex, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL ORDER BY sort_order, name",
-        )?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, Option<i64>>(1)?,
-                    role_name(
-                        &r.get::<_, String>(2)?,
-                        r.get::<_, Option<String>>(6)?.as_deref(),
-                    ),
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, Option<i64>>(5)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut rows = Self::category_rows(&db)?;
+        rows.sort_by(|a, b| a.5.cmp(&b.5).then(a.2.cmp(&b.2)));
         let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
-        let mut by_id = HashMap::new();
+        let paths = Self::category_paths_from_rows(&rows);
         for r in &rows {
-            by_id.insert(r.0, r);
             if let Some(p) = r.1 {
                 children.entry(p).or_default().push(r.0);
             }
         }
-        let path_of = |id: i64| {
-            let mut parts = Vec::new();
-            let mut cur = Some(id);
-            let mut guard = 0;
-            while let Some(c) = cur {
-                guard += 1;
-                match by_id.get(&c) {
-                    Some(r) if guard < 32 => {
-                        parts.push(r.2.clone());
-                        cur = r.1;
-                    }
-                    _ => break,
-                }
-            }
-            parts.reverse();
-            parts.join(" › ")
-        };
         let mut out = Vec::new();
-        for r in rows.iter().filter(|r| r.5.is_some()) {
-            let budget = r.5.unwrap_or(0);
+        for r in rows.iter().filter(|r| r.6.is_some()) {
+            let budget = r.6.unwrap_or(0);
             let mut stack = vec![r.0];
             let mut sum = 0i64;
             let mut guard = 0;
@@ -205,7 +203,7 @@ impl Vault {
             out.push(CategoryBudgetStatus {
                 category_id: r.0,
                 name: r.2.clone(),
-                path: path_of(r.0),
+                path: paths[&r.0].1.clone(),
                 sf_symbol: r.3.clone(),
                 color_hex: r.4.clone(),
                 budget_cents: budget,
@@ -422,13 +420,16 @@ pub(crate) fn cashflow_for(
     } else {
         None
     };
+    // the same totals set scopes the netted refunds (#714): a refund on an account left out of
+    // the totals does not reduce a purchase in them
     let filter = BookingFilter {
         account_ids: account_ids.to_vec(),
         date_from: Some(from),
+        respect_in_total,
         ..Default::default()
     };
     let mut acc: HashMap<String, (i64, i64)> = HashMap::new();
-    v.visit_bookings(&db, &filter, |_, b| {
+    v.visit_bookings(&db, &filter, |share, b| {
         // other currencies are never added to the sums, unless one account is
         // selected (#1049); in a totals context only the effective total set
         // contributes (#337) — a directly requested account is a proof view
@@ -439,7 +440,8 @@ pub(crate) fn cashflow_for(
         {
             return;
         }
-        let (date, amt) = (&b.booking_date, b.amount_cents);
+        // the KPI share: the amount, without linked refunds when they are left out
+        let (date, amt) = (&b.booking_date, share);
         // Non-ASCII / malformed dates are skipped instead of panicking on a slice.
         let key = match granularity {
             PeriodGranularity::Month => date.get(..7).map(str::to_string),

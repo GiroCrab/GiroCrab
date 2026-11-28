@@ -200,7 +200,7 @@ private struct ManualSubscriptionForm: View {
                     LabeledContent("Vertragsende") {
                         HStack(spacing: 8) {
                             if hasEnd { DatePicker("", selection: $end, displayedComponents: .date).labelsHidden() }
-                            Toggle("Endet am", isOn: $hasEnd).toggleStyle(.checkbox)
+                            Toggle("Endet am", isOn: $hasEnd).macCheckbox()
                         }
                     }
                     LabeledContent("Verlängerung um") {
@@ -214,7 +214,7 @@ private struct ManualSubscriptionForm: View {
                     LabeledContent("Probezeit") {
                         HStack(spacing: 8) {
                             if hasTrial { DatePicker("", selection: $trialEnd, displayedComponents: .date).labelsHidden() }
-                            Toggle("Endet am", isOn: $hasTrial).toggleStyle(.checkbox)
+                            Toggle("Endet am", isOn: $hasTrial).macCheckbox()
                         }
                     }
                 } header: { Text("Vertrag (optional)").appSectionHeader() }

@@ -288,7 +288,7 @@ enum GroupDialog {
         case .rename(let g): g.name
         case .renameAccount(let a): a.name
         case .editOwner(let a): a.owner
-        case .renameCategory(let c): c.name
+        case .renameCategory(let c): c.editName
         case .renameUncategorized: ""
         default: ""
         }
@@ -344,6 +344,11 @@ enum BankLabelChoice: Hashable, CaseIterable {
 extension Account {
     /// The bank in the sidebar row (#1467): the user's label, else the bank name.
     var sidebarBankName: String { bankLabel ?? bankName }
+
+    /// The subtitle combines the chosen bank label with the distinction for namesakes.
+    func sidebarSubtitle(distinction: String) -> String {
+        [sidebarBankName, distinction].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
 }
 
 /// IBAN, else account number, else bank.

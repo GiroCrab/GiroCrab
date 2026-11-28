@@ -165,7 +165,7 @@ fn render_categories(win: &MainWindow, cats: Vec<Category>, select: Option<i64>)
     let palette = with_ui(|u| u.palette.clone());
     match index.map(|i| &cats[i]) {
         Some(c) => {
-            win.set_cat_name(c.name.clone().into());
+            win.set_cat_name(c.edit_name.clone().into());
             win.set_cat_color(
                 manage::palette_index(&palette, &c.color_hex).map_or(-1, |i| i as i32),
             );
@@ -388,7 +388,7 @@ fn wire_categories(win: &MainWindow, vault: &VaultSlot) {
         });
         let Some(cat) = cat else { return };
         win.set_cat_selected(index);
-        win.set_cat_name(cat.name.clone().into());
+        win.set_cat_name(cat.edit_name.clone().into());
         win.set_cat_color(manage::palette_index(&palette, &cat.color_hex).map_or(-1, |i| i as i32));
         win.set_cat_armed(false);
         win.set_cat_status(SharedString::new());

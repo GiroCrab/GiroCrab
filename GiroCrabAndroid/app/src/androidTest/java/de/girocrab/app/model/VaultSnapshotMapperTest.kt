@@ -4,6 +4,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.girocrab.app.security.NativeVaultOpener
 import de.girocrab.app.security.OwnVault
+import de.girocrab.app.ui.screens.SequenceType
+import de.girocrab.app.ui.screens.buildPain008
+import de.girocrab.app.ui.screens.collectableFrom
 import java.io.File
 import java.time.LocalDate
 import uniffi.girocrab_core.AssetInterpolation
@@ -11,10 +14,13 @@ import uniffi.girocrab_core.AssetItem as CoreAssetItem
 import uniffi.girocrab_core.AssetItemSetup as CoreAssetSetup
 import uniffi.girocrab_core.BookingPage as CoreBookingPage
 import uniffi.girocrab_core.Holding as CoreHolding
+import uniffi.girocrab_core.Mandate as CoreMandate
+import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
 import uniffi.girocrab_core.MatchKind as CoreMatchKind
 import uniffi.girocrab_core.Rule as CoreRule
 import uniffi.girocrab_core.RuleField as CoreRuleField
 import uniffi.girocrab_core.SelectionFlow as CoreFlow
+import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
 import java.security.SecureRandom
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -316,6 +322,129 @@ class VaultSnapshotMapperTest {
         }
     }
 
+    /** 3.2b: a mandate carries the core's fields — debtor, scheme, sequence, last collection. */
+    @Test
+    fun mandateCarriesWhatTheCoreStores() {
+        val m = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            rules = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            mandates = listOf(coreMandate()),
+        ).mandates.single()
+
+        assertEquals("7", m.id)
+        assertEquals("3", m.accountId)
+        assertEquals("Vattenfall Europe Sales", m.debtorName)
+        assertEquals("DE12345678901234567890", m.debtorIban)
+        assertEquals("VAT-2024-0042", m.reference)
+        assertEquals(LocalDate.of(2024, 3, 1), m.signedDate)
+        assertEquals(MandateScheme.Core, m.scheme)
+        assertFalse(m.oneOff)
+        assertEquals(8_900L, m.defaultAmountCents)
+        assertTrue(m.active)
+        assertEquals(LocalDate.of(2026, 10, 5), m.lastCollected)
+        assertEquals("RCUR", m.nextSequence)
+    }
+
+    /** A mandate without a collection keeps `null`, not a made-up date; the scheme survives. */
+    @Test
+    fun mandateWithoutCollectionKeepsNoDate() {
+        val m = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            rules = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            mandates = listOf(coreMandate(lastCollected = null, scheme = CoreMandateScheme.B2B, oneOff = true, nextSequence = "OOFF")),
+        ).mandates.single()
+
+        assertNull(m.lastCollected)
+        assertEquals(MandateScheme.B2b, m.scheme)
+        assertTrue(m.oneOff)
+        assertEquals("OOFF", m.nextSequence)
+    }
+
+    /** 3.2b: a standing order carries the core's rhythm and both dates, no stored next date. */
+    @Test
+    fun standingOrderCarriesRhythmAndDates() {
+        val o = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            rules = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            standingOrders = listOf(coreStandingOrder()),
+        ).standingOrders.single()
+
+        assertEquals("11", o.id)
+        assertEquals("4", o.accountId)
+        assertEquals("Hausverwaltung Berlin", o.recipient)
+        assertEquals("DE44500105175407324931", o.iban)
+        assertEquals(-98_000L, o.amountCents)
+        assertEquals("Miete", o.purpose)
+        assertEquals("M", o.unit)
+        assertEquals(3, o.every)
+        assertEquals(1, o.execDay)
+        assertEquals(LocalDate.of(2024, 1, 1), o.firstDate)
+        assertNull(o.lastDate)
+        assertEquals("vierteljährlich", o.rhythm)
+    }
+
+    private fun coreStandingOrder() = CoreStandingOrder(
+        id = 11,
+        accountId = 4,
+        accountName = "Girokonto",
+        orderId = "",
+        recipientName = "Hausverwaltung Berlin",
+        recipientIban = "DE44500105175407324931",
+        amountCents = -98_000,
+        purpose = "Miete",
+        firstDate = "2024-01-01",
+        lastDate = null,
+        timeUnit = "M",
+        interval = 3u,
+        execDay = 1u,
+        canChange = true,
+        canDelete = true,
+    )
+
+    private fun coreMandate(
+        lastCollected: String? = "2026-10-05",
+        scheme: CoreMandateScheme = CoreMandateScheme.CORE,
+        oneOff: Boolean = false,
+        nextSequence: String = "RCUR",
+    ) = CoreMandate(
+        id = 7,
+        accountId = 3,
+        debtorName = "Vattenfall Europe Sales",
+        debtorIban = "DE12345678901234567890",
+        debtorBic = "",
+        reference = "VAT-2024-0042",
+        signedDate = "2024-03-01",
+        scheme = scheme,
+        oneOff = oneOff,
+        defaultAmountCents = 8_900,
+        defaultPurpose = "Abschlag Strom",
+        note = "",
+        active = true,
+        lastCollected = lastCollected,
+        nextSequence = nextSequence,
+    )
+
     private fun read(key: ByteArray): VaultSnapshot {
         val vault = open(key)
         return try {
@@ -422,5 +551,54 @@ class VaultSnapshotMapperTest {
         val miss = booking().copy(counterpartyIban = "DE02120300000000202052")
         assertTrue("whitespace in the stored IBAN must not matter", rule.matches(hit))
         assertFalse(rule.matches(miss))
+    }
+
+    private fun appMandate(id: String = "7", scheme: MandateScheme = MandateScheme.Core) = DirectDebitMandate(
+        id = id,
+        accountId = "3",
+        debtorName = "Testschuldner",
+        debtorIban = "DE02 1203 0000 0000 2020 51",
+        reference = "REF-$id",
+        signedDate = LocalDate.of(2024, 3, 1),
+        scheme = scheme,
+        oneOff = false,
+        defaultAmountCents = 0,
+        defaultPurpose = "",
+        note = "",
+        active = true,
+        lastCollected = null,
+        nextSequence = "RCUR",
+    )
+
+    /** The core collects a mandate only from its own account, and only when it is still collectable. */
+    @Test
+    fun mandateIsCollectableOnlyFromItsOwnAccount() {
+        val m = appMandate()
+        assertTrue(m.collectableFrom("3"))
+        assertFalse("another account must not collect it", m.collectableFrom("4"))
+        assertFalse("no account chosen", m.collectableFrom(null))
+        assertFalse("inactive", m.copy(active = false).collectableFrom("3"))
+        assertFalse("used one-off", m.copy(oneOff = true, lastCollected = LocalDate.of(2026, 1, 5)).collectableFrom("3"))
+        assertTrue("unused one-off stays selectable", m.copy(oneOff = true).collectableFrom("3"))
+    }
+
+    /** CORE and B2B never share a payment block; every transaction names the debtor's account. */
+    @Test
+    fun pain008CarriesSchemeAndDebtorAccount() {
+        val xml = buildPain008(
+            "Verein", "DE89 3704 0044 0532 0130 00", "DE98ZZZ09999999999",
+            listOf(
+                Triple(appMandate(), 1_000L, SequenceType.RCUR),
+                Triple(appMandate(id = "8", scheme = MandateScheme.B2b), 2_000L, SequenceType.RCUR),
+            ),
+            LocalDate.of(2026, 12, 1),
+        )
+        assertTrue(xml.contains("<LclInstrm><Cd>CORE</Cd></LclInstrm><SeqTp>RCUR</SeqTp>"))
+        assertTrue(xml.contains("<LclInstrm><Cd>B2B</Cd></LclInstrm><SeqTp>RCUR</SeqTp>"))
+        assertEquals("one payment block per scheme and sequence", 2, Regex("<PmtInf>").findAll(xml).count())
+        assertTrue(
+            "debtor IBAN without whitespace",
+            xml.contains("<DbtrAcct><Id><IBAN>DE02120300000000202051</IBAN></Id></DbtrAcct>"),
+        )
     }
 }

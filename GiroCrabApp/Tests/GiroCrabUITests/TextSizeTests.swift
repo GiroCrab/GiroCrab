@@ -16,6 +16,23 @@ final class TextSizeTests: XCTestCase {
         XCTAssertNil(AppTextSize(rawValue: "huge"))
     }
 
+    func testSidebarStackingFollowsThePlatformTextSize() {
+        var environment = EnvironmentValues()
+        #if os(macOS)
+        environment.textScale = AppTextSize.standard.scale
+        XCTAssertFalse(environment.sidebarUsesLargeText)
+        environment.textScale = AppTextSize.large.scale
+        XCTAssertTrue(environment.sidebarUsesLargeText)
+        environment.textScale = AppTextSize.larger.scale
+        XCTAssertTrue(environment.sidebarUsesLargeText)
+        #else
+        environment.dynamicTypeSize = .xxxLarge
+        XCTAssertFalse(environment.sidebarUsesLargeText)
+        environment.dynamicTypeSize = .accessibility1
+        XCTAssertTrue(environment.sidebarUsesLargeText)
+        #endif
+    }
+
     func testScalesMacTextStyles() {
         // Standard = the system sizes of NSFont.preferredFont(forTextStyle:)
         XCTAssertEqual(Font.TextStyle.body.macSize(scale: 1), 13)

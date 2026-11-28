@@ -233,7 +233,7 @@ private struct SubscriptionDetailView: View {
                     Toggle("Endet am", isOn: Binding(
                         get: { draft.contractEnd != nil },
                         set: { draft.contractEnd = $0 ? (draft.contractEnd ?? item.nextDue ?? DateText.iso(Date())) : nil }))
-                        .toggleStyle(.checkbox)
+                        .macCheckbox()
                     if let end = draft.contractEnd {
                         DatePicker("", selection: Binding(
                             get: { DateText.parseISODay(end) ?? Self.fallbackDate },
@@ -260,7 +260,7 @@ private struct SubscriptionDetailView: View {
                                 // the end is fixed now: the next payment moves on with every booking, the end must not
                                 if on, draft.contractEnd == nil { draft.contractEnd = item.nextDue ?? DateText.iso(Date()) }
                                 draft.cancelledOn = on ? (draft.cancelledOn ?? DateText.iso(Date())) : nil
-                            })).toggleStyle(.checkbox)
+                            })).macCheckbox()
                         if draft.cancelled, let on = draft.cancelledOn {
                             DatePicker("", selection: Binding(
                                 get: { DateText.parseISODay(on) ?? Self.fallbackDate },
@@ -284,7 +284,7 @@ private struct SubscriptionDetailView: View {
                     Toggle("Endet am", isOn: Binding(
                         get: { draft.trialEnd != nil },
                         set: { draft.trialEnd = $0 ? (draft.trialEnd ?? item.nextDue ?? DateText.iso(Date())) : nil }))
-                        .toggleStyle(.checkbox)
+                        .macCheckbox()
                     if let end = draft.trialEnd {
                         DatePicker("", selection: Binding(
                             get: { DateText.parseISODay(end) ?? Self.fallbackDate },
@@ -326,7 +326,7 @@ private struct SubscriptionDetailView: View {
                 Button(showAllBookings ? "Weniger anzeigen" : "Alle \(all.count) Buchungen anzeigen") {
                     showAllBookings.toggle()
                 }
-                .buttonStyle(.link).appFont(.caption)
+                .macLinkButton().appFont(.caption)
             }
         }
     }
@@ -349,6 +349,6 @@ private struct SubscriptionDetailView: View {
                 Button("Abo löschen …", role: .destructive) { confirmRemove = true }
             }
         }
-        .buttonStyle(.link).appFont(.callout)
+        .macLinkButton().appFont(.callout)
     }
 }

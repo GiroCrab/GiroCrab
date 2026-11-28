@@ -1,0 +1,91 @@
+# cargo-deny policy (#1800). Run: `cargo deny --workspace check` (CI job `deny`).
+# Front ends (own lockfiles), same policy (found in the manifest's parent directory):
+#   cargo deny --manifest-path GiroCrabLinux/Cargo.toml --workspace check
+#   cargo deny --manifest-path GiroCrabWindows/Cargo.toml --workspace check
+# Advisory exceptions for the core workspace mirror `.cargo/audit.toml`; keep both in sync.
+# `cargo audit` checks only the root lockfile, so front-end-only exceptions live here alone.
+
+[graph]
+# Run with `--workspace`: the root is a package too, without it only that one is checked.
+all-features = true
+
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = [
+    # basic-toml: unmaintained, only pulled in by askama_derive (UniFFI build-time codegen).
+    # Same reason as in `.cargo/audit.toml`; remove with it.
+    "RUSTSEC-2026-0374",
+    # Windows front end only: chrono (unmaintained) comes in via i-slint-core (Slint 1.19), no
+    # safe upgrade exists. Ignored by advisory ID, so it applies to every chrono version (no
+    # version pin); remove once Slint drops chrono.
+    { id = "RUSTSEC-2026-0543", reason = "transitive via Slint (Windows front end), no fixed version available" },
+    # Windows front end only: pin-utils 0.1.1 (unmaintained) comes in via spin_on (Slint renderer,
+    # build and macros), no safe upgrade exists. Ignored by advisory ID (a `crate = …` entry here
+    # only covers yanked crates); remove once Slint drops spin_on/pin-utils.
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1, transitive via Slint (Windows front end), no fixed version available" },
+    # Windows front end only: ttf-parser 0.25.1 (unmaintained) comes in via Slint's winit backend
+    # (i-slint-backend-winit 1.19), no safe upgrade exists. Remove once Slint moves to skrifa.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1, transitive via Slint (Windows front end), no fixed version available" },
+    # Windows front end only: zvariant 5.x, zvariant_derive 5.x and zbus_names 4.x (unmaintained,
+    # merged into zbus 6) come in via the zbus 5 D-Bus stack under Slint, no safe upgrade exists.
+    # Remove all three once the Slint dependency tree moves to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant 5.15.1, transitive via Slint's zbus 5 stack (Windows front end), no fixed version available" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names 4.3.5, transitive via Slint's zbus 5 stack (Windows front end), no fixed version available" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5.15.1, transitive via Slint's zbus 5 stack (Windows front end), no fixed version available" },
+]
+
+[licenses]
+# GPL-3.0-or-later project: only permissive licenses (compatible with GPL-3.0) are allowed.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "GPL-3.0-or-later",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0", # webpki-roots (CA list data)
+    "MPL-2.0",             # uniffi (file-level copyleft, GPL-3.0 compatible via MPL-2.0 §3.3)
+    "WTFPL",               # sqlcipher-src (bundled libtomcrypt)
+    "blessing",            # sqlcipher-src (SQLite public-domain blessing)
+    "GPL-3.0-only",        # slint (Windows front end; combinable with this GPL-3.0-or-later project)
+    "BSL-1.0",             # clipboard-win, error-code (Windows front end; permissive, GPL-3.0 compatible)
+]
+confidence-threshold = 0.9
+# Only for the named crate: any other crate under the OpenSSL license still fails.
+exceptions = [
+    # aws-lc-sys (rustls crypto backend): "ISC AND (Apache-2.0 OR ISC) AND OpenSSL" for code
+    # inherited from BoringSSL/OpenSSL.
+    { allow = ["OpenSSL"], crate = "aws-lc-sys" },
+    # ksni (Linux tray backend pulled in by Slint, Windows front end graph): Unlicense, a
+    # public-domain dedication compatible with GPL-3.0. Only this crate; others under it fail.
+    { allow = ["Unlicense"], crate = "ksni" },
+]
+
+[licenses.private]
+# Unpublished workspace crates (`publish = false`, e.g. the front ends) need no license field.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between workspace members carry a version or are private.
+allow-wildcard-paths = true
+# Unwanted crates. Every entry needs a reason; extend only after a maintainer decision.
+deny = [
+    # TLS runs on rustls on every platform. Platform/OpenSSL TLS would make certificate
+    # handling differ per OS. `openssl-sys` stays allowed: SQLCipher links a vendored OpenSSL.
+    { crate = "native-tls", reason = "TLS only via rustls (same behaviour on all platforms)" },
+    { crate = "openssl", reason = "TLS only via rustls; OpenSSL is linked only for SQLCipher (openssl-sys)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
