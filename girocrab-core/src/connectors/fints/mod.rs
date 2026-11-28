@@ -617,8 +617,12 @@ impl BankConnector for FinTsConnector {
                 .as_ref()
                 .map(|u| kind_from_code(u.kind_code))
                 .unwrap_or(AccountKind::Checking);
-            // Some banks report depots with a generic Kontoart; trust the product name.
+            // Some banks report depots with a generic Kontoart; trust the product name, unless
+            // the bank's list of what the account allows leaves out HKWPD. comdirect's depot
+            // (Kontoart 1) allows it (#805); Deutsche Bank's "maxblue Depotkonto" (Kontoart 1,
+            // HKCAZ/HKSAL) is the depot's cash account and must not get its holdings (#2040).
             if kind == AccountKind::Checking
+                && allowed("HKWPD")
                 && (upd
                     .as_ref()
                     .is_some_and(|u| u.product.to_lowercase().contains("depot"))

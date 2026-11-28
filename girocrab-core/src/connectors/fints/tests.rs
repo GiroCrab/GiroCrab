@@ -3161,6 +3161,32 @@ async fn a_depot_known_only_by_its_product_name_keeps_its_value_without_hkwpd() 
 }
 
 #[tokio::test]
+async fn a_depotkonto_without_hkwpd_in_its_upd_stays_a_cash_account() {
+    // #2040: Deutsche Bank lists the maxblue Depotkonto with Kontoart 1 and its cash
+    // transactions, without HKWPD; the bank offers HKWPD for its depots. Asking HKWPD for it
+    // made it a second copy of the depot.
+    let (url, seen) = mock_bank(vec![SAL_A]);
+    let mut c = depot_connector(&url, true);
+    c.st.versions.insert("HKSAL".into(), vec![7]);
+    c.upd = vec![upd_acc(
+        "0123456",
+        "01",
+        IBAN_A,
+        "maxblue Depotkonto",
+        &[
+            "DKPAE", "HKCAZ", "HKCUB", "HKCUM", "HKFRD", "HKKAZ", "HKPAE", "HKPRO", "HKSAL",
+            "HKSPA", "HKTAB", "HKTAN",
+        ],
+    )];
+    let r = c.fetch(&test_ctx()).await.unwrap();
+    assert_eq!(r.accounts[0].kind, AccountKind::Checking);
+    assert_eq!(r.accounts[0].balance_cents, 123456);
+    assert!(r.holdings.is_empty());
+    let sent = seen.lock().unwrap();
+    assert!(!sent.iter().flatten().any(|id| id == "HKWPD"), "{sent:?}");
+}
+
+#[tokio::test]
 async fn an_empty_depot_statement_is_a_finished_fetch_with_value_0() {
     let (url, _) = mock_bank(vec![WPD_WITH_DATA]);
     let r = depot_connector(&url, true)
