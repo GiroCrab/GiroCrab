@@ -1143,6 +1143,17 @@ final class TRWebCoordinator: NSObject, WKNavigationDelegate {
     let phone: String
     init(phone: String) { self.phone = phone }
 
+    /// The default data store is the one `WebLoginSheet` polls for `tr_session`. Desktop mode
+    /// (Safari's "Request Desktop Website"): Trade Republic's web app shows an iPhone or iPad
+    /// user agent only "get the app", without a login form (#2074); on macOS it changes nothing.
+    @MainActor
+    static func makeConfiguration() -> WKWebViewConfiguration {
+        let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .default()
+        cfg.defaultWebpagePreferences.preferredContentMode = .desktop
+        return cfg
+    }
+
     // Same rule as the portal guard: https only in the main frame (the saved phone number
     // is filled in only on Trade Republic's own host, see below).
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -1180,9 +1191,7 @@ struct TRWebView: NSViewRepresentable {
     var phone: String = ""
     func makeCoordinator() -> TRWebCoordinator { TRWebCoordinator(phone: phone) }
     func makeNSView(context: Context) -> WKWebView {
-        let cfg = WKWebViewConfiguration()
-        cfg.websiteDataStore = .default()
-        let v = WKWebView(frame: .zero, configuration: cfg)
+        let v = WKWebView(frame: .zero, configuration: TRWebCoordinator.makeConfiguration())
         v.navigationDelegate = context.coordinator
         v.load(URLRequest(url: url))
         return v
@@ -1195,9 +1204,7 @@ struct TRWebView: UIViewRepresentable {
     var phone: String = ""
     func makeCoordinator() -> TRWebCoordinator { TRWebCoordinator(phone: phone) }
     func makeUIView(context: Context) -> WKWebView {
-        let cfg = WKWebViewConfiguration()
-        cfg.websiteDataStore = .default()
-        let v = WKWebView(frame: .zero, configuration: cfg)
+        let v = WKWebView(frame: .zero, configuration: TRWebCoordinator.makeConfiguration())
         v.navigationDelegate = context.coordinator
         v.load(URLRequest(url: url))
         return v
