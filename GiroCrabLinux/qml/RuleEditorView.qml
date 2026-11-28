@@ -256,6 +256,20 @@ Sheet {
                             }
                         }
                     }
+                    // exchangeBar: rules (with their tags) to and from a file (#1057), the same
+                    // menu button as in the tag manager
+                    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.border }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 10; Layout.rightMargin: 10; Layout.topMargin: 4; Layout.bottomMargin: 4
+                        Item { Layout.fillWidth: true }
+                        IconButton {
+                            id: exchangeButton
+                            symbol: "square.and.arrow.up.on.square"
+                            ToolTip.text: qsTr("Regeln importieren oder exportieren")
+                            onClicked: exchangeMenu.popup(exchangeButton, 0, exchangeButton.height)
+                        }
+                    }
                 }
                 Rectangle { Layout.fillHeight: true; width: 1; color: Theme.border }
                 // detail
@@ -329,8 +343,22 @@ Sheet {
         AppMenuItem { text: qsTr("Ans Ende"); icon.name: SF.icon("arrow.down.to.line"); enabled: editor.menuIndex >= 0 && editor.menuIndex < AppModel.rules.length - 1
                       onTriggered: editor.moveRule(editor.menuRule.id, AppModel.rules.length - 1) }
         AppMenuSeparator {}
+        AppMenuItem { text: qsTr("Exportieren …"); icon.name: SF.icon("square.and.arrow.up"); onTriggered: exchange.exportRules([editor.menuRule.id]) }
+        AppMenuSeparator {}
         AppMenuItem { text: qsTr("Regel löschen …"); icon.name: SF.icon("trash"); onTriggered: editor.ruleToDelete = editor.menuRule }
     }
+
+    // the menu of the exchange bar (#1057)
+    AppMenu {
+        id: exchangeMenu
+        AppMenuItem { text: qsTr("Regeln importieren …"); onTriggered: exchange.startImport() }
+        AppMenuSeparator {}
+        AppMenuItem { text: qsTr("Alle Regeln exportieren …"); enabled: AppModel.rules.length > 0; onTriggered: exchange.exportRules([]) }
+        AppMenuItem { text: qsTr("Ausgewählte Regel exportieren …"); enabled: editor.selection !== null
+                      onTriggered: exchange.exportRules([editor.selection]) }
+    }
+    // .ruleTagExchange(export:importing:)
+    RuleTagExchange { id: exchange }
 
     // .confirmationDialog("Regel löschen?")
     ConfirmDialog {

@@ -1671,6 +1671,11 @@ fn dispatch_vault(v: &Vault, method: &str, a: &Value) -> Option<R> {
                 crate::refunds::edit(v, a)
             }
         })()),
+        // Regeln und Tags als Datei (RuleTagExchangeUI.swift, #1057); the file is read and
+        // written here, errors keep their CoreError kind (`InvalidInput`: no GiroCrab file).
+        "export_rules_tags_file" => Some(export_rules_tags_file(v, a)),
+        "preview_rules_tags_file" => Some(preview_rules_tags_file(v, a)),
+        "import_rules_and_tags_selected" => Some(import_rules_and_tags_selected(v, a)),
         "split_editor_data" => Some(split_editor_data(v, a)),
         "set_transaction_splits" => Some(set_transaction_splits(v, a)),
         _ => dispatch_vault_methods(v, method, a),
@@ -1728,6 +1733,56 @@ fn camt053_export(v: &Vault, a: &Value) -> R {
         girocrab_core::CoreError::InvalidInput { message } => message,
         e => e.to_string(),
     })?)
+}
+
+/// Largest rules/tags file the import reads (AppModel+RuleExchange.swift › previewRulesTagsFile).
+const RULES_TAGS_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// AppModel+RuleExchange.swift › exportRulesFile / exportTagsFile: the rules or tags
+/// `ids` (empty = all) as JSON, written to `path` (save panel).
+fn export_rules_tags_file(v: &Vault, a: &Value) -> R {
+    let ids: Vec<i64> = arg(a, "ids")?;
+    let json = if arg::<String>(a, "kind")? == "tags" {
+        v.export_tags(ids)
+    } else {
+        v.export_rules(ids)
+    }
+    .map_err(|e| core_error_json(&e))?;
+    std::fs::write(local_path(arg(a, "path")?), json).map_err(|e| e.to_string())?;
+    ok(())
+}
+
+/// AppModel+RuleExchange.swift › previewRulesTagsFile: the chosen file (never more than
+/// `RULES_TAGS_MAX_BYTES` read) and what it holds, `{ json, preview }`; QML hands `json`
+/// back to `import_rules_and_tags_selected`.
+fn preview_rules_tags_file(v: &Vault, a: &Value) -> R {
+    use std::io::Read;
+    let path = local_path(arg(a, "path")?);
+    let unreadable = || crate::i18n::tr("Die Datei ist zu groß oder nicht lesbar.");
+    let mut bytes = Vec::new();
+    std::fs::File::open(&path)
+        .and_then(|f| f.take(RULES_TAGS_MAX_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|_| unreadable())?;
+    if bytes.len() as u64 > RULES_TAGS_MAX_BYTES {
+        return Err(unreadable());
+    }
+    // not UTF-8: the core refuses it as no GiroCrab file
+    let json = String::from_utf8_lossy(&bytes).into_owned();
+    let preview = v
+        .preview_rules_and_tags(json.clone())
+        .map_err(|e| core_error_json(&e))?;
+    ok(json!({ "json": json, "preview": preview }))
+}
+
+/// AppModel+RuleExchange.swift › importRulesAndTags: the chosen rules (file positions)
+/// and tags of a previewed file.
+fn import_rules_and_tags_selected(v: &Vault, a: &Value) -> R {
+    ok(v.import_rules_and_tags_selected(
+        arg(a, "json")?,
+        arg(a, "rule_indices")?,
+        arg(a, "tag_names")?,
+    )
+    .map_err(|e| core_error_json(&e))?)
 }
 
 macro_rules! vault_methods {
@@ -2863,6 +2918,114 @@ mod tests {
         assert!(row["booking_count"].as_u64().unwrap() > 0);
         drop(v);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Regeln und Tags als Datei (#1057, RuleTagExchange.qml): a rule with its tag and a
+    /// tag alone go to a file, are deleted and come back through preview and import; a
+    /// file that is no GiroCrab rules/tags file is refused as `InvalidInput`.
+    #[test]
+    fn rules_and_tags_file_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("girocrab-exchange-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let v = Vault::open(dir.join("v.girocrab").display().to_string(), vec![10; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let tag_named = |name: &str| {
+            call("list_tags", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t["name"] == json!(name))
+                .cloned()
+        };
+        let cat = call("list_categories", json!({}))
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["depth"] == json!(1))
+            .unwrap()["id"]
+            .clone();
+        let tag = call(
+            "create_tag",
+            json!({ "name": "Austausch", "color_hex": "#FF9500" }),
+        );
+        let alone = call(
+            "create_tag",
+            json!({ "name": "Nur Datei", "color_hex": "#2E86DE" }),
+        );
+        let rule = call(
+            "save_rule",
+            json!({ "rule": {
+                "id": 0, "name": "Austauschregel", "category_id": cat, "field": "Any", "match_kind": "Keyword",
+                "pattern": "AUSTAUSCH", "case_sensitive": false, "min_amount_cents": null, "max_amount_cents": null,
+                "account_ids": [], "priority": 999, "enabled": true, "match_count": 0, "tag_ids": [tag["id"]] } }),
+        );
+        let rules_file = dir.join("GiroCrab-Regel.json").display().to_string();
+        let tags_file = dir.join("GiroCrab-Tag.json").display().to_string();
+        call(
+            "export_rules_tags_file",
+            json!({ "kind": "rules", "ids": [rule], "path": format!("file://{rules_file}") }),
+        );
+        call(
+            "export_rules_tags_file",
+            json!({ "kind": "tags", "ids": [alone["id"]], "path": tags_file }),
+        );
+        call("delete_rule", json!({ "rule_id": rule }));
+        call("delete_tag", json!({ "id": tag["id"] }));
+        call("delete_tag", json!({ "id": alone["id"] }));
+        assert!(tag_named("Austausch").is_none() && tag_named("Nur Datei").is_none());
+
+        let read = call("preview_rules_tags_file", json!({ "path": rules_file }));
+        let preview = &read["preview"];
+        assert_eq!(preview["rules"].as_array().unwrap().len(), 1, "{preview}");
+        assert_eq!(preview["rules"][0]["name"], json!("Austauschregel"));
+        assert!(preview["rules"][0]["problem"].is_null(), "{preview}");
+        assert_eq!(preview["tags"][0]["exists"], json!(false));
+        let report = call(
+            "import_rules_and_tags_selected",
+            json!({ "json": read["json"], "rule_indices": [0], "tag_names": [] }),
+        );
+        assert_eq!(report["rules_imported"], json!(1), "{report}");
+        assert_eq!(report["tags_created"], json!(1), "{report}");
+        let back = call("list_rules", json!({}))
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["pattern"] == json!("AUSTAUSCH"))
+            .cloned()
+            .expect("the rule is back");
+        assert_eq!(back["category_id"], cat);
+        let tag = tag_named("Austausch").expect("its tag is back");
+        assert_eq!(back["tag_ids"], json!([tag["id"]]));
+
+        let read = call("preview_rules_tags_file", json!({ "path": tags_file }));
+        assert!(read["preview"]["rules"].as_array().unwrap().is_empty());
+        let report = call(
+            "import_rules_and_tags_selected",
+            json!({ "json": read["json"], "rule_indices": [], "tag_names": ["Nur Datei"] }),
+        );
+        assert_eq!(report["tags_created"], json!(1), "{report}");
+        assert_eq!(
+            tag_named("Nur Datei").unwrap()["color_hex"],
+            json!("#2E86DE")
+        );
+
+        let foreign = dir.join("fremd.json");
+        std::fs::write(&foreign, r#"{"format":"etwas-anderes","version":1}"#).unwrap();
+        let e = dispatch_vault(
+            &v,
+            "preview_rules_tags_file",
+            &json!({ "path": foreign.display().to_string() }),
+        )
+        .unwrap()
+        .unwrap_err();
+        assert!(e.contains("InvalidInput"), "{e}");
+        drop(v);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// „Auf welche Buchungen soll die Regel angewendet werden?“: `apply_rule` with only

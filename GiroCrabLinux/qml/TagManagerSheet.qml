@@ -91,6 +91,10 @@ Sheet {
     function openEditor(mode, id) { nameEditor.mode = mode; nameEditor.tagID = id; nameEditor.open() }
     function rename() { if (selectedIDs.length === 1) openEditor("rename", selectedIDs[0]) }
     function confirmDeleteSelection() { if (selectedIDs.length > 0) deleteDialog.open() }
+    /// Pending names, colours and order first, so the file holds what the sheet shows (#1057).
+    function exportTags(ids) { TagManager.applyDraft(); exchange.exportTags(ids) }
+    // .ruleTagExchange(export:importing:)
+    RuleTagExchange { id: exchange }
 
     // a tag gone (merged, deleted, synced away) leaves the selection
     Connections {
@@ -267,6 +271,21 @@ Sheet {
                 }
             }
             Button { text: qsTr("Ungenutzte entfernen …"); enabled: TagManager.unusedTags.length > 0; onClicked: unusedSheet.open() }
+            // tags to and from a file (#1057); one menu, the bar has no room for more buttons
+            IconButton {
+                id: exchangeButton
+                symbol: "square.and.arrow.up.on.square"
+                ToolTip.text: qsTr("Tags importieren oder exportieren")
+                onClicked: exchangeMenu.popup(exchangeButton, 0, exchangeButton.height)
+                AppMenu {
+                    id: exchangeMenu
+                    AppMenuItem { text: qsTr("Tags importieren …"); onTriggered: { TagManager.applyDraft(); exchange.startImport() } }
+                    AppMenuSeparator {}
+                    AppMenuItem { text: qsTr("Alle Tags exportieren …"); enabled: TagsModel.tags.length > 0; onTriggered: sheet.exportTags([]) }
+                    AppMenuItem { text: sheet.selectedIDs.length > 1 ? qsTr("Ausgewählte Tags exportieren …") : qsTr("Ausgewählten Tag exportieren …")
+                                  enabled: sheet.selectedIDs.length > 0; onTriggered: sheet.exportTags(sheet.selectedIDs) }
+                }
+            }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.border }
 
@@ -573,6 +592,7 @@ Sheet {
                       onTriggered: sheet.openEditor("rename", rowMenu.ids[0]) }
         AppMenuItem { text: qsTr("Zusammenführen …"); visible: rowMenu.ids.length > 1; height: visible ? implicitHeight : 0
                       onTriggered: { sheet.select(rowMenu.ids); mergeSheet.open() } }
+        AppMenuItem { text: qsTr("Exportieren …"); onTriggered: sheet.exportTags(rowMenu.ids) }
         AppMenuSeparator {}
         AppMenuItem { text: rowMenu.ids.length > 1 ? qsTr("%1 Tags löschen …").arg(rowMenu.ids.length) : qsTr("Löschen …")
                       onTriggered: { sheet.select(rowMenu.ids); deleteDialog.open() } }
