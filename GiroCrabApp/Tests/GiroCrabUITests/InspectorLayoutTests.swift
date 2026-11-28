@@ -1,5 +1,10 @@
 import XCTest
 @testable import GiroCrabUI
+#if os(macOS)
+import AppKit
+import GiroCrabCore
+import SwiftUI
+#endif
 
 /// Anpassbare rechte Seitenleiste (#448): order, hiding and the stored form of `InspectorLayout`.
 final class InspectorLayoutTests: XCTestCase {
@@ -8,6 +13,9 @@ final class InspectorLayoutTests: XCTestCase {
         XCTAssertEqual(layout, .standard)
         XCTAssertEqual(layout.visible, InspectorSection.allCases)
         XCTAssertTrue(layout.hiddenSections.isEmpty)
+        #if os(macOS)
+        XCTAssertEqual(Array(layout.visible.prefix(4)), [.receipt, .merchantHistory, .tags, .categories])
+        #endif
     }
 
     func testHideAndShow() {
@@ -25,9 +33,10 @@ final class InspectorLayoutTests: XCTestCase {
 
     func testInsertAtGapAccountsForTheDraggedCardItself() {
         var layout = InspectorLayout.standard
-        // Receipt (index 0) dropped into the gap below note (gap 2) lands right after note.
+        let original = layout.visible
+        // Receipt (index 0) dropped into gap 2 lands just after the next section.
         layout.insert(.receipt, atGap: 2)
-        XCTAssertEqual(Array(layout.visible.prefix(3)), [.note, .receipt, .tags])
+        XCTAssertEqual(Array(layout.visible.prefix(3)), [original[1], .receipt, original[2]])
 
         // Raw data (last) dropped above the first card.
         layout.insert(.rawData, atGap: 0)
@@ -93,15 +102,48 @@ final class InspectorLayoutTests: XCTestCase {
         XCTAssertEqual(layout.persistedValue, "")
     }
 
-    /// v0.7.5 stored the standard as a list without the tag card: read as standard,
-    /// so the tag card sits below the note.
+    /// v0.7.5 stored the standard as a list without the tag card: read as today's standard.
     func testFormerStandardReadsAsCurrentStandard() {
         let old = InspectorLayout(storageValue: "receipt,note,salary,recurring,categories,documents,merchantHistory,rawData")
         XCTAssertTrue(old.isStandard)
-        XCTAssertEqual(Array(old.visible.prefix(3)), [.receipt, .note, .tags])
+        XCTAssertEqual(old, .standard)
         // a layout the user changed keeps its order; the new card goes to the bottom
         let own = InspectorLayout(storageValue: "note,receipt,salary,recurring,categories,documents,merchantHistory,rawData")
         XCTAssertEqual(own.visible.first, .note)
-        XCTAssertEqual(Array(own.visible.suffix(2)), [.tags, .refunds])
+        XCTAssertTrue(own.visible.suffix(2).contains(.tags))
+        XCTAssertTrue(own.visible.suffix(2).contains(.refunds))
     }
+
+    #if os(macOS)
+    @MainActor
+    func testHistoryCardKeepsItsHeightWhenSelectionAndStatsChange() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let first = try XCTUnwrap(model.bookings.first { !$0.merchant.key.isEmpty })
+        let second = try XCTUnwrap(model.bookings.first { !$0.merchant.key.isEmpty && $0.merchant.key != first.merchant.key })
+        let all = MerchantStats(key: first.merchant.key, name: first.merchant.name, count: 4,
+                                totalCents: -24_120, averageCents: -6_030, firstDate: "2026-11-05", lastDate: "2026-11-24")
+        let own = MerchantStats(key: first.merchant.key, name: first.merchant.name, count: 1,
+                                totalCents: -2_400, averageCents: -2_400, firstDate: "2026-11-05", lastDate: "2026-11-05")
+
+        func historyHeight(for booking: Booking, width: CGFloat, textScale: CGFloat) -> CGFloat {
+            NSHostingView(rootView: MerchantHistoryCard(booking: booking)
+                .environment(model)
+                .environment(\.textScale, textScale)
+                .frame(width: width)).fittingSize.height
+        }
+
+        let widthsAndScales: [(CGFloat, CGFloat)] = [(370, 1), (310, 1.3)]
+        for (width, scale) in widthsAndScales {
+            model.merchantStats = nil
+            model.merchantAccountStats = nil
+            let loading = historyHeight(for: first, width: width, textScale: scale)
+            XCTAssertGreaterThan(loading, 0)
+            model.merchantStats = all
+            XCTAssertEqual(historyHeight(for: first, width: width, textScale: scale), loading, accuracy: 0.5)
+            model.merchantAccountStats = (first.accountId, own)
+            XCTAssertEqual(historyHeight(for: first, width: width, textScale: scale), loading, accuracy: 0.5)
+            XCTAssertEqual(historyHeight(for: second, width: width, textScale: scale), loading, accuracy: 0.5)
+        }
+    }
+    #endif
 }

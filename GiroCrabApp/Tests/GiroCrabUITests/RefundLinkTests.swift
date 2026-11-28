@@ -705,9 +705,15 @@ final class RefundLinkTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    func testTheInspectorCardHasItsPlaceInTheStandardLayout() {
+    func testTheInspectorCardHasItsPlaceInTheStandardLayout() throws {
         let visible = InspectorLayout.standard.visible
-        XCTAssertEqual(visible.firstIndex(of: .refunds), visible.firstIndex(of: .tags).map { $0 + 1 })
+        #if os(macOS)
+        let precedingSection = InspectorSection.note
+        #else
+        let precedingSection = InspectorSection.tags
+        #endif
+        let precedingIndex = try XCTUnwrap(visible.firstIndex(of: precedingSection))
+        XCTAssertEqual(visible.firstIndex(of: .refunds), precedingIndex + 1)
         XCTAssertEqual(InspectorLayout(storageValue: "note,receipt").order.last, .rawData)
         XCTAssertTrue(InspectorLayout(storageValue: "note,receipt").visible.contains(.refunds))
     }
