@@ -472,7 +472,16 @@ impl BankConnector for FinTsConnector {
                 return Err(CoreError::SessionClosed);
             }
         } else {
-            self.url = ctx.setting(&format!("fints.url.{}", self.blz))?.to_string();
+            let url_key = format!("fints.url.{}", self.blz);
+            // no address to ask the user for: the bank shut down FinTS (#2020)
+            if ctx.setting_or(&url_key, "").is_empty()
+                && crate::connectors::fints_directory::fints_discontinued(&self.blz)
+            {
+                return Err(CoreError::invalid(tr(
+                    "Diese Bank bietet kein FinTS mehr an. Über diesen Zugang lassen sich keine Konten abrufen.",
+                )));
+            }
+            self.url = ctx.setting(&url_key)?.to_string();
         }
         self.product_id = ctx.setting("fints.product_id")?.to_string();
         self.product_version = ctx.setting_or("fints.product_version", "0.1").to_string();

@@ -2647,6 +2647,15 @@ fn brand_banks_with_pseudo_bank_code_map_to_their_connector() {
     assert_eq!(connector_for("", "Bondora"), Some(ConnectorKind::GoAndGrow));
 }
 
+/// A login at a bank that shut down FinTS (Wüstenrot Bank, now OLB) is not turned into a
+/// FinTS login that can never fetch (#2020): the import leaves its accounts unconnected.
+#[test]
+fn bank_without_fints_gets_no_fints_login() {
+    for blz in ["60420000", "60420020"] {
+        assert_eq!(connector_for(blz, "Wüstenrot"), None, "{blz}");
+    }
+}
+
 #[test]
 fn bunq_accounts_are_recognised_in_every_country() {
     // BIC of any bunq branch

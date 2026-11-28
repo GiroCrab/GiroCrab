@@ -133,6 +133,17 @@ pub fn url_for_blz(blz: &str) -> Option<&'static str> {
     find(blz).map(|e| e.2)
 }
 
+/// Bank codes that offer no FinTS any more and are therefore missing from the
+/// directory: the Wüstenrot Bank AG Pfandbriefbank merged into the
+/// Oldenburgische Landesbank on 29.11.2019, its customers got new IBANs there
+/// and `fints.wuestenrot.de` no longer resolves (#2020).
+const FINTS_DISCONTINUED: &[&str] = &["60420000", "60420020"];
+
+/// The bank behind `blz` has shut down its FinTS access (see [`FINTS_DISCONTINUED`]).
+pub fn fints_discontinued(blz: &str) -> bool {
+    FINTS_DISCONTINUED.contains(&blz.trim())
+}
+
 /// Endpoints earlier directory versions handed out that the bank has moved on from
 /// (apoBank left Atruvia in 2020, #1385; the Sparkassen host hs5 of 1822direkt no
 /// longer resolves; flatex switched from its former "biw Bank" host to

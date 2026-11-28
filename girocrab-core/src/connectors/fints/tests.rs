@@ -31,6 +31,41 @@ async fn rah10_without_keyfile_never_falls_back_to_pin_tan() {
     );
 }
 
+/// A login at a bank that shut down FinTS says so instead of asking for a server
+/// address nobody can enter (#2020); an address set by hand is still used.
+#[tokio::test]
+async fn bank_without_fints_says_so_unless_an_address_is_set() {
+    let mut connector = FinTsConnector::for_key("fints:60420000");
+    match connector.begin(&test_ctx()).await {
+        Err(CoreError::InvalidInput { message }) => assert_eq!(
+            message,
+            crate::i18n::tr(
+                "Diese Bank bietet kein FinTS mehr an. Über diesen Zugang lassen sich keine Konten abrufen."
+            )
+        ),
+        other => panic!("unexpected: {other:?}"),
+    }
+    assert!(connector.client.is_none());
+
+    let mut ctx = test_ctx();
+    ctx.settings.insert(
+        "fints.url.60420000".into(),
+        SecretString::new("https://example.invalid/fints".into()),
+    );
+    let mut connector = FinTsConnector::for_key("fints:60420000");
+    assert!(matches!(
+        connector.begin(&ctx).await,
+        Err(CoreError::MissingSetting { key }) if key == "fints.product_id"
+    ));
+
+    // any other bank without an address still asks for it
+    let mut connector = FinTsConnector::for_key("fints:12345678");
+    assert!(matches!(
+        connector.begin(&test_ctx()).await,
+        Err(CoreError::MissingSetting { key }) if key == "fints.url.12345678"
+    ));
+}
+
 fn test_ctx() -> ConnectContext {
     ConnectContext {
         connection_id: 1,
