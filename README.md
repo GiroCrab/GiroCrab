@@ -38,13 +38,6 @@
 
 <p align="center"><sub>⭐ Gefällt dir GiroCrab? Ein <a href="https://github.com/GiroCrab/GiroCrab/stargazers">Stern auf GitHub</a> hilft anderen, das Projekt zu finden. · <i>A star helps others find the project.</i></sub></p>
 
-> ### 🛠️ Mitbauen in 4 Schritten · Contribute in 4 steps
-> In den ersten 10 Tagen: **310+ GitHub-Sterne**, **580+ erledigte Pull Requests**, **25+ Mitwirkende** – direkt von GitHub.
-> Du brauchst **keine Swift- oder Rust-Erfahrung**: Mach aus deinem Funktionswunsch mit **Claude Code, Codex oder Cursor** und der [`CLAUDE.md`](CLAUDE.md) einen eigenen Pull Request.
-> 👉 [**Schritt-für-Schritt-Anleitung**](https://girocrab.de/girocrab_mitbau_anleitung.html) · [CONTRIBUTING.md](CONTRIBUTING.md)
->
-> *In our first 10 days: 310+ stars, 580+ closed/merged pull requests, 25+ contributors (from GitHub). No Swift or Rust experience needed – turn your own feature wish into a pull request with Claude Code, Codex or Cursor and [`CLAUDE.md`](CLAUDE.md). See the [step-by-step guide](https://girocrab.de/girocrab_mitbau_anleitung.html) and [CONTRIBUTING.md](CONTRIBUTING.md).*
-
 ---
 
 ## 🇩🇪 Deutsch

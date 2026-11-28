@@ -6,6 +6,8 @@ Thanks for helping! / Danke für die Mitarbeit! Issues and PRs may be in English
 bank exports (MT940/CAMT/CSV) or real people's names. Use invented data (e.g. the public example IBAN
 `DE89 3704 0044 0532 0130 00`, "Max Mustermann").
 
+> **Feature freeze (v0.9):** GiroCrab is currently in a feature freeze. Please focus pull requests on **bugfixes, stabilization, and tests** rather than new features. Feature ideas can still be discussed in issues for a later release.
+
 ## Setup
 
 ```bash
