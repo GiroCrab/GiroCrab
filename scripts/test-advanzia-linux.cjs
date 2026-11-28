@@ -103,6 +103,7 @@ test('PDF failures do not replace a successful capture or prevent saving the nex
     },
     AppModel: {
       documentsVersion: 0,
+      logSync: (...args) => recorded.push(['log', ...args]),
       async corePromise(method, args) {
         assert.equal(args.connection_id, 42);
         assert.equal(args.bank_account_id, id);
@@ -118,6 +119,34 @@ test('PDF failures do not replace a successful capture or prevent saving the nex
   assert.match(ctx.AppModel.toast, /^Umsätze übernommen .*1 neue Kontoauszüge .*1 Kontoauszüge konnten nicht geladen werden/);
   assert.deepEqual(recorded.filter(r => r[0] !== 'browser'), [
     ['advanzia_statements_enabled', undefined], ['pending_advanzia_statements', 24],
-    ['import_advanzia_statement', 'good'], ['close', true],
+    ['import_advanzia_statement', 'good'],
+    ['log', 42, 'Partial', '1 neue Kontoauszüge · 1 Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.', 0, 'Statements'],
+    ['close', true],
   ]);
+});
+
+test('manual Advanzia statements check the refreshed banking policy and vault before opening the portal', () => {
+  const app = read('../GiroCrabLinux/qml/AppModel.qml');
+  const fetch = app.slice(app.indexOf('    function fetchStatements('), app.indexOf('    function autoStatements('));
+  const account = {id: 42, connection_id: 7};
+  const connection = {id: 7, connector: 'Advanzia'};
+  for (const scenario of ['blocked', 'vault replaced', 'allowed']) {
+    let afterRefresh;
+    const gate = {};
+    const ctx = {
+      account, connections: [connection], accountsByID: {42: account},
+      vaultGeneration: 1, isUnlocked: true, syncingConnectionID: null, webLoginConnection: null,
+      usesPortalLogin: () => true,
+      withFreshBankingPolicy: callback => { afterRefresh = callback; },
+      bankingGate: () => scenario === 'blocked' ? gate : null,
+      showBankingGate: value => { ctx.shownGate = value; },
+    };
+    vm.runInNewContext(fetch + '\nfetchStatements(account, 12)', ctx);
+    assert.equal(ctx.webLoginConnection, null);
+    if (scenario === 'vault replaced') ctx.vaultGeneration++;
+    afterRefresh();
+    assert.equal(ctx.webLoginConnection, scenario === 'allowed' ? connection : null);
+    assert.equal(ctx.shownGate, scenario === 'blocked' ? gate : undefined);
+    assert.equal(ctx.advanziaStatementRequest?.months, scenario === 'allowed' ? 12 : undefined);
+  }
 });

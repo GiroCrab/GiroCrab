@@ -404,7 +404,7 @@ return 'unknown';`
         const account = accountID
         const args = { connection_id: connection.id, bank_account_id: account, profile_id: profile.profile_id,
                        target_account_id: statementRequest ? statementRequest.account : null }
-        let added = 0, failed = 0
+        let added = 0, failed = 0, attempted = false
         const download = (pending, index) => {
             if (!current() || index >= pending.length) return
             const statement = pending[index]
@@ -425,6 +425,7 @@ return 'unknown';`
         }
         return AppModel.corePromise("advanzia_statements_enabled", args).then(enabled => {
             if (!enabled || !current()) return
+            attempted = true
             return browser.runAsync(statementScript, { account: account, statementID: "" }, browser.mainWorld)
                 .then(list => {
                     if (!current()) return
@@ -436,9 +437,14 @@ return 'unknown';`
         }).catch(() => failed++).then(() => {
             if (!current()) return
             const messages = note ? [note] : []
-            if (added) messages.push(qsTr("%1 neue Kontoauszüge").arg(added))
-            if (failed) messages.push(qsTr("%1 Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.").arg(failed))
-            if (!messages.length) messages.push(qsTr("Keine neuen Kontoauszüge"))
+            if (attempted || failed) {
+                const result = [added ? qsTr("%1 neue Kontoauszüge").arg(added) : qsTr("Keine neuen Kontoauszüge")]
+                if (failed) result.push(qsTr("%1 Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.").arg(failed))
+                const outcome = failed ? (added ? "Partial" : "Error") : "Ok"
+                AppModel.logSync(args.connection_id, outcome, result.join(" · "), 0, "Statements")
+                messages.push(result.join(" · "))
+            }
+            if (!messages.length) messages.push(qsTr("Dokumentenabruf aus"))
             AppModel.toast = messages.join(" · ")
             automatic = "finished"; phase = "finished"
             close(true)

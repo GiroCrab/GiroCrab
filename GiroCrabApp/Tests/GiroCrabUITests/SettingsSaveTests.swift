@@ -1,3 +1,4 @@
+// test: serial-defaults
 import XCTest
 import GiroCrabCore
 @testable import GiroCrabUI
@@ -39,6 +40,23 @@ final class SettingsSaveTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(try XCTUnwrap(model.vault).onlineLogoProvider(), "duckduckgo")
         XCTAssertEqual(model.logoProvider, "duckduckgo")
+    }
+
+    func testPrivacyModePreventsDocumentMirrorFromStarting() async throws {
+        let defaults = UserDefaults.standard
+        let key = PrivacyMode.enabledKey
+        let previous = defaults.object(forKey: key)
+        defer { defaults.set(previous, forKey: key) }
+        defaults.set(true, forKey: key)
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("girocrab-mirror-private-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        model.demoActive = false
+        model.documentMirrorPath = folder.path
+        model.mirrorDocumentsIfEnabled()
+        XCTAssertFalse(model.mirrorRunning)
+        for _ in 0..<300 where model.mirrorRunning { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
     }
 
     #if os(macOS)

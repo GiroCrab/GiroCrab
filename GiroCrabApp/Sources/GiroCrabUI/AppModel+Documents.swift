@@ -51,14 +51,17 @@ extension AppModel {
 
     /// Copies documents that are not in the folder yet (after syncs, imports, drops).
     func mirrorDocumentsIfEnabled() {
-        guard let vault, let dir = documentMirrorPath, !isDemo, !mirrorRunning else { return }
+        guard let vault, let dir = documentMirrorPath, !isDemo, !mirrorRunning,
+              !UserDefaults.standard.bool(forKey: PrivacyMode.enabledKey), options.redaction.isEmpty else { return }
         mirrorRunning = true
         Task { @MainActor [weak self] in
-            let result: Result<UInt32, Error> = await Task.detached(priority: .utility) {
-                Result { try vault.mirrorNewDocuments(destDir: dir) }
+            let result = await Task.detached(priority: .utility) { () -> Result<UInt32, Error>? in
+                guard !UserDefaults.standard.bool(forKey: PrivacyMode.enabledKey) else { return nil }
+                return Result { try vault.mirrorNewDocuments(destDir: dir) }
             }.value
             guard let self else { return }
             mirrorRunning = false
+            guard let result else { return }
             switch result {
             case .success(let n):
                 let time = Date().formatted(date: .omitted, time: .shortened)

@@ -2895,8 +2895,16 @@ QtObject {
         if (!c) return
         if (c.connector === "Advanzia") {
             if (webLoginConnection || !usesPortalLogin(c)) return
-            advanziaStatementRequest = { connection: c.id, account: a.id, months: months || 0 }
-            webLoginConnection = c
+            const vault = vaultGeneration
+            withFreshBankingPolicy(() => {
+                if (!isUnlocked || vault !== vaultGeneration || syncingConnectionID !== null || webLoginConnection) return
+                const current = connections.find(x => x.id === c.id)
+                if (!current || !usesPortalLogin(current) || accountsByID[a.id]?.connection_id !== current.id) return
+                const gate = bankingGate(current)
+                if (gate) { showBankingGate(gate); return }
+                advanziaStatementRequest = { connection: current.id, account: a.id, months: months || 0 }
+                webLoginConnection = current
+            })
             return
         }
         statementsAccountID = a.id

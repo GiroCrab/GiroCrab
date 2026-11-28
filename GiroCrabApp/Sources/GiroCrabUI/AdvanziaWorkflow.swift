@@ -200,6 +200,17 @@ final class AdvanziaWorkflow {
         phase = .statements
         if !showBrowser { showPrompt = false }
         var added = 0, failed = 0
+        var attempted = false
+        var completed = false
+        defer {
+            if let model, model.isCurrent(pin), attempted || failed > 0 {
+                let outcome: SyncLogOutcome = failed == 0 ? .ok : (added > 0 ? .partial : .error)
+                model.logSync(connectionID: connection.id, source: .statements, outcome: completed ? outcome : .cancelled,
+                              message: statementResult(added: added, failed: failed))
+                if added > 0 { model.documentsVersion += 1 }
+                model.mirrorDocumentsIfEnabled()
+            }
+        }
         do {
             if let browser = session.portal, let account = session.accountID {
                 let id = connection.id, profile = session.profile.profileId
@@ -208,6 +219,7 @@ final class AdvanziaWorkflow {
                     bankAccountId: account, profileId: profile, targetAccountId: target) }
                 guard active, !Task.isCancelled else { return }
                 if enabled {
+                    attempted = true
                     let listing = try await AdvanziaBrowserSession.statementResponse(browser: browser, account: account)
                     let pending = try await pin.run { try $0.pendingAdvanziaStatements(connectionId: id,
                         bankAccountId: account, profileId: profile, targetAccountId: target, listing: listing, months: period) }
@@ -220,8 +232,8 @@ final class AdvanziaWorkflow {
                             let stored = try await pin.run { try $0.importAdvanziaStatement(connectionId: id,
                                 bankAccountId: account, profileId: profile, targetAccountId: target, statement: statement,
                                 pdfBase64: bytes) }
+                            if stored { added += 1 }
                             guard active, !Task.isCancelled else { return }
-                            if stored { added += 1; model?.documentsVersion += 1 }
                         } catch is CancellationError { return }
                         catch let error as AdvanziaBrowserError where ["AUTH", "ACCOUNT", "TIMEOUT"].contains(error.code) {
                             failed += pending.count - index
@@ -233,16 +245,20 @@ final class AdvanziaWorkflow {
         } catch is CancellationError { return }
         catch { failed += 1 }
         guard active, !Task.isCancelled else { return }
-        var messages = [note].compactMap { $0 }
-        if added > 0 { messages.append(String(localized: "\(added) neue Kontoauszüge")) }
-        if failed > 0 {
-            messages.append(String(localized: "\(failed) Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen."))
-        }
-        if messages.isEmpty { messages.append(String(localized: "Keine neuen Kontoauszüge")) }
-        if added > 0 { model?.mirrorDocumentsIfEnabled() }
-        model?.toast = messages.joined(separator: " · ")
+        let result = attempted || failed > 0 ? statementResult(added: added, failed: failed) : nil
+        model?.toast = [note, result ?? (note == nil ? String(localized: "Dokumentenabruf aus") : nil)]
+            .compactMap { $0 }.joined(separator: " · ")
+        completed = true
         automatic.finish(success: true); phase = .finished
         cancel()
+    }
+
+    private func statementResult(added: Int, failed: Int) -> String {
+        let imported = added > 0 ? String(localized: "\(added) neue Kontoauszüge")
+            : String(localized: "Keine neuen Kontoauszüge")
+        guard failed > 0 else { return imported }
+        let retry = String(localized: "\(failed) Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.")
+        return imported + " · " + retry
     }
 
     private func fail(_ message: String) {
