@@ -503,6 +503,20 @@ fn parse_accounts(html: &str) -> CoreResult<(Vec<Account>, Vec<String>)> {
     Ok((out, unreadable))
 }
 
+/// The `limit` field of the list page after loading a date range, `None` when
+/// the range has no bookings: the bank then shows the account without the list
+/// and its `limit` field (#1766). A page that lost the date fields as well changed.
+fn list_limit(form: &Form) -> CoreResult<Option<String>> {
+    if let Some(limit) = form.field_ending(":limit") {
+        return Ok(Some(limit));
+    }
+    if form.field_ending(":inbox-datetimepicker-start").is_some() {
+        return Ok(None);
+    }
+    trace("transaction list page: neither list nor date fields");
+    Err(page_changed())
+}
+
 /// What a failed transaction list of one account means for the sync: an
 /// ended session or a cancel fails it (the other accounts would fail the
 /// same way), anything else is a warning and the account keeps its balance.
@@ -824,7 +838,10 @@ impl FordMoneyConnector {
             .await?;
 
         let mut form = form_by_id(&page, "contentForm").ok_or_else(page_changed)?;
-        let limit = form.field_ending(":limit").ok_or_else(page_changed)?;
+        let Some(limit) = list_limit(&form)? else {
+            trace("transaction list empty for the date range");
+            return Ok(Vec::new());
+        };
         let mut wanted = LIST_LIMIT;
         let mut list = String::new();
         for _ in 0..4 {
@@ -1862,6 +1879,39 @@ mod tests {
             link_param(html, ".button-anzeigen").as_deref(),
             Some("contentForm:j_idt296")
         );
+    }
+
+    /// A date range without bookings (#1766): the bank shows only the account,
+    /// no list. That is an empty list, not a changed page.
+    #[test]
+    fn a_date_range_without_bookings_is_an_empty_list() {
+        let page = |list: &str| {
+            format!(
+                r#"<form id="contentForm" method="post" action="/eBankingClient/pages/konten/transactions-10.jsf">
+                <input type="hidden" name="contentForm" value="contentForm" />
+                <input type="text" name="contentForm:inbox-datetimepicker-start" value="21.11.2026" />
+                <input type="text" name="contentForm:inbox-datetimepicker-end" value="28.11.2026" />
+                {list}
+              </form>"#
+            )
+        };
+        let empty = form_by_id(&page(""), "contentForm").unwrap();
+        assert_eq!(list_limit(&empty).unwrap(), None);
+
+        let with_list = page(r#"<input type="hidden" name="contentForm:limit" value="5" />"#);
+        let form = form_by_id(&with_list, "contentForm").unwrap();
+        assert_eq!(
+            list_limit(&form).unwrap().as_deref(),
+            Some("contentForm:limit")
+        );
+
+        let other = form_by_id(
+            r#"<form id="contentForm" method="post" action="/eBankingClient/pages/x.jsf">
+              <input type="hidden" name="contentForm" value="contentForm" /></form>"#,
+            "contentForm",
+        )
+        .unwrap();
+        assert!(list_limit(&other).is_err());
     }
 
     #[test]
