@@ -150,7 +150,7 @@ extension AppModel {
     private var canStartScheduledBankSync: Bool {
         vault != nil && !isDemo && syncingConnectionID == nil && activeChallenge == nil
             && !transferBusy && pendingLogin == nil && webLoginConnection == nil
-            && setupRequest == nil && syncQueue.isEmpty
+            && setupRequest == nil && syncQueue.isEmpty && syncRun == nil
             // a sync asked for in the closing Einstellungen sheet comes first (#1831)
             && afterSettingsDismiss == nil
     }
@@ -211,7 +211,13 @@ extension AppModel {
     /// a pointer to the log when parts failed (#1083; the texts name accounts, so not here)
     /// and the core's advice for it, which names none (#1627).
     func syncNotice(_ connection: BankConnection, _ s: SyncSummary) -> String {
-        var parts = [String(localized: "\(connection.displayName): \(s.transactionsImported) neue Buchungen, \(s.transactionsCategorized) kategorisiert")]
+        ([String(localized: "\(connection.displayName): \(s.transactionsImported) neue Buchungen, \(s.transactionsCategorized) kategorisiert")]
+            + syncNoticeDetails(s)).joined(separator: " · ")
+    }
+
+    /// What a sync notice says besides the bookings (also a row of the sync window).
+    func syncNoticeDetails(_ s: SyncSummary) -> [String] {
+        var parts: [String] = []
         if !s.newAccounts.isEmpty {
             parts.append(String(localized: "Neue Konten: \(s.newAccounts.joined(separator: ", "))"))
         }
@@ -226,6 +232,6 @@ extension AppModel {
             #endif
         }
         parts.append(contentsOf: s.hints)
-        return parts.joined(separator: " · ")
+        return parts
     }
 }

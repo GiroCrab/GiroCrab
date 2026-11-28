@@ -268,9 +268,11 @@ struct TwoFactorSheet: View {
 /// (PIN and TAN sheets), so skipping one is an informed choice.
 struct SyncBatchProgressLabel: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.inSyncRunWindow) private var inSyncRunWindow
 
     var body: some View {
-        if let p = model.syncBatchProgress {
+        // the sync window shows the run's progress itself
+        if !inSyncRunWindow, let p = model.syncBatchProgress {
             Text("Bankzugang \(p.current) von \(p.total)")
                 .appFont(.caption)
                 .monospacedDigit()
@@ -288,6 +290,8 @@ struct SyncBatchProgressLabel: View {
 /// (Esc = skip this login) sits next to the default button, both one width.
 struct SyncPromptButtons<Default: View>: View {
     @Environment(AppModel.self) private var model
+    /// Inside the sync window, whose footer has "Alle abbrechen".
+    @Environment(\.inSyncRunWindow) private var inSyncRunWindow
     /// Cancel this prompt: skips the login in a batch, otherwise just cancels.
     let cancel: () -> Void
     /// Extra buttons after the leading one (e.g. "Demo-Daten ansehen").
@@ -304,7 +308,7 @@ struct SyncPromptButtons<Default: View>: View {
                 Button(role: .cancel, action: cancel) {
                     Text("Überspringen").frame(maxWidth: .infinity)
                 }
-                Button("Alle abbrechen") { model.cancelAllSync() }
+                if !inSyncRunWindow { Button("Alle abbrechen") { model.cancelAllSync() } }
             } else {
                 Button("Abbrechen", role: .cancel, action: cancel)
             }
@@ -315,9 +319,11 @@ struct SyncPromptButtons<Default: View>: View {
         #else
         HStack {
             if model.canSkipInSyncBatch {
-                Button("Alle abbrechen") { model.cancelAllSync() }
-                    .help("Den Abruf für alle restlichen Bankzugänge beenden.")
-                    .fixedSize()
+                if !inSyncRunWindow {
+                    Button("Alle abbrechen") { model.cancelAllSync() }
+                        .help("Den Abruf für alle restlichen Bankzugänge beenden.")
+                        .fixedSize()
+                }
             } else {
                 Button("Abbrechen", role: .cancel, action: cancel)
                     .keyboardShortcut(.cancelAction)

@@ -34,14 +34,28 @@ extension AppModel {
             showSettings = false
             return
         }
+        // A login of a run waits here for the policy check: "Alle abbrechen", a lock or a
+        // closed window meanwhile must not start it afterwards (#2055 review).
+        let runGeneration = syncRunActive && syncRun?.contains(connection.id) == true ? syncGeneration : nil
         withFreshBankingPolicy { [self] in
+            if let runGeneration {
+                guard syncGeneration == runGeneration,
+                      let status = syncRun?.status(of: connection.id), status == .waiting || status == .running
+                else { return }
+            }
             if let gate = bankingGate(for: connection) {
                 clearSyncTargets()
-                if syncBatchTotal > 1, !gate.all {
-                    // A lock published while "Alle abrufen" runs: skip this
-                    // login, go on with the rest, name it in the closing notice.
-                    syncBatchSkipped.append(String(localized: "\(connection.displayName) (Sicherheitssperre)"))
-                    syncNextInQueue()
+                if syncRunActive {
+                    // A lock published while "Alle abrufen" runs: skip this login and go on
+                    // with the rest; a lock of all logins skips them all. The window says why.
+                    if gate.all {
+                        syncQueue = []
+                        syncRun?.skipRemaining(reason: String(localized: "Übersprungen: \(gate.title)"))
+                        syncNextInQueue()   // the run is over: announce its summary
+                    } else {
+                        syncRun?.skip(connection.id, reason: Self.skippedByLock)
+                        syncNextInQueue()
+                    }
                 } else {
                     resetSyncBatch()
                     showError(gate.title, gate.detail)
@@ -60,11 +74,18 @@ extension AppModel {
     }
 
     private func requestSyncChecked(_ connection: BankConnection) {
+        syncRun?.start(connection.id)
+        // a new attempt: an import an earlier browser window reported does not count for it
+        syncRunBrowserImports[connection.id] = nil
         // Bitcoin Core on a Mac without a node (the vault came over iCloud): not fetched here,
         // its balance comes from the Mac running the node
         if connection.connector == .bitcoinCore, !isDemo,
            !BitcoinCoreDatadir.nodeOnThisMac(configured: settingEntry(BitcoinCoreDatadir.key)?.value) {
-            toast = String(localized: "\(connection.displayName): wird per iCloud-Sync vom Mac mit Bitcoin Core aktualisiert.")
+            if syncRunActive {
+                syncRun?.skip(connection.id, reason: String(localized: "Übersprungen: wird per iCloud-Sync vom Mac mit Bitcoin Core aktualisiert"))
+            } else {
+                toast = String(localized: "\(connection.displayName): wird per iCloud-Sync vom Mac mit Bitcoin Core aktualisiert.")
+            }
             syncNextInQueue()
             return
         }
@@ -75,10 +96,21 @@ extension AppModel {
             saveSetting(BitcoinCoreDatadir.key, dir)
         }
         if connection.connector == .advanzia, !isDemo, !Self.isMagicDemoLogin(connection.loginName) {
+            // Its own window and flow, which cannot run inside the sync window.
+            if syncRunActive {
+                syncRun?.skip(connection.id, reason: String(localized: "Übersprungen: eigener Abruf-Ablauf, bitte einzeln abrufen"))
+                syncNextInQueue()
+                return
+            }
             startAdvanzia(connection); return
         }
         // Finpension: no sync, the export file is imported from the connection's sheet.
         if usesFileImport(connection) {
+            if syncRunActive {
+                syncRun?.skip(connection.id, reason: String(localized: "Übersprungen: wird per Datei-Import aktualisiert"))
+                syncNextInQueue()
+                return
+            }
             resetSyncBatch()
             toast = String(localized: "\(connection.displayName): Bitte den Export in den Einstellungen der Verbindung importieren.")
             return
@@ -231,7 +263,8 @@ extension AppModel {
             // an error alert of "Alle abrufen" waits for the user too (#1041)
             let prompting = pendingLogin != nil || setupRequest != nil || webLoginConnection != nil || activeChallenge != nil
                 || errorMessage != nil
-            if prompting || (syncingConnectionID == nil && syncQueue.isEmpty) { return }
+            // the sync window shows the rest of "Alle abrufen" (#1041)
+            if prompting || syncRun != nil || (syncingConnectionID == nil && syncQueue.isEmpty) { return }
             try? await Task.sleep(for: .milliseconds(200))
             waited += 1
         }
@@ -239,12 +272,18 @@ extension AppModel {
 
     /// Runs `logins` one after another; read once the banking policy is fresh.
     private func requestSyncBatch(_ logins: @escaping @MainActor () -> [BankConnection]) {
-        guard syncingConnectionID == nil else { return }
+        guard syncingConnectionID == nil, syncRun == nil else { return }
+        // iOS: the sync window cannot appear over the Einstellungen sheet (#1831)
+        if showSettings {
+            afterSettingsDismiss = { [weak self] in self?.requestSyncBatch(logins) }
+            showSettings = false
+            return
+        }
         refreshAssetPrices()
         withFreshBankingPolicy { [self] in
-            guard syncingConnectionID == nil else { return }
+            guard syncingConnectionID == nil, syncRun == nil else { return }
             let batch = logins()
-            // Logins the banking policy blocks are skipped and named at the end.
+            // Logins the banking policy blocks are skipped; the window names them.
             let blocked = batch.filter { bankingGate(for: $0) != nil }
             let allowed = batch.filter { bankingGate(for: $0) == nil }
             guard let head = allowed.first else {
@@ -254,30 +293,37 @@ extension AppModel {
                 return
             }
             syncQueue = Array(allowed.dropFirst())
-            syncBatchTotal = allowed.count
-            syncBatchSkipped = blocked.map { String(localized: "\($0.displayName) (Sicherheitssperre)") }
             syncAccountID = nil
+            syncRunActions = [:]
+            if batch.count > 1 {
+                var run = SyncRun(logins: batch.map { ($0.id, $0.displayName) })
+                for b in blocked { run.skip(b.id, reason: Self.skippedByLock) }
+                syncRun = run
+            }
             requestSyncChecked(head)
         }
     }
 
     /// Position in a running "Alle abrufen" over several logins, e.g. (2, 5).
     var syncBatchProgress: (current: Int, total: Int)? {
-        guard syncBatchTotal > 1 else { return nil }
-        return (syncBatchTotal - syncQueue.count, syncBatchTotal)
+        guard let run = syncRun, !run.isFinished else { return nil }
+        return (run.position, run.total)
     }
 
-    /// More logins wait after the current one: cancelling a PIN or TAN
-    /// prompt then skips this login instead of stopping the whole batch.
-    var canSkipInSyncBatch: Bool { !syncQueue.isEmpty }
+    /// A run over several logins is under way (its window is open and not yet over).
+    var syncRunActive: Bool { syncRun.map { !$0.isFinished } ?? false }
+
+    /// In a run, cancelling a PIN or TAN prompt skips this login (the window
+    /// keeps it as "übersprungen") instead of stopping the whole run.
+    var canSkipInSyncBatch: Bool { syncRunActive }
 
     /// Cancel button of the TAN sheet. In a batch it drops this login and goes
     /// on with the next one (on the last one it ends the batch with its notice).
     func skipCurrentSync() {
-        guard syncBatchTotal > 1, activeTransfer == nil else { cancelSync(); return }
-        if let name = activeChallenge?.connection.displayName
-            ?? connections.first(where: { $0.id == syncingConnectionID })?.displayName {
-            syncBatchSkipped.append(name)
+        guard syncRunActive, activeTransfer == nil else { cancelSync(); return }
+        if let id = activeChallenge?.connection.id ?? syncingConnectionID {
+            syncRun?.skip(id, reason: Self.skippedByUser)
+            syncRunBrowserImports[id] = nil
         }
         pollTask?.cancel()
         let s = activeSession
@@ -299,8 +345,14 @@ extension AppModel {
         }
     }
 
+    /// Reason in the sync window for a login the user skipped.
+    static var skippedByUser: String { String(localized: "Von Ihnen übersprungen") }
+    /// Reason for a login the banking policy blocks (security lock).
+    static var skippedByLock: String { String(localized: "Wegen Sicherheitssperre übersprungen") }
+
     /// "Alle abbrechen": ends the running sync and closes whichever prompt of
-    /// the batch is open (PIN, setup, browser login, TAN).
+    /// the batch is open (PIN, setup, browser login, TAN). The sync window stays
+    /// with every login not yet fetched as skipped.
     func cancelAllSync() {
         advanziaWorkflow?.cancel()
         setupRequest = nil
@@ -336,15 +388,81 @@ extension AppModel {
         // A cancelled "Kontoauszüge abrufen" must never carry over to the next
         // sync – it would send that login's PIN for another bank's account.
         clearSyncTargets()
-        guard syncBatchTotal > 1 else { resetSyncBatch(); return }
-        if let name = connection?.displayName { syncBatchSkipped.append(name) }
+        guard syncRunActive else { resetSyncBatch(); return }
+        if let id = connection?.id {
+            syncRun?.skip(id, reason: Self.skippedByUser)
+            syncRunBrowserImports[id] = nil
+        }
         syncNextInQueue()
     }
 
+    /// Ends a run at once, its window included (lock, off to Settings).
     func resetSyncBatch() {
         syncQueue = []
-        syncBatchTotal = 0
-        syncBatchSkipped = []
+        syncRun = nil
+        syncRunActions = [:]
+        syncRunBrowserImports = [:]
+    }
+
+    /// "Fertig" in the sync window once the run is over.
+    func closeSyncRun() {
+        guard let run = syncRun, run.isFinished else { return }
+        syncRun = nil
+        syncRunActions = [:]
+        syncRunBrowserImports = [:]
+        // held back while the window was open: its sheet cannot show over it (#346)
+        checkPendingAccountSelection()
+    }
+
+    /// "Erneut versuchen" of a failed or skipped login in the sync window: it is fetched
+    /// again after the logins still waiting, or right away when the run is over.
+    func retryInSyncRun(_ id: Int64) {
+        guard var run = syncRun, let c = connections.first(where: { $0.id == id }) else { return }
+        let idle = run.isFinished && syncingConnectionID == nil
+        guard run.retry(id) else { return }
+        syncRun = run
+        syncRunActions[id] = nil
+        syncRunBrowserImports[id] = nil
+        syncQueue.append(c)
+        if idle { syncNextInQueue() }
+    }
+
+    /// An extra action of a failed login (another FinTS registration …): closes the
+    /// window, then runs it as a single sync would.
+    func runSyncRunAction(_ id: Int64, _ index: Int) {
+        guard let actions = syncRunActions[id], actions.indices.contains(index) else { return }
+        let action = actions[index].action
+        closeSyncRun()
+        action()
+    }
+
+    /// The browser window of a run's login imported it itself (FNZ): its row is done.
+    /// Counted when the window closes, which moves the run on.
+    func webLoginImportedInSyncRun(_ id: Int64, imported: Int) {
+        guard syncRun?.status(of: id) == .running else { return }
+        syncRunBrowserImports[id] = imported
+    }
+
+    /// A browser login of the run closed without a sync of its own: the run goes on. Only an
+    /// import the window reported (`webLoginImportedInSyncRun`) counts as fetched; any other
+    /// close leaves the login out.
+    func webLoginClosedInSyncRun(_ connection: BankConnection) {
+        guard syncRunActive else { return }
+        let generation = syncGeneration
+        Task { @MainActor [weak self] in
+            // a skip, a sync started from the browser session or a cancel acts first
+            guard let self, self.syncGeneration == generation, self.syncingConnectionID == nil,
+                  self.syncRun?.running?.connectionID == connection.id,
+                  self.pendingLogin == nil, self.setupRequest == nil, self.activeChallenge == nil,
+                  self.webLoginConnection == nil else { return }
+            if let imported = self.syncRunBrowserImports.removeValue(forKey: connection.id) {
+                self.syncRun?.finish(connection.id, imported: imported,
+                                     detail: String(localized: "Im Browser-Fenster abgerufen"))
+            } else {
+                self.syncRun?.skip(connection.id, reason: Self.browserClosed)
+            }
+            self.syncNextInQueue()
+        }
     }
 
     /// Errors answered with a prompt (setup form, browser login, FinTS registration)
@@ -392,26 +510,20 @@ extension AppModel {
         s.transactionsSkippedArchived == 0 ? "" : " · " + String(localized: "\(s.transactionsSkippedArchived) Buchungen archivierter Konten übersprungen")
     }
 
-    /// Locale of the UI language (Settings › Allgemein › Sprache), which can
-    /// differ from the system's – e.g. "und" vs. "and" in a list. Builds
-    /// without the translations (`swift run`) fall back to the system locale.
-    private static var uiLocale: Locale {
-        LanguagePreference.isAvailable ? Locale(identifier: LanguagePreference.runningLanguage) : .current
-    }
-
     private func syncNextInQueue() {
         guard syncQueue.isEmpty else {
             requestSync(syncQueue.removeFirst())
             return
         }
-        // batch done: name what was skipped, after the last login's own notice
-        if !syncBatchSkipped.isEmpty {
-            let note = String(localized: "Übersprungen: \(syncBatchSkipped.formatted(.list(type: .and).locale(Self.uiLocale)))")
-            toast = toast.map { $0 + " · " + note } ?? note
-            // the notice disappears after a few seconds: VoiceOver reads it out
-            AccessibilityNotification.Announcement(note).post()
+        // run over: the window stays with its summary until "Fertig"
+        if let run = syncRun, run.isFinished {
+            AccessibilityNotification.Announcement(Self.syncRunSummary(run)).post()
         }
-        resetSyncBatch()
+    }
+
+    /// "Abruf abgeschlossen: 4 abgerufen, 1 übersprungen, 0 fehlgeschlagen".
+    static func syncRunSummary(_ run: SyncRun) -> String {
+        String(localized: "Abruf abgeschlossen: \(run.doneCount) abgerufen, \(run.skippedCount) übersprungen, \(run.failedCount) fehlgeschlagen")
     }
 
     /// Forgets what the next sync was asked to fetch besides (or instead of)
@@ -574,8 +686,17 @@ extension AppModel {
                 toast = syncNotice(connection, s) + " · " + Self.postboxNote(s, connection)
             } else {
                 let quiet = quietSyncConnectionID == connection.id
-                // scheduled syncs only speak up when something changed
-                if !quiet || s.transactionsImported > 0 || !s.newAccounts.isEmpty || !s.revokedAccounts.isEmpty
+                if !quiet, syncRun?.status(of: connection.id) == .running {
+                    // the window's row tells it instead of a notice
+                    var parts = syncNoticeDetails(s)
+                    // both notes start with " · " for the toast
+                    for note in [Self.skippedArchivedNote(s), Self.historyNote(s)] where !note.isEmpty {
+                        parts.append(String(note.dropFirst(" · ".count)))
+                    }
+                    if let n = s.postboxDocuments, n > 0 { parts.append(Self.postboxNote(s, connection)) }
+                    syncRun?.finish(connection.id, imported: Int(s.transactionsImported),
+                                    detail: parts.isEmpty ? nil : parts.joined(separator: " · "))
+                } else if !quiet || s.transactionsImported > 0 || !s.newAccounts.isEmpty || !s.revokedAccounts.isEmpty
                     || !s.warnings.isEmpty {
                     var note = syncNotice(connection, s) + Self.skippedArchivedNote(s) + Self.historyNote(s)
                     if let n = s.postboxDocuments, n > 0 { note += " · " + Self.postboxNote(s, connection) }
@@ -592,7 +713,8 @@ extension AppModel {
                     if await self.placeBhwDocuments().placed > 0 { self.documentsVersion += 1 }
                 }
             }
-            checkPendingAccountSelection()
+            // its sheet cannot show over the sync window: asked once that is closed
+            if syncRun == nil { checkPendingAccountSelection() }
             syncNextInQueue()
         }
     }
@@ -734,11 +856,29 @@ extension AppModel {
         activeSession = nil
         activeChallenge = nil
         pendingLogin = nil
-        syncingConnectionID = nil
         clearSyncTargets()
         syncGeneration &+= 1
-        resetSyncBatch()
-        Task { await s?.cancel() }
+        let generation = syncGeneration
+        // "Alle abbrechen": the window stays and shows the rest as skipped
+        syncQueue = []
+        let inRun = syncRunActive
+        syncRun?.skipRemaining(reason: Self.syncRunCancelled)
+        syncRunBrowserImports = [:]
+        guard inRun, s != nil else {
+            syncingConnectionID = nil
+            Task { await s?.cancel() }
+            // no bank dialog to wait for (a PIN or setup prompt was open): the run is over now
+            if inRun { syncNextInQueue() }
+            return
+        }
+        // As in skipCurrentSync: the bank dialog ends first, so an "Erneut versuchen" in the
+        // window (queued meanwhile) never meets it still open at the same bank.
+        Task {
+            await s?.cancel()
+            guard self.syncGeneration == generation else { return }
+            self.syncingConnectionID = nil
+            self.syncNextInQueue()
+        }
     }
 
     func finishSync(error: Error) {
@@ -790,25 +930,15 @@ extension AppModel {
                 }
             }
         }
-        // "Alle abrufen" (#1041): an error ends only this login. Its alert shows right away;
-        // the batch goes on once it is closed ("Überspringen"), retries this login, or ends.
-        if syncBatchTotal > 1, !Self.errorOpensPrompt(error),
+        // "Alle abrufen" (#1041): an error ends only this login. Its row in the sync window
+        // shows it with "Erneut versuchen", and the run goes on with the next login.
+        if syncRunActive, !Self.errorOpensPrompt(error),
            let conn = connections.first(where: { $0.id == syncingConnectionIDBeforeError }) {
-            showError(String(localized: "Abruf von „\(conn.displayName)“ fehlgeschlagen"), describe(error)) { [weak self] in
-                guard let self, let c = self.connections.first(where: { $0.id == conn.id }) else { return }
-                self.requestSync(c)   // the batch goes on after it
-            }
-            let alternatives = productIDAlternatives(for: conn, error: error, secret: retrySecret)
-            if syncQueue.isEmpty {
-                errorAlternatives = alternatives
-            } else {
-                // macOS shows at most three buttons: Überspringen, one retry, Alle abbrechen.
-                // A rejected FinTS registration is retried with the other one, not the same.
-                if let alt = alternatives.last { errorRetry = nil; errorAlternatives = [alt] }
-                errorAlternatives.append((String(localized: "Alle abbrechen"), { [weak self] in self?.cancelAllSync() }))
-                errorCloseTitle = String(localized: "Überspringen")
-            }
-            errorOnClose = { [weak self] in self?.syncNextInQueue() }
+            syncRun?.fail(conn.id, message: describe(error))
+            // without the PIN: the window may keep these until "Fertig"; a retry asks for it the normal way
+            let alternatives = productIDAlternatives(for: conn, error: error, secret: nil)
+            syncRunActions[conn.id] = alternatives.isEmpty ? nil : alternatives
+            syncNextInQueue()
             return
         }
         // A prompt (browser login, setup form, retry with GiroCrab's registration) keeps
@@ -827,6 +957,12 @@ extension AppModel {
                 requestSync(conn)
                 return
             }
+            if syncRunActive {
+                syncRun?.fail(conn.id, message: String(localized: "Diese Version enthält keine FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein."))
+                syncRunActions[conn.id] = [(String(localized: "Eigene Registrierung eintragen …"), { [weak self] in self?.enterOwnProductID() })]
+                syncNextInQueue()
+                return
+            }
             resetSyncBatch()
             showError(String(localized: "Abruf von „\(conn.displayName)“ fehlgeschlagen"),
                       String(localized: "Diese Version enthält keine FinTS-Registrierung von GiroCrab. Tragen Sie Ihre eigene Registrierung ein."))
@@ -838,6 +974,12 @@ extension AppModel {
             var keys = missingSettings(for: conn)
             if !keys.contains(key) { keys.insert(key, at: 0) }
             setupRequest = SetupRequest(connection: conn, keys: keys)
+            return
+        }
+        if syncRunActive {
+            // no login to name: the running one of the run failed
+            if let id = syncRun?.running?.connectionID { syncRun?.fail(id, message: describe(error)) }
+            syncNextInQueue()
             return
         }
         resetSyncBatch()
@@ -865,5 +1007,64 @@ extension AppModel {
                   self.accountSelectionConnection == nil else { return }
             self.accountSelectionConnection = self.connections.first { $0.id == first }
         }
+    }
+}
+
+extension AppModel {
+    // MARK: - Sync window (SyncRunSheet)
+
+    /// The login's current name, or the one it had when the run started.
+    func connectionName(_ entry: SyncRunEntry) -> String {
+        connections.first { $0.id == entry.connectionID }?.displayName ?? entry.name
+    }
+
+    /// The sync window shows a prompt of the running login below its list.
+    var syncRunPromptShown: Bool { pendingLogin != nil || setupRequest != nil || activeChallenge != nil }
+
+    /// Reason in the sync window for logins "Alle abbrechen" left out.
+    static var syncRunCancelled: String { String(localized: "Abruf abgebrochen") }
+
+    /// Skipped by the user or by "Alle abbrechen": worth another try (a lock is not).
+    static func retryableSkip(_ reason: String) -> Bool {
+        reason == skippedByUser || reason == syncRunCancelled || reason == browserClosed
+    }
+
+    /// Reason for a login whose browser window closed without a fetch.
+    static var browserClosed: String { String(localized: "Browser-Fenster ohne Abruf geschlossen") }
+
+    /// What the running login waits for, for its row.
+    func syncRunPromptText(for id: Int64) -> String {
+        if pendingLogin?.connection.id == id { return String(localized: "Anmeldung erforderlich") }
+        if setupRequest?.connection.id == id { return String(localized: "Angaben fehlen") }
+        if webLoginConnection?.id == id { return String(localized: "Anmeldung im Browser-Fenster") }
+        if let ch = activeChallenge, ch.connection.id == id {
+            switch ch.challenge.kind {
+            case .decoupledPush: return String(localized: "Wartet auf Freigabe")
+            case .progress: return String(localized: "Wird abgerufen …")
+            default: return String(localized: "TAN erforderlich")
+            }
+        }
+        return String(localized: "Wird abgerufen …")
+    }
+
+    /// `--demo-sheet sync-run[-done]` (screenshots): the sync window with fictional results,
+    /// one login per status; nothing is fetched.
+    func presentDemoSyncRun(finished: Bool) {
+        let logins = connections.filter { !$0.allAccountsArchived }
+        guard logins.count >= 2 else { return }
+        var run = SyncRun(logins: logins.map { ($0.id, $0.displayName) })
+        // running: fetched, fetched, the running one, waiting …; over: fetched, failed, skipped, fetched …
+        for (i, c) in logins.enumerated() {
+            switch (finished, i) {
+            case (_, 0): run.finish(c.id, imported: 12, detail: nil)
+            case (false, 1): run.finish(c.id, imported: 0, detail: nil)
+            case (false, 2): run.start(c.id)
+            case (true, 1): run.fail(c.id, message: String(localized: "Die Bank hat nicht geantwortet (Zeitüberschreitung)."))
+            case (true, 2): run.skip(c.id, reason: Self.skippedByUser)
+            case (true, _): run.finish(c.id, imported: 3, detail: nil)
+            default: break
+            }
+        }
+        syncRun = run
     }
 }

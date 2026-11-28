@@ -532,7 +532,12 @@ extension AppModel {
             toast = String(localized: "Trade-Republic-Sitzung übernommen")
             startSync(connection, secret: "")
         } catch {
-            resetSyncBatch()   // like any sync error: ends "Alle abrufen" instead of stalling it
+            if syncRunActive {
+                // like any sync error in "Alle abrufen": its row tells it, the run goes on
+                finishSync(error: error)
+                return
+            }
+            resetSyncBatch()   // like any sync error: ends a single sync's batch state
             showError(String(localized: "Anmeldung konnte nicht übernommen werden"), describe(error))
         }
     }

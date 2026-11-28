@@ -747,6 +747,13 @@ struct MainSplitView: View {
     }
     #endif
 
+    /// A sync prompt presented from the main window only outside "Alle abrufen": during a
+    /// run the sync window hosts it, and a dismissal there must not clear it here.
+    private func outsideSyncRun<T>(_ key: ReferenceWritableKeyPath<AppModel, T?>) -> Binding<T?> {
+        Binding(get: { model.syncRun == nil ? model[keyPath: key] : nil },
+                set: { if model.syncRun == nil { model[keyPath: key] = $0 } })
+    }
+
     var body: some View {
         @Bindable var model = model
         splitView
@@ -853,33 +860,28 @@ struct MainSplitView: View {
                 .environment(model)
                 .interactiveDismissDisabled()
         }
-        .capturableSheet(item: $model.activeChallenge) { _ in
+        // "Alle abrufen" over several logins: one window for the whole run, which hosts
+        // the prompts below (docs/ABRUF_UI.md); they show here only outside a run.
+        .capturableSheet(isPresented: Binding(get: { model.syncRun != nil },
+                                              set: { if !$0 { model.closeSyncRun() } })) {
+            SyncRunSheet()
+                .environment(model)
+                .interactiveDismissDisabled()
+        }
+        .capturableSheet(item: outsideSyncRun(\.activeChallenge)) { _ in
             TwoFactorSheet()
                 .environment(model)
                 .interactiveDismissDisabled()
         }
-        .capturableSheet(item: $model.webLoginConnection) { c in
-            Group {
-                if c.connector == .tradeRepublic { WebLoginSheet(connection: c) }
-                else if c.connector == .amazonOrders { AmazonWebSheet(connection: c) }
-                else if c.connector == .fnz { FnzWebSheet(connection: c) }
-                else if c.connector == .equatePlus { EquatePlusWebSheet(connection: c) }
-                else if c.connector == .quirion { QuirionWebSheet(connection: c) }
-                else if c.connector == .sharinbox { SharinboxWebSheet(connection: c) }
-                else if c.connector == .axaShareplan { AxaShareplanWebSheet(connection: c) }
-                else if c.connector == .unionInvestment { UnionInvestmentWebSheet(connection: c) }
-                else if c.connector == .airPlus { AirPlusWebSheet(connection: c) }
-                else if c.connector == .berghausCie { BerghausCieWebSheet(connection: c) }
-                else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
-                else { PortalWebSheet(connection: c) }
-            }
-            .environment(model)
+        .capturableSheet(item: outsideSyncRun(\.webLoginConnection)) { c in
+            WebLoginContent(connection: c)
+                .environment(model)
         }
-        .capturableSheet(item: $model.setupRequest) { req in
+        .capturableSheet(item: outsideSyncRun(\.setupRequest)) { req in
             BankSetupSheet(request: req)
                 .environment(model)
         }
-        .capturableSheet(item: $model.pendingLogin) { login in
+        .capturableSheet(item: outsideSyncRun(\.pendingLogin)) { login in
             PinSheet(connection: login.connection)
                 .environment(model)
         }
@@ -902,22 +904,8 @@ struct MainSplitView: View {
         } message: {
             Text(model.transferCancelNotice?.message ?? "")
         }
-        .alert(model.errorTitle ?? String(localized: "Etwas ist schiefgelaufen"),
-               isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-            if let retry = model.errorRetry {
-                Button("Erneut versuchen") { model.errorOnClose = nil; model.errorMessage = nil; retry() }
-            }
-            ForEach(Array(model.errorAlternatives.enumerated()), id: \.offset) { _, alt in
-                Button(alt.title) { model.errorOnClose = nil; model.errorMessage = nil; alt.action() }
-            }
-            if let close = model.errorCloseTitle {
-                Button(close, role: .cancel) { model.errorMessage = nil }
-            } else {
-                Button("OK", role: .cancel) { model.errorMessage = nil }
-            }
-        } message: {
-            Text(model.errorMessage ?? "")
-        }
+        // while the sync window is open, its own copy of the alert shows instead
+        .modifier(ModelErrorAlert(enabled: model.syncRun == nil))
         // After the upgrade: GiroCrab's own FinTS registration or keep the user's (asked once).
         .alert("Welche FinTS-Registrierung soll GiroCrab verwenden?",
                isPresented: Binding(get: { model.offerProductIDChoice }, set: { _ in })) {

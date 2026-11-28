@@ -1543,6 +1543,17 @@
         }
       }
     },
+    "%lld abgerufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld fetched"
+          }
+        }
+      }
+    },
     "%lld aktiv, %lld inaktiv" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1646,6 +1657,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld in foreign currency not included"
+          }
+        }
+      }
+    },
+    "%lld mit Fehler" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld failed"
           }
         }
       }
@@ -1785,6 +1807,17 @@
         }
       }
     },
+    "%lld von %lld Bankzugängen erledigt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld of %lld bank logins done"
+          }
+        }
+      }
+    },
     "%lld von %lld Buchungen geladen – ältere Buchungen sind noch nicht sichtbar." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1908,6 +1941,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld × Umsaetze-….pdf"
+          }
+        }
+      }
+    },
+    "%lld übersprungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld skipped"
           }
         }
       }
@@ -3260,6 +3304,39 @@
         }
       }
     },
+    "Abruf abgebrochen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch cancelled"
+          }
+        }
+      }
+    },
+    "Abruf abgeschlossen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch complete"
+          }
+        }
+      }
+    },
+    "Abruf abgeschlossen: %lld abgerufen, %lld übersprungen, %lld fehlgeschlagen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch complete: %lld fetched, %lld skipped, %lld failed"
+          }
+        }
+      }
+    },
     "Abruf fehlgeschlagen" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3278,6 +3355,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stopped – nothing was imported."
+          }
+        }
+      }
+    },
+    "Abruf läuft" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetching"
           }
         }
       }
@@ -4102,6 +4190,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "All Bank Connections"
+          }
+        }
+      }
+    },
+    "Alle Bankzugänge sind durch." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All bank logins are through."
           }
         }
       }
@@ -5201,6 +5300,17 @@
         }
       }
     },
+    "Angaben fehlen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Details missing"
+          }
+        }
+      }
+    },
     "Angeklickte Umsätze werden sofort als gelesen markiert. Beim Wechsel auf ein anderes Konto werden alle übrigen ungelesenen Umsätze des vorherigen Kontos als gelesen markiert, unabhängig von Zeitraum und Filtern." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5520,6 +5630,17 @@
         }
       }
     },
+    "Anmeldung erforderlich" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign-in required"
+          }
+        }
+      }
+    },
     "Anmeldung fehlgeschlagen: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5527,6 +5648,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Login failed: %@"
+          }
+        }
+      }
+    },
+    "Anmeldung im Browser-Fenster" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign-in in the browser window"
           }
         }
       }
@@ -9325,6 +9457,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Broker"
+          }
+        }
+      }
+    },
+    "Browser-Fenster ohne Abruf geschlossen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browser window closed without a fetch"
           }
         }
       }
@@ -15857,6 +16000,17 @@
         }
       }
     },
+    "Fehlgeschlagene Bankzugänge lassen sich einzeln erneut abrufen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed bank logins can be fetched again one by one."
+          }
+        }
+      }
+    },
     "Feier" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16310,6 +16464,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Continue"
+          }
+        }
+      }
+    },
+    "Fortschritt des Abrufs" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetch progress"
           }
         }
       }
@@ -19173,6 +19338,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sign in in the browser"
+          }
+        }
+      }
+    },
+    "Im Browser-Fenster abgerufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetched in the browser window"
           }
         }
       }
@@ -23661,6 +23837,17 @@
         }
       }
     },
+    "Läuft" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running"
+          }
+        }
+      }
+    },
     "Läuft bis %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -27210,6 +27397,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Next payment"
+          }
+        }
+      }
+    },
+    "Nächster Bankzugang …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next bank login …"
           }
         }
       }
@@ -32515,6 +32713,17 @@
         }
       }
     },
+    "TAN erforderlich" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "TAN required"
+          }
+        }
+      }
+    },
     "TAN-Medium" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35012,6 +35221,17 @@
         }
       }
     },
+    "Von Ihnen übersprungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped by you"
+          }
+        }
+      }
+    },
     "Von Konto" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35512,6 +35732,28 @@
         }
       }
     },
+    "Wartet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting"
+          }
+        }
+      }
+    },
+    "Wartet auf Freigabe" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for approval"
+          }
+        }
+      }
+    },
     "Wartet auf einen Zugangsschlüssel" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35618,6 +35860,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Go to the affected view or open the dialog, then capture it."
+          }
+        }
+      }
+    },
+    "Wegen Sicherheitssperre übersprungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped due to security lock"
           }
         }
       }
@@ -36365,6 +36618,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cancelling…"
+          }
+        }
+      }
+    },
+    "Wird abgerufen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetching …"
           }
         }
       }
@@ -38086,6 +38350,17 @@
         }
       }
     },
+    "noch %lld von %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld of %lld to go"
+          }
+        }
+      }
+    },
     "noch kein Kurs" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38279,6 +38554,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "existing"
+          }
+        }
+      }
+    },
+    "wird abgerufen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "is being fetched …"
           }
         }
       }
@@ -38888,6 +39174,17 @@
         }
       }
     },
+    "Übersprungen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped"
+          }
+        }
+      }
+    },
     "Übersprungen: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38895,6 +39192,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Skipped: %@"
+          }
+        }
+      }
+    },
+    "Übersprungen: eigener Abruf-Ablauf, bitte einzeln abrufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped: own fetch flow, please fetch it on its own"
+          }
+        }
+      }
+    },
+    "Übersprungen: wird per Datei-Import aktualisiert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped: updated by file import"
+          }
+        }
+      }
+    },
+    "Übersprungen: wird per iCloud-Sync vom Mac mit Bitcoin Core aktualisiert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skipped: updated via iCloud sync from the Mac running Bitcoin Core"
           }
         }
       }

@@ -753,6 +753,7 @@ public final class AppModel {
                 webLoginConnection = nil
                 showError(gate.title, gate.detail)
             }
+            if webLoginConnection == nil, let closed = oldValue { webLoginClosedInSyncRun(closed) }
         }
     }
     /// Connector key per login (`fints:<BLZ>`, …) for the banking policy.
@@ -938,10 +939,14 @@ public final class AppModel {
     var netRefundsWriteGeneration = 0
     var transferBusy = false
     var syncQueue: [BankConnection] = []
-    /// "Alle abrufen": number of logins in the running batch (0 = single sync).
-    var syncBatchTotal = 0
-    /// Logins the user skipped in the running batch, named when it ends.
-    var syncBatchSkipped: [String] = []
+    /// "Alle abrufen" over several logins: every login with its status. Non-nil keeps the
+    /// sync window (`SyncRunSheet`) open, also after the run until the user closes it.
+    var syncRun: SyncRun?
+    /// What a failed login of the run offers besides "Erneut versuchen" (another FinTS
+    /// registration …). Shown once the run is over; using one closes the window first.
+    @ObservationIgnored var syncRunActions: [Int64: [(title: String, action: @MainActor () -> Void)]] = [:]
+    /// Bookings a browser window of the run imported itself (FNZ), counted when it closes.
+    @ObservationIgnored var syncRunBrowserImports: [Int64: Int] = [:]
     /// Bumped by every sync start, cancel, skip and lock: a deferred step of
     /// an older one (e.g. the end of "Überspringen") checks it before acting.
     @ObservationIgnored var syncGeneration = 0
@@ -1177,6 +1182,9 @@ public final class AppModel {
     /// Screenshot helper: open a sheet pre-filled with fictional data.
     private func presentDemoSheet(_ name: String) {
         switch name {
+        case "sync-run", "sync-run-done":
+            // "Alle abrufen" window (docs/ABRUF_UI.md) with every status, or its end
+            presentDemoSyncRun(finished: name == "sync-run-done")
         case "refund-split", "refund-negative", "refund-linked":
             guard demoActive else { return }
             Task { await prepareRefundDemo(name) }
