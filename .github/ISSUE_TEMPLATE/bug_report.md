@@ -5,7 +5,7 @@ title: "[BUG] "
 labels: bug
 ---
 
-> 💡 **Tipp (macOS / iOS):** Über **Hilfe › Fehler melden …** direkt in GiroCrab werden Systeminfos und geschwärzte Screenshots automatisch vorbereitet.
+> 💡 **Tipp:** Über **Hilfe › Problem melden …** (macOS, Linux) bzw. **Einstellungen › Problem melden** (iOS) direkt in GiroCrab werden Systeminfos und geschwärzte Screenshots automatisch vorbereitet. Unter Windows: **Werkzeuge › Problem melden …** (ohne Screenshot).
 
 ### Was ist passiert?
 
