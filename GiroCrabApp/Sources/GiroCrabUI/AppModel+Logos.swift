@@ -95,6 +95,8 @@ extension AppModel {
         logoVersion += 1
         reloadBookings()
         reloadMerchantStats()
+        // Einstellungen › Händler shows the domain too
+        merchantSettingsRevision += 1
     }
 
     static func image(from data: Data) -> Image? {
