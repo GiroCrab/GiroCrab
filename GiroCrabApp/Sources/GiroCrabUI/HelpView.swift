@@ -202,14 +202,14 @@ enum HelpCatalog {
                 "de": """
                 **100 % lokal:** Alle Daten liegen in einer verschlüsselten SQLite/SQLCipher-Datenbank auf deinem Gerät. GiroCrab hat keinen eigenen Server und sendet nichts an Dritte; Abfragen gehen nur direkt an deine Bank bzw. den gewählten Dienst.
 
-                **Tresor sperren:** *Tresor sperren* im Menü (⌃⌘L) oder die Schaltfläche in der Symbolleiste. Beim Entsperren wird dein Schlüssel verlangt (Touch ID/Face ID oder Passwort). Auf iPhone/iPad sperrt die App automatisch beim Wechsel in den Hintergrund.
+                **Tresor sperren:** *Tresor sperren* im Menü (⌃⌘L) oder die Schaltfläche in der Symbolleiste. Beim Entsperren wird dein Schlüssel verlangt (Touch ID/Face ID oder Passwort). Auf iPhone/iPad sperrt die App automatisch beim Wechsel in den Hintergrund. Am Mac kann GiroCrab unter *Einstellungen › Sicherheit* zusätzlich sperren, wenn das Hauptfenster im Dock abgelegt oder die App ausgeblendet wird, und nach einigen Minuten ohne Eingabe (nur mit Touch ID).
 
                 **iCloud-Sync:** Unter *Einstellungen › Sicherheit › iCloud Sync* legt GiroCrab verschlüsselte Snapshots in iCloud Drive ab. Mac, iPhone und iPad führen die Snapshots zusammen (Merge), ohne dass Klartext in der Cloud liegt. Auf allen Geräten muss derselbe Tresorschlüssel hinterlegt sein.
                 """,
                 "en": """
                 **100% local:** All data lives in an encrypted SQLite/SQLCipher database on your device. GiroCrab has no server of its own and sends nothing to third parties; requests go only to your bank or the service you chose.
 
-                **Locking the vault:** *Lock vault* in the menu (⌃⌘L) or the toolbar button. Unlocking asks for your key (Touch ID/Face ID or password). On iPhone/iPad the app locks automatically when it goes to the background.
+                **Locking the vault:** *Lock vault* in the menu (⌃⌘L) or the toolbar button. Unlocking asks for your key (Touch ID/Face ID or password). On iPhone/iPad the app locks automatically when it goes to the background. On the Mac, *Settings › Security* can also lock it when the main window is minimized to the Dock or the app is hidden, and after a few minutes without input (Touch ID only).
 
                 **iCloud sync:** Under *Settings › Security › iCloud Sync* GiroCrab stores encrypted snapshots in iCloud Drive. Mac, iPhone and iPad merge the snapshots without any plain text in the cloud. All devices need the same vault key.
                 """],
