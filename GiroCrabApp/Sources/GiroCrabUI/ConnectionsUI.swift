@@ -183,6 +183,9 @@ struct ConnectionEditSheet: View {
     @State private var initialRightsFetch = true
     @State private var syncSchedule = 0
     @State private var initialSyncSchedule = 0
+    /// Browser-login connections: join "Alle Konten abrufen" with their sign-in window.
+    @State private var portalInSyncAll = false
+    @State private var initialPortalInSyncAll = false
     /// The values as loaded: "Speichern" is only available once something differs.
     @State private var initialValues: [String: String] = [:]
     @State private var initialTanMedium = ""
@@ -567,6 +570,17 @@ struct ConnectionEditSheet: View {
                         }
                     } header: { Text("Abruf").appSectionHeader() }
                 }
+                if model.offersSyncAllPortal(connection) {
+                    Section {
+                        Toggle("Bei „Alle Konten abrufen“ einbeziehen", isOn: $portalInSyncAll)
+                    } header: {
+                        Text("Abruf").appSectionHeader()
+                    } footer: {
+                        Text("Öffnet das Anmeldefenster dieses Zugangs, nachdem die Bankzugänge ohne Anmeldefenster abgerufen sind. Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt diesen Zugang aus.")
+                            .appFont(.caption).foregroundStyle(Theme.secondary)
+                            .leadingFooter()
+                    }
+                }
                 Section {
                     Picker("Beim nächsten Abruf", selection: $fullHistory) {
                         Text("Ab dem neuesten Umsatz").tag("")
@@ -807,6 +821,7 @@ struct ConnectionEditSheet: View {
         if documentsSupported, documentsFetch != initialDocumentsFetch { return true }
         if connection.connector == .sharinbox, rightsFetch != initialRightsFetch { return true }
         if syncSchedule != initialSyncSchedule { return true }
+        if portalInSyncAll != initialPortalInSyncAll { return true }
         if fullHistory != initialFullHistory { return true }
         // Amex portal login (user name, password, save switch) and Advanzia (password, release method)
         // are not in `values`.
@@ -833,6 +848,10 @@ struct ConnectionEditSheet: View {
     }
 
     private func saveSyncScheduleIfChanged() -> Bool {
+        if portalInSyncAll != initialPortalInSyncAll {
+            guard model.setSyncAllIncludesPortal(connection.id, portalInSyncAll) else { return false }
+            initialPortalInSyncAll = portalInSyncAll
+        }
         guard syncSchedule != initialSyncSchedule else { return true }
         guard model.setSyncSchedule(connection.id, syncSchedule) else { return false }
         initialSyncSchedule = syncSchedule
@@ -890,6 +909,8 @@ struct ConnectionEditSheet: View {
         }
         syncSchedule = model.syncSchedule(connection.id)
         initialSyncSchedule = syncSchedule
+        portalInSyncAll = model.syncAllIncludesPortal(connection.id)
+        initialPortalInSyncAll = portalInSyncAll
         fullHistory = model.pendingFullHistory(connection.id)
         initialFullHistory = fullHistory
         if isFinTs { tanMedium = model.revealSetting(tanMediumKey) }

@@ -85,6 +85,11 @@ extension AppModel {
         }
         // Amex / Amazon Visa: embedded web-portal login (no API keys needed).
         if usesPortal(connection) {
+            // in "Alle Konten abrufen" closing the window goes on with the next login
+            if syncBatchTotal > 0 {
+                portalBatchConnectionID = connection.id
+                portalBatchOpenedAt = Int64(Date().timeIntervalSince1970)
+            }
             webLoginConnection = connection
             return
         }
@@ -145,15 +150,84 @@ extension AppModel {
     }
 
     func requestSyncAll() {
-        requestSyncBatch { [self] in
-            connections.filter {
-                !$0.allAccountsArchived && supportsSyncSchedule($0) && syncSchedule($0.id) != AutoSync.never
-            }
+        requestSyncBatch { [self] in syncAllConnections() }
+    }
+
+    /// Setting key per login: "Alle Konten abrufen" also opens this login's browser sign-in.
+    static func syncAllPortalKey(_ connectionID: Int64) -> String { "sync.all_includes_portal.\(connectionID)" }
+
+    /// A login that signs in through a browser window (card portal, …) and can join
+    /// "Alle Konten abrufen" when switched on in its sheet (Abruf). Advanzia runs its own
+    /// workflow, which does not report back to the batch.
+    func offersSyncAllPortal(_ connection: BankConnection) -> Bool {
+        usesPortal(connection) && !usesFileImport(connection) && connection.connector != .advanzia
+    }
+
+    /// Off by default; stored in the vault like the login's sync interval.
+    func syncAllIncludesPortal(_ id: Int64) -> Bool {
+        revealSetting(Self.syncAllPortalKey(id)) == "1"
+    }
+
+    @discardableResult
+    func setSyncAllIncludesPortal(_ id: Int64, _ on: Bool) -> Bool {
+        guard let vault, connections.contains(where: { $0.id == id && offersSyncAllPortal($0) }) else { return false }
+        do {
+            try vault.setSetting(key: Self.syncAllPortalKey(id), value: on ? "1" : "")
+            return true
+        } catch {
+            errorMessage = describe(error)
+            return false
         }
     }
 
+    /// The logins of "Alle Konten abrufen" in order: those that sync unattended first, then
+    /// the browser-login ones switched on for it, each opening its window in turn.
+    func syncAllConnections() -> [BankConnection] {
+        let live = connections.filter { !$0.allAccountsArchived }
+        let unattended = live.filter { supportsSyncSchedule($0) && syncSchedule($0.id) != AutoSync.never }
+        return unattended + live.filter { offersSyncAllPortal($0) && syncAllIncludesPortal($0.id) }
+    }
+
+    /// A browser login opened by "Alle Konten abrufen" was closed (imported or closed
+    /// without import): on with the next login, unless a sync runs meanwhile. Closed without
+    /// an import (the login was not fetched since its window opened), it is named in the
+    /// closing "Übersprungen" notice like a skipped PIN or setup prompt.
+    func continueSyncBatchAfterPortal(generation: Int, connection: BankConnection, openedAt: Int64) {
+        guard generation == syncBatchGeneration, syncingConnectionID == nil, syncBatchTotal > 0 else { return }
+        let id = connection.id
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // -1: never fetched, or the vault is gone
+            let lastSync = (try? await self.vaultOffMain {
+                try $0.listBankConnections().first { $0.id == id }?.lastSyncUnix ?? -1
+            }) ?? -1
+            guard generation == self.syncBatchGeneration, self.syncingConnectionID == nil,
+                  self.syncBatchTotal > 0 else { return }
+            if lastSync < openedAt { self.syncBatchSkipped.append(connection.displayName) }
+            self.syncNextInQueue()
+        }
+    }
+
+    /// A portal login of the batch the banking policy blocks: skipped and named at the end.
+    func skipPortalInSyncBatch(_ connection: BankConnection) {
+        guard syncBatchTotal > 0 else { return }
+        syncBatchSkipped.append(String(localized: "\(connection.displayName) (Sicherheitssperre)"))
+        // only this batch goes on: "Alle abbrechen" or a new batch meanwhile own the queue
+        let generation = syncBatchGeneration
+        Task { @MainActor [weak self] in
+            guard let self, generation == self.syncBatchGeneration else { return }
+            self.syncNextInQueue()
+        }
+    }
+
+    /// The sheet shows the batch's progress and "Alle abbrechen" (RootView).
+    func isPortalInSyncBatch(_ connection: BankConnection) -> Bool {
+        portalBatchConnectionID == connection.id && syncBatchProgress != nil
+    }
+
     /// "Konten abrufen" in a group's menu: the logins behind the group's
-    /// accounts, subgroups included, each once – as "Alle abrufen" would.
+    /// accounts, subgroups included, each once – as "Alle abrufen" would, but never the
+    /// logins with a browser sign-in (those join only "Alle Konten abrufen", when chosen).
     func groupSyncConnections(_ group: UserGroup) -> [BankConnection] {
         let ids = Set(userGroupSubtree(group.uuid).flatMap(\.accounts)
             .filter { !$0.isArchived }.compactMap(\.connectionId))
@@ -239,10 +313,11 @@ extension AppModel {
 
     /// Runs `logins` one after another; read once the banking policy is fresh.
     private func requestSyncBatch(_ logins: @escaping @MainActor () -> [BankConnection]) {
-        guard syncingConnectionID == nil else { return }
+        // a batch waiting for its browser login keeps its queue: no second batch over it
+        guard syncingConnectionID == nil, portalBatchConnectionID == nil else { return }
         refreshAssetPrices()
         withFreshBankingPolicy { [self] in
-            guard syncingConnectionID == nil else { return }
+            guard syncingConnectionID == nil, portalBatchConnectionID == nil else { return }
             let batch = logins()
             // Logins the banking policy blocks are skipped and named at the end.
             let blocked = batch.filter { bankingGate(for: $0) != nil }
@@ -253,6 +328,7 @@ extension AppModel {
                 }
                 return
             }
+            syncBatchGeneration &+= 1
             syncQueue = Array(allowed.dropFirst())
             syncBatchTotal = allowed.count
             syncBatchSkipped = blocked.map { String(localized: "\($0.displayName) (Sicherheitssperre)") }
@@ -304,7 +380,8 @@ extension AppModel {
     func cancelAllSync() {
         advanziaWorkflow?.cancel()
         setupRequest = nil
-        webLoginConnection = nil   // in a batch only the Trade Republic login
+        portalBatchConnectionID = nil  // closing the window below must not go on with the batch
+        webLoginConnection = nil   // in a batch the Trade Republic login or a portal login
         cancelSync()
     }
 
@@ -325,6 +402,8 @@ extension AppModel {
     /// "Abbrechen" / "Überspringen" in the Trade Republic browser login.
     func cancelWebLogin() {
         let c = webLoginConnection
+        // the skip below goes on with the batch, not the closed window
+        if c?.id == portalBatchConnectionID { portalBatchConnectionID = nil }
         webLoginConnection = nil
         skipPrompt(for: c)
     }
@@ -342,9 +421,11 @@ extension AppModel {
     }
 
     func resetSyncBatch() {
+        syncBatchGeneration &+= 1
         syncQueue = []
         syncBatchTotal = 0
         syncBatchSkipped = []
+        portalBatchConnectionID = nil
     }
 
     /// Errors answered with a prompt (setup form, browser login, FinTS registration)

@@ -7612,6 +7612,16 @@
         }
       }
     },
+    "Bei „Alle Konten abrufen“ einbeziehen" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Include in “Fetch all accounts”"
+          }
+        }
+      }
+    },
     "Bei „Nur Symbol“ steht der Betrag nur im Popover." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38741,6 +38751,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Open earlier billing periods in the portal. “Import Transactions” imports all recognised transactions and closes the window."
+          }
+        }
+      }
+    },
+    "Öffnet das Anmeldefenster dieses Zugangs, nachdem die Bankzugänge ohne Anmeldefenster abgerufen sind. Nach „Fertig“ geht es mit dem nächsten weiter, „Abbrechen“ lässt diesen Zugang aus." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens this login's sign-in window after the bank logins without a sign-in window have been fetched. “Done” moves on to the next one, “Cancel” leaves this login out."
           }
         }
       }

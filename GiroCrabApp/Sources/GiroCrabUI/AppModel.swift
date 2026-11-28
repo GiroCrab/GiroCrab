@@ -750,11 +750,37 @@ public final class AppModel {
     var webLoginConnection: BankConnection? {
         didSet {
             if let c = webLoginConnection, let gate = bankingGate(for: c) {
+                // a portal login of "Alle Konten abrufen" whose sheet never opens: skipped,
+                // the batch goes on (no sheet, so no onDismiss would continue it)
+                let inBatch = portalBatchConnectionID == c.id
+                if inBatch { portalBatchConnectionID = nil }
                 webLoginConnection = nil
-                showError(gate.title, gate.detail)
+                if inBatch { skipPortalInSyncBatch(c) } else { showError(gate.title, gate.detail) }
+                return
+            }
+            // a portal login of "Alle Konten abrufen" closed: on with the next login once
+            // its sheet is gone (RootView's onDismiss), so the next window is not opened
+            // while this one is still being dismissed
+            if webLoginConnection == nil, let id = portalBatchConnectionID, let closed = oldValue, closed.id == id {
+                portalBatchConnectionID = nil
+                let generation = syncBatchGeneration
+                let openedAt = portalBatchOpenedAt
+                afterWebLoginDismiss = { [weak self] in
+                    self?.continueSyncBatchAfterPortal(generation: generation, connection: closed, openedAt: openedAt)
+                }
             }
         }
     }
+    /// The portal login "Alle Konten abrufen" opened and waits for (`webLoginConnection`).
+    var portalBatchConnectionID: Int64?
+    /// When that window opened (Unix seconds): a login not fetched since then was closed
+    /// without an import and is named as skipped.
+    @ObservationIgnored var portalBatchOpenedAt: Int64 = 0
+    /// Run after the browser login sheet has been dismissed (goes on with "Alle Konten abrufen").
+    @ObservationIgnored var afterWebLoginDismiss: (@MainActor () -> Void)?
+    /// Bumped whenever a sync batch starts or ends: a continuation scheduled for an
+    /// earlier batch must not resume a later one.
+    @ObservationIgnored var syncBatchGeneration = 0
     /// Connector key per login (`fints:<BLZ>`, …) for the banking policy.
     var connectionKeys: [Int64: String] = [:]
     /// Showing the throw-away demo vault (also when the own vault is still empty).

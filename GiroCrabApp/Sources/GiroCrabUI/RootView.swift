@@ -858,7 +858,12 @@ struct MainSplitView: View {
                 .environment(model)
                 .interactiveDismissDisabled()
         }
-        .capturableSheet(item: $model.webLoginConnection) { c in
+        .capturableSheet(item: $model.webLoginConnection, onDismiss: {
+            // "Alle Konten abrufen": the next login once this window is really gone
+            let next = model.afterWebLoginDismiss
+            model.afterWebLoginDismiss = nil
+            next?()
+        }) { c in
             Group {
                 if c.connector == .tradeRepublic { WebLoginSheet(connection: c) }
                 else if c.connector == .amazonOrders { AmazonWebSheet(connection: c) }
@@ -872,6 +877,18 @@ struct MainSplitView: View {
                 else if c.connector == .berghausCie { BerghausCieWebSheet(connection: c) }
                 else if c.connector == .schwaebischHall { SchwaebischHallWebSheet(connection: c) }
                 else { PortalWebSheet(connection: c) }
+            }
+            // "Alle Konten abrufen": where the batch stands, and a way to end it from here
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if model.isPortalInSyncBatch(c) {
+                    HStack {
+                        SyncBatchProgressLabel()
+                        Spacer()
+                        Button("Alle abbrechen") { model.cancelAllSync() }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(.bar)
+                }
             }
             .environment(model)
         }
