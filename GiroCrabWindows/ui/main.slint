@@ -895,6 +895,8 @@ export component MainWindow inherits Window {
     in-out property <int> bank-choice: -1;
     in-out property <string> add-status;
     in property <bool> add-busy: false;
+    // first-fetch period (#1767): 0 = 90 Tage, 1 = 1 Jahr, 2 = 2 Jahre, 3 = Maximum
+    in-out property <int> add-period: 3;
 
     // daily driver: filter bar, inspector, privacy, import, transfer
     in-out property <bool> privacy: false;
@@ -1286,7 +1288,8 @@ export component MainWindow inherits Window {
     callback amount-filter-apply(string, string, int);
     callback amount-filter-reset();
     callback bank-search(string);
-    callback bank-add(int, string);
+    callback bank-add(int, string, int);
+    callback add-period-reset();
     callback tan-submit(string);
     callback tan-cancel();
 
@@ -1524,6 +1527,7 @@ export component MainWindow inherits Window {
                             add => {
                                 root.add-status = "";
                                 root.bank-search("");
+                                root.add-period-reset();
                                 root.add-open = true;
                             }
                         }
@@ -1538,6 +1542,7 @@ export component MainWindow inherits Window {
                         clicked => {
                             root.add-status = "";
                             root.bank-search("");
+                            root.add-period-reset();
                             root.add-open = true;
                         }
                     }
@@ -2312,6 +2317,18 @@ export component MainWindow inherits Window {
                 login := LineEdit {
                     placeholder-text: "Zugangskennung / Login (bei der Demo-Bank leer lassen)";
                 }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Zeitraum beim ersten Abruf"; color: Theme.text; font-size: 12px; vertical-alignment: center; }
+                    ComboBox {
+                        model: ["90 Tage", "1 Jahr", "2 Jahre", "Maximum"];
+                        current-index <=> root.add-period;
+                    }
+                }
+                Text {
+                    text: "„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN.";
+                    color: Theme.muted; font-size: 11px; wrap: word-wrap;
+                }
                 Text {
                     text: "PIN und TAN werden erst beim Abruf abgefragt, nur im Speicher gehalten und nie gespeichert.";
                     color: Theme.muted; font-size: 11px; wrap: word-wrap;
@@ -2326,7 +2343,7 @@ export component MainWindow inherits Window {
                         text: root.add-busy ? "Bitte warten …" : "Hinzufügen";
                         primary: true;
                         enabled: root.bank-choice >= 0 && !root.add-busy;
-                        clicked => { root.bank-add(root.bank-choice, login.text); }
+                        clicked => { root.bank-add(root.bank-choice, login.text, root.add-period); }
                     }
                 }
             }

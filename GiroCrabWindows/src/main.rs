@@ -17,6 +17,7 @@ mod daily;
 mod girocode;
 mod groups;
 mod groups_ui;
+mod history_ui;
 mod lists;
 mod logos;
 mod manage;
@@ -1385,10 +1386,12 @@ fn search_rows(query: &str) -> (Vec<BankHit>, Vec<Option<BankSearchResult>>) {
 
 /// Adds the chosen bank (`None` = demo bank) and, for the demo bank, syncs it right away.
 /// Real banks are stored; their first fetch starts with "Jetzt abrufen" (PIN/TAN or browser dialog).
+/// `range`: first-fetch period chosen in the dialog (#1767), stored for the new login.
 fn add_bank(
     vault: &Arc<Vault>,
     hit: Option<&BankSearchResult>,
     login: &str,
+    range: girocrab_core::connectors::HistoryRange,
 ) -> Result<String, String> {
     let e = |e: girocrab_core::CoreError| e.to_string();
     let Some(r) = hit else {
@@ -1399,46 +1402,42 @@ fn add_bank(
                 "demo".into(),
             )
             .map_err(e)?;
+        let note = history_ui::apply(vault, id, range);
         sync_demo_connection(vault, &tokio_runtime()?, id)?;
-        return Ok("Demo-Bank hinzugefügt und abgerufen.".into());
+        return Ok(format!("Demo-Bank hinzugefügt und abgerufen.{note}"));
     };
     let login = login.trim();
     if login.is_empty() {
         return Err("Bitte die Zugangskennung (Login) eingeben.".into());
     }
-    match (r.mode, r.connector) {
-        (BankAccessMode::FinTs, _) => {
-            vault
-                .add_fints_connection(
-                    r.blz.clone(),
-                    r.url.clone(),
-                    r.name.clone(),
-                    login.into(),
-                    String::new(),
-                )
-                .map_err(e)?;
-        }
-        (_, Some(kind)) => {
-            vault
-                .add_bank_connection(kind, r.name.clone(), login.into())
-                .map_err(e)?;
-        }
-        (_, None) => {
-            vault
-                .add_enable_banking_connection(
-                    r.aspsp.clone(),
-                    r.country.clone(),
-                    r.name.clone(),
-                    login.into(),
-                )
-                .map_err(e)?;
-        }
-    }
+    let id = match (r.mode, r.connector) {
+        (BankAccessMode::FinTs, _) => vault
+            .add_fints_connection(
+                r.blz.clone(),
+                r.url.clone(),
+                r.name.clone(),
+                login.into(),
+                String::new(),
+            )
+            .map_err(e)?,
+        (_, Some(kind)) => vault
+            .add_bank_connection(kind, r.name.clone(), login.into())
+            .map_err(e)?,
+        (_, None) => vault
+            .add_enable_banking_connection(
+                r.aspsp.clone(),
+                r.country.clone(),
+                r.name.clone(),
+                login.into(),
+            )
+            .map_err(e)?,
+    };
+    let note = history_ui::apply(vault, id, range);
     let file_import = r
         .connector
         .is_some_and(|k| sync_flow::auth_for(k) == sync_flow::Auth::FileImport);
     Ok(format!(
-        "{} hinzugefügt. {}",
+        "{} hinzugefügt. {}{note}",
         r.name,
         sync_flow::added_hint(file_import)
     ))
@@ -2466,8 +2465,20 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     {
+        let (weak, vault) = (win.as_weak(), vault.clone());
+        win.on_add_period_reset(move || {
+            let Some(win) = weak.upgrade() else { return };
+            let index = vault
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map_or(history_ui::MAX_INDEX, |v| history_ui::preselect(v));
+            win.set_add_period(index);
+        });
+    }
+    {
         let (weak, vault, hits) = (win.as_weak(), vault.clone(), hits.clone());
-        win.on_bank_add(move |choice, login| {
+        win.on_bank_add(move |choice, login, period| {
             let (Some(win), Some(v)) = (weak.upgrade(), vault.lock().unwrap().clone()) else {
                 return;
             };
@@ -2483,8 +2494,10 @@ fn main() -> Result<(), slint::PlatformError> {
             win.set_add_status("Bank wird eingerichtet …".into());
             let weak = win.as_weak();
             let login = login.to_string();
+            // captured at the click, not after the add (#1767)
+            let range = history_ui::range_of(period);
             std::thread::spawn(move || {
-                let result = add_bank(&v, hit.as_ref(), &login);
+                let result = add_bank(&v, hit.as_ref(), &login, range);
                 let _ = weak.upgrade_in_event_loop(move |win| {
                     win.set_add_busy(false);
                     match result {
@@ -2718,6 +2731,8 @@ fn main() -> Result<(), slint::PlatformError> {
             SESSION.store(0, Ordering::SeqCst);
             win.set_busy(false);
             refunds_ui::reset(&win);
+            win.set_add_open(false);
+            win.set_add_period(history_ui::MAX_INDEX);
             *vault.lock().unwrap() = None;
             bug_report_ui::reset(&win);
             with_state(|st| *st = State::default());
