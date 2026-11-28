@@ -613,9 +613,12 @@ Rectangle {
                 // the Amazon drill-down chevron sits below this area
                 const c = row.chevron
                 if (c.visible && c.contains(c.mapFromItem(dc, m.x, m.y))) { stream.toggleAmazonExpanded(dc.booking.id); return }
+                // .bookingRowControl(): the category label opens its picker and leaves the selection alone
+                const t = row.categoryTriggerAt(dc, m.x, m.y)
+                if (t) { t.openPicker(); return }
                 dc.primaryActivate(m.modifiers & Qt.ControlModifier, m.modifiers & Qt.ShiftModifier)
             }
-            onDoubleClicked: m => { if (m.button === Qt.LeftButton) AppModel.editNote(dc.booking) }
+            onDoubleClicked: m => { if (m.button === Qt.LeftButton && !row.categoryTriggerAt(dc, m.x, m.y)) AppModel.editNote(dc.booking) }
             // .draggable(BookingDrag.payload(…)): onto a sidebar category (#366)
             DragHandler {
                 target: null
@@ -635,6 +638,8 @@ Rectangle {
     // shown for the row that was right-clicked. A menu per row was rebuilt with every list
     // reload and made switching accounts slow with many bookings.
     property var menuBooking: null
+    // BookingCategoryLabel's popover (#1857): one for the whole list, opened at the clicked label
+    readonly property BookingCategoryPicker categoryPicker: BookingCategoryPicker { parent: stream }
     function openRowMenu(booking, item, x, y) {
         menuBooking = booking
         rowMenu.popup(item, x, y)
@@ -776,6 +781,14 @@ Rectangle {
         readonly property bool hasRefund: booking !== null && ["refund", "original", "both"].includes(booking.refund_marker)
         readonly property real refundRoom: hasRefund ? refundBadge.implicitWidth + 8 : 0
         property alias chevron: chevron
+        /// The category label's trigger under (x, y) of `item`, or null (the row's MouseArea lies above it).
+        function categoryTriggerAt(item, x, y) {
+            for (const l of [singleLineCategory, lineCategory]) {
+                const t = l.trigger
+                if (l.visible && t.contains(t.mapFromItem(item, x, y))) return l
+            }
+            return null
+        }
         /// Width the name line gets in a single line: the row minus date, signet, marks and amount.
         readonly property real nameLineWidth: width - 28 - (compact ? 80 * Theme.textScale + 8 : 0) - Theme.scaled(signetSize) - 8
             - (checkIcon.visible ? checkIcon.width + 8 : 0) - (pendingIcon.visible ? pendingIcon.width + 8 : 0)
@@ -882,7 +895,7 @@ Rectangle {
                             symbol: br.booking ? AppModel.accountSymbol(br.booking.account_id) : ""
                         }
                         // category with the sidebar's icon and colour (unless hidden for this account, #336)
-                        BookingCategoryLabel { booking: br.booking; visible: br.showsCategoryChip }
+                        BookingCategoryLabel { id: lineCategory; booking: br.booking; visible: br.showsCategoryChip }
                         BookingTagMarkers { tags: br.booking ? (br.booking.tags || []) : [] }
                         // a transfer to an own account or pocket names it (#523), else the payment method
                         Text {
@@ -1060,13 +1073,28 @@ Rectangle {
     }
 
     component BookingCategoryLabel: RowLayout {
+        id: cl
         property var booking
         readonly property bool none: !booking || booking.category_name === ""
         readonly property color tint: none ? Theme.warning : Theme.readable(booking.category_color_hex)
+        /// The button part (label + chevron); the suggestion hint behind it is not part of it.
+        property alias trigger: trigger
+        function openPicker() { stream.categoryPicker.show(booking, trigger) }
+        // a reused row shows another booking: .onChange(of: booking.id) { showsPicker = false }
+        onBookingChanged: if (stream.categoryPicker.parent === trigger) stream.categoryPicker.close()
         spacing: 3
-        SFIcon { symbol: none ? "questionmark.folder" : (booking.category_symbol || "tag.fill"); size: 11; color: parent.tint }
-        Text { text: none ? SidebarModel.uncategorizedLabel : booking.category_name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: parent.tint; elide: Text.ElideRight
-               Sensitive { labels: true } }   // also a custom „Ohne Kategorie“ label (#597)
+        // Button { showsPicker = true }: the row's MouseArea passes clicks on it to openPicker()
+        RowLayout {
+            id: trigger
+            spacing: 3
+            Accessible.role: Accessible.Button
+            Accessible.name: AppModel.masking(cl.none ? SidebarModel.uncategorizedLabel : cl.booking.category_name, AppModel.redactLabels)
+            Accessible.onPressAction: cl.openPicker()
+            SFIcon { symbol: cl.none ? "questionmark.folder" : (cl.booking.category_symbol || "tag.fill"); size: 11; color: cl.tint }
+            Text { text: cl.none ? SidebarModel.uncategorizedLabel : cl.booking.category_name; font.pixelSize: Theme.callout + 1; font.weight: Font.Medium; color: cl.tint; elide: Text.ElideRight
+                   Sensitive { labels: true } }   // also a custom „Ohne Kategorie“ label (#597)
+            SFIcon { symbol: "chevron.down"; size: 9; color: cl.tint }
+        }
         // BookingListView.swift › BookingSuggestionHint (#664): the history's suggestion behind
         // „Ohne Kategorie“, in the secondary colour so it never reads as assigned
         readonly property var suggested: none ? CategorySuggestions.category(CategorySuggestions.forBooking(booking)) : null
