@@ -11,8 +11,12 @@ Card {
     readonly property bool isTangible: account !== null && AppModel.isTangible(account.id)
     readonly property var selectedItem: account !== null ? AppModel.selectedAssetItem(account.id) : null
     /// The selected item's value instead of the account's.
+    /// AppModel+Loading.swift › headerBalance (#1981): an offline loan shows its remaining debt as a positive "Restschuld".
+    readonly property bool isOfflineLoan: account !== null && account.kind === "Loan" && OfflineAccounts.isOffline(account.id) && account.balance_cents <= 0
     readonly property var balance: selectedItem
         ? { label: selectedItem.sold ? qsTr("Verkauft") : qsTr("Wert heute"), cents: selectedItem.holding.value_cents }
+        : isOfflineLoan && AppModel.headerBalance && !AppModel.headerTotalSplit
+        ? { label: qsTr("Restschuld"), cents: -account.balance_cents }
         : AppModel.headerBalance
     /// Sachwerte: "Sachwerte · Auto (Kombi)" while an item is selected, else "Sachwerte · Gesamt".
     readonly property string headerTitle: isTangible ? AppModel.title + " · " + (selectedItem ? selectedItem.setup.name : qsTr("Gesamt")) : AppModel.title

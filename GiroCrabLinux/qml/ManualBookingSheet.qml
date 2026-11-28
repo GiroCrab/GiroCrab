@@ -19,6 +19,9 @@ Sheet {
     /// Flow: "out" | "in"
     property string flow: "out"
     property string saveError: ""
+    /// An offline loan (#1981): "Schuld erhöhen" / "Tilgung" instead of "Ausgabe" / "Einnahme".
+    readonly property bool isLoan: accountId !== null && AppModel.accountsByID[accountId]?.kind === "Loan"
+    onIsLoanChanged: if (isNew) flow = isLoan ? "in" : "out"
     readonly property bool hasSplits: (OfflineAccounts.bookingRequest?.booking?.split_count || 0) > 0
 
     readonly property var accountChoices: OfflineAccounts.offlineAccounts
@@ -41,6 +44,7 @@ Sheet {
         if (!req) return
         accountId = req.accountId
         const b = req.booking
+        if (!b) flow = isLoan ? "in" : "out"
         if (b) {
             date = Fmt.date(b.booking_date) || new Date()
             flow = b.amount_cents < 0 ? "out" : "in"
@@ -97,7 +101,8 @@ Sheet {
             Segmented {
                 enabled: !sheet.hasSplits
                 Layout.fillWidth: true
-                options: [{ id: "out", title: qsTr("Ausgabe") }, { id: "in", title: qsTr("Einnahme") }]
+                options: [{ id: "out", title: sheet.isLoan ? qsTr("Schuld erhöhen") : qsTr("Ausgabe") },
+                          { id: "in", title: sheet.isLoan ? qsTr("Tilgung") : qsTr("Einnahme") }]
                 current: sheet.flow
                 onActivated: id => sheet.flow = id
             }

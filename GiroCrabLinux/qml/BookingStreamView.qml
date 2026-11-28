@@ -697,7 +697,7 @@ Rectangle {
                    text: qsTr("Buchung löschen …"); icon.name: SF.icon("trash")
                    onTriggered: OfflineAccounts.deleting = stream.menuBooking }
         Instantiator {
-            model: stream.menuBooking && OfflineAccounts.offlineAccounts.some(a => a.id !== stream.menuBooking.account_id) ? 1 : 0
+            model: OfflineAccounts.mirrorTargets(stream.menuBooking).length > 0 ? 1 : 0
             delegate: OfflineMirrorMenu { booking: stream.menuBooking }
             onObjectAdded: (index, menu) => {
                 let at = 0

@@ -12,7 +12,12 @@ Rectangle {
     property bool editing: false
     readonly property var manual: account ? AppModel.manualLoan(account.id) : null
     readonly property var initial: account && account.initial_balance_cents !== null && Math.abs(account.initial_balance_cents) > 0 ? Math.abs(account.initial_balance_cents) : null
-    readonly property var repaid: initial ? Math.max(0, Math.min(1, 1 - Math.abs(account.balance_cents) / initial)) : null
+    /// An offline loan (#1981): a positive balance is no debt left, not more debt.
+    readonly property var repaid: {
+        if (!initial) return null
+        const outstanding = OfflineAccounts.isOffline(account.id) ? Math.max(0, -account.balance_cents) : Math.abs(account.balance_cents)
+        return Math.max(0, Math.min(1, 1 - outstanding / initial))
+    }
     function commit() {
         const t = amount.text.trim()
         if (t === "") AppModel.setAccountInitialBalance(account.id, null)
@@ -53,7 +58,7 @@ Rectangle {
             Shortcut { sequences: ["Esc"]; enabled: card.editing && card.visible && card.manual === null; onActivated: card.editing = false }
             IconButton {
                 visible: card.manual === null && !card.editing
-                text: card.initial === null ? qsTr("Betrag eingeben") : qsTr("Ursprünglich: %1").arg(Fmt.money(card.initial))
+                text: card.initial === null ? qsTr("Betrag eingeben") : qsTr("Ursprünglich: %1").arg(Fmt.money(card.initial, card.account.currency))
                 font.pixelSize: Theme.caption
                 // narrow inspector: the title shrinks (…) instead of running past the card
                 Layout.fillWidth: true; Layout.maximumWidth: Math.ceil(implicitWidth)

@@ -16,6 +16,8 @@ QtObject {
     }
     /// "Neue Buchung …" / "Buchung bearbeiten …": { accountId, booking (null = new) } or null.
     property var bookingRequest: null
+    /// OfflineLoanPaymentRequest (#1981): { booking, account } for "Tilgung übernehmen", or null.
+    property var loanPaymentRequest: null
     /// "Neues Offline-Konto …".
     property bool showNewAccount: false
     /// "Saldo korrigieren …": { accountId } or null.
@@ -92,6 +94,8 @@ QtObject {
     }
     property Connections ownVaultWatch: Connections {
         target: AppModel
+        // AppModel.vault didSet: an open "Tilgung übernehmen" belongs to the previous vault
+        function onVaultGenerationChanged() { store.loanPaymentRequest = null }
         function onVaultStateChanged() {
             const f = store.pendingOwnVaultAction
             if (f === null || AppModel.vaultState !== "open") return
@@ -104,10 +108,21 @@ QtObject {
     }
     function openNewAccount() { runInOwnVault(() => { store.showNewAccount = true }) }
 
-    /// "Neues Offline-Konto …": always cash, with its account note (#980).
-    function createOfflineAccount(name, note, openingCents) {
+    /// OfflineAccountOptions.kinds (#1049, #1981): the kinds that can be kept by hand. The currency
+    /// stays EUR here (OfflineAccountOptions.defaultCurrency).
+    readonly property var kinds: [
+        { id: "Cash", title: qsTr("Bargeld") }, { id: "Savings", title: qsTr("Sparkonto") },
+        { id: "TimeDeposit", title: qsTr("Festgeld") }, { id: "Loan", title: qsTr("Darlehen / Kredit") }
+    ]
+    function kindTitle(kind) { const k = kinds.find(k => k.id === kind); return k ? k.title : kinds[0].title }
+
+    /// "Neues Offline-Konto …" with its account note (#980). A loan (#1981) keeps the original
+    /// amount (`originalLoanCents`) and starts at the remaining debt (`openingCents`, positive).
+    function createOfflineAccount(name, note, openingCents, kind, originalLoanCents) {
         runInOwnVault(() => {
-            const id = AppModel.run(() => AppModel.core("create_offline_account", { name: name, kind: "Cash", currency: "", opening_cents: openingCents }))
+            const id = AppModel.run(() => originalLoanCents !== undefined && originalLoanCents !== null
+                ? AppModel.core("create_offline_loan", { name: name, currency: "EUR", original_cents: originalLoanCents, remaining_cents: openingCents })
+                : AppModel.core("create_offline_account", { name: name, kind: kind || "Cash", currency: "EUR", opening_cents: openingCents }))
             if (id === undefined) return
             // the note is a field of the account (#980): set before the one reload
             if (note.trim() !== "") AppModel.run(() => { AppModel.core("set_account_note", { account_id: id, note: note.trim() }); return true })
@@ -115,9 +130,33 @@ QtObject {
         })
     }
 
-    /// One-time copy of `b` into `account` with the amount reversed and no category.
+    /// OfflineBookingMenu targets: the other offline accounts; a loan (#1981) only for an
+    /// outgoing booking in its currency.
+    function mirrorTargets(b) {
+        if (!b) return []
+        const source = AppModel.accountsByID[b.account_id]
+        const sourceCurrency = (b.currency || (source ? source.currency : "") || "").toUpperCase()
+        return offlineAccounts.filter(a => a.id !== b.account_id && (a.kind !== "Loan"
+            || (b.amount_cents < 0 && sourceCurrency !== "" && sourceCurrency === (a.currency || "").toUpperCase())))
+    }
+
+    /// One-time copy of `b` into `account`. Into a loan (#1981) only the confirmed principal:
+    /// "Tilgung übernehmen" asks for it first.
     function mirror(b, account) {
+        if (account.kind === "Loan") { loanPaymentRequest = { booking: b, account: account }; return }
         if (AppModel.run(() => AppModel.core("mirror_booking_to_offline_account", { booking_id: b.id, account_id: account.id })) === undefined) return
+        finishMirror(account)
+    }
+
+    /// "Übernehmen" in "Tilgung übernehmen": throws on a core error (shown in the sheet).
+    function mirrorLoanPayment(request, principalCents) {
+        if (loanPaymentRequest !== request) throw new Error(qsTr("Die Tilgungsübernahme ist nicht mehr aktiv."))
+        AppModel.core("mirror_offline_loan_payment", { booking_id: request.booking.id, account_id: request.account.id, principal_cents: principalCents })
+        loanPaymentRequest = null
+        finishMirror(request.account)
+    }
+
+    function finishMirror(account) {
         AppModel.toast = qsTr("Buchung in „%1“ gespiegelt").arg(account.name)
         reloadAfterManualChange()
     }
