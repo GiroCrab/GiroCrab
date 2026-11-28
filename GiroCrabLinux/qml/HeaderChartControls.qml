@@ -56,6 +56,33 @@ RowLayout {
         }
     }
 
+    // PieValueModeMenu (#889): share or amount in the pie's legend, right of the type picker
+    Item {
+        id: pieMenu
+        visible: !BalanceChartPrefs.collapsed && BalanceChartPrefs.style === "pie"
+        implicitWidth: pieRow.implicitWidth; implicitHeight: 20
+        RowLayout {
+            id: pieRow
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 3
+            Text { text: BalanceChartPrefs.pieValueModeTitle; font.pixelSize: Theme.caption2; color: Theme.secondary }
+            SFIcon { symbol: "chevron.down"; size: 8; color: Theme.secondary }
+        }
+        MouseArea { id: pieArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: modeMenu.popup() }
+        ToolTip.visible: pieArea.containsMouse && !modeMenu.visible; ToolTip.delay: 600; ToolTip.text: qsTr("Kreis zeigt")
+        Accessible.role: Accessible.ButtonMenu; Accessible.name: qsTr("Kreis zeigt"); Accessible.description: BalanceChartPrefs.pieValueModeTitle
+        Accessible.onPressAction: modeMenu.popup()
+        AppMenu {
+            id: modeMenu
+            Repeater {
+                model: BalanceChartPrefs.pieValueModes
+                AppMenuItem { required property var modelData; text: modelData.title; checkable: true
+                              checked: BalanceChartPrefs.pieValueMode === modelData.id
+                              onTriggered: { checked = Qt.binding(() => BalanceChartPrefs.pieValueMode === modelData.id); BalanceChartPrefs.setPieValueMode(modelData.id) } }
+            }
+        }
+    }
+
     // BarUnitMenu: "Monate ⌄" / "Auto: Monate ⌄" in caption2, opens „Balken je“
     Item {
         id: unitMenu

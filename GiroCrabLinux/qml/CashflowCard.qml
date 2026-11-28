@@ -17,6 +17,11 @@ Card {
     /// @AppStorage("chartColorPalette")
     readonly property string paletteName: AppModel.uiDefaults.chartColorPalette
     property var rows: []
+    onRowsChanged: hovered = -1
+    /// Period under the pointer (index into `rows`, -1 for none) and where the pointer is (#889).
+    property int hovered: -1
+    property point spot
+    readonly property var hoveredRow: hovered >= 0 && hovered < rows.length ? rows[hovered] : null
     readonly property var hexes: ({
         girocrab: { income: ["#38BDF8", "#0284C7"], expense: ["#F97316", "#EA580C"] },
         profi: { income: ["#3B82F6", "#2563EB"], expense: ["#64748B", "#475569"] },
@@ -112,11 +117,22 @@ Card {
                 Repeater {
                     model: card.rows
                     Item {
+                        id: period
                         required property var modelData
+                        required property int index
                         width: parent.width / Math.max(1, card.rows.length); height: 140
+                        HoverHandler {
+                            onPointChanged: if (hovered) {
+                                card.hovered = period.index
+                                card.spot = period.mapToItem(card, point.position.x, point.position.y)
+                            }
+                            onHoveredChanged: if (!hovered && card.hovered === period.index) card.hovered = -1
+                        }
                         Row {
                             anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter
                             spacing: width / 8
+                            // the other periods' bars fade while one is hovered
+                            opacity: card.hovered < 0 || card.hovered === period.index ? 1 : 0.4
                             Repeater {
                                 model: [{ v: modelData.income_cents, c: card.hexes.income }, { v: Math.abs(modelData.expense_cents), c: card.hexes.expense }]
                                 Rectangle {
@@ -133,6 +149,32 @@ Card {
                             }
                         }
                         Text { anchors.horizontalCenter: parent.horizontalCenter; y: 144; text: card.label(modelData.key); font.pixelSize: Theme.caption; color: Theme.secondary }
+                    }
+                }
+            }
+            // hoverCard: income, expenses and the balance of one period, at the pointer
+            HoverCard {
+                id: periodCard
+                readonly property var r: card.hoveredRow
+                readonly property real net: r ? r.income_cents - r.expense_cents : 0
+                source: card
+                point: card.spot
+                shown: r !== null && !card.collapsed
+                minimumWidth: 150
+                Text { text: periodCard.r ? card.label(periodCard.r.key) : ""; font.pixelSize: Theme.caption; font.weight: Font.DemiBold; color: Theme.text }
+                Repeater {
+                    model: periodCard.r ? [{ t: qsTr("Einnahmen"), v: periodCard.r.income_cents, c: Theme.inflow },
+                                           { t: qsTr("Ausgaben"), v: periodCard.r.expense_cents, c: Theme.outflow },
+                                           { t: qsTr("Saldo"), v: periodCard.net, c: periodCard.net >= 0 ? Theme.inflow : Theme.outflow }] : []
+                    Item {
+                        required property var modelData
+                        width: Math.max(periodCard.minimumWidth, implicitWidth)
+                        implicitWidth: lineTitle.implicitWidth + 10 + lineAmount.implicitWidth
+                        height: Math.max(lineTitle.implicitHeight, lineAmount.implicitHeight)
+                        Text { id: lineTitle; text: modelData.t; font.pixelSize: Theme.caption; color: Theme.secondary }
+                        Text { id: lineAmount; anchors.right: parent.right; text: Fmt.money(modelData.v); font.pixelSize: Theme.caption
+                               font.features: { "tnum": 1 }; color: modelData.c
+                               Sensitive { amounts: true } }
                     }
                 }
             }
