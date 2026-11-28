@@ -206,7 +206,8 @@ impl FinTsConnector {
         }
         let mut accounts = merge_upd_with_sepa(&self.upd, sepa, &self.blz);
         // Postbank (which also serves accounts of other banks of the group, BIC DEUT…, behind
-        // the one login) and norisbank: the login's server decides, not the account's BIC.
+        // the one login), norisbank and Deutsche Bank: the login's server decides, not the
+        // account's BIC.
         if needs_full_kti(&self.url) {
             for (acc, _) in &mut accounts {
                 acc.full_kti = true;
@@ -386,10 +387,11 @@ impl FinTsConnector {
         if acc.blz == CONSORSBANK_BLZ && !acc.iban.is_empty() && !acc.account_number.is_empty() {
             return Self::kti_full(acc, &acc.account_number);
         }
-        // Postbank and norisbank answer HKCAZ/HKCDB with 9210 "nationale Kontoverbindung
-        // erforderlich" for IBAN:BIC alone (#1702); Postbank also rejects ("Keine gültige
-        // Kontoverbindung") the 10-digit number from the IBAN with its 3-digit sub-account.
-        // Both get the account exactly as HIUPD lists it (as HKKAZ already does through KTV).
+        // Postbank, norisbank and Deutsche Bank answer HKCAZ/HKCDB with 9210 "nationale
+        // Kontoverbindung erforderlich" for IBAN:BIC alone (#1702, #2040); Postbank also
+        // rejects ("Keine gültige Kontoverbindung") the 10-digit number from the IBAN with its
+        // 3-digit sub-account. All three get the account exactly as HIUPD lists it (as HKKAZ
+        // already does through KTV).
         if acc.full_kti && !acc.iban.is_empty() && !acc.account_number.is_empty() {
             return Self::kti_full(acc, &acc.account_number);
         }
@@ -428,11 +430,18 @@ impl FinTsConnector {
 }
 
 /// Servers that identify an account for HKCAZ/HKCDB only with the national account (KTI
-/// with Konto:Unterkonto:280:BLZ): Postbank (#1702) and norisbank, which answers IBAN:BIC
-/// alone with the same 9210 "Angaben zur nationalen Kontoverbindung … erforderlich".
+/// with Konto:Unterkonto:280:BLZ): Postbank (#1702), norisbank and Deutsche Bank, which
+/// answer IBAN:BIC alone with the same 9210 "Angaben zur nationalen Kontoverbindung …
+/// erforderlich" (Deutsche Bank for a maxblue Depotkonto, #2040).
 fn needs_full_kti(url: &str) -> bool {
     let url = url.to_ascii_lowercase();
-    url.contains("hbci.postbank.de") || url.contains("fints.norisbank.de")
+    [
+        "hbci.postbank.de",
+        "fints.norisbank.de",
+        "fints.deutsche-bank.de",
+    ]
+    .iter()
+    .any(|host| url.contains(host))
 }
 
 #[cfg(test)]
@@ -440,10 +449,28 @@ mod postbank_kti_tests {
     use super::*;
 
     #[test]
-    fn postbank_and_norisbank_servers_need_the_national_account() {
+    fn postbank_norisbank_and_deutsche_bank_servers_need_the_national_account() {
         assert!(needs_full_kti("https://hbci.postbank.de/banking/hbci.do"));
         assert!(needs_full_kti("https://fints.norisbank.de/"));
+        assert!(needs_full_kti("https://fints.deutsche-bank.de/"));
         assert!(!needs_full_kti("https://fints.dkb.de/fints"));
+    }
+
+    #[test]
+    fn deutsche_bank_kti_names_the_sub_account_of_a_depotkonto() {
+        // #2040: for IBAN:BIC alone the bank cannot tell the maxblue Depotkonto apart (9210)
+        let acc = SepaAccount {
+            iban: "DE00500700240123456700".into(),
+            bic: "DEUTDEFFXXX".into(),
+            account_number: "0123456".into(),
+            sub_account: "01".into(),
+            blz: "50070024".into(),
+            full_kti: needs_full_kti("https://fints.deutsche-bank.de/"),
+        };
+        assert_eq!(
+            FinTsConnector::kti(&acc),
+            "DE00500700240123456700:DEUTDEFFXXX:0123456:01:280:50070024"
+        );
     }
 
     #[test]

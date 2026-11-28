@@ -360,6 +360,57 @@ async fn sync_dialog_9040_explains_the_refused_login() {
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
 
+/// Answer to HKSYN: a dialog, a new system ID and HKTAB in the BPD.
+const SYNCED: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISYN:3:4:5+NEWSYS'HITABS:4:4:4+1+1+0+N'";
+
+/// Records the system ID in HNVSK and HNSHK ("1::<id>"), other segments by name.
+fn system_id_label(s: &syntax::Segment) -> String {
+    match s.id() {
+        "HNVSK" => format!("HNVSK {}", s.get(4, 2)),
+        "HNSHK" => format!("HNSHK {}", s.get(6, 2)),
+        id => id.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn sync_dialog_uses_the_new_system_id_only_from_the_next_dialog() {
+    // a new login, and a login re-synchronised because its TAN function is not known (#2048)
+    for (opened_with, sent) in [("", "0"), ("OLDSYS", "OLDSYS")] {
+        let (url, seen) = mock_bank_with(vec![SYNCED, ACCEPT, ACCEPT], system_id_label);
+        let state = serde_json::json!({"system_id": opened_with, "sec_func": "", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
+        let mut c = two_step_connector(&url, state);
+        c.sync_dialog(&test_ctx()).await.unwrap();
+        let seen = seen.lock().unwrap();
+        let orders: Vec<_> = seen
+            .iter()
+            .map(|ids| ids.iter().find(|i| i.starts_with("HK")).cloned())
+            .collect();
+        assert_eq!(
+            orders,
+            [Some("HKIDN"), Some("HKTAB"), Some("HKEND")].map(|o| o.map(String::from))
+        );
+        for ids in seen.iter() {
+            let headers = [format!("HNVSK {sent}"), format!("HNSHK {sent}")];
+            assert!(
+                headers.iter().all(|h| ids.contains(h)),
+                "{opened_with}: {ids:?}"
+            );
+        }
+        assert_eq!(c.st.system_id, "NEWSYS");
+        let next_init = String::from_utf8_lossy(&c.hkidn(&test_ctx(), 3)).to_string();
+        assert!(next_init.contains("NEWSYS"), "{next_init}");
+    }
+}
+
+#[test]
+fn step_trace_names_the_dialog_id_state_but_never_the_id() {
+    assert_eq!(dialog::dialog_trace("0", "DIALOG1"), "new");
+    assert_eq!(dialog::dialog_trace("DIALOG1", "DIALOG1"), "same");
+    assert_eq!(dialog::dialog_trace("DIALOG1", "DIALOG2"), "new");
+    assert_eq!(dialog::dialog_trace("DIALOG1", "0"), "none");
+    assert_eq!(dialog::dialog_trace("0", ""), "none");
+}
+
 #[tokio::test]
 async fn failed_single_step_retry_is_not_remembered() {
     let (url, seen) = mock_bank(vec![REJECT_9010]);
