@@ -415,6 +415,38 @@ extension AppModel {
         documentsChanged()
     }
 
+    /// Several documents at once (#1968): one job off the main thread, then one reload. Stops at the
+    /// first error; the documents changed until then stay changed (the reload shows them).
+    func deleteDocuments(_ ids: [Int64]) async {
+        await changeDocuments(ids) { try $0.deleteDocument(docId: $1) }
+    }
+
+    func unlinkDocuments(_ ids: [Int64]) async {
+        if await changeDocuments(ids, { try $0.linkDocument(docId: $1, bookingId: nil) }) {
+            toast = String(localized: "Zuordnung aufgehoben")
+        }
+    }
+
+    func setDocumentsAccount(_ ids: [Int64], _ accountID: Int64?) async {
+        await changeDocuments(ids) { try $0.setDocumentAccount(docId: $1, accountId: accountID) }
+    }
+
+    /// True when every document changed.
+    @discardableResult
+    private func changeDocuments(_ ids: [Int64], _ change: @escaping @Sendable (Vault, Int64) throws -> Void) async -> Bool {
+        guard !ids.isEmpty, let pin = pinVault() else { return false }
+        var done = true
+        do {
+            try await pin.run { vault in for id in ids { try change(vault, id) } }
+        } catch {
+            done = false
+            if isCurrent(pin) { errorMessage = describe(error) }
+        }
+        guard isCurrent(pin) else { return false }
+        documentsChanged()
+        return done
+    }
+
     /// Writes the document to a temp file and shows it in QuickLook.
     func quickLook(_ doc: DocumentInfo) {
         guard let url = writeTemporaryFile(for: doc) else { return }

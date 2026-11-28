@@ -35,6 +35,27 @@ final class DocumentsScopeTests: XCTestCase {
         }
     }
 
+    /// #1968: several documents unlinked, moved and deleted in one go; the others stay as they were.
+    func testSeveralDocumentsChangeAtOnce() async throws {
+        let all = model.allDocuments()
+        let linked = all.filter { $0.bookingId != nil }.prefix(2).map(\.id)
+        XCTAssertEqual(linked.count, 2)
+        let untouched = try XCTUnwrap(all.first { $0.bookingId != nil && !linked.contains($0.id) })
+
+        await model.unlinkDocuments(linked)
+        XCTAssertEqual(Set(model.allDocuments(unlinkedOnly: true).map(\.id)).intersection(linked), Set(linked))
+        XCTAssertNotNil(model.allDocuments().first { $0.id == untouched.id }?.bookingId)
+
+        await model.setDocumentsAccount(linked, nil)
+        let withoutAccount = model.allDocuments(accountId: AppModel.documentsWithoutAccount).map(\.id)
+        XCTAssertTrue(Set(linked).isSubset(of: withoutAccount))
+        XCTAssertEqual(model.allDocuments().first { $0.id == untouched.id }?.accountId, untouched.accountId)
+
+        await model.deleteDocuments(linked)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.allDocuments().map(\.id), all.map(\.id).filter { !linked.contains($0) })
+    }
+
     func testConnectionsWithRetrievalOffAreNamedForTheListInView() throws {
         clearBankingBlock() // the policy check cannot reach the network in a test run
         defer { clearBankingBlock() }

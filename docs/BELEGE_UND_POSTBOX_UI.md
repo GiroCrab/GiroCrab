@@ -72,6 +72,14 @@ ungelesen).
   jeder Änderung neu gelesen; ein älterer Lesevorgang, der spät fertig wird, überschreibt keinen neueren
   (`sidebarCountsGeneration`).
 
+## Mehrfachauswahl (#1968)
+
+Mit ⌘/⇧-Klick lassen sich mehrere Dokumente wählen. Die Vorschau zeigt dann nur die Zahl der gewählten Dokumente. Das
+Kontextmenü (auf eine gewählte Zeile: für die ganze Auswahl, sonst für die angeklickte Zeile) bietet „Konto zuordnen“,
+„Zuordnung aufheben“ (für die gewählten mit Umsatz) und „N Belege löschen …“ (mit Rückfrage); alle anderen Einträge
+sind ausgegraut. Die Änderung läuft in einem Auftrag abseits des Hauptthreads, danach wird einmal neu geladen. Gelesen
+wird nur ein einzeln gewähltes Dokument.
+
 ## Export
 
 „N exportieren …“ exportiert genau die Dokumente, die in der Liste stehen (nach Jahren sortiert); ohne Filter heißt der
