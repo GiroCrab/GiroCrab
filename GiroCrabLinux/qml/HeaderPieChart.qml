@@ -71,19 +71,22 @@ Item {
     onVisibleChanged: if (!visible) hovered = ""
     /// PieValueMode.shareText: share of the total with one digit, a dash without a positive total.
     function shareText(cents) { return total > 0 ? DepotMetrics.percent(cents / total * 100, false, 1) : "–" }
+    /// SectorMark(innerRadius: .ratio(0.55)): shared by onPaint and hit()
+    readonly property real innerRatio: 0.55
     /// PieHit.id(at:in:innerRatio:parts:): the slice at `x`/`y` of the canvas, "" outside the ring.
     function hit(x, y) {
         const dx = x - canvas.width / 2, dy = y - canvas.height / 2
         const distance = Math.hypot(dx, dy), radius = Math.min(canvas.width, canvas.height) / 2
-        if (radius <= 0 || total <= 0 || distance < radius * 0.55 || distance > radius) return ""
+        if (radius <= 0 || total <= 0 || distance < radius * innerRatio || distance > radius) return ""
         let angle = Math.atan2(dx, -dy)   // clockwise from twelve o'clock, like the slices are drawn
         if (angle < 0) angle += 2 * Math.PI
         const v = angle / (2 * Math.PI) * total
-        let end = 0
+        // the same running sum as onPaint: every slice moves the start angle, only a drawn one is hit
+        let start = 0
         for (const p of slices) {
-            if (p.cents <= 0) continue
-            end += p.cents
-            if (v < end) return p.id
+            const end = start + p.cents
+            if (p.cents > 0 && v >= start && v < end) return p.id
+            start = end
         }
         return ""
     }
@@ -137,7 +140,7 @@ Item {
                 ctx.reset()
                 const sum = pie.total
                 if (sum <= 0) return
-                const cx = width / 2, cy = height / 2, r = Math.min(width, height) / 2, inner = r * 0.55
+                const cx = width / 2, cy = height / 2, r = Math.min(width, height) / 2, inner = r * pie.innerRatio
                 const inset = pie.slices.length > 1 ? 1 : 0
                 let a = -Math.PI / 2
                 for (const p of pie.slices) {
