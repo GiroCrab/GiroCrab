@@ -310,6 +310,11 @@ fn matches_all(haystack: &str, words: &[&str]) -> bool {
 const FINTS_ALIASES: &[(&str, &str)] = &[
     ("76030080", "dab bnp paribas"),
     ("50070439", "lufthansa mastercard"),
+    // flatexDEGIRO: former name "biw Bank für Investments und Wertpapiere" plus its brands
+    (
+        "10130800",
+        "vitrade biw bank flatexdegiro fur investments und wertpapiere",
+    ),
     // custodian of these brokers; their customers log in with the Baader Stammnummer
     ("70033100", "traders place finanzen net zero"),
 ];
@@ -445,25 +450,28 @@ pub fn search(
     }
 
     let words: Vec<&str> = q.split(' ').collect();
-    out.extend(
-        fints_directory::search(query, per_group_limit)
-            .into_iter()
-            .map(fints_result),
-    );
+    let mut fints: Vec<BankSearchResult> = fints_directory::search(query, per_group_limit)
+        .into_iter()
+        .map(fints_result)
+        .collect();
     for (blz, extra) in FINTS_ALIASES {
         let hit = words.iter().all(|w| extra.split(' ').any(|x| x == *w));
         if hit
-            && !out.iter().any(|r| r.blz == *blz)
+            && !fints.iter().any(|r| r.blz == *blz)
             && let Some(b) = fints_directory::lookup(blz)
         {
-            out.push(fints_result(b));
+            fints.push(fints_result(b));
         }
     }
     // comdirect by name: FinTS next to its own API (the FinTS directory
     // search above leaves it out, see `fints_directory::COMDIRECT_BLZ`)
     if matches_all("comdirect", &words) {
-        out.push(comdirect_fints_result());
+        fints.push(comdirect_fints_result());
     }
+    // aliases and the comdirect row come after the directory hits and can push the
+    // group past its limit: keep the directory matches, drop the appended rows.
+    fints.truncate(per_group_limit);
+    out.extend(fints);
     for (kind, name, extra) in own_api() {
         if matches_all(&format!("{} {}", fold(name), extra), &words) {
             out.push(own_result(kind, name));
@@ -872,6 +880,73 @@ mod tests {
             assert_eq!(r[0].url, fints_directory::COMDIRECT_FINTS_URL);
             assert_eq!(r[1].mode, BankAccessMode::OwnApi);
         }
+    }
+
+    #[test]
+    fn flatex_degiro_offers_fints_under_every_bank_code() {
+        for query in [
+            "flatex",
+            "flatexdegiro",
+            "degiro",
+            "vitrade",
+            "biw",
+            "biw bank",
+            "biw bank für investments und wertpapiere",
+            "10130800",
+            "30330800",
+            "DE11 1013 0800 1234 5678 90",
+        ] {
+            let r = search(query, vec![], 10);
+            let hit = r.iter().find(|b| b.mode == BankAccessMode::FinTs);
+            let hit = hit.unwrap_or_else(|| panic!("{query}: no FinTS row"));
+            assert_eq!(hit.url, fints_directory::FLATEX_FINTS_URL, "{query}");
+            assert!(
+                hit.name.starts_with("flatexDEGIRO"),
+                "{query}: {}",
+                hit.name
+            );
+        }
+        // neither the alias nor the superseded "biw Bank" table row is listed twice
+        for query in ["flatex", "biw", "biw bank"] {
+            assert_eq!(
+                search(query, vec![], 50)
+                    .iter()
+                    .filter(|b| b.blz == "10130800")
+                    .count(),
+                1,
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn fints_group_stays_within_the_limit() {
+        // the directory fills the limit, the aliases must not add rows behind it
+        let fints = search("bank", vec![], 1)
+            .into_iter()
+            .filter(|b| b.mode == BankAccessMode::FinTs)
+            .collect::<Vec<_>>();
+        assert_eq!(fints.len(), 1, "bank with limit 1: {fints:?}");
+        // a query only the alias answers still finds the pinned institute
+        let r = search("biw bank", vec![], 1);
+        let hit = r.iter().find(|b| b.mode == BankAccessMode::FinTs);
+        assert_eq!(
+            r.iter().filter(|b| b.mode == BankAccessMode::FinTs).count(),
+            1
+        );
+        assert_eq!(
+            hit.map(|b| (b.blz.clone(), b.url.clone())).unwrap(),
+            (
+                "10130800".into(),
+                fints_directory::FLATEX_FINTS_URL.to_string()
+            )
+        );
+        // with room left, the alias row is still returned next to the directory hits
+        assert!(
+            search("biw bank", vec![], 10)
+                .iter()
+                .any(|b| b.blz == "10130800")
+        );
     }
 
     #[test]
