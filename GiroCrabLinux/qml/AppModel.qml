@@ -3810,11 +3810,6 @@ QtObject {
         }
         return { iban: grouped, ibanPrefix: prefix.trimEnd(), endCharacters: compact.slice(-4), amount: Fmt.money(cents) }
     }
-    /// TransferSession.awaitsOrderApproval: the session waits for the TAN of the order itself.
-    function transferAwaitsOrderApproval() {
-        if (activeTransfer === null) return false
-        try { return core("transfer_awaits_order_approval", { session: activeTransfer }) === true } catch (e) { return false }
-    }
     /// Name check (Verification of Payee) awaiting the user's decision: { connection, check, busy }.
     property var payeeCheck: null
     /// The running session is a Sammelüberweisung / a Dauerauftrag (Payments.qml), not the
@@ -4006,12 +4001,14 @@ QtObject {
             payeeCheck = { connection: connection, check: step.NeedsPayeeConfirmation.check, busy: false }
         } else if (step.NeedsChallenge) {
             const c = step.NeedsChallenge.challenge
+            // TransferSession.awaitsOrderApproval, read by dispatch.rs right after this step (#949):
+            // it belongs to this reply, not to whatever the session does when the reply arrives
             activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "",
-                                orderApproval: transferAwaitsOrderApproval() }
+                                orderApproval: step.order_approval === true }
             if (c.kind === "DecoupledPush" || c.kind === "Progress") schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.StillWaiting) {
             const c = step.StillWaiting.challenge
-            const orderApproval = transferAwaitsOrderApproval()
+            const orderApproval = step.order_approval === true
             if (activeChallenge === null) activeChallenge = { connection: connection, challenge: c, waiting: true, busy: false, error: "", orderApproval: orderApproval }
             else activeChallenge = Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false, orderApproval: orderApproval })
             schedulePoll(connection, c.poll_interval_seconds)
@@ -4064,12 +4061,22 @@ QtObject {
     }
     /// schedulePoll / submitCode / cancelSync: transfer branches.
     function pollTransfer(connection) {
-        const t = activeTransfer
-        coreAsync("session_poll", { session: t }, step => { if (activeTransfer === t) handleTransfer(step, connection) },
-                  err => { if (activeTransfer === t) finishTransfer(err) })
+        const t = activeTransfer, gen = transferSubmitGeneration
+        coreAsync("session_poll", { session: t }, step => {
+            if (activeTransfer !== t) return
+            // A TAN sent after this poll started (or still on its way) owns the sheet: an older
+            // poll reply must not put the login's challenge back over the order's one (#949).
+            // A last step (Finished, …) still ends the transfer, as in pollSession.
+            const stale = gen !== transferSubmitGeneration || (activeChallenge !== null && activeChallenge.busy)
+            if (stale && (step.NeedsChallenge || step.StillWaiting)) return
+            handleTransfer(step, connection)
+        }, err => { if (activeTransfer === t) finishTransfer(err) })
     }
+    /// Counts the TANs sent in transfer sessions: a poll reply older than the latest one is stale.
+    property int transferSubmitGeneration: 0
     function submitTransferCode(code) {
         const t = activeTransfer, ch = activeChallenge
+        transferSubmitGeneration++
         activeChallenge = Object.assign({}, ch, { busy: true, error: "" })
         // cancelled while the TAN was on its way: the cancel notice owns the sheet
         coreAsync("session_submit", { session: t, code: code }, step => { if (activeTransfer === t) handleTransfer(step, ch.connection) },
