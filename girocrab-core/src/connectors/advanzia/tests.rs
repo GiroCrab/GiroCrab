@@ -397,6 +397,74 @@ fn a_still_reported_hold_is_not_settled_and_old_snapshots_do_not_keep_it_alive()
     assert!(v.advanzia_open_holds(id).unwrap().is_empty());
 }
 #[test]
+fn a_hold_first_imported_with_its_posting_is_settled_after_it_disappears() {
+    assert_shared_import_is_settled(false);
+}
+#[test]
+fn a_legacy_same_day_posting_stored_before_its_hold_is_reconciled() {
+    assert_shared_import_is_settled(true);
+}
+fn assert_shared_import_is_settled(legacy_order: bool) {
+    let (v, id, _d) = setup();
+    let posting = body("APPROVED", "post", "-10", "Test Shop");
+    if legacy_order {
+        sync(&v, id, vec![posting.clone()], "-10").unwrap();
+    }
+    let mut snapshot: Value = serde_json::from_str(&posting).unwrap();
+    for hold in [
+        body("PENDING", "hold", "-10", "TEST SHOP"),
+        body("PENDING", "other-hold", "-20", "OTHER SHOP"),
+    ] {
+        snapshot["transactions"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::from_str::<Value>(&hold).unwrap()["transactions"][0].clone());
+    }
+    sync(&v, id, vec![snapshot.to_string()], "-10").unwrap();
+    assert_eq!(v.advanzia_open_holds(id).unwrap().len(), 2);
+    if legacy_order {
+        // Simulate rows first seen in one capture by a version that inserted
+        // the posting first. Set the timestamp explicitly across two sync calls.
+        v.db()
+            .unwrap()
+            .execute("UPDATE transactions SET imported_unix = 1794528000", [])
+            .unwrap();
+    }
+    let initial_rows = rows(&v);
+    let posting_index = if legacy_order { 0 } else { 2 };
+    let (posting_id, posting_key, _, _) = &initial_rows[posting_index];
+    assert!(posting_key.starts_with("advanzia-post-"));
+    snapshot["transactions"].as_array_mut().unwrap().remove(1);
+    for _ in 0..2 {
+        sync(&v, id, vec![snapshot.to_string()], "-10").unwrap();
+        let open = v.advanzia_open_holds(id).unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].amount_cents, -2000);
+        let all_rows = rows(&v);
+        assert_eq!(all_rows.len(), 3);
+        assert_eq!(all_rows[posting_index].0, *posting_id);
+        assert!(all_rows[posting_index].3.is_none());
+        assert_eq!(all_rows.iter().filter(|row| row.3.is_some()).count(), 1);
+    }
+}
+#[test]
+fn a_posting_from_an_earlier_import_does_not_settle_a_newer_hold() {
+    let (v, id, _d) = setup();
+    let posting = body("APPROVED", "earlier-post", "-10", "TEST SHOP");
+    sync(&v, id, vec![posting.clone()], "-10").unwrap();
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE transactions SET imported_unix = imported_unix - 60",
+            [],
+        )
+        .unwrap();
+    let hold = body("PENDING", "new-hold", "-10", "TEST SHOP");
+    sync(&v, id, vec![posting.clone(), hold], "-10").unwrap();
+    sync(&v, id, vec![posting], "-10").unwrap();
+    assert_eq!(v.advanzia_open_holds(id).unwrap().len(), 1);
+}
+#[test]
 fn ambiguous_postings_do_not_settle_one_hold() {
     let (v, id, _d) = setup();
     sync(
