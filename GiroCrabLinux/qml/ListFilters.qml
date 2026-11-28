@@ -6,6 +6,7 @@ import QtQuick
 //   (#357): only bookings whose absolute amount lies in the range; filtered in the core, so count,
 //   pages, sums and exports follow. Kept while the app runs, like the other list filters.
 // - AppModel.swift › hasActiveListFilters / resetListFilters („Filter zurücksetzen“, #840).
+// - AppModel.swift › includeSubcategories (#1494): „Unterkategorien einbeziehen“ in a category's list.
 // - AppModel+Selection.swift › rememberPeriod / storedPeriod (#840): the period of the last launch.
 // The header pill and its popover: StreamHeaderCard.qml / AmountFilterPopover.qml.
 QtObject {
@@ -41,22 +42,38 @@ QtObject {
         return lo !== null ? qsTr("Betrag: ≥ %1").arg(Fmt.money(lo)) : qsTr("Betrag: ≤ %1").arg(Fmt.money(hi))
     }
 
-    /// AppModel+Loading.swift › currentFilter: `amount_min_cents` / `amount_max_cents`.
+    /// AppModel.swift › includeSubcategories (#1494): a category's list with or without its
+    /// sub-categories, for this session and every category alike (not saved).
+    property bool includeSubcategories: true
+    /// showsSubcategoryFilter: the toggle in the filter menu, in a category's list only.
+    readonly property bool showsSubcategoryFilter: AppModel.sidebarSelection.startsWith("category:")
+    readonly property bool excludesSubcategories: showsSubcategoryFilter && !includeSubcategories
+    onIncludeSubcategoriesChanged: {
+        if (suspendsReloads || !showsSubcategoryFilter) return
+        AppModel.listLimit = AppModel.defaultListLimit
+        AppModel.reloadAfterFilterChange()
+    }
+
+    /// AppModel+Loading.swift › currentFilter: `amount_min_cents` / `amount_max_cents`, and
+    /// `include_subcategories: category == nil || includeSubcategories`.
     function applyTo(f) {
         f.amount_min_cents = amountMin
         f.amount_max_cents = amountMax
+        f.include_subcategories = f.category_id === null || includeSubcategories
         return f
     }
 
-    /// hasActiveListFilters: any filter of the header row (status, type, tags, accounts, amount, search) narrows the list.
+    /// hasActiveListFilters: any filter of the header row narrows the list.
     readonly property bool hasActive: AppModel.statusFilter !== "all" || AppModel.directionFilter !== "All"
         || TagFilter.isActive || amountActive || AppModel.searchText !== "" || AppModel.categoryAccountIDs.length > 0
+        || excludesSubcategories
 
     /// resetListFilters: clears every list filter with a single reload; the period stays.
     function reset() {
         suspendsReloads = true
         AppModel.statusFilter = "all"
         AppModel.directionFilter = "All"
+        includeSubcategories = true
         TagFilter.tagIDs = []
         TagFilter.untagged = false
         amountMin = null

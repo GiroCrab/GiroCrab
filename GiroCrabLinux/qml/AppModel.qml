@@ -553,6 +553,7 @@ QtObject {
         ++loanGeneration; loans = []; loanLinks = ({}); loanEditor = null; openingBalanceRequest = null
         tangibleAccountIDs = ({}); assetItemsByAccount = ({}); selectedAssetItemID = null; selectedAssetHistory = []
         assetEditor = null; assetAction = null
+        newCategoryRequest = null   // may carry this vault's booking ids
     }
 
     // MARK: - App zurücksetzen (AppModel+Reset.swift, #241)
@@ -1671,6 +1672,9 @@ QtObject {
         selectedBookingIDs = ids
         if (selectedBookingID === null || !ids[selectedBookingID]) selectedBookingID = bookings[0].id
     }
+    /// Rows per Bild↑/Bild↓ step in the booking list (AppModel+Selection.swift, #1561).
+    readonly property int keyboardPageStep: 10
+    /// `delta` may be ±Infinity (Pos1/Ende); nothing selected counts as just above the first row.
     function moveSelection(delta) {
         if (!bookings.length) return
         const i = bookings.findIndex(b => b.id === selectedBookingID)
@@ -3372,9 +3376,11 @@ QtObject {
         if (scope === "Investments") reloadDashboard()
     }
 
-    function createCategory(name, parent, symbol, color) {
-        run(() => core("create_category", { name: name, parent_id: parent, sf_symbol: symbol, color_hex: color }))
+    /// `bookingIDs`: the bookings of the row menu's „Neue Kategorie …“ get the new category.
+    function createCategory(name, parent, symbol, color, bookingIDs) {
+        const id = run(() => core("create_category", { name: name, parent_id: parent, sf_symbol: symbol, color_hex: color }))
         reloadCategories()
+        if (id !== undefined && bookingIDs && bookingIDs.length) setCategoryFor(bookingIDs.map(b => ({ id: b })), id)
     }
     /// Changes one property of a category and keeps the others (the core only
     /// updates a category as a whole).

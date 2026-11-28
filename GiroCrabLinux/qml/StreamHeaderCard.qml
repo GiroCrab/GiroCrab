@@ -292,7 +292,8 @@ Card {
                 }
             }
             MenuLabel {
-                symbol: AppModel.statusFilter === "all" && AppModel.directionFilter === "All" ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
+                symbol: AppModel.statusFilter === "all" && AppModel.directionFilter === "All" && !ListFilters.excludesSubcategories
+                        ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill"
                 text: AppModel.filterTitle
                 onClicked: filterMenu.popup()
                 AppMenu {
@@ -308,6 +309,14 @@ Card {
                         model: AppModel.directions
                         AppMenuItem { required property var modelData; text: modelData.title; checkable: true
                                    checked: AppModel.directionFilter === modelData.id; onTriggered: AppModel.directionFilter = modelData.id }
+                    }
+                    // Toggle("Unterkategorien einbeziehen") in a category's list (#1494)
+                    AppMenuSeparator { visible: ListFilters.showsSubcategoryFilter; height: visible ? implicitHeight : 0 }
+                    AppMenuItem {
+                        visible: ListFilters.showsSubcategoryFilter; height: visible ? implicitHeight : 0
+                        text: qsTr("Unterkategorien einbeziehen"); checkable: true; checked: ListFilters.includeSubcategories
+                        // the click flipped `checked`: back to the binding (Filter zurücksetzen sets it too)
+                        onTriggered: { ListFilters.includeSubcategories = checked; checked = Qt.binding(() => ListFilters.includeSubcategories) }
                     }
                 }
             }
@@ -376,7 +385,7 @@ Card {
                 symbol: "xmark.circle"; text: qsTr("Filter zurücksetzen"); chevron: false
                 onClicked: ListFilters.reset()
                 ToolTip.visible: hovered; ToolTip.delay: 600
-                ToolTip.text: qsTr("Status, Buchungsart, Tags, Konten, Betrag und Suche zurücksetzen")
+                ToolTip.text: qsTr("Alle Buchungsfilter zurücksetzen")
             }
             MenuLabel { visible: card.account !== null; symbol: "doc.text"; text: qsTr("Dokumente"); chevron: false
                         onClicked: AppModel.openAccountDocuments(card.account) }

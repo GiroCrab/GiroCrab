@@ -27,6 +27,16 @@ Rectangle {
     Keys.onDownPressed: AppModel.moveSelection(1)
     Keys.onUpPressed: AppModel.moveSelection(-1)
     Keys.onPressed: e => {
+        // Bild↓/Bild↑ page through the list, Pos1/Ende jump to its ends (#1561); the list scrolls
+        // also when the target row is already selected (Mac: keyboardScrollToken)
+        const page = { [Qt.Key_PageDown]: AppModel.keyboardPageStep, [Qt.Key_PageUp]: -AppModel.keyboardPageStep,
+                       [Qt.Key_Home]: -Infinity, [Qt.Key_End]: Infinity }[e.key]
+        if (page !== undefined && !(e.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier | Qt.ShiftModifier))) {
+            AppModel.moveSelection(page)
+            Qt.callLater(list.revealSelection)
+            e.accepted = true
+            return
+        }
         if (AppModel.screenshotMode || AppModel.selectedBooking === null) return
         const b = AppModel.selectedBooking
         // Strg+C copies the selected booking (Bearbeiten › Kopieren)
@@ -613,6 +623,9 @@ Rectangle {
                 // the Amazon drill-down chevron sits below this area
                 const c = row.chevron
                 if (c.visible && c.contains(c.mapFromItem(dc, m.x, m.y))) { stream.toggleAmazonExpanded(dc.booking.id); return }
+                // BookingNoteIndicator: the note icon opens the note in the inspector
+                const n = row.noteIcon
+                if (n.visible && n.contains(n.mapFromItem(dc, m.x, m.y))) { n.clicked = true; AppModel.editNote(dc.booking); return }
                 dc.primaryActivate(m.modifiers & Qt.ControlModifier, m.modifiers & Qt.ShiftModifier)
             }
             onDoubleClicked: m => { if (m.button === Qt.LeftButton) AppModel.editNote(dc.booking) }
@@ -776,8 +789,17 @@ Rectangle {
         readonly property bool hasRefund: booking !== null && ["refund", "original", "both"].includes(booking.refund_marker)
         readonly property real refundRoom: hasRefund ? refundBadge.implicitWidth + 8 : 0
         property alias chevron: chevron
+        property alias noteIcon: noteIcon
+        /// BookingNoteIndicator.preview(of:): the first three lines of at most 240 characters.
+        function notePreview(note) {
+            const limited = note.slice(0, 240)
+            const lines = limited.split("\n")
+            const head = lines.slice(0, 3).join("\n").trim()
+            return limited.length < note.length || lines.length > 3 ? head + " …" : head
+        }
         /// Width the name line gets in a single line: the row minus date, signet, marks and amount.
         readonly property real nameLineWidth: width - 28 - (compact ? 80 * Theme.textScale + 8 : 0) - Theme.scaled(signetSize) - 8
+            - (noteIcon.visible ? noteIcon.width + 8 : 0)
             - (checkIcon.visible ? checkIcon.width + 8 : 0) - (pendingIcon.visible ? pendingIcon.width + 8 : 0)
             - amountColumn.implicitWidth - 8 - refundRoom
         implicitHeight: Math.max((effectiveDensity === "compact" ? 28 : 44) * Theme.textScale, column.implicitHeight) + 2 * verticalPadding
@@ -953,6 +975,33 @@ Rectangle {
                         Item { Layout.fillWidth: true }
                     }
                 }
+                // BookingNoteIndicator: a click edits the note (DayCardRow), hovering shows its start
+                Item {
+                    id: noteIcon
+                    readonly property string note: br.booking ? (br.booking.note || "").trim() : ""
+                    property bool clicked: false
+                    visible: note !== ""
+                    implicitWidth: 18 * Theme.textScale; implicitHeight: 16 * Theme.textScale
+                    Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop; Layout.topMargin: br.isSingleLine ? 0 : 2
+                    // SpiralNotebook
+                    Shape {
+                        width: 13; height: 14; anchors.centerIn: parent; scale: Theme.textScale
+                        preferredRendererType: Shape.CurveRenderer
+                        ShapePath {
+                            strokeColor: Theme.secondary; strokeWidth: 1.15; fillColor: "transparent"; capStyle: ShapePath.RoundCap
+                            PathSvg { path: "M3 2.75 H10 A1.5 1.5 0 0 1 11.5 4.25 V11.75 A1.5 1.5 0 0 1 10 13.25 H3 A1.5 1.5 0 0 1 1.5 11.75 V4.25 A1.5 1.5 0 0 1 3 2.75 Z"
+                                             + " M4 1 V4.25 M6.5 1 V4.25 M9 1 V4.25 M4 7 H9 M4 9.5 H8" }
+                        }
+                    }
+                    HoverHandler { id: noteHover; onHoveredChanged: if (!hovered) noteIcon.clicked = false }
+                    // no preview of the personal note while it is redacted
+                    ToolTip.visible: noteHover.hovered && !clicked && (AppModel.effectiveRedaction & AppModel.redactPersonal) === 0
+                    ToolTip.delay: 500
+                    ToolTip.text: br.notePreview(note)
+                    Accessible.role: Accessible.Button
+                    Accessible.name: qsTr("Notiz bearbeiten")
+                    Accessible.onPressAction: AppModel.editNote(br.booking)
+                }
                 // the row just checked in „Neue Umsätze“ or under "Neu" stays without a mark until it leaves
                 SFIcon { id: checkIcon; visible: br.booking && br.booking.checked && AppModel.lingeringBookingID !== br.booking.id; symbol: "checkmark"; size: 11; color: Theme.tertiary
                          Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop; Layout.topMargin: br.isSingleLine ? 0 : 4 }
@@ -979,8 +1028,19 @@ Rectangle {
                     columns: br.isSingleLine ? 3 : 1
                     columnSpacing: 8; rowSpacing: 1
                     Layout.alignment: br.isSingleLine ? Qt.AlignVCenter : Qt.AlignTop
-                    AmountLabel { id: amountLabel; visible: br.amazonRef === null; cents: br.booking ? br.booking.amount_cents : 0
-                                  Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
+                    AmountLabel {
+                        id: amountLabel; visible: br.amazonRef === null; cents: br.booking ? br.booking.amount_cents : 0
+                        readonly property bool pending: br.booking !== null && br.booking.is_pending
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                        // pending: a dashed capsule around the amount
+                        Layout.leftMargin: pending ? 6 : 0; Layout.rightMargin: pending ? 6 : 0
+                        Layout.topMargin: pending ? 2 : 0; Layout.bottomMargin: pending ? 2 : 0
+                        DashedFrame {
+                            visible: amountLabel.pending
+                            x: -6; y: -2; width: parent.width + 12; height: parent.height + 4
+                            radius: height / 2; strokeColor: Theme.secondary; lineWidth: 1; dash: [3, 3]
+                        }
+                    }
                     // Order account: the direction is never colour alone — charges get a
                     // minus, refunds a plus (#571); both are badged symmetrically.
                     Rectangle {
