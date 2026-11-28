@@ -117,7 +117,9 @@ ColumnLayout {
     readonly property var visibleSteps: needsEnableBankingSetup ? ["source", "accounts", "banks", "enableBanking"] : ["source", "accounts", "banks"]
     readonly property bool isLastStep: visibleSteps[visibleSteps.length - 1] === step
     readonly property bool canContinue: step === "source" ? (filePath !== "" && !loading)
-        : step === "accounts" ? Object.keys(choices).some(k => choices[k].selected) : true
+        : step === "accounts" ? Object.keys(choices).some(k => choices[k].selected) && !undecidedSelected : true
+    /// An account to import whose IBAN fits several accounts and has no target yet (#1993).
+    readonly property bool undecidedSelected: Object.keys(choices).some(k => choices[k].selected && choices[k].undecided)
 
     function next() {
         error = ""
@@ -142,7 +144,9 @@ ColumnLayout {
 
     // MARK: - Choices
 
-    function choice(a) { return choices[a.mm_id] || { selected: true, kind: a.suggested_kind, target: a.existing_account_id } }
+    /// `undecided`: the IBAN fits several accounts (#1993), no target (not even a new account) until chosen.
+    function suggestedChoice(a) { return { selected: true, kind: a.suggested_kind, target: a.existing_account_id, undecided: a.target_needs_choice === true } }
+    function choice(a) { return choices[a.mm_id] || suggestedChoice(a) }
     function setChoice(a, patch) {
         const c = Object.assign({}, choices)
         c[a.mm_id] = Object.assign({}, choice(a), patch)
@@ -185,7 +189,12 @@ ColumnLayout {
     function apply(p) {
         preview = p
         const c = {}
-        for (const a of p.accounts) c[a.mm_id] = choices[a.mm_id] || { selected: true, kind: a.suggested_kind, target: a.existing_account_id }
+        // read again (statements folder): selection and kind stay, a target nobody picked follows the new suggestion
+        for (const a of p.accounts) {
+            const old = choices[a.mm_id]
+            c[a.mm_id] = !old ? suggestedChoice(a) : old.picked ? old
+                : Object.assign({}, old, { target: a.existing_account_id, undecided: a.target_needs_choice === true })
+        }
         choices = c
     }
 
@@ -336,6 +345,8 @@ ColumnLayout {
     function runImport() {
         if (!preview) return
         error = ""
+        // a reloaded preview (statements folder) can leave a target to choose (#1993)
+        if (!Object.keys(choices).some(k => choices[k].selected) || undecidedSelected) { go("accounts"); return }
         if (isDemo) {
             // demo: nothing to read – show what the summary looks like
             result = AppModel.demoMoneyMoneyDbResult(preview, importStatements, plannedPsd2Links)
@@ -558,19 +569,29 @@ ColumnLayout {
                                 textRole: "text"
                                 readonly property var a: rowItem.modelData
                                 model: {
-                                    const list = [{ id: null, text: qsTr("Neues Konto") }]
-                                    for (const acc of AppModel.allAccounts)
+                                    const list = rowItem.c.undecided ? [{ undecided: true, text: qsTr("Bitte wählen") }] : []
+                                    list.push({ id: null, text: qsTr("Neues Konto") })
+                                    // another known currency is refused by the import (#1993); the chosen or suggested one stays
+                                    const cur = x => (x || "").trim().toUpperCase()
+                                    for (const acc of AppModel.allAccounts.filter(x => cur(x.currency) === "" || cur(x.currency) === cur(a.currency)
+                                                                                    || x.id === rowItem.c.target || x.id === a.existing_account_id))
                                         list.push({ id: acc.id, text: acc.id === a.existing_account_id ? qsTr("%1 (gleiche IBAN)").arg(acc.name) : acc.name })
                                     if (a.existing_account_id !== null && !AppModel.allAccounts.some(x => x.id === a.existing_account_id))
                                         list.push({ id: a.existing_account_id, text: a.existing_account_name || qsTr("Vorhandenes Konto") })
                                     return list
                                 }
-                                currentIndex: Math.max(0, model.findIndex(o => o.id === rowItem.c.target))
-                                onActivated: i => v.setChoice(rowItem.modelData, { target: model[i].id })
+                                currentIndex: rowItem.c.undecided ? 0 : Math.max(0, model.findIndex(o => o.id === rowItem.c.target))
+                                onActivated: i => { if (!model[i].undecided) v.setChoice(rowItem.modelData, { target: model[i].id, undecided: false, picked: true }) }
                             }
                         }
                     }
                 }
+            }
+            Text {
+                visible: v.undecidedSelected
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                text: qsTr("Bei „Bitte wählen“ passen mehrere Konten zur IBAN. Wählen Sie das Ziel, „Neues Konto“ oder nehmen Sie das Konto aus dem Import.")
+                font.pixelSize: Theme.caption; color: Theme.secondary
             }
         }
 

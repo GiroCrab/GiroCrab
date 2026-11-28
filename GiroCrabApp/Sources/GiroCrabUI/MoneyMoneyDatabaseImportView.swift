@@ -33,6 +33,41 @@ struct MoneyMoneyDatabaseImportView: View {
         var kind: AccountKind
         /// nil = new account
         var target: Int64?
+        /// The IBAN fits several accounts (#1993): no target, not even a new account,
+        /// until the user picks one.
+        var undecided = false
+        /// The user picked the target; otherwise it follows the preview.
+        var picked = false
+
+        /// What the preview suggests for `a`.
+        static func suggested(_ a: MoneyMoneyDbAccount) -> Choice {
+            Choice(selected: true, kind: a.suggestedKind, target: a.existingAccountId, undecided: a.targetNeedsChoice)
+        }
+
+        /// This choice after the preview was read again (statements folder): selection and
+        /// kind stay, a target nobody picked follows the new suggestion.
+        func refreshed(by a: MoneyMoneyDbAccount) -> Choice {
+            guard !picked else { return self }
+            var c = self
+            c.target = a.existingAccountId
+            c.undecided = a.targetNeedsChoice
+            return c
+        }
+
+        /// Whether the accounts step can go on: an account to import, each with a target.
+        static func ready(_ choices: some Collection<Choice>) -> Bool {
+            choices.contains(where: \.selected) && !choices.contains { $0.selected && $0.undecided }
+        }
+    }
+
+    /// The value of the "Ziel" picker.
+    enum Target: Hashable { case undecided, new, account(Int64) }
+
+    /// Whether an account in `currency` can take the bookings of one in `source`: the import
+    /// refuses another known currency (#1993), so the picker leaves it out.
+    static func currencyFits(_ currency: String, source: String) -> Bool {
+        let c = currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return c.isEmpty || c == source.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     }
 
     /// One table row.
@@ -215,7 +250,7 @@ struct MoneyMoneyDatabaseImportView: View {
     private var canContinue: Bool {
         switch step {
         case .source: return fileURL != nil && !loading
-        case .accounts: return choices.values.contains(where: \.selected)
+        case .accounts: return Choice.ready(choices.values)
         default: return true
         }
     }
@@ -298,6 +333,11 @@ struct MoneyMoneyDatabaseImportView: View {
                         for id in tableSelection { choices[id]?.selected = on }
                         return .handled
                     }
+                if choices.values.contains(where: { $0.selected && $0.undecided }) {
+                    Text("Bei „Bitte wählen“ passen mehrere Konten zur IBAN. Wählen Sie das Ziel, „Neues Konto“ oder nehmen Sie das Konto aus dem Import.")
+                        .appFont(.caption).foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -362,13 +402,37 @@ struct MoneyMoneyDatabaseImportView: View {
     }
 
     private func targetCell(_ a: MoneyMoneyDbAccount) -> some View {
-        Picker("Ziel", selection: binding(a).target) {
-            Text("Neues Konto").tag(Int64?.none)
-            ForEach(model.allAccounts) { acc in
-                Text(acc.id == a.existingAccountId ? String(localized: "\(acc.name) (gleiche IBAN)") : acc.name).tag(Int64?.some(acc.id))
+        let choice = binding(a)
+        let target = Binding<Target>(
+            get: {
+                let c = choice.wrappedValue
+                return c.undecided ? .undecided : c.target.map(Target.account) ?? .new
+            },
+            set: { t in
+                var c = choice.wrappedValue
+                switch t {
+                case .undecided: return
+                case .new: c.target = nil
+                case .account(let id): c.target = id
+                }
+                c.undecided = false
+                c.picked = true
+                choice.wrappedValue = c
+            }
+        )
+        return Picker("Ziel", selection: target) {
+            if choice.wrappedValue.undecided {
+                Text("Bitte wählen").tag(Target.undecided)
+            }
+            Text("Neues Konto").tag(Target.new)
+            // the chosen or suggested one stays, so the choice is visible
+            ForEach(model.allAccounts.filter {
+                Self.currencyFits($0.currency, source: a.currency) || $0.id == choice.wrappedValue.target || $0.id == a.existingAccountId
+            }) { acc in
+                Text(acc.id == a.existingAccountId ? String(localized: "\(acc.name) (gleiche IBAN)") : acc.name).tag(Target.account(acc.id))
             }
             if let id = a.existingAccountId, !model.allAccounts.contains(where: { $0.id == id }) {
-                Text(a.existingAccountName ?? String(localized: "Vorhandenes Konto")).tag(Int64?.some(id))
+                Text(a.existingAccountName ?? String(localized: "Vorhandenes Konto")).tag(Target.account(id))
             }
         }
         .labelsHidden()
@@ -773,7 +837,7 @@ struct MoneyMoneyDatabaseImportView: View {
 
     private func binding(_ a: MoneyMoneyDbAccount) -> Binding<Choice> {
         Binding(
-            get: { choices[a.mmId] ?? Choice(selected: true, kind: a.suggestedKind, target: a.existingAccountId) },
+            get: { choices[a.mmId] ?? Choice.suggested(a) },
             set: { choices[a.mmId] = $0 }
         )
     }
@@ -914,7 +978,7 @@ struct MoneyMoneyDatabaseImportView: View {
         model.loadLivePsd2Banks()
         var c: [Int64: Choice] = [:]
         for a in p.accounts {
-            c[a.mmId] = choices[a.mmId] ?? Choice(selected: true, kind: a.suggestedKind, target: a.existingAccountId)
+            c[a.mmId] = choices[a.mmId]?.refreshed(by: a) ?? Choice.suggested(a)
         }
         choices = c
     }
@@ -983,6 +1047,8 @@ struct MoneyMoneyDatabaseImportView: View {
     private func runImport() {
         guard let url = fileURL, let preview else { return }
         error = nil
+        // a reloaded preview (statements folder) can leave a target to choose (#1993)
+        guard Choice.ready(choices.values) else { go(.accounts); return }
         if model.demoDbPreview != nil {
             // demo: nothing to read – show what the summary looks like
             result = Self.demoResult(preview, statements: importStatements, psd2: plannedPsd2Links)
@@ -992,7 +1058,7 @@ struct MoneyMoneyDatabaseImportView: View {
         }
         let options = MoneyMoneyDbImportOptions(
             accounts: preview.accounts.map { a in
-                let c = choices[a.mmId] ?? Choice(selected: true, kind: a.suggestedKind, target: a.existingAccountId)
+                let c = choices[a.mmId] ?? Choice.suggested(a)
                 return MoneyMoneyDbAccountChoice(mmId: a.mmId, import: c.selected, kind: c.kind, targetAccountId: c.target)
             },
             importCategories: importCategories,
