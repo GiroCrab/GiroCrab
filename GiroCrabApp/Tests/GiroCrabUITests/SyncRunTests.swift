@@ -44,14 +44,30 @@ final class SyncRunTests: XCTestCase {
         XCTAssertEqual(r.skippedCount, 1)
     }
 
-    func testSkipNeverOverwritesAnEnd() {
-        var r = run(2)
+    func testNoEndOverwritesAnotherEnd() {
+        var r = run(3)
         r.finish(1, imported: 3, detail: nil)
         r.fail(2, message: "x")
+        r.skip(3, reason: "z")
+        // a late skip, failure or result of an ended login changes nothing
         r.skip(1, reason: "y")
+        r.fail(1, message: "late")
         r.skip(2, reason: "y")
+        r.finish(2, imported: 1, detail: nil)
+        r.finish(3, imported: 1, detail: nil)
+        r.fail(3, message: "late")
         XCTAssertEqual(r.status(of: 1), .done(imported: 3, detail: nil))
         XCTAssertEqual(r.status(of: 2), .failed(message: "x"))
+        XCTAssertEqual(r.status(of: 3), .skipped(reason: "z"))
+    }
+
+    func testAFetchedLoginIsNotRetried() {
+        var r = run(2)
+        r.finish(1, imported: 3, detail: nil)
+        r.skip(2, reason: "y")
+        XCTAssertFalse(r.retry(1))
+        XCTAssertEqual(r.status(of: 1), .done(imported: 3, detail: nil))
+        XCTAssertTrue(r.isFinished)
     }
 
     func testSkipRemainingLeavesFinishedLoginsAlone() {

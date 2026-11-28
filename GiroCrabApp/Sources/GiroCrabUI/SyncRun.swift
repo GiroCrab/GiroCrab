@@ -57,25 +57,32 @@ struct SyncRun: Equatable {
         update(id) { $0 = .running }
     }
 
+    // finish, skip and fail end only an open login (waiting or running): a late answer never
+    // overwrites a result, and a login gets a new end only through `retry`.
+
     mutating func finish(_ id: Int64, imported: Int?, detail: String?) {
-        update(id) { $0 = .done(imported: imported, detail: detail) }
+        updateOpen(id) { $0 = .done(imported: imported, detail: detail) }
     }
 
     mutating func skip(_ id: Int64, reason: String) {
-        update(id) { if $0 == .waiting || $0 == .running { $0 = .skipped(reason: reason) } }
+        updateOpen(id) { $0 = .skipped(reason: reason) }
     }
 
     mutating func fail(_ id: Int64, message: String) {
-        update(id) { $0 = .failed(message: message) }
+        updateOpen(id) { $0 = .failed(message: message) }
     }
 
     /// "Erneut versuchen" of a failed or skipped login: it waits again.
-    /// False when it is still open or not in this run.
+    /// False when it is open, fetched or not in this run.
     @discardableResult
     mutating func retry(_ id: Int64) -> Bool {
-        guard let s = status(of: id), s != .waiting, s != .running else { return false }
-        update(id) { $0 = .waiting }
-        return true
+        switch status(of: id) {
+        case .failed?, .skipped?:
+            update(id) { $0 = .waiting }
+            return true
+        default:
+            return false
+        }
     }
 
     /// "Alle abbrechen" or a lock for all logins: whatever is still open is skipped.
@@ -83,6 +90,10 @@ struct SyncRun: Equatable {
         for i in entries.indices where entries[i].isOpen {
             entries[i].status = .skipped(reason: reason)
         }
+    }
+
+    private mutating func updateOpen(_ id: Int64, _ change: (inout SyncRunEntry.Status) -> Void) {
+        update(id) { if $0 == .waiting || $0 == .running { change(&$0) } }
     }
 
     private mutating func update(_ id: Int64, _ change: (inout SyncRunEntry.Status) -> Void) {
