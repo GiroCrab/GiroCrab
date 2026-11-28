@@ -22,6 +22,11 @@
 //! DIKKU version 2 (answer to the proprietary DKKKU, comdirect, #807) has the same
 //! head but 22 components per booking (`DIKKU_V2`). `shape` logs the kind of every
 //! field, never the content, so a layout deviation shows up in the debug log.
+//!
+//! Not yet booked card payments: Deutsche Bank lists them among the bookings, the
+//! first description line starting with "Vorgemerkt"; the booked payment comes
+//! later with another text (#2113). They become holds (`camt::HOLD_PREFIX`), which
+//! persist keeps only while a complete fetch still reports them.
 
 use super::syntax::{Segment, Value};
 use crate::connectors::RemoteTransaction;
@@ -139,6 +144,7 @@ fn booking(
     let booking_date = iso_date(get(l.booking_date)).or_else(|| iso_date(get(l.receipt_date)))?;
     let value_date = iso_date(get(l.value_date)).unwrap_or_else(|| booking_date.clone());
     let lines: Vec<&str> = l.lines.clone().map(get).filter(|l| !l.is_empty()).collect();
+    let hold = lines.first().is_some_and(|l| is_hold_text(l));
     let merchant = l.merchant.map(get).unwrap_or("");
     let counterparty = if merchant.is_empty() {
         lines.first().copied().unwrap_or("")
@@ -172,9 +178,25 @@ fn booking(
         },
         counterparty: counterparty.to_string(),
         purpose: purpose.join(" "),
-        booking_text: "Kartenumsatz".into(),
+        booking_text: if hold {
+            crate::i18n::tr("Vorgemerkt").into()
+        } else {
+            "Kartenumsatz".into()
+        },
+        // marked here, the id is set in `parse` (it counts equal holds)
+        external_id: if hold {
+            super::camt::HOLD_PREFIX.into()
+        } else {
+            String::new()
+        },
         ..Default::default()
     })
+}
+
+/// Whether a description line marks a not yet booked payment ("Vorgemerkt …").
+fn is_hold_text(line: &str) -> bool {
+    line.get(..10)
+        .is_some_and(|p| p.eq_ignore_ascii_case("vorgemerkt"))
 }
 
 /// Bookings and balance of all HIKKU / DIKKU segments of one reply. The balance is
@@ -186,6 +208,8 @@ pub fn parse<'a>(
 ) -> (Vec<RemoteTransaction>, Option<CardBalance>) {
     let mut txs = Vec::new();
     let mut balance = None;
+    // equal holds (same day, amount, merchant, text) get distinct ids
+    let mut seen_holds: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     for s in segments {
         if balance.is_none()
             && let Some(cents) = signed(s.get(3, 1), s.get(3, 0))
@@ -199,7 +223,16 @@ pub fn parse<'a>(
         let l = layout(s);
         for el in s.elements.iter().skip(6) {
             let c = components(el);
-            if let Some(t) = booking(l, &c, account_ref, fallback_currency) {
+            if let Some(mut t) = booking(l, &c, account_ref, fallback_currency) {
+                if !t.external_id.is_empty() {
+                    let key = format!(
+                        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+                        t.booking_date, t.amount_cents, t.counterparty, t.purpose
+                    );
+                    let n = seen_holds.entry(key).or_insert(0);
+                    t.external_id = format!("{}{}", super::camt::HOLD_PREFIX, t.content_id(*n));
+                    *n += 1;
+                }
                 txs.push(t);
             }
         }
@@ -331,6 +364,70 @@ mod tests {
             (23, "J"),
             (24, "REF0003"),
         ])
+    }
+
+    /// A not yet booked payment as Deutsche Bank lists it (#2113), invented data.
+    fn hold(terminal: &str) -> String {
+        group(&[
+            (0, CARD),
+            (1, "20261006"),
+            (2, "20261006"),
+            (4, "20261006"),
+            (9, "7,00"),
+            (10, "EUR"),
+            (11, "D"),
+            (12, &format!("Vorgemerkt {terminal} MUSTERSTADT DEU")),
+            (21, "KAFFEEBAR"),
+            (23, "N"),
+            (24, "REF0009"),
+        ])
+    }
+
+    fn segment(groups: &[String]) -> String {
+        format!(
+            "HIKKU:4:1:3+{CARD}++D:7,00:EUR:20261006+20261003+20261103+{}'",
+            groups.join("+")
+        )
+    }
+
+    #[test]
+    fn vorgemerkt_bookings_become_holds() {
+        let (txs, _) = parsed(&segment(&[hold("1"), purchase()]));
+        let (h, booked) = (&txs[0], &txs[1]);
+        assert!(
+            h.external_id.starts_with(super::super::camt::HOLD_PREFIX),
+            "{}",
+            h.external_id
+        );
+        assert_eq!(h.booking_text, "Vorgemerkt");
+        assert_eq!(
+            (h.amount_cents, h.counterparty.as_str()),
+            (-7_00, "KAFFEEBAR")
+        );
+        // a booked payment keeps the content id persist gives it
+        assert!(booked.external_id.is_empty());
+        assert_eq!(booked.booking_text, "Kartenumsatz");
+    }
+
+    #[test]
+    fn hold_ids_are_stable_and_distinct_for_equal_holds() {
+        let (a, _) = parsed(&segment(&[hold("1"), hold("1"), hold("2")]));
+        let (b, _) = parsed(&segment(&[hold("1"), hold("1"), hold("2")]));
+        let ids =
+            |t: &[RemoteTransaction]| t.iter().map(|t| t.external_id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&a), ids(&b));
+        let unique: std::collections::HashSet<_> = ids(&a).into_iter().collect();
+        assert_eq!(unique.len(), 3);
+    }
+
+    #[test]
+    fn hold_text_is_recognised_only_at_the_start() {
+        assert!(is_hold_text("Vorgemerkt 1 MUSTERSTADT DEU"));
+        assert!(is_hold_text("VORGEMERKT 1 MUSTERSTADT"));
+        assert!(!is_hold_text("Kreditkartenumsatz 1 MUSTERSTADT, DEU"));
+        assert!(!is_hold_text("Erstattung Vorgemerkt"));
+        assert!(!is_hold_text("Vorg"));
+        assert!(!is_hold_text("Vörgemerkt"));
     }
 
     #[test]

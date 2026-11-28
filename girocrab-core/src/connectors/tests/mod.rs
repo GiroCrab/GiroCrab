@@ -1120,6 +1120,116 @@ fn incomplete_fints_hold_list_keeps_old_holds() {
     std::fs::remove_file(path).ok();
 }
 
+/// #2113: card holds ("Vorgemerkt …") that older versions stored as bookings go once
+/// a complete FinTS fetch lists the holds itself; open holds stay only while listed.
+#[test]
+fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::FinTsGeneric, String::new(), "u".into())
+        .unwrap();
+    let acc = RemoteAccount {
+        external_ref: "f:card".into(),
+        name: "Kreditkarte".into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::CreditCard,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    // invented data
+    let card =
+        |purpose: &str, booking_text: &str, external_id: &str, cents: i64| RemoteTransaction {
+            account_ref: "f:card".into(),
+            external_id: external_id.into(),
+            booking_date: "2026-11-05".into(),
+            value_date: "2026-11-05".into(),
+            amount_cents: cents,
+            currency: "EUR".into(),
+            counterparty: "KAFFEEBAR".into(),
+            purpose: purpose.into(),
+            booking_text: booking_text.into(),
+            ..Default::default()
+        };
+    let legacy = card("Vorgemerkt 1 MUSTERSTADT DEU", "Kartenumsatz", "", -4_50);
+    let booked = card(
+        "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
+        "Kartenumsatz",
+        "",
+        -4_50,
+    );
+    let hold = card(
+        "Vorgemerkt 2 MUSTERSTADT DEU",
+        "Vorgemerkt",
+        &format!("{}c1", crate::connectors::fints::camt::HOLD_PREFIX),
+        -7_00,
+    );
+    let fetch = |txs: Vec<RemoteTransaction>, complete: bool| FetchResult {
+        accounts: vec![acc.clone()],
+        transactions: txs,
+        hold_prefix: complete.then(|| crate::connectors::fints::camt::HOLD_PREFIX.into()),
+        ..Default::default()
+    };
+    let purposes = || -> Vec<String> {
+        let db = v.db().unwrap();
+        let mut q = db
+            .prepare(
+                "SELECT purpose FROM transactions WHERE deleted_ms IS NULL
+                   AND account_id IN (SELECT id FROM accounts WHERE external_ref = 'f:card')
+                 ORDER BY purpose",
+            )
+            .unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    // an older version stored the hold as a booking
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        fetch(vec![legacy.clone()], false),
+    )
+    .unwrap();
+    // an incomplete fetch leaves it alone
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        fetch(vec![booked.clone()], false),
+    )
+    .unwrap();
+    assert_eq!(purposes().len(), 2);
+    // a complete fetch: the old row goes, the booking and the listed hold stay
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        fetch(vec![booked.clone(), hold], true),
+    )
+    .unwrap();
+    assert_eq!(
+        purposes(),
+        vec![
+            "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
+            "Vorgemerkt 2 MUSTERSTADT DEU"
+        ]
+    );
+    // the hold is no longer listed: gone
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        fetch(vec![booked], true),
+    )
+    .unwrap();
+    assert_eq!(purposes(), vec!["Kreditkartenumsatz 1 MUSTERSTADT, DEU"]);
+    std::fs::remove_file(path).ok();
+}
+
 #[test]
 fn pending_batch_booking_is_replaced_by_the_banks_booking_whatever_its_iban() {
     let (v, path) = demo_vault();

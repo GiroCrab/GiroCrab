@@ -1037,6 +1037,23 @@ pub(crate) fn store_fetch(
                         crate::sync_merge::soft_delete_booking(&tx, row_id)?;
                     }
                 }
+                // FinTS card holds stored as bookings by older versions (#2113): the
+                // ones still open came again above as holds, the rest are booked or gone.
+                if prefix == super::fints::camt::HOLD_PREFIX {
+                    let legacy: Vec<i64> = {
+                        let mut q = tx.prepare(
+                            "SELECT id FROM transactions
+                             WHERE account_id = ?1 AND deleted_ms IS NULL
+                               AND external_id NOT LIKE 'pending-%'
+                               AND booking_text = 'Kartenumsatz' AND purpose LIKE 'Vorgemerkt%'",
+                        )?;
+                        let rows = q.query_map(params![acc_id], |r| r.get(0))?;
+                        rows.collect::<Result<_, _>>()?
+                    };
+                    for row_id in legacy {
+                        crate::sync_merge::soft_delete_booking(&tx, row_id)?;
+                    }
+                }
             }
         }
         let mut postbox_added = 0u32;

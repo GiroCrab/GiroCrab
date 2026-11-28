@@ -373,6 +373,8 @@ impl FinTsConnector {
                 break;
             }
         }
+        // unread pages may list holds (#2113): the stored ones stay
+        self.truncated_statements |= touchdown.is_some();
         Ok((txs, balance))
     }
 
