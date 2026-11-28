@@ -171,9 +171,10 @@ Rectangle {
                     // a selectable row is a button for the keyboard too: Tab reaches it, Space selects,
                     // Return / Enter opens like the double click
                     activeFocusOnTab: table.selectable
-                    Keys.onSpacePressed: table.selected(rowBox.p)
-                    Keys.onReturnPressed: table.opened(rowBox.p)
-                    Keys.onEnterPressed: table.opened(rowBox.p)
+                    // a pending single click of the mouse must not override the key afterwards
+                    Keys.onSpacePressed: { clickTimer.stop(); table.selected(rowBox.p) }
+                    Keys.onReturnPressed: { clickTimer.stop(); table.opened(rowBox.p) }
+                    Keys.onEnterPressed: { clickTimer.stop(); table.opened(rowBox.p) }
                     Accessible.role: table.selectable ? Accessible.Button : Accessible.Row
                     Accessible.name: AppModel.masking(rowBox.p.displayName, rowBox.p.isOwnItem ? undefined : AppModel.redactLabels)
                     Accessible.onPressAction: { if (table.selectable) table.opened(rowBox.p) }
