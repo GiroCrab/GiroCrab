@@ -141,7 +141,7 @@ struct WealthPosition: Identifiable, Equatable {
             let key = h.isin.isEmpty ? (h.wkn.isEmpty ? h.name : h.wkn) : h.isin
             // the same rules as the depot view: previous-day value, bank P&L or cost-price calculation
             let day = HoldingFigures.dayChange(h)?.cents
-            let gain = HoldingFigures.gain(h, basis: HoldingFigures.priceBasis(h, isBond: false))?.cents
+            let gain = HoldingFigures.gain(h, basis: HoldingFigures.priceBasis(h, isBond: nil))?.cents
             if var p = byKey[key] {
                 p.quantity += h.quantity
                 p.valueCents += h.valueCents

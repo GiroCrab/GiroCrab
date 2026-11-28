@@ -81,6 +81,9 @@ final class DepotMetricsTests: XCTestCase {
         let bond = Holding(isin: "DE0003", wkn: "", name: "Anleihe", quantity: 1_000, currentPriceCents: 0,
                            purchasePriceCents: 0, valueCents: 0)
         XCTAssertEqual(HoldingFigures.priceBasis(bond, isBond: true), .percentOfNominal)
+        // asset class unknown (wealth view): a bond would be taken per unit, 100 × too large, so no basis
+        XCTAssertEqual(HoldingFigures.priceBasis(share, isBond: nil), .unknown)
+        XCTAssertNil(WealthPosition.aggregate([[share]]).first?.gainCents)
         // nothing held: no basis
         var sold = share
         sold.quantity = 0
