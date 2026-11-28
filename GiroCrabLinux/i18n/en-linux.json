@@ -170,6 +170,7 @@
   "Informationen ein-/ausblenden": "Show/Hide Inspector",
   "Informationen einblenden (Strg+Alt+I)": "Show Inspector (Ctrl+Alt+I)",
   "Interner Fehler in %1: %2": "Internal error in %1: %2",
+  "JSON-Datei (*.json)": "JSON file (*.json)",
   "Kein Zugriff auf den Schlüsselbund (KWallet / GNOME Schlüsselbund): %1. Ist der Schlüsselbund entsperrt und der Secret-Service-Dienst aktiv?": "No access to the keyring (KWallet / GNOME Keyring): %1. Is the keyring unlocked and the Secret Service running?",
   "Keine Bestellungen im gewählten Zeitraum gefunden.": "No orders found in the chosen period.",
   "Keine Ergebnisse": "No Results",

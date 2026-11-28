@@ -25,7 +25,7 @@ QtObject {
         "paintpalette": "color-picker", "wand.and.stars": "tools-wizard", "arrow.triangle.branch": "split",
         "archivebox": "archive-insert", "gearshape": "settings-configure", "printer": "document-print",
         "square.and.arrow.up": "document-export", "square.and.arrow.down": "document-import", "command": "code-context",
-        "square.and.arrow.down.on.square": "document-import",
+        "square.and.arrow.down.on.square": "document-import", "square.and.arrow.up.on.square": "document-export",
         "exclamationmark.triangle": "dialog-warning", "exclamationmark.shield": "security-low", "globe": "globe-symbolic",
         "person": "im-user", "tray": "mail-folder-inbox", "chart.bar.xaxis": "office-chart-bar", "chart.bar": "office-chart-bar",
         "chart.pie": "office-chart-pie", "chart.xyaxis.line": "office-chart-line", "arrow.down": "view-financial-category-income",
