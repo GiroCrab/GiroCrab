@@ -14,6 +14,7 @@ struct BookingRowText: View {
     #if os(macOS)
     @Environment(\.reportRedaction) private var redaction
     @Environment(\.textScale) private var scale
+    @State private var textView = BookingTextViewPresence()
     #endif
 
     init(_ value: String, prominent: Bool = false, wraps: Bool = false, onSingleClick: (() -> Void)?) {
@@ -35,14 +36,21 @@ struct BookingRowText: View {
         Group {
             #if os(macOS)
             if let onSingleClick, redaction.allowsBookingTextCopy {
-                text.hidden().overlay {
-                    SelectableBookingText(
-                        value: value, wraps: wraps,
-                        font: style.appKitFont(scale: scale, weight: weight),
-                        color: NSColor(color), onSingleClick: onSingleClick
-                    )
+                // The AppKit text view only while the pointer is over the text or it holds a
+                // selection: one per visible text made scrolling a long list stall.
+                text.opacity(textView.isShown ? 0 : 1).overlay {
+                    if textView.isShown {
+                        SelectableBookingText(
+                            value: value, wraps: wraps,
+                            font: style.appKitFont(scale: scale, weight: weight),
+                            color: NSColor(color), onSingleClick: onSingleClick,
+                            // AppKit may change the first responder during a view update
+                            onFocusChange: { focus in DispatchQueue.main.async { textView.hasFocus = focus } }
+                        )
+                    }
                 }
                 .clipped()
+                .onHover { textView.isHovered = $0 }
             } else {
                 text
             }
@@ -55,12 +63,21 @@ struct BookingRowText: View {
 }
 
 #if os(macOS)
+/// When a booking text needs its AppKit text view: a click or drag reaches it only under the
+/// pointer, and a selection must stay copyable (⌘C) after the pointer has left.
+struct BookingTextViewPresence {
+    var isHovered = false
+    var hasFocus = false
+    var isShown: Bool { isHovered || hasFocus }
+}
+
 private struct SelectableBookingText: NSViewRepresentable {
     let value: String
     let wraps: Bool
     let font: NSFont
     let color: NSColor
     let onSingleClick: () -> Void
+    let onFocusChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> BookingTextView {
         let view = BookingTextView()
@@ -77,6 +94,7 @@ private struct SelectableBookingText: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: BookingTextView, coordinator: ()) {
+        view.onFocusChange = nil
         if let window = view.window, window.firstResponder === view {
             window.makeFirstResponder(nil)
         }
@@ -87,6 +105,7 @@ private struct SelectableBookingText: NSViewRepresentable {
 
     func updateNSView(_ view: BookingTextView, context: Context) {
         view.onSingleClick = onSingleClick
+        view.onFocusChange = onFocusChange
         view.textContainer?.maximumNumberOfLines = wraps ? 0 : 1
         view.textContainer?.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
         if view.string != value { view.string = value }
@@ -97,10 +116,23 @@ private struct SelectableBookingText: NSViewRepresentable {
 
 private final class BookingTextView: NSTextView {
     var onSingleClick: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
     private var trackingSelection = false
 
     // Ordinary clicks focus the list; native text selection takes focus for Cmd+C.
     override var acceptsFirstResponder: Bool { trackingSelection }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { onFocusChange?(true) }
+        return became
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { onFocusChange?(false) }
+        return resigned
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let event = NSApp.currentEvent {
