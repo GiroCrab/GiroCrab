@@ -90,6 +90,14 @@ final class MacAutoLock {
         lockIfArmed(.minimized, enabled: lockOnMinimize)
     }
 
+    /// The vault was unlocked (`AppModel.vaultState` became `.open`). Restarts the idle
+    /// interval without waiting for a check: a lock and unlock between two checks would
+    /// otherwise go unseen and count the time before the lock.
+    func vaultOpened() {
+        armedAtLastCheck = false
+        noteActivity()
+    }
+
     /// Locks once the app saw no input for `idleInterval`. The interval starts afresh on
     /// the first check after arming (unlock, switching the setting on), not at the last
     /// check before it.
