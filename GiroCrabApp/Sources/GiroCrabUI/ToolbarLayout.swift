@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// The macOS main toolbar as GiroCrab stores it (#2049): which buttons it shows in which order, in a leading
-/// and a trailing group, and whether the scope control is shown. SwiftUI's own customizable toolbar
+/// and a trailing group, whether the scope control is shown, and whether the toolbar is shown at all. SwiftUI's own customizable toolbar
 /// (`toolbar(id:)`) loses AppKit's silent reorders and moves items back or crashes (#1832, #2010, #2037), so
 /// `MainToolbar` builds a plain, non-customizable toolbar from this layout.
 struct ToolbarLayout: Codable, Equatable {
@@ -14,6 +14,8 @@ struct ToolbarLayout: Codable, Equatable {
     var showsScope: Bool
     var leading: [Item]
     var trailing: [Item]
+    /// Ansicht › Symbolleiste ausblenden: AppKit kept this in its own configuration, which the takeover deletes.
+    var toolbarShown = true
 
     /// The former default toolbar: scope, five buttons, then (flexible space and) the search field.
     static let standard = ToolbarLayout(showsScope: true, leading: [.transfer, .newBooking, .sync, .inspector, .privacy], trailing: [])
@@ -38,6 +40,7 @@ struct ToolbarLayout: Codable, Equatable {
         showsScope = try c.decode(Bool.self, forKey: .showsScope)
         leading = try items(.leading)
         trailing = try items(.trailing)
+        toolbarShown = try c.decodeIfPresent(Bool.self, forKey: .toolbarShown) ?? true // absent in the first version
     }
 
     /// Converts the `TB Item Identifiers` of the former customizable toolbar: buttons before the first
@@ -57,11 +60,16 @@ struct ToolbarLayout: Codable, Equatable {
     }
 
     /// One-time takeover: when GiroCrab has no layout of its own yet, converts AppKit's saved layout of the former
-    /// customizable toolbar and deletes it (that saved layout is what crashes SwiftUI at launch, #2010).
+    /// customizable toolbar (`TB Item Identifiers`, and `TB Is Shown` = 0 for a hidden toolbar) and deletes it
+    /// (that saved layout is what crashes SwiftUI at launch, #2010).
     static func migrateLegacy(in defaults: UserDefaults) {
         guard defaults.object(forKey: defaultsKey) == nil, let legacy = defaults.dictionary(forKey: legacyDefaultsKey) else { return }
-        if let items = legacy["TB Item Identifiers"] as? [String] {
-            converting(legacyItems: items).save(to: defaults)
+        let items = legacy["TB Item Identifiers"] as? [String]
+        let shown = (legacy["TB Is Shown"] as? NSNumber)?.boolValue ?? true
+        if items != nil || !shown {
+            var layout = items.map(converting(legacyItems:)) ?? .standard
+            layout.toolbarShown = shown
+            layout.save(to: defaults)
         }
         defaults.removeObject(forKey: legacyDefaultsKey)
     }

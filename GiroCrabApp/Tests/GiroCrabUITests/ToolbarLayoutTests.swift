@@ -65,6 +65,39 @@ final class ToolbarLayoutTests: XCTestCase {
         XCTAssertEqual(ToolbarLayout.load(from: defaults), ToolbarLayout(showsScope: false, leading: [.sync], trailing: [.inspector]))
     }
 
+    func testTakeoverKeepsAHiddenToolbar() {
+        defaults.set(["TB Item Identifiers": ["sync", "NSToolbarFlexibleSpaceItem", "inspector"], "TB Is Shown": 0],
+                     forKey: ToolbarLayout.legacyDefaultsKey)
+        ToolbarLayout.migrateLegacy(in: defaults)
+        var expected = ToolbarLayout(showsScope: false, leading: [.sync], trailing: [.inspector])
+        expected.toolbarShown = false
+        XCTAssertEqual(ToolbarLayout.load(from: defaults), expected)
+        XCTAssertNil(defaults.object(forKey: ToolbarLayout.legacyDefaultsKey))
+    }
+
+    func testTakeoverOfAShownToolbarOrWithoutTheFlag() {
+        defaults.set(["TB Item Identifiers": ["sync"], "TB Is Shown": 1], forKey: ToolbarLayout.legacyDefaultsKey)
+        ToolbarLayout.migrateLegacy(in: defaults)
+        XCTAssertTrue(ToolbarLayout.load(from: defaults).toolbarShown)
+        defaults.removeObject(forKey: ToolbarLayout.defaultsKey)
+        setLegacy(["sync"])
+        ToolbarLayout.migrateLegacy(in: defaults)
+        XCTAssertTrue(ToolbarLayout.load(from: defaults).toolbarShown)
+    }
+
+    func testTakeoverOfAHiddenToolbarWithoutItemsKeepsTheDefaultButtons() {
+        defaults.set(["TB Is Shown": false], forKey: ToolbarLayout.legacyDefaultsKey)
+        ToolbarLayout.migrateLegacy(in: defaults)
+        var expected = ToolbarLayout.standard
+        expected.toolbarShown = false
+        XCTAssertEqual(ToolbarLayout.load(from: defaults), expected)
+    }
+
+    func testLayoutStoredWithoutTheFlagDecodesAsShown() throws {
+        let json = #"{"showsScope":true,"leading":["sync"],"trailing":[]}"#
+        XCTAssertTrue(try JSONDecoder().decode(ToolbarLayout.self, from: Data(json.utf8)).toolbarShown)
+    }
+
     func testTakeoverWithoutItemsKeepsTheDefaultAndDeletesTheOldKey() {
         defaults.set(["TB Is Shown": 1], forKey: ToolbarLayout.legacyDefaultsKey)
         ToolbarLayout.migrateLegacy(in: defaults)
@@ -92,7 +125,8 @@ final class ToolbarLayoutTests: XCTestCase {
     }
 
     func testJSONRoundTrip() throws {
-        let layout = ToolbarLayout(showsScope: false, leading: [.settings, .rules, .palette], trailing: [.lock, .print])
+        var layout = ToolbarLayout(showsScope: false, leading: [.settings, .rules, .palette], trailing: [.lock, .print])
+        layout.toolbarShown = false
         let data = try JSONEncoder().encode(layout)
         XCTAssertEqual(try JSONDecoder().decode(ToolbarLayout.self, from: data), layout)
     }
