@@ -107,6 +107,7 @@ CONNECTOR_DOCS = {
     "advanzia": ("Advanzia Bank", "Advanzia Bank"),
     "airplus": ("AirPlus Corporate Card", "AirPlus"),
     "alte-leipziger": ("Alte Leipziger (Bausparen)", "Alte Leipziger"),
+    "amazon-visa": ("Amazon Visa", "Amazon Visa"),
     "axashareplan": ("AXA Mitarbeiter Shareplan", "AXA"),
     "berghauscie": ("Berghaus & Cie (Weindepot)", "Berghaus & Cie"),
     "bitcoin-core": ("Bitcoin Core", "Bitcoin Core"),

@@ -81,11 +81,7 @@ fn statement_ref(v: &serde_json::Value) -> Option<PortalStatementRef> {
         _ => return None,
     };
     let date = own_date(m)?;
-    let document_id = m
-        .iter()
-        .filter(|(k, _)| field_name(k) == "documentid")
-        .find_map(|(_, v)| v.as_str())
-        .filter(|s| !s.is_empty() && !s.contains(char::is_whitespace))?;
+    let document_id = document_id(m)?;
     let version = m
         .iter()
         .filter(|(k, _)| field_name(k) == "version")
@@ -97,6 +93,15 @@ fn statement_ref(v: &serde_json::Value) -> Option<PortalStatementRef> {
         document_id: document_id.to_string(),
         version,
     })
+}
+
+/// The entry's `documentId` as a direct field of the object (nonempty, no
+/// whitespace), like `statement_ref` reads it.
+fn document_id(m: &serde_json::Map<String, serde_json::Value>) -> Option<&str> {
+    m.iter()
+        .filter(|(k, _)| field_name(k) == "documentid")
+        .find_map(|(_, v)| v.as_str())
+        .filter(|s| !s.is_empty() && !s.contains(char::is_whitespace))
 }
 
 /// The statements list of the Amazon-Visa portal (Open Bank), schema-agnostic:
@@ -268,12 +273,14 @@ fn list_like(field: Option<&str>, v: &serde_json::Value) -> bool {
             // a bare empty array is a list only at the root or under a
             // statement-named field — elsewhere it is no statements list
             let empty_list = a.is_empty() && field.is_none_or(|f| f.contains("statement"));
-            // an entry-shaped item: a closing date, or a PDF where `entry` would
-            // read one — directly or nested (a `files` array of link strings)
+            // an entry-shaped item: a closing date, a document id (the
+            // document-id kind of entry, dated or not), or a PDF where `entry`
+            // would read one — directly or nested (a `files` array of links)
             let shaped = empty_list
                 || a.iter().any(|i| match i {
                     serde_json::Value::Object(m) => {
                         own_date(m).is_some()
+                            || document_id(m).is_some()
                             || m.values()
                                 .filter_map(|s| s.as_str())
                                 .any(|s| pdf_link(s).is_some())
@@ -300,6 +307,10 @@ fn field_name(k: &str) -> String {
 /// a dated one): each unidentified statement is a failure, like an undated
 /// visible link — one link once, and PDFs of a dated entry belong to its date.
 /// String items of arrays are PDF links too (`pdf_in` reads them as well).
+/// A direct `documentId` without a closing date is an unidentified statement
+/// as well: it counts once, like an undated PDF link — but only when the
+/// object carries no PDF of its own (that one is counted instead, so an
+/// entry is never two failures).
 fn rejected_entries(v: &serde_json::Value, under_entry: bool, out: &mut HashSet<String>) {
     match v {
         serde_json::Value::Object(m) => {
@@ -308,6 +319,18 @@ fn rejected_entries(v: &serde_json::Value, under_entry: bool, out: &mut HashSet<
                 if !under {
                     out.insert(path.to_string());
                 }
+            }
+            let has_pdf = m
+                .values()
+                .filter_map(|s| s.as_str())
+                .find_map(pdf_link)
+                .is_some()
+                || m.values().find_map(pdf_in).is_some();
+            if !under
+                && !has_pdf
+                && let Some(id) = document_id(m)
+            {
+                out.insert(id.to_string());
             }
             m.values().for_each(|val| rejected_entries(val, under, out));
         }
@@ -824,6 +847,25 @@ mod statement_list_tests {
             r#"{"statements":[{"date":"2026-10-15","files":[{"created":"2026-10-20","url":"/a/1.pdf"}]}]}"#,
         );
         assert!(l.items.len() == 1 && l.rejected == 0, "{l:?}");
+        // a direct entry with a documentId but no closing date is an
+        // unidentified statement too: counted rejected, not silently dropped
+        // (the dated id entry is a ref of its own, no item, not rejected)
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"statementDate":"2026-10-31","documentId":"d0"},{"documentId":"d1"}]}"#,
+        );
+        assert!(l.readable && l.items.is_empty() && l.rejected == 1, "{l:?}");
+        // a listing with only undated document ids: a recognized list whose
+        // every entry is an unidentified statement — readable, all rejected
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"documentId":"d1"},{"documentId":"d2"}]}"#,
+        );
+        assert!(l.readable && l.items.is_empty() && l.rejected == 2, "{l:?}");
+        // an undated entry whose PDF the listing carries anyway counts its
+        // PDF, not its documentId — one statement, one failure
+        let l = parse_portal_statement_listing(
+            r#"{"statements":[{"statementDate":"2026-10-31","url":"/ok.pdf"},{"documentId":"d1","url":"/missing.pdf"}]}"#,
+        );
+        assert!(l.items.len() == 1 && l.rejected == 1, "{l:?}");
     }
 
     /// The statements list of the real Amazon-Visa portal (Open Bank), captured
