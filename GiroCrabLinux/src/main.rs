@@ -11,6 +11,7 @@ mod dispatch;
 mod i18n;
 mod local_api;
 mod ocr;
+mod payment_link;
 mod qr_scan;
 mod refunds;
 mod search_terms;
@@ -33,6 +34,16 @@ unsafe extern "C" {
 }
 
 fn main() {
+    // `girocrab girocrab://transfer?…` (desktop file, %u): a running instance takes the
+    // link and comes to the front; this process ends before it touches anything.
+    if let Some(link) = std::env::args_os()
+        .skip(1)
+        .filter_map(|a| a.into_string().ok())
+        .find(|a| payment_link::handles(a))
+        && payment_link::forward(&link)
+    {
+        return;
+    }
     // SAFETY: plain Qt setters, called once before the application object exists.
     unsafe { girocrab_prepare_qt() };
     // Decrypted QuickLook copies a crash or force quit may have left behind.
@@ -68,6 +79,8 @@ fn main() {
     // Einstellungen › Analyse (#136): the socket file goes before `_exit` (a file left by a
     // crash is replaced on the next start, see the core's lock file).
     local_api::stop();
+    // girocrab://transfer links of later starts (src/payment_link.rs).
+    payment_link::stop();
     // Normal quit: the decrypted QuickLook copies go too (start-up cleans up after a crash).
     dispatch::remove_quicklook_files();
     bug_report::clear_temp_dir();

@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtCore
+import GiroCrab
 
 // RootView.swift: GiroCrabScenes (window + menu commands), GiroCrabRootView
 // (vault state) and MainSplitView (sidebar | booking column | inspector).
@@ -32,9 +33,24 @@ ApplicationWindow {
     readonly property QtObject externalAccess: ExternalAccess
     readonly property bool showLanguagePrompt: languageQuestion === "choose" && !languagePromptDone
     Component.onCompleted: {
+        // `girocrab girocrab://transfer?…` (desktop file, %u): the link waits for the open
+        // vault (AppModel.openLink); links of later starts come through `Core.linkReceived`.
+        Core.listenForLinks()
+        const link = Qt.application.arguments.slice(1).find(a => /^girocrab:/i.test(a))
+        if (link !== undefined) AppModel.openLink(link)
         if (showLanguagePrompt) return   // the vault opens after the language screen
         Qt.callLater(AppModel.bootstrap)
         if (languageQuestion.startsWith("changed:")) Qt.callLater(systemLanguageChanged.open)
+    }
+    /// A link opened while GiroCrab runs: the open main window takes it and comes to the front.
+    Connections {
+        target: Core
+        function onLinkReceived(url) {
+            if (window.visibility === Window.Minimized || !window.visible) window.showNormal()
+            window.raise()
+            window.requestActivate()
+            AppModel.openLink(url)
+        }
     }
     /// Bearbeiten › Suchen …: after the menu has closed (it hands the focus back to the
     /// item that had it before), so the search field keeps it.

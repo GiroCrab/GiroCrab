@@ -503,6 +503,7 @@ QtObject {
         vaultLoaded = true
         afterAccountsQueue = []
         afterBookingsQueue = []
+        accountsLoaded = false   // a waiting payment link waits for this vault's accounts
         selectionNeeds = ({ recurring: false, categories: false })
         selectFirstBookingOnLoad = false
         endSelectionLoad()
@@ -623,12 +624,17 @@ QtObject {
                 sidebarSelection = "all"
             rebuildAccountIndex()
             applyAssets(r[3], r[4])
+            accountsLoaded = true
+            // After unlocking or a sync: a transfer link that came meanwhile.
+            resumePaymentLink()
             const queue = afterAccountsQueue
             afterAccountsQueue = []
             for (const e of queue) e.fn()
         }, err => {
             afterAccountsQueue = []
             if (failed) failed(err); else errorMessage = parseCoreError(err).message
+            // a link that waited for this load uses the list loaded before
+            resumePaymentLink()
         })
     }
     function rebuildAccountIndex() {
@@ -3773,7 +3779,10 @@ QtObject {
                  // SEPA Instant: off by default; if the bank declines, nothing is sent automatically.
                  instant: false,
                  // Terminüberweisung: `executionDate` (YYYY-MM-DD) is sent when on (FinTS only).
-                 scheduled: false, executionDate: Fmt.iso(t) }
+                 scheduled: false, executionDate: Fmt.iso(t),
+                 // Filled from a `girocrab://transfer` link: the form warns that another app or a
+                 // web page chose the recipient. A new draft starts without it.
+                 fromLink: false }
     }
     property var transferDraft: newTransferDraft(null)
     function setDraft(patch) { transferDraft = Object.assign({}, transferDraft, patch) }
@@ -3898,6 +3907,72 @@ QtObject {
         p.ownTransfer = false
         setDraft(p)
     }
+
+    // MARK: Überweisungs-Link (girocrab://transfer, src/payment_link.rs, docs/payment-link.md)
+    /// A `girocrab://transfer` link that came while the form could not open (vault locked,
+    /// accounts still loading, a sync running, a form open): shown once that is over.
+    property var pendingPaymentLink: null
+    /// The open vault's accounts have been loaded once (`reloadAccounts`): an empty list then
+    /// means no accounts, not "not loaded yet". Reset with the vault (`vaultSwitched`).
+    property bool accountsLoaded: false
+    /// A `girocrab://` link from the command line or a later start (Main.qml). A transfer link
+    /// fills a new form (never sends); while the form cannot open it waits. The link's
+    /// content is never logged.
+    function openLink(url) {
+        let payment
+        try { payment = core("parse_payment_link", { url: url }) }
+        catch (e) { errorTitle = qsTr("Link nicht übernommen"); errorMessage = e.message; return }
+        if (payment === null) return
+        // A newer link replaces one still waiting: the last one opened is what the user
+        // asked for, and nothing of the earlier one was shown yet.
+        pendingPaymentLink = payment
+        presentPendingPaymentLink()
+    }
+    /// Opens the form for `pendingPaymentLink` once the vault is open, its accounts are loaded
+    /// (also not while they load again, e.g. after a sync: the source account comes from the new list), no sync or bank order is running and no form is open (also not one on its result step:
+    /// the link waits until it is closed, never replaces it). Later changes retry (`resumePaymentLink`).
+    function presentPendingPaymentLink() {
+        const payment = pendingPaymentLink
+        if (payment === null || !vaultLoaded || vaultState !== "open" || !accountsLoaded || isLoadPending("accounts")
+            || syncingConnectionID !== null || activeTransfer !== null || Payments.transferKindSwitching
+            || showTransferSheet || Payments.showBatchSheet || Payments.showStandingSheet) return
+        pendingPaymentLink = null
+        // The link names a recipient, and a savings account books only to own accounts:
+        // without a checking account to send from, the link's recipient would be lost.
+        const checking = transferAccounts.concat(giroCodeAccounts)
+        if (!canTransfer || checking.length === 0) {
+            errorTitle = qsTr("Link nicht übernommen")
+            errorMessage = qsTr("Es gibt kein Girokonto mit IBAN, von dem aus überwiesen werden kann.")
+            return
+        }
+        transferDraft = newTransferDraft(transferDraft.account_id)
+        presentTransfer()
+        const source = account(transferDraft.account_id)
+        if (source && source.kind === "Savings") setDraft({ account_id: checking[0].id })
+        const patch = { iban: groupedIBAN(payment.iban) }
+        if (payment.name !== null) patch.name = payment.name
+        if (payment.bic !== null) patch.bic = payment.bic
+        if (payment.amount_cents !== null) patch.amountText = Fmt.plain(payment.amount_cents)
+        if (payment.purpose !== null) patch.purpose = payment.purpose
+        fillTransferDraft(patch)
+        setDraft({ fromLink: true })
+    }
+    /// After unlocking, a sync, a bank order or a closed form: a link that came meanwhile
+    /// (later, so the rest of that change is in place before the form picks its account).
+    function resumePaymentLink() { if (pendingPaymentLink !== null) Qt.callLater(presentPendingPaymentLink) }
+    property Connections paymentLinkResume: Connections {
+        target: model
+        function onVaultStateChanged() { if (model.vaultState === "open") model.resumePaymentLink() }
+        function onSyncingConnectionIDChanged() { if (model.syncingConnectionID === null) model.resumePaymentLink() }
+        function onActiveTransferChanged() { if (model.activeTransfer === null) model.resumePaymentLink() }
+        function onShowTransferSheetChanged() { if (!model.showTransferSheet) model.resumePaymentLink() }
+    }
+    property Connections paymentLinkResumeOrders: Connections {
+        target: Payments
+        function onShowBatchSheetChanged() { if (!Payments.showBatchSheet) model.resumePaymentLink() }
+        function onShowStandingSheetChanged() { if (!Payments.showStandingSheet) model.resumePaymentLink() }
+    }
+
     /// AppModel+Batch.swift: any own account other than a sender can receive an Umbuchung.
     readonly property bool hasOwnTransferTargets: allAccounts.filter(a => a.iban !== "" && a.archived_unix === null).length > 1
     /// The kind switch of both transfer sheets: "single" | "own" | "batch".
