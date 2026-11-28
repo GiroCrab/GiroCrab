@@ -1261,15 +1261,19 @@ struct BookingCategoryLabel: View {
         let color = none ? Theme.warning : Color.readable(hex: booking.categoryColorHex)
         HStack(spacing: 3) {
             #if os(macOS)
-            Button { showsPicker = true } label: {
-                HStack(spacing: 3) {
-                    label(none: none)
-                    Image(systemName: "chevron.down").appFont(.caption2).accessibilityHidden(true)
-                }
-                .foregroundStyle(color)
-                .contentShape(Rectangle())
+            // A tap target, not a `Button`: SwiftUI registers every button for keyboard focus, and
+            // each row a scroll brought in rebuilt that registry for the whole list (the largest
+            // share of main-thread time while scrolling). To assistive technologies it stays a button.
+            HStack(spacing: 3) {
+                label(none: none)
+                Image(systemName: "chevron.down").appFont(.caption2).accessibilityHidden(true)
             }
-            .buttonStyle(.plain)
+            .foregroundStyle(color)
+            .contentShape(Rectangle())
+            .onTapGesture { showsPicker = true }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { showsPicker = true }
             .bookingRowControl()
             .capturablePopover(isPresented: $showsPicker, arrowEdge: .bottom) {
                 BookingCategoryPicker(booking: booking) { showsPicker = false }
