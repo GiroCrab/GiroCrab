@@ -56,6 +56,40 @@ RowLayout {
         }
     }
 
+    // PieValueModeMenu (#889): share or amount in the pie's legend, right of the type picker
+    Item {
+        id: pieMenu
+        visible: !BalanceChartPrefs.collapsed && BalanceChartPrefs.style === "pie"
+        implicitWidth: pieRow.implicitWidth; implicitHeight: 20
+        // a Menu on the Mac: Tab reaches it, Space / Return opens it below the label
+        activeFocusOnTab: true
+        Keys.onSpacePressed: modeMenu.popup(0, pieMenu.height)
+        Keys.onReturnPressed: modeMenu.popup(0, pieMenu.height)
+        Keys.onEnterPressed: modeMenu.popup(0, pieMenu.height)
+        Rectangle { visible: pieMenu.activeFocus; anchors.fill: parent; anchors.margins: -2
+                    radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
+        RowLayout {
+            id: pieRow
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 3
+            Text { text: BalanceChartPrefs.pieValueModeTitle; font.pixelSize: Theme.caption2; color: Theme.secondary }
+            SFIcon { symbol: "chevron.down"; size: 8; color: Theme.secondary }
+        }
+        MouseArea { id: pieArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: modeMenu.popup() }
+        ToolTip.visible: pieArea.containsMouse && !modeMenu.visible; ToolTip.delay: 600; ToolTip.text: qsTr("Kreis zeigt")
+        Accessible.role: Accessible.ButtonMenu; Accessible.name: qsTr("Kreis zeigt"); Accessible.description: BalanceChartPrefs.pieValueModeTitle
+        Accessible.onPressAction: modeMenu.popup()
+        AppMenu {
+            id: modeMenu
+            Repeater {
+                model: BalanceChartPrefs.pieValueModes
+                AppMenuItem { required property var modelData; text: modelData.title; checkable: true
+                              checked: BalanceChartPrefs.pieValueMode === modelData.id
+                              onTriggered: { checked = Qt.binding(() => BalanceChartPrefs.pieValueMode === modelData.id); BalanceChartPrefs.setPieValueMode(modelData.id) } }
+            }
+        }
+    }
+
     // BarUnitMenu: "Monate ⌄" / "Auto: Monate ⌄" in caption2, opens „Balken je“
     Item {
         id: unitMenu
@@ -63,6 +97,13 @@ RowLayout {
         readonly property string label: controls.resolved !== "" ? qsTr("Auto: %1").arg(BalanceChartPrefs.unitTitle(controls.resolved))
                                                                    : BalanceChartPrefs.unitTitle(controls.unit)
         implicitWidth: unitRow.implicitWidth; implicitHeight: 20
+        // a Menu on the Mac: Tab reaches it, Space / Return opens it below the label
+        activeFocusOnTab: true
+        Keys.onSpacePressed: barMenu.popup(0, unitMenu.height)
+        Keys.onReturnPressed: barMenu.popup(0, unitMenu.height)
+        Keys.onEnterPressed: barMenu.popup(0, unitMenu.height)
+        Rectangle { visible: unitMenu.activeFocus; anchors.fill: parent; anchors.margins: -2
+                    radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
         RowLayout {
             id: unitRow
             anchors.verticalCenter: parent.verticalCenter
@@ -73,6 +114,7 @@ RowLayout {
         MouseArea { id: unitArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: barMenu.popup() }
         ToolTip.visible: unitArea.containsMouse && !barMenu.visible; ToolTip.delay: 600; ToolTip.text: qsTr("Balken je")
         Accessible.role: Accessible.ButtonMenu; Accessible.name: qsTr("Balken je"); Accessible.description: label
+        Accessible.onPressAction: barMenu.popup()
         AppMenu {
             id: barMenu
             Repeater {

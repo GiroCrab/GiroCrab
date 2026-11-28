@@ -14,6 +14,9 @@ QtObject {
         category: "chart"
         property string balanceStyle: "line"
         property string balanceBarUnit: "auto"
+        /// PieValueMode.headerPieKey (`chart.headerPie.valueMode`, #889): the header pie's legend
+        /// shows the share (default) or the amount.
+        property string headerPieValueMode: "share"
     }
     /// `@AppStorage(ViewLayout.headerChartCollapsedKey)`: top level like the other ViewLayout keys.
     property Settings layout: Settings {
@@ -30,6 +33,12 @@ QtObject {
     /// HeaderChartControls: „Ausgeblendet“ folds only the chart and keeps the chosen type.
     readonly property bool collapsed: layout.headerChartCollapsed
     function setCollapsed(on) { layout.headerChartCollapsed = on }
+
+    // PieValueMode (title): what the header pie's legend shows next to the name (#889).
+    readonly property var pieValueModes: [{ id: "share", title: qsTr("Anteil in Prozent") }, { id: "amount", title: qsTr("Betrag") }]
+    readonly property string pieValueMode: store.headerPieValueMode === "amount" ? "amount" : "share"
+    readonly property string pieValueModeTitle: pieValueModes.find(m => m.id === pieValueMode).title
+    function setPieValueMode(id) { store.headerPieValueMode = id }
 
     // BalanceBarUnit (titles); `units` = balanceCases (accounts, groups)
     readonly property var units: [{ id: "auto", title: qsTr("Automatisch") }, { id: "day", title: qsTr("Tage") },

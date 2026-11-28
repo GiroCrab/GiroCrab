@@ -60,6 +60,37 @@ Item {
     /// .percent.precision(.fractionLength(0))
     function percent(x) { const n = Math.round(x * 100); return Fmt.english ? n + "%" : n + " %" }
 
+    // PieHover.swift (#889): the slice under the pointer (or the hovered legend entry) stands
+    // out, the others fade; a card at the pointer shows name, amount and share.
+    /// `hovered`: id of the highlighted slice, "" for none.
+    property string hovered: ""
+    /// `spot`: the pointer in this item's coordinates while it is over a slice or legend entry.
+    property point spot
+    readonly property var hoveredSlice: hovered === "" ? null : slices.find(s => s.id === hovered) || null
+    onHoveredChanged: canvas.requestPaint()
+    onVisibleChanged: if (!visible) hovered = ""
+    /// PieValueMode.shareText: share of the total with one digit, a dash without a positive total.
+    function shareText(cents) { return total > 0 ? DepotMetrics.percent(cents / total * 100, false, 1) : "–" }
+    /// SectorMark(innerRadius: .ratio(0.55)): shared by onPaint and hit()
+    readonly property real innerRatio: 0.55
+    /// PieHit.id(at:in:innerRatio:parts:): the slice at `x`/`y` of the canvas, "" outside the ring.
+    function hit(x, y) {
+        const dx = x - canvas.width / 2, dy = y - canvas.height / 2
+        const distance = Math.hypot(dx, dy), radius = Math.min(canvas.width, canvas.height) / 2
+        if (radius <= 0 || total <= 0 || distance < radius * innerRatio || distance > radius) return ""
+        let angle = Math.atan2(dx, -dy)   // clockwise from twelve o'clock, like the slices are drawn
+        if (angle < 0) angle += 2 * Math.PI
+        const v = angle / (2 * Math.PI) * total
+        // the same running sum as onPaint: every slice moves the start angle, only a drawn one is hit
+        let start = 0
+        for (const p of slices) {
+            const end = start + p.cents
+            if (p.cents > 0 && v >= start && v < end) return p.id
+            start = end
+        }
+        return ""
+    }
+
     // AccountExpensePie: reloads when the accounts, the period or the category sums change.
     readonly property string loadKey: isCategory || !visible ? ""
         : JSON.stringify([AppModel.historyRequest().ids, AppModel.periodRange(), AppModel.categories.map(c => c.total_cents)])
@@ -109,10 +140,11 @@ Item {
                 ctx.reset()
                 const sum = pie.total
                 if (sum <= 0) return
-                const cx = width / 2, cy = height / 2, r = Math.min(width, height) / 2, inner = r * 0.55
+                const cx = width / 2, cy = height / 2, r = Math.min(width, height) / 2, inner = r * pie.innerRatio
                 const inset = pie.slices.length > 1 ? 1 : 0
                 let a = -Math.PI / 2
                 for (const p of pie.slices) {
+                    ctx.globalAlpha = pie.hovered === "" || pie.hovered === p.id ? 1 : 0.35
                     const span = p.cents / sum * 2 * Math.PI
                     const o = inset / r, i = inset / inner
                     if (span > 2 * o) {
@@ -125,6 +157,16 @@ Item {
                     }
                     a += span
                 }
+            }
+            // .pieHover: the slice under the pointer, the card where the pointer is
+            HoverHandler {
+                onPointChanged: {
+                    if (!hovered) return
+                    const id = pie.hit(point.position.x, point.position.y)
+                    if (pie.hovered !== id) pie.hovered = id
+                    if (id !== "") pie.spot = canvas.mapToItem(pie, point.position.x, point.position.y)
+                }
+                onHoveredChanged: if (!hovered) pie.hovered = ""
             }
         }
         // legend: columns of `rows` entries, each at most 200 pt wide
@@ -154,20 +196,46 @@ Item {
                                        elide: Text.ElideRight
                                        Layout.preferredWidth: Math.ceil(Math.min(implicitWidth, 200 * Theme.textScale - 12 - share.implicitWidth))
                                        Sensitive { labels: true } }
-                                Text { id: share; text: pie.percent(entry.modelData.cents / pie.total); font.pixelSize: Theme.caption2
+                                // PieValueMode: the share (default) or the amount
+                                Text { id: share; text: BalanceChartPrefs.pieValueMode === "amount" ? Fmt.money(entry.modelData.cents)
+                                                                                                    : pie.percent(entry.modelData.cents / pie.total)
+                                       font.pixelSize: Theme.caption2
                                        font.features: { "tnum": 1 }; color: Theme.secondary
                                        Sensitive { amounts: true } }
+                            }
+                            opacity: pie.hovered === "" || pie.hovered === entry.modelData.id ? 1 : 0.5
+                            // .sliceHover: the entry highlights its slice and shows the card at the pointer
+                            HoverHandler {
+                                onPointChanged: if (hovered) {
+                                    pie.hovered = entry.modelData.id
+                                    pie.spot = entry.mapToItem(pie, point.position.x, point.position.y)
+                                }
+                                onHoveredChanged: if (!hovered && pie.hovered === entry.modelData.id) pie.hovered = ""
                             }
                             // a legend click opens the subcategory (category slices only)
                             TapHandler { enabled: entry.selectable; cursorShape: Qt.PointingHandCursor
                                          onTapped: AppModel.sidebarSelection = "category:" + entry.modelData.id }
                             Accessible.role: entry.selectable ? Accessible.Button : Accessible.StaticText
                             Accessible.name: AppModel.masking(entry.modelData.label, AppModel.redactLabels)
+                            Accessible.description: AppModel.masking(Fmt.money(entry.modelData.cents) + " · " + pie.shareText(entry.modelData.cents), AppModel.redactAmounts)
                         }
                     }
                 }
             }
         }
         Item { Layout.fillWidth: true }
+    }
+    // PieDetailCard: name, amount and share of the hovered slice
+    HoverCard {
+        source: pie
+        point: pie.spot
+        shown: pie.hoveredSlice !== null && pie.total > 0
+        Text { text: pie.hoveredSlice ? pie.hoveredSlice.label : ""; font.pixelSize: Theme.caption; font.weight: Font.DemiBold; color: Theme.text
+               width: Math.min(implicitWidth, 184 * Theme.textScale); wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+               Sensitive { labels: true } }
+        Text { text: pie.hoveredSlice ? Fmt.money(pie.hoveredSlice.cents) : ""; font.pixelSize: Theme.caption; font.features: { "tnum": 1 }; color: Theme.text
+               Sensitive { amounts: true } }
+        Text { text: pie.hoveredSlice ? pie.shareText(pie.hoveredSlice.cents) : ""; font.pixelSize: Theme.caption2; font.features: { "tnum": 1 }; color: Theme.secondary
+               Sensitive { amounts: true } }
     }
 }
