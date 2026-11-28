@@ -749,9 +749,11 @@ impl BankConnector for FinTsConnector {
                     .statements_card(ctx, card_tx, acc, label, &currency)
                     .await
                 {
-                    Ok((t, bal)) => {
-                        // card holds ("Vorgemerkt", #2113) share the FinTS hold list
+                    Ok((t, bal, all_read)) => {
+                        // card holds ("Vorgemerkt", #2113) share the FinTS hold list;
+                        // a booking group it could not read may be one of them
                         holds_listed = true;
+                        holds_complete &= all_read;
                         if std::mem::take(&mut self.truncated_statements) {
                             holds_complete = false;
                             errors.push(statements::truncated_warning(label));

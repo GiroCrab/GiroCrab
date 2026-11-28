@@ -199,14 +199,23 @@ fn is_hold_text(line: &str) -> bool {
         .is_some_and(|p| p.eq_ignore_ascii_case("vorgemerkt"))
 }
 
+/// State of reading one card fetch across its pages.
+#[derive(Default)]
+pub(crate) struct CardRead {
+    /// numbers equal holds, so equal holds on different pages stay distinct
+    hold_ids: ContentIds,
+    /// a booking group with content could not be read: the list is not complete
+    /// and must not retire stored holds (#2113)
+    pub(crate) unreadable: bool,
+}
+
 /// Bookings and balance of all HIKKU / DIKKU segments of one reply. The balance is
-/// taken from the first segment that carries one. `hold_ids` numbers equal holds:
-/// one per card fetch, so equal holds on different pages stay distinct.
+/// taken from the first segment that carries one.
 pub(crate) fn parse<'a>(
     segments: impl Iterator<Item = &'a Segment>,
     account_ref: &str,
     fallback_currency: &str,
-    hold_ids: &mut ContentIds,
+    read: &mut CardRead,
 ) -> (Vec<RemoteTransaction>, Option<CardBalance>) {
     let mut txs = Vec::new();
     let mut balance = None;
@@ -223,12 +232,14 @@ pub(crate) fn parse<'a>(
         let l = layout(s);
         for el in s.elements.iter().skip(6) {
             let c = components(el);
-            if let Some(mut t) = booking(l, &c, account_ref, fallback_currency) {
-                if !t.external_id.is_empty() {
-                    t.external_id = format!("{}{}", super::camt::HOLD_PREFIX, hold_ids.next(&t));
-                }
-                txs.push(t);
+            let Some(mut t) = booking(l, &c, account_ref, fallback_currency) else {
+                read.unreadable |= c.iter().any(|v| !v.trim().is_empty());
+                continue;
+            };
+            if !t.external_id.is_empty() {
+                t.external_id = format!("{}{}", super::camt::HOLD_PREFIX, read.hold_ids.next(&t));
             }
+            txs.push(t);
         }
     }
     (txs, balance)
@@ -297,7 +308,7 @@ mod tests {
             segs.iter().filter(|s| s.id() == "HIKKU"),
             "card",
             "EUR",
-            &mut ContentIds::default(),
+            &mut CardRead::default(),
         )
     }
 
@@ -421,16 +432,32 @@ mod tests {
 
     #[test]
     fn equal_holds_on_different_pages_get_distinct_ids() {
-        let mut ids = ContentIds::default();
+        let mut read = CardRead::default();
         let mut page = || {
             let segs = parse_response(segment(&[hold("1")]).as_bytes()).unwrap();
-            parse(segs.iter(), "card", "EUR", &mut ids)
+            parse(segs.iter(), "card", "EUR", &mut read)
                 .0
                 .remove(0)
                 .external_id
         };
         let (first, second) = (page(), page());
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn an_unreadable_booking_group_marks_the_list_incomplete() {
+        let read_of = |groups: &[String]| {
+            let segs = parse_response(segment(groups).as_bytes()).unwrap();
+            let mut read = CardRead::default();
+            let (txs, _) = parse(segs.iter(), "card", "EUR", &mut read);
+            (txs.len(), read.unreadable)
+        };
+        assert_eq!(read_of(&[purchase(), hold("1")]), (2, false));
+        // text, but neither amount nor date
+        let broken = group(&[(12, "Kreditkartenumsatz 1 MUSTERSTADT, DEU")]);
+        assert_eq!(read_of(&[purchase(), broken]), (1, true));
+        // an empty group is no booking
+        assert_eq!(read_of(&[purchase(), group(&[])]), (1, false));
     }
 
     #[test]
@@ -545,7 +572,7 @@ mod tests {
     fn dikku_v2_bookings_and_balance() {
         let raw = dikku_v2();
         let segs = parse_response(raw.as_bytes()).unwrap();
-        let (txs, balance) = parse(segs.iter(), "card", "EUR", &mut ContentIds::default());
+        let (txs, balance) = parse(segs.iter(), "card", "EUR", &mut CardRead::default());
         assert_eq!(txs.len(), 2);
         assert_eq!(txs[0].amount_cents, -2390);
         assert_eq!(txs[0].booking_date, "2026-09-07");
@@ -573,7 +600,7 @@ mod tests {
             purchase()
         );
         let segs = parse_response(raw.as_bytes()).unwrap();
-        let (txs, _) = parse(segs.iter(), "card", "EUR", &mut ContentIds::default());
+        let (txs, _) = parse(segs.iter(), "card", "EUR", &mut CardRead::default());
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].amount_cents, -1250);
         assert_eq!(txs[0].counterparty, "KAFFEEBAR");
