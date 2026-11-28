@@ -1015,14 +1015,20 @@ pub(crate) fn store_fetch(
         }
         // Card holds: keep exactly the ones the bank still reports as open.
         if let Some(prefix) = data.hold_prefix.as_deref().filter(|p| !p.is_empty()) {
-            let current: std::collections::HashSet<&str> = data
+            // per account: two cards can list holds with the same id, and every connector
+            // that sets `hold_prefix` stores its holds under the account's external ref,
+            // so the pair identifies them
+            let current: std::collections::HashSet<(&str, &str)> = data
                 .transactions
                 .iter()
                 .filter(|t| t.external_id.starts_with(prefix))
-                .map(|t| t.external_id.as_str())
+                .map(|t| (t.account_ref.as_str(), t.external_id.as_str()))
                 .collect();
             let like = format!("{}%", prefix.replace('%', "").replace('_', "\\_"));
-            for acc_id in account_ids.values() {
+            for (acc_ref, acc_id) in &account_ids {
+                if data.holds_incomplete.contains(acc_ref) {
+                    continue;
+                }
                 let stale: Vec<(i64, String)> = {
                     let mut q = tx.prepare(
                         "SELECT id, external_id FROM transactions
@@ -1033,7 +1039,7 @@ pub(crate) fn store_fetch(
                     rows.collect::<Result<_, _>>()?
                 };
                 for (row_id, ext) in stale {
-                    if !current.contains(ext.as_str()) {
+                    if !current.contains(&(acc_ref.as_str(), ext.as_str())) {
                         crate::sync_merge::soft_delete_booking(&tx, row_id)?;
                     }
                 }

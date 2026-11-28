@@ -689,6 +689,96 @@ fn split_transactions(items: &[Value], account_ref: &str) -> Vec<RemoteTransacti
     out
 }
 
+/// `entry_reference` values that identify nothing: empty or only zeros. Some banks send
+/// `"0"` for every pending card authorisation, so it cannot tell two of them apart.
+fn is_placeholder_ref(r: &str) -> bool {
+    r.trim().chars().all(|c| c == '0')
+}
+
+/// The payee of a pending card authorisation without a payee name: some banks put a time
+/// stamp first ("MM-DD hh:mm:ss MERCHANT TOWN CC") and repeat the merchant alone in a last
+/// line. That last line, else the text without the leading stamp, names the booking and
+/// feeds the merchant recognition (`None` keeps what `map_transaction` chose). The shape
+/// is that of a real Bank Norwegian card authorisation; no other bank was checked against
+/// live data.
+fn hold_counterparty(t: &Value, amount_cents: i64) -> Option<String> {
+    let party = if amount_cents < 0 {
+        &t["creditor"]
+    } else {
+        &t["debtor"]
+    };
+    if party["name"].as_str().is_some_and(|n| !n.trim().is_empty()) {
+        return None;
+    }
+    let lines: Vec<&str> = t["remittance_information"]
+        .as_array()?
+        .iter()
+        .filter_map(|x| x.as_str())
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .collect();
+    if let [_, .., last] = lines.as_slice() {
+        let name = strip_leading_time_stamp(last);
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    let rest: Vec<&str> = strip_leading_time_stamp(lines.first()?)
+        .split_whitespace()
+        .take(4)
+        .collect();
+    (!rest.is_empty()).then(|| rest.join(" "))
+}
+
+/// `text` without leading date or time tokens such as "11-26" or "21:53:56".
+fn strip_leading_time_stamp(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    while let Some(token) = rest.split_whitespace().next() {
+        let stamp = token.chars().any(|c| c.is_ascii_digit())
+            && token
+                .chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, '-' | ':' | '.' | '/'))
+            && token.chars().any(|c| matches!(c, '-' | ':' | '.' | '/'));
+        if !stamp {
+            break;
+        }
+        rest = rest[token.len()..].trim_start();
+    }
+    rest
+}
+
+/// Pending card authorisations (`PDNG` / `HOLD`) of a card in generic mode: kept as
+/// bookings with the hold prefix, so the vault shows them and removes them once the bank
+/// no longer lists them (`hold_prefix`). A missing or placeholder `entry_reference` gets
+/// a content id. The card balance keeps adding the pending sum on its own; these bookings
+/// never enter it. An entry without a `status` counts as pending: the separate `PDNG`
+/// request lists pending entries only, and the default listing hands over entries
+/// whose status says `PDNG` or `HOLD`.
+fn card_pending_holds(
+    items: &[Value],
+    account_ref: &str,
+    ids: &mut super::ContentIds,
+) -> Vec<RemoteTransaction> {
+    let mut holds = Vec::new();
+    for t in items {
+        if !matches!(t["status"].as_str(), Some("PDNG" | "HOLD") | None) {
+            continue;
+        }
+        let Some(mut rt) = map_transaction(t, account_ref) else {
+            continue;
+        };
+        if let Some(name) = hold_counterparty(t, rt.amount_cents) {
+            rt.counterparty = name;
+        }
+        if is_placeholder_ref(&rt.external_id) {
+            rt.external_id = ids.next(&rt);
+        }
+        rt.external_id = format!("{HOLD_PREFIX}{}", rt.external_id);
+        holds.push(rt);
+    }
+    holds
+}
+
 impl EnableBankingConnector {
     /// Kind of a bank (non-card) account. PayPal is a payment service, as
     /// with its own API and in imported data; reported as a current account it
@@ -1583,12 +1673,23 @@ impl EnableBankingConnector {
             let mut skipped_non_book = 0u32;
             let mut skipped_unreadable = 0u32;
             let mut ids = super::ContentIds::default();
+            // Generic mode (a card of any bank, not the frozen Amex / Amazon Visa mode):
+            // pending authorisations become bookings too, like on bank accounts.
+            let generic = !self.card_mode();
             // A later page failing keeps the earlier ones (logged by `list_transactions`).
-            let booked = self
+            let listed = self
                 .list_transactions(&uid, &format!("date_from={since}"), TX_MAX_PAGES)
-                .await?
-                .items;
+                .await?;
+            let booked = listed.items;
+            // a cut-off listing may lack pending entries of its later pages
+            let listed_complete = listed.stopped.is_none();
+            // pending authorisations the default listing already carries (generic mode)
+            let mut listed_pending: Vec<Value> = Vec::new();
             for t in &booked {
+                if generic && matches!(t["status"].as_str(), Some("PDNG" | "HOLD")) {
+                    listed_pending.push(t.clone());
+                    continue;
+                }
                 if t["status"].as_str().map(|s| s != "BOOK").unwrap_or(false) {
                     skipped_non_book += 1;
                     continue;
@@ -1669,20 +1770,40 @@ impl EnableBankingConnector {
                 out.transactions.push(rt);
             }
             // Pending authorizations (not yet booked) are part of what the card
-            // currently owes. Summed only (never stored as bookings), so nothing
-            // has to be reconciled when they get booked later.
+            // currently owes. In card mode they are summed only (never stored as
+            // bookings), so nothing has to be reconciled when they get booked later.
+            // In generic mode they are stored as holds too (the vault removes a hold
+            // once the bank no longer lists it); the default listing usually carries
+            // them already, which saves the extra request of the PSD2 daily limit.
             let mut pending_sum = 0i64;
             let mut pending_n = 0u32;
             // Optional: without them the balance only lacks the pending part.
-            let pending = self
-                .list_transactions(
-                    &uid,
-                    &format!("date_from={since}&transaction_status=PDNG"),
-                    PENDING_MAX_PAGES,
-                )
-                .await
-                .map(|p| p.items)
-                .unwrap_or_default();
+            let pending = if generic && listed_complete && !listed_pending.is_empty() {
+                listed_pending
+            } else {
+                let res = self
+                    .list_transactions(
+                        &uid,
+                        &format!("date_from={since}&transaction_status=PDNG"),
+                        PENDING_MAX_PAGES,
+                    )
+                    .await;
+                // Generic mode: an incomplete listing must not remove the stored holds.
+                if generic && !res.as_ref().is_ok_and(|p| p.stopped.is_none()) {
+                    out.holds_incomplete.push(external_ref.clone());
+                    out.warnings.push(trf(
+                        "{0}: Die Vormerkungen konnten nicht vollständig abgerufen werden. Bereits gespeicherte Vormerkungen bleiben bis zum nächsten Abruf stehen.",
+                        &[&external_ref],
+                    ));
+                }
+                res.map(|p| p.items).unwrap_or_default()
+            };
+            if generic {
+                // own counter: a booked twin must not shift a hold's id
+                let mut hold_ids = super::ContentIds::default();
+                out.transactions
+                    .extend(card_pending_holds(&pending, &external_ref, &mut hold_ids));
+            }
             for t in &pending {
                 if t["status"].as_str().is_some_and(|s| s == "BOOK") {
                     continue;
@@ -2409,6 +2530,102 @@ mod tests {
         );
         // unknown -> 90 days (card mode always uses this)
         assert!(consent_valid_until(now, None).starts_with("2027-02-09T00:00:00"));
+    }
+
+    /// A card of any bank (generic mode) keeps pending authorisations as holds. Values are
+    /// made up; only the shape follows a bank that sends `"0"` for every authorisation.
+    #[test]
+    fn generic_card_keeps_pending_authorisations_as_holds() {
+        let pending = |amount: &str, text: &str| {
+            json!({"entry_reference": "0", "status": "PDNG",
+                   "transaction_amount": {"amount": amount, "currency": "EUR"},
+                   "credit_debit_indicator": "DBIT", "booking_date": null, "value_date": null,
+                   "transaction_date": "2026-03-14", "creditor": {"name": ""},
+                   "bank_transaction_code": {"code": "Reserviert", "description": null},
+                   "remittance_information": [text]})
+        };
+        let items = vec![
+            json!({"entry_reference": "4711", "status": "BOOK",
+                   "transaction_amount": {"amount": "12.40", "currency": "EUR"},
+                   "credit_debit_indicator": "DBIT", "booking_date": "2026-03-12",
+                   "creditor": {"name": "Beispielbäcker"}}),
+            pending("7.25", "Musterkino Ticket"),
+            pending("3.10", "Testcafe Kaffee"),
+            json!({"entry_reference": "0", "status": "HOLD",
+                   "transaction_amount": {"amount": "1.00", "currency": "EUR"},
+                   "credit_debit_indicator": "CRDT", "transaction_date": "2026-03-14"}),
+        ];
+        let mut ids = super::super::ContentIds::default();
+        let holds = card_pending_holds(&items, "CARD-REF", &mut ids);
+        assert_eq!(holds.len(), 3, "booked entries are not holds");
+        assert!(holds.iter().all(|h| h.external_id.starts_with(HOLD_PREFIX)));
+        // "0" is no id: each authorisation gets its own
+        assert_ne!(holds[0].external_id, holds[1].external_id);
+        assert_ne!(holds[0].external_id, format!("{HOLD_PREFIX}0"));
+        assert_eq!(holds[0].amount_cents, -725);
+        assert_eq!(holds[0].booking_date, "2026-03-14");
+        assert_eq!(holds[0].account_ref, "CARD-REF");
+        assert_eq!(holds[2].amount_cents, 100);
+        // the same listing gives the same ids on the next sync (the hold is not re-added)
+        let again =
+            card_pending_holds(&items, "CARD-REF", &mut super::super::ContentIds::default());
+        assert_eq!(
+            holds.iter().map(|h| &h.external_id).collect::<Vec<_>>(),
+            again.iter().map(|h| &h.external_id).collect::<Vec<_>>()
+        );
+        // a real reference is kept
+        let real = vec![json!({"entry_reference": "A-9", "status": "PDNG",
+            "transaction_amount": {"amount": "2.00", "currency": "EUR"},
+            "credit_debit_indicator": "DBIT", "transaction_date": "2026-03-14"})];
+        let held = card_pending_holds(&real, "CARD-REF", &mut super::super::ContentIds::default());
+        assert_eq!(held[0].external_id, format!("{HOLD_PREFIX}A-9"));
+        // the separate PDNG request can leave the status out: pending by definition of the request
+        let unstated = vec![json!({"entry_reference": "B-2",
+            "transaction_amount": {"amount": "5.00", "currency": "EUR"},
+            "credit_debit_indicator": "DBIT", "transaction_date": "2026-03-14"})];
+        let unstated = card_pending_holds(
+            &unstated,
+            "CARD-REF",
+            &mut super::super::ContentIds::default(),
+        );
+        assert_eq!(unstated.len(), 1);
+        assert_eq!(unstated[0].external_id, format!("{HOLD_PREFIX}B-2"));
+        assert_eq!(unstated[0].amount_cents, -500);
+        assert!(is_placeholder_ref("0") && is_placeholder_ref("000") && is_placeholder_ref(" "));
+        // without a payee name: the last remittance line, else the text without its time stamp
+        let named = |lines: Vec<&str>, creditor: &str| {
+            json!({"entry_reference": "0", "status": "PDNG",
+                   "transaction_amount": {"amount": "4.50", "currency": "EUR"},
+                   "credit_debit_indicator": "DBIT", "transaction_date": "2026-03-14",
+                   "creditor": {"name": creditor}, "remittance_information": lines})
+        };
+        let payee = |t: Value| {
+            card_pending_holds(&[t], "CARD-REF", &mut super::super::ContentIds::default())[0]
+                .clone()
+        };
+        let two = payee(named(
+            vec!["03-14 18:02:11 MUSTERKINO BEISPIELSTADT XX", "MUSTERKINO"],
+            "",
+        ));
+        assert_eq!(two.counterparty, "MUSTERKINO");
+        assert_eq!(
+            two.purpose,
+            "03-14 18:02:11 MUSTERKINO BEISPIELSTADT XX MUSTERKINO"
+        );
+        let one = payee(named(vec!["03-14 09:15:00 TESTCAFE MUSTERORT XX"], ""));
+        assert_eq!(one.counterparty, "TESTCAFE MUSTERORT XX");
+        // the row title (merchant name) carries no time stamp
+        for (hold, word) in [(&two, "musterkino"), (&one, "testcafe")] {
+            let title =
+                crate::merchants::MerchantResolver::resolve(&hold.counterparty, &hold.purpose).name;
+            assert!(title.to_lowercase().contains(word), "{title}");
+            assert!(!title.starts_with(|c: char| c.is_ascii_digit()), "{title}");
+        }
+        let kept = payee(named(vec!["03-14 09:15:00 TESTCAFE"], "Testcafe GmbH"));
+        assert_eq!(kept.counterparty, "Testcafe GmbH");
+        assert_eq!(strip_leading_time_stamp("14.03. 10:00 Laden 3"), "Laden 3");
+        assert_eq!(strip_leading_time_stamp("Laden 03-14"), "Laden 03-14");
+        assert!(!is_placeholder_ref("10") && !is_placeholder_ref("A0"));
     }
 
     #[test]

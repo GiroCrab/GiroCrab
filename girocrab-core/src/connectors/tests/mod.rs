@@ -1041,6 +1041,73 @@ fn card_holds_are_replaced_on_each_sync() {
     // Hold 1 cleared (booked elsewhere), hold 2 still open.
     store_fetch(&v, ConnectorKind::Bunq, conn, fetch(vec![hold("2", -7_10)])).unwrap();
     assert_eq!(holds(), vec!["pending-hold-bunq-2"]);
+    // The hold list of the account could not be read completely: hold 2 stays.
+    let mut partial = fetch(Vec::new());
+    partial.holds_incomplete = vec!["bunq:1".into()];
+    store_fetch(&v, ConnectorKind::Bunq, conn, partial).unwrap();
+    assert_eq!(holds(), vec!["pending-hold-bunq-2"]);
+    // The next complete list removes it.
+    store_fetch(&v, ConnectorKind::Bunq, conn, fetch(Vec::new())).unwrap();
+    assert!(holds().is_empty());
+    std::fs::remove_file(path).ok();
+}
+
+/// Two cards of one login can list holds with the same id (content ids carry no
+/// account): a hold one card still lists keeps no stale hold of the other card.
+#[test]
+fn card_holds_with_the_same_id_are_cleared_per_account() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::Bunq, String::new(), "me@example.com".into())
+        .unwrap();
+    let card = |r: &str| RemoteAccount {
+        external_ref: r.into(),
+        name: r.into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: r.into(),
+        currency: "EUR".into(),
+        kind: AccountKind::CreditCard,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    let hold = |r: &str| RemoteTransaction {
+        account_ref: r.into(),
+        external_id: "pending-hold-bunq-same".into(),
+        booking_date: "2026-11-09".into(),
+        value_date: "2026-11-09".into(),
+        amount_cents: -9_90,
+        currency: "EUR".into(),
+        counterparty: "Testcafe".into(),
+        ..Default::default()
+    };
+    let fetch = |txs: Vec<RemoteTransaction>| FetchResult {
+        accounts: vec![card("card:a"), card("card:b")],
+        transactions: txs,
+        hold_prefix: Some("pending-hold-bunq-".into()),
+        ..Default::default()
+    };
+    let holds = || -> i64 {
+        v.db()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE external_id LIKE 'pending-hold-%' AND deleted_ms IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    store_fetch(
+        &v,
+        ConnectorKind::Bunq,
+        conn,
+        fetch(vec![hold("card:a"), hold("card:b")]),
+    )
+    .unwrap();
+    assert_eq!(holds(), 2);
+    // card b's hold cleared, card a's still open
+    store_fetch(&v, ConnectorKind::Bunq, conn, fetch(vec![hold("card:a")])).unwrap();
+    assert_eq!(holds(), 1);
     std::fs::remove_file(path).ok();
 }
 
@@ -2239,6 +2306,7 @@ fn keep_only_follows_a_renamed_ref_and_keeps_revocations() {
         accounts: vec![account("new-a"), account("b")],
         renamed_refs: vec![("a".into(), "new-a".into())],
         revoked_refs: vec!["c".into()],
+        holds_incomplete: vec!["new-a".into(), "b".into()],
         accounts_complete: true,
         ..Default::default()
     };
@@ -2246,6 +2314,8 @@ fn keep_only_follows_a_renamed_ref_and_keeps_revocations() {
     assert_eq!(data.accounts.len(), 1);
     assert_eq!(data.accounts[0].external_ref, "new-a");
     assert_eq!(data.revoked_refs, ["c"]);
+    // the one account's incomplete hold list stays incomplete
+    assert_eq!(data.holds_incomplete, ["new-a"]);
     assert!(!data.accounts_complete && data.single_account);
 }
 

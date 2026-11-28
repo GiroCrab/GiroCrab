@@ -1014,6 +1014,9 @@ fn english(de: &str) -> Option<&'static str> {
         "{0}: Die Bank hat den angeforderten Zeitraum abgelehnt. Abgerufen wurden nur die Umsätze ab dem {1}, ältere fehlen." => {
             "{0}: the bank refused the requested period. Only transactions from {1} on were fetched, older ones are missing."
         }
+        "{0}: Die Vormerkungen konnten nicht vollständig abgerufen werden. Bereits gespeicherte Vormerkungen bleiben bis zum nächsten Abruf stehen." => {
+            "{0}: the pending transactions could not be fetched completely. Pending transactions already stored stay until the next fetch."
+        }
         "{0}: Die Umsatzliste war länger als 50 Seiten und wurde nicht vollständig gelesen." => {
             "{0}: the transaction list was longer than 50 pages and was not read completely."
         }
