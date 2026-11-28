@@ -239,6 +239,232 @@ final class SubscriptionsTests: XCTestCase {
 
     // MARK: model
 
+    func testUnreadableStoredValueIsNotTreatedAsEmpty() {
+        XCTAssertNil(SubscriptionStore.parse("nicht json"))
+        XCTAssertNil(SubscriptionStore.parse(nil, legacy: "nicht json"))
+        XCTAssertEqual(SubscriptionStore.parse(nil), SubscriptionData(), "nothing stored is a valid, empty state")
+        XCTAssertEqual(SubscriptionStore.parse("{}"), SubscriptionData())
+    }
+
+    @MainActor
+    func testUnreadableSettingBlocksWritingAndKeepsTheStoredValue() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let vault = try XCTUnwrap(model.vault)
+        try vault.setSetting(key: SubscriptionStore.settingKey, value: "kaputt {")
+        model.resetSubscriptionState()
+
+        model.addManualSubscription(name: "Verein", amountCents: -500, group: .monthly, currency: "EUR", startDate: "2026-01-01")
+        XCTAssertTrue(model.subscriptionData.manual.isEmpty)
+        XCTAssertEqual(try vault.getSetting(key: SubscriptionStore.settingKey), "kaputt {", "the stored value must stay as it is")
+        XCTAssertNotNil(model.errorMessage)
+
+        // once readable again, writing works
+        try vault.setSetting(key: SubscriptionStore.settingKey, value: SubscriptionStore.encode(SubscriptionData()))
+        model.addManualSubscription(name: "Verein", amountCents: -500, group: .monthly, currency: "EUR", startDate: "2026-01-01")
+        XCTAssertEqual(model.subscriptionData.manual.count, 1)
+    }
+
+    @MainActor
+    func testFailedReloadAfterAnEarlierSuccessfulReadStillBlocksWriting() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let vault = try XCTUnwrap(model.vault)
+        model.loadSubscriptionData()
+        XCTAssertTrue(model.subscriptionDataLoaded)
+        try vault.setSetting(key: SubscriptionStore.settingKey, value: "kaputt {")
+        model.loadSubscriptionData()
+        XCTAssertFalse(model.subscriptionDataLoaded)
+
+        model.addManualSubscription(name: "Verein", amountCents: -500, group: .monthly, currency: "EUR", startDate: "2026-01-01")
+        XCTAssertEqual(try vault.getSetting(key: SubscriptionStore.settingKey), "kaputt {")
+    }
+
+    @MainActor
+    func testEntryFollowsItsSeriesWhenThePriceChangesTheKey() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let s = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        model.setSubscription(s, marked: true)
+        var d = try XCTUnwrap(model.subscriptionData.entries[s.seriesKey])
+        d.note = "Preis erhöht"; d.noticeValue = 2
+        model.setSubscriptionDetails(try XCTUnwrap(model.subscriptionItems.first { $0.id == s.seriesKey }), d)
+
+        // the price rise gives the series a new key
+        var risen = s
+        risen.seriesKey = s.baseKey + "#99999"
+        risen.amountCents = s.amountCents - 100
+        model.recurring = model.recurring.map { $0.seriesKey == s.seriesKey ? risen : $0 }
+        XCTAssertNil(model.subscriptionItems.first { $0.series?.baseKey == s.baseKey }, "without matching it drops out")
+
+        model.reconcileSubscriptionKeys()
+        let item = try XCTUnwrap(model.subscriptionItems.first { $0.id == risen.seriesKey })
+        XCTAssertEqual(item.details.note, "Preis erhöht")
+        XCTAssertEqual(item.details.noticeValue, 2)
+        XCTAssertNil(model.subscriptionData.entries[s.seriesKey], "the old key must not stay behind")
+        XCTAssertEqual(item.details.lastAmountCents, risen.amountCents)
+    }
+
+    @MainActor
+    func testEndedContractDoesNotPassItsFieldsToAnotherContractOfThePayee() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let s = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        model.setSubscription(s, marked: true)
+
+        // the marked contract is gone; the only series left is a much cheaper one that was never marked
+        var other = s
+        other.seriesKey = s.baseKey + "#7"; other.amountCents = s.amountCents / 5
+        model.recurring = model.recurring.filter { $0.seriesKey != s.seriesKey } + [other]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNil(model.subscriptionData.entries[other.seriesKey], "an unmarked contract must not become a subscription")
+        XCTAssertNotNil(model.subscriptionData.entries[s.seriesKey])
+
+        // a price rise of about 15 % is still the same contract
+        var risen = s
+        risen.seriesKey = s.baseKey + "#8"; risen.amountCents = s.amountCents * 115 / 100
+        model.recurring = [risen]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[risen.seriesKey])
+    }
+
+    @MainActor
+    func testSeriesThatAlreadyExistedNextToTheEntryIsNeverItsSuccessor() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let s = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        // a second contract of the payee with a similar amount is already there when the first one is marked
+        var sibling = s
+        sibling.seriesKey = s.baseKey + "#9"; sibling.amountCents = s.amountCents * 12 / 10
+        model.recurring.append(sibling)
+        model.setSubscription(s, marked: true)
+
+        model.recurring = model.recurring.filter { $0.seriesKey != s.seriesKey }
+        model.reconcileSubscriptionKeys()
+        XCTAssertNil(model.subscriptionData.entries[sibling.seriesKey], "the other contract stays unmarked")
+        XCTAssertNotNil(model.subscriptionData.entries[s.seriesKey])
+    }
+
+    @MainActor
+    func testUnreadableSettingIsOnlyReportedWhenWriting() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        let vault = try XCTUnwrap(model.vault)
+        try vault.setSetting(key: SubscriptionStore.settingKey, value: "kaputt {")
+        model.resetSubscriptionState()
+        model.errorMessage = nil
+        model.refreshRecurring() // loads on every reload, also in views without subscriptions
+        XCTAssertNil(model.errorMessage)
+        model.addManualSubscription(name: "Verein", amountCents: -500, group: .monthly, currency: "EUR", startDate: "2026-01-01")
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    @MainActor
+    func testSiblingStaysExcludedAfterItsOwnPriceChange() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        var a = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        let others = model.recurring.filter { $0.baseKey != a.baseKey }
+        a.amountCents = -1000; a.seriesKey = a.baseKey + "#1000"
+        var b = a
+        b.amountCents = -1300; b.seriesKey = a.baseKey + "#1300"
+        model.recurring = others + [a, b]
+        model.setSubscription(a, marked: true)
+
+        // the unmarked sibling gets more expensive while the marked one is still there
+        b.amountCents = -1400; b.seriesKey = a.baseKey + "#1400"
+        model.recurring = others + [a, b]
+        model.reconcileSubscriptionKeys()
+
+        // later the marked contract ends
+        model.recurring = others + [b]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[a.seriesKey], "kept for when it is back")
+        XCTAssertNil(model.subscriptionData.entries[b.seriesKey])
+    }
+
+    @MainActor
+    func testAbsentSiblingStaysExcludedAfterTheEntryMoved() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        var a = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        let others = model.recurring.filter { $0.baseKey != a.baseKey }
+        a.amountCents = -1000; a.seriesKey = a.baseKey + "#1000"
+        var b = a
+        b.amountCents = -1300; b.seriesKey = a.baseKey + "#1300"
+        model.recurring = others + [a, b]
+        model.setSubscription(a, marked: true)
+
+        // the marked series gets more expensive while the sibling is not there
+        var risen = a
+        risen.amountCents = -1100; risen.seriesKey = a.baseKey + "#1100"
+        model.recurring = others + [risen]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[risen.seriesKey])
+
+        // the sibling is back and the marked contract ends
+        model.recurring = others + [b]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[risen.seriesKey], "kept for when it is back")
+        XCTAssertNil(model.subscriptionData.entries[b.seriesKey])
+    }
+
+    @MainActor
+    func testTargetClaimedByTwoEntriesGoesToNeither() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        var a = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        let others = model.recurring.filter { $0.baseKey != a.baseKey }
+        a.amountCents = -1000; a.seriesKey = a.baseKey + "#1000"
+        var b = a
+        b.amountCents = -1400; b.seriesKey = a.baseKey + "#1400"
+        model.recurring = others + [a, b]
+        model.setSubscription(a, marked: true)
+        model.setSubscription(b, marked: true)
+
+        // no sibling history: both entries would take the series on their own, only the shared claim stops them
+        model.subscriptionData.entries[a.seriesKey]?.siblingKeys = []
+        model.subscriptionData.entries[b.seriesKey]?.siblingKeys = []
+
+        // both keys vanish at once, one series in between remains
+        var c = a
+        c.amountCents = -1200; c.seriesKey = a.baseKey + "#1200"
+        model.recurring = others + [c]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[a.seriesKey])
+        XCTAssertNotNil(model.subscriptionData.entries[b.seriesKey])
+        XCTAssertNil(model.subscriptionData.entries[c.seriesKey])
+    }
+
+    @MainActor
+    func testAmbiguousSeriesAreNotMatchedByGuessing() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let s = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 })
+        model.setSubscription(s, marked: true)
+
+        // the marked key is gone; two unmarked series of the same payee are both within the amount window
+        var a = s, b = s
+        a.seriesKey = s.baseKey + "#1"; a.amountCents = s.amountCents * 8 / 10
+        b.seriesKey = s.baseKey + "#2"; b.amountCents = s.amountCents * 12 / 10
+        model.recurring = model.recurring.filter { $0.seriesKey != s.seriesKey } + [a, b]
+        model.reconcileSubscriptionKeys()
+        XCTAssertNotNil(model.subscriptionData.entries[s.seriesKey], "kept for when it is back")
+        XCTAssertNil(model.subscriptionData.entries[a.seriesKey])
+        XCTAssertNil(model.subscriptionData.entries[b.seriesKey])
+    }
+
+    @MainActor
+    func testSwitchingToTheDemoVaultDropsTheSubscriptionState() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.addManualSubscription(name: "Eigener Vertrag", amountCents: -500, group: .monthly, currency: "EUR", startDate: "2026-01-01")
+        model.selectedSubscriptionID = "x"
+        model.demoActive = false // stands in for the own vault
+
+        model.showDemo()
+        XCTAssertNil(model.selectedSubscriptionID)
+        XCTAssertFalse(model.subscriptionData.manual.contains { $0.name == "Eigener Vertrag" })
+    }
+
     @MainActor
     func testMarkingKeepsDetailsPerSeriesAndPersistsInTheVault() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
@@ -410,6 +636,13 @@ final class SubscriptionsTests: XCTestCase {
         XCTAssertFalse(make(1).isEnded, "runs until tomorrow")
         XCTAssertEqual(make(-1).status?.ended, true)
         XCTAssertEqual(make(1).status?.daysToEnd, 1)
+    }
+
+    func testRollingForwardKeepsTheEndOfMonth() throws {
+        var d = SubscriptionDetails()
+        d.contractEnd = "2026-01-31"; d.renewalMonths = 1
+        let status = try XCTUnwrap(SubscriptionContract.status(d, today: day("2026-04-10")))
+        XCTAssertEqual(DateText.iso(status.end), "2026-04-30", "not the 28th of the first short month, for good")
     }
 
     func testCurrencyOrderIsConsistentInBothDirections() {

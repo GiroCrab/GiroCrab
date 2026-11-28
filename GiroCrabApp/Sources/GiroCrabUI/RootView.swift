@@ -508,7 +508,7 @@ struct MainSplitView: View {
             }
         }
         #if os(macOS)
-        .background(ToolbarSearchVisibility(hidden: [.planned, .directDebits, .wealth].contains(model.mainColumn)))
+        .background(ToolbarSearchVisibility(hidden: [.planned, .directDebits, .subscriptions, .wealth].contains(model.mainColumn)))
         // The customizable toolbar belongs to the column, not to the view in
         // it: its items must stay when Belege replaces the booking list
         // (AppKit crashes on customizable items that come and go).

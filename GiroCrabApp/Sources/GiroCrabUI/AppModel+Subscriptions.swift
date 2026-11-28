@@ -18,27 +18,35 @@ extension AppModel {
         selectedSubscriptionID = nil
     }
 
+    /// Only the write path reports a failed read (`reportsFailure`): `refreshRecurring` loads on every reload,
+    /// and an alert in views that have nothing to do with subscriptions would be wrong.
     /// A failed read keeps what is there and blocks writing: an unreadable setting must never be
     /// replaced by an empty snapshot that the next edit would then store over the real contracts.
-    func loadSubscriptionData() {
+    func loadSubscriptionData(reportsFailure: Bool = false) {
         guard let vault else { return }
         do {
             let current = try vault.getSetting(key: SubscriptionStore.settingKey)
             let legacy = current == nil ? try vault.getSetting(key: SubscriptionStore.legacySettingKey) : nil
-            let loaded = SubscriptionStore.decode(current, legacy: legacy)
+            guard let loaded = SubscriptionStore.parse(current, legacy: legacy) else {
+                // stored but unreadable: keep what is shown and block writing, else the next edit would
+                // replace the real contracts by an empty snapshot
+                subscriptionDataLoaded = false
+                if reportsFailure { errorMessage = String(localized: "Die gespeicherten Abo-Daten sind nicht lesbar. Änderungen werden nicht gespeichert.") }
+                return
+            }
             if loaded != subscriptionData { subscriptionData = loaded }
             subscriptionDataLoaded = true
         } catch {
             // an unreadable setting blocks writing, even when an earlier read had worked:
             // the snapshot in memory may be older than what is stored
             subscriptionDataLoaded = false
-            errorMessage = describe(error)
+            if reportsFailure { errorMessage = describe(error) }
         }
     }
 
     /// Mutations copy `subscriptionData` first, so it must be loaded before that copy is taken.
     private func ensureSubscriptionDataLoaded() -> Bool {
-        if !subscriptionDataLoaded { loadSubscriptionData() }
+        if !subscriptionDataLoaded { loadSubscriptionData(reportsFailure: true) }
         return subscriptionDataLoaded
     }
 
@@ -57,6 +65,95 @@ extension AppModel {
         return true
     }
 
+    private func remember(_ s: RecurringSeries, in d: inout SubscriptionDetails) {
+        d.baseKey = s.baseKey
+        d.lastAmountCents = s.amountCents
+        d.accountId = s.accountId
+        // taken once: a successor of this series (price rise) shows up next to it too, and must stay a candidate
+        if d.siblingKeys == nil {
+            d.siblingKeys = recurring.filter { $0.baseKey == s.baseKey && $0.seriesKey != s.seriesKey }.map(\.seriesKey)
+        }
+    }
+
+    /// The base key an entry belongs to: stored, else the series key without its amount suffix (`…#1299`).
+    private static func baseKey(of key: String, _ d: SubscriptionDetails) -> String {
+        if let b = d.baseKey { return b }
+        guard let r = key.range(of: #"#-?\d+$"#, options: .regularExpression) else { return key }
+        return String(key[..<r.lowerBound])
+    }
+
+    /// The amount a series key carries (`…#1299`, the core writes it without a sign); nil for keys without one.
+    private static func amount(of key: String) -> Int64? {
+        guard let r = key.range(of: #"#-?\d+$"#, options: .regularExpression) else { return nil }
+        return Int64(key[r].dropFirst())
+    }
+
+    /// Unmarked series that are a known sibling under a new key (its price changed too): their amount is at least
+    /// as near to that vanished sibling as to the entry's own. They must stay excluded like the sibling itself.
+    private func renamedSiblings(of d: SubscriptionDetails, base: String, in data: SubscriptionData) -> [String] {
+        guard let own = d.lastAmountCents, let known = d.siblingKeys else { return [] }
+        let live = Set(recurring.map(\.seriesKey))
+        let gone = known.filter { !live.contains($0) }.compactMap(Self.amount(of:))
+        return recurring.filter { s in
+            s.baseKey == base && data.entries[s.seriesKey] == nil && !known.contains(s.seriesKey)
+                && (d.accountId == nil || d.accountId == s.accountId)
+                // magnitudes: the keys carry no sign, the amounts of expenses are negative
+                && gone.contains { abs(abs(s.amountCents) - abs($0)) <= abs(abs(s.amountCents) - abs(own)) }
+        }.map(\.seriesKey)
+    }
+
+    /// The series key follows the typical amount, so a price rise or a second contract of the same payee
+    /// gives a marked series a new key: the entry would drop out of the list with its contract fields.
+    /// Entries whose key is no longer there move to the series with the same base key, when that is
+    /// unambiguous (one unmarked candidate within half of the last known amount, claimed by no other entry).
+    /// Also keeps the identity fields of the live entries current. Only touches what is visible now:
+    /// `recurring` covers the selected accounts, so an entry of another account is left alone.
+    func reconcileSubscriptionKeys() {
+        guard subscriptionDataLoaded, !recurring.isEmpty else { return }
+        var data = subscriptionData
+        let live = Set(recurring.map(\.seriesKey))
+        // All claims first, then the moves: which entry wins must never depend on the order of the dictionary.
+        var claims: [String: [RecurringSeries]] = [:]
+        for (key, d) in subscriptionData.entries where !live.contains(key) {
+            let base = Self.baseKey(of: key, d)
+            let excluded = Set((d.siblingKeys ?? []) + renamedSiblings(of: d, base: base, in: subscriptionData))
+            // Never by payee alone: a contract that ended must not hand its fields to another, never marked
+            // contract of the same payee. The amount has to stay within half of the last known one
+            // (12.99 → 14.99 € is a price rise, 12.99 → 2.99 € is another contract).
+            guard let last = d.lastAmountCents else { continue }
+            claims[key] = recurring.filter {
+                $0.baseKey == base && subscriptionData.entries[$0.seriesKey] == nil && !excluded.contains($0.seriesKey)
+                    && (d.accountId == nil || d.accountId == $0.accountId)
+                    && abs($0.amountCents - last) * 2 <= abs(last)
+            }
+        }
+        let claimed = Dictionary(claims.values.flatMap { $0 }.map { ($0.seriesKey, 1) }, uniquingKeysWith: +)
+        for (key, near) in claims {
+            // one candidate, and no other orphaned entry claims it
+            guard near.count == 1, let target = near.first, claimed[target.seriesKey] == 1,
+                  var moved = data.entries[key] else { continue }
+            // earlier siblings stay excluded, also those not visible right now; the current ones are added
+            let history = moved.siblingKeys ?? []
+            moved.siblingKeys = nil
+            remember(target, in: &moved)
+            moved.siblingKeys = history + (moved.siblingKeys ?? []).filter { !history.contains($0) }
+            data.entries[key] = nil
+            data.entries[target.seriesKey] = moved
+            if selectedSubscriptionID == key { selectedSubscriptionID = target.seriesKey }
+        }
+        for s in recurring {
+            guard var d = data.entries[s.seriesKey] else { continue }
+            let before = d
+            remember(s, in: &d)
+            let renamed = renamedSiblings(of: d, base: s.baseKey, in: data)
+            if !renamed.isEmpty { d.siblingKeys = (d.siblingKeys ?? []) + renamed }
+            if d != before { data.entries[s.seriesKey] = d }
+        }
+        guard data != subscriptionData else { return }
+        let accounts = Set(recurring.compactMap { data.entries[$0.seriesKey] != nil ? $0.accountId : nil })
+        if storeSubscriptionData(data) { scheduleSubscriptionBookingsReload(accounts: accounts) }
+    }
+
     func isSubscription(_ s: RecurringSeries) -> Bool { subscriptionData.entries[s.seriesKey] != nil }
 
     /// Recurring expenses and incomes that can still be marked.
@@ -67,7 +164,11 @@ extension AppModel {
     func setSubscription(_ s: RecurringSeries, marked: Bool) {
         guard ensureSubscriptionDataLoaded() else { return }
         var data = subscriptionData
-        if marked { data.entries[s.seriesKey] = data.entries[s.seriesKey] ?? SubscriptionDetails() } else { data.entries[s.seriesKey] = nil }
+        if marked {
+            var d = data.entries[s.seriesKey] ?? SubscriptionDetails()
+            remember(s, in: &d)
+            data.entries[s.seriesKey] = d
+        } else { data.entries[s.seriesKey] = nil }
         storeSubscriptionData(data)
         if marked { scheduleSubscriptionBookingsReload(accounts: [s.accountId]) }
     }
@@ -141,7 +242,7 @@ extension AppModel {
     /// Demo vault only: fills the view with a few subscriptions the first time it opens, so there is
     /// something to look at (a real vault never gets entries it did not ask for).
     func seedDemoSubscriptions() {
-        guard options.demoSeed, subscriptionData == SubscriptionData() else { return }
+        guard options.demoSeed, demoActive, subscriptionData == SubscriptionData() else { return }
         var data = SubscriptionData()
         let expenses = recurring.filter { $0.amountCents < 0 }
         let incomes = recurring.filter { $0.amountCents > 0 }

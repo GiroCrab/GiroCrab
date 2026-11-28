@@ -92,6 +92,14 @@ struct SubscriptionDetails: Codable, Equatable {
     var cancelledOn: String?
     /// ISO day a free trial ends; the payments start after it.
     var trialEnd: String?
+    /// What identified the series when it was last seen. The series key follows the amount, so a price
+    /// change gives it a new key; these three find the entry again (see `reconcileSubscriptionKeys`).
+    var baseKey: String?
+    var lastAmountCents: Int64?
+    var accountId: Int64?
+    /// Keys of the series of the same payee that already existed next to this one. A series that appears
+    /// later is a successor (price rise), one of these is another contract and never takes this entry over.
+    var siblingKeys: [String]?
 
     init() {}
 
@@ -105,10 +113,14 @@ struct SubscriptionDetails: Codable, Equatable {
         cancelled = try c.decodeIfPresent(Bool.self, forKey: .cancelled) ?? false
         cancelledOn = try c.decodeIfPresent(String.self, forKey: .cancelledOn)
         trialEnd = try c.decodeIfPresent(String.self, forKey: .trialEnd)
+        baseKey = try c.decodeIfPresent(String.self, forKey: .baseKey)
+        lastAmountCents = try c.decodeIfPresent(Int64.self, forKey: .lastAmountCents)
+        accountId = try c.decodeIfPresent(Int64.self, forKey: .accountId)
+        siblingKeys = try c.decodeIfPresent([String].self, forKey: .siblingKeys)
     }
 
     private enum Keys: String, CodingKey {
-        case note, noticeValue, noticeUnit, contractEnd, renewalMonths, cancelled, cancelledOn, trialEnd
+        case note, noticeValue, noticeUnit, contractEnd, renewalMonths, cancelled, cancelledOn, trialEnd, baseKey, lastAmountCents, accountId, siblingKeys
     }
 }
 
@@ -133,6 +145,20 @@ struct ManualSubscription: Codable, Equatable, Identifiable {
 struct SubscriptionData: Codable, Equatable {
     var entries: [String: SubscriptionDetails] = [:]
     var manual: [ManualSubscription] = []
+
+    init(entries: [String: SubscriptionDetails] = [:], manual: [ManualSubscription] = []) {
+        self.entries = entries
+        self.manual = manual
+    }
+
+    /// A missing key is an empty list, not an unreadable value (a later version may add or drop one).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        entries = try c.decodeIfPresent([String: SubscriptionDetails].self, forKey: .entries) ?? [:]
+        manual = try c.decodeIfPresent([ManualSubscription].self, forKey: .manual) ?? []
+    }
+
+    private enum Keys: String, CodingKey { case entries, manual }
 }
 
 enum SubscriptionStore {
@@ -140,11 +166,17 @@ enum SubscriptionStore {
     /// First version: only a note per series.
     static let legacySettingKey = "subscriptions.v1"
 
-    static func decode(_ json: String?, legacy: String? = nil) -> SubscriptionData {
-        if let data = json?.data(using: .utf8),
-           let value = try? JSONDecoder().decode(SubscriptionData.self, from: data) { return value }
-        if let data = legacy?.data(using: .utf8),
-           let notes = try? JSONDecoder().decode([String: String].self, from: data) {
+    /// nil when a stored value exists but cannot be read: the caller must not treat that as "no
+    /// subscriptions" and write over it. No stored value at all is an empty, valid state.
+    static func parse(_ json: String?, legacy: String? = nil) -> SubscriptionData? {
+        if let json {
+            guard let data = json.data(using: .utf8),
+                  let value = try? JSONDecoder().decode(SubscriptionData.self, from: data) else { return nil }
+            return value
+        }
+        if let legacy {
+            guard let data = legacy.data(using: .utf8),
+                  let notes = try? JSONDecoder().decode([String: String].self, from: data) else { return nil }
             return SubscriptionData(entries: notes.mapValues { note in
                 var d = SubscriptionDetails()
                 d.note = note
@@ -152,6 +184,11 @@ enum SubscriptionStore {
             })
         }
         return SubscriptionData()
+    }
+
+    /// Lenient variant: unreadable values become empty data (display only, never to be stored back).
+    static func decode(_ json: String?, legacy: String? = nil) -> SubscriptionData {
+        parse(json, legacy: legacy) ?? SubscriptionData()
     }
 
     static func encode(_ value: SubscriptionData) -> String {
@@ -241,12 +278,14 @@ enum SubscriptionContract {
         if d.cancelled {
             // Cancelled after the deadline: the term runs on, the cancellation counts for the next one.
             var missed: Date?
+            let firstEnd = end
             if let onText = d.cancelledOn, let on = DateText.parseISODay(onText), let months = d.renewalMonths, months > 0 {
                 var n = 0
                 while n < 1200, let dl = deadline(end: end, details: d), dl < on {
                     missed = missed ?? dl
-                    end = cal.date(byAdding: .month, value: months, to: end) ?? end.addingTimeInterval(86_400 * 30)
                     n += 1
+                    // from the first end, not the previous one: 31 Jan + 1 month must not drift to the 28th for good
+                    end = cal.date(byAdding: .month, value: months * n, to: firstEnd) ?? end.addingTimeInterval(86_400 * 30)
                 }
             }
             let dl = deadline(end: end, details: d)
@@ -256,11 +295,12 @@ enum SubscriptionContract {
         }
         if let months = d.renewalMonths, months > 0 {
             var guardCount = 0
+            let firstEnd = end
             while guardCount < 1200 {
                 let dl = deadline(end: end, details: d)
                 guard end < now || (dl.map { $0 < now } ?? false) else { break }
-                end = cal.date(byAdding: .month, value: months, to: end) ?? end.addingTimeInterval(86_400 * 30)
                 guardCount += 1
+                end = cal.date(byAdding: .month, value: months * guardCount, to: firstEnd) ?? end.addingTimeInterval(86_400 * 30)
             }
         } else if end < now {
             expired = true
