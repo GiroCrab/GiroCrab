@@ -535,7 +535,7 @@ impl RemoteTransaction {
 
 /// Prefix of [`RemoteTransaction::content_id`] ids. Ids of older versions
 /// (`h` + 16 hex digits, `DefaultHasher`) are adopted on the next sync, see
-/// [`adopt_legacy_content_id`].
+/// `legacy_candidates` in `connectors/persist.rs`.
 pub(crate) const CONTENT_ID_PREFIX: char = 'c';
 
 /// Hands out content ids, counting occurrences per identical content (not

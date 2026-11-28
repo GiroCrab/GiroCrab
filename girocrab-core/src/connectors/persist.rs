@@ -148,7 +148,7 @@ fn switched_source_candidates(
     // Purpose and name differ in form between the two formats, so they are
     // compared normalised here instead of in SQL (`switch_purpose`, `same_party`).
     let mut candidates = tx.prepare_cached(
-        "SELECT id, external_id, counterparty, purpose FROM transactions
+        "SELECT id, external_id, counterparty, purpose, counterparty_iban FROM transactions
           WHERE account_id = ?1 AND external_id GLOB ?2
             AND booking_date = ?3 AND value_date = ?4 AND amount_cents = ?5
           ORDER BY id",
@@ -167,15 +167,19 @@ fn switched_source_candidates(
                 r.get::<_, String>(1)?,
                 r.get::<_, Option<String>>(2)?.unwrap_or_default(),
                 r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                r.get::<_, Option<String>>(4)?.unwrap_or_default(),
             ))
         },
     )?;
     let purpose = switch_purpose(&t.purpose);
+    // The stored row comes from the other source: MT940 when the fetched booking is camt.
+    let stored_is_mt940 = t.external_id.starts_with(CAMT_ID_PREFIX);
     let mut found = Vec::new();
     for row in rows {
-        let (id, external_id, counterparty, stored_purpose) = row?;
+        let (id, external_id, counterparty, stored_purpose, stored_iban) = row?;
         if fetched.contains(&(account_id, external_id.as_str()))
             || switch_purpose(&stored_purpose) != purpose
+            || iban_conflict(&stored_iban, &t.counterparty_iban)
         {
             continue;
         }
@@ -184,6 +188,7 @@ fn switched_source_candidates(
             &t.counterparty,
             &t.original_counterparty,
             &purpose,
+            stored_is_mt940,
         ) {
             found.push((rank, id, external_id));
         }
@@ -207,15 +212,18 @@ fn squash(s: &str) -> String {
 
 /// Purpose as both FinTS formats carry it (#1715): camt writes the SEPA tags
 /// (`EREF+… MREF+… SVWZ+text`), MT940 often only the `SVWZ` text. Compares the
-/// text after `SVWZ+` (up to an `ABWA+`/`ABWE+` tag), else the whole purpose.
+/// text after `SVWZ+` up to the next SEPA tag, as the MT940 parser stores it
+/// (`mt940::sepa_purpose`), else the whole purpose.
 fn switch_purpose(purpose: &str) -> String {
-    let text = purpose.find("SVWZ+").map_or(purpose, |i| &purpose[i + 5..]);
-    let end = ["ABWA+", "ABWE+"]
-        .iter()
-        .filter_map(|tag| text.find(tag))
-        .min()
-        .unwrap_or(text.len());
-    squash(&text[..end])
+    squash(&crate::connectors::fints::mt940::sepa_purpose(purpose))
+}
+
+/// Both sides name a counterparty IBAN and they differ (#1715): then the rows
+/// are different payments even when everything else matches. A missing IBAN on
+/// either side is no conflict.
+fn iban_conflict(stored: &str, fetched: &str) -> bool {
+    let (a, b) = (squash(stored), squash(fetched));
+    !a.is_empty() && !b.is_empty() && a != b
 }
 
 /// Same counterparty across camt and MT940 (#1715): equal without whitespace,
@@ -233,17 +241,28 @@ fn same_party(stored: &str, fetched: &str) -> bool {
 }
 
 /// Rank of a stored row's counterparty for a fetched booking (#1715), lower is
-/// better: by the original counterparty, by the name, and last, when one side
-/// carries no name at all (MT940 without name data), by the other fields
-/// alone. That last case needs a purpose (`switch_purpose`, non-empty): date
-/// and amount alone are no identity. A named row always ranks before it, and
-/// an empty name still never equals a name ([`same_party`]).
+/// better: by the original counterparty, by the name, and last, when the MT940
+/// side carries no name at all (MT940 without name data), by the other fields
+/// alone. `stored_is_mt940` says which side that is (the stored row when the
+/// fetched booking is camt). A nameless camt entry never takes a named MT940
+/// row by purpose alone. That last case needs a purpose (`switch_purpose`,
+/// non-empty): date and amount alone are no identity. A named row always ranks
+/// before it, and an empty name still never equals a name ([`same_party`]).
 /// `None`: different parties.
-fn party_rank(stored: &str, name: &str, original: &str, purpose: &str) -> Option<(bool, bool)> {
+fn party_rank(
+    stored: &str,
+    name: &str,
+    original: &str,
+    purpose: &str,
+    stored_is_mt940: bool,
+) -> Option<(bool, bool)> {
     let by_original = same_party(stored, original);
     let by_name = same_party(stored, name);
-    let nameless =
-        squash(stored).is_empty() || (squash(name).is_empty() && squash(original).is_empty());
+    let nameless = if stored_is_mt940 {
+        squash(stored).is_empty()
+    } else {
+        squash(name).is_empty() && squash(original).is_empty()
+    };
     (by_original || by_name || (nameless && !purpose.is_empty()))
         .then_some((!by_original, !by_name))
 }
@@ -324,7 +343,7 @@ mod switch_planning_tests {
         db.execute_batch(
             "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
                external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
-               amount_cents INTEGER, counterparty TEXT, purpose TEXT,
+               amount_cents INTEGER, counterparty TEXT, purpose TEXT, counterparty_iban TEXT,
                UNIQUE(account_id, external_id))",
         )
         .unwrap();
@@ -562,7 +581,7 @@ mod joint_planning_tests {
         db.execute_batch(
             "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
                external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
-               amount_cents INTEGER, counterparty TEXT, purpose TEXT,
+               amount_cents INTEGER, counterparty TEXT, purpose TEXT, counterparty_iban TEXT,
                UNIQUE(account_id, external_id))",
         )
         .unwrap();
@@ -690,20 +709,59 @@ mod joint_planning_tests {
 
     #[test]
     fn nameless_side_needs_a_purpose_and_ranks_last() {
+        // Nameless stored MT940 row, named camt booking.
         assert_eq!(
-            party_rank("", "Stadtwerke", "", "abschlag"),
+            party_rank("", "Stadtwerke", "", "abschlag", true),
             Some((true, true))
         );
+        // Nameless fetched MT940 booking, named stored camt row.
         assert_eq!(
-            party_rank("Stadtwerke", "", "", "abschlag"),
+            party_rank("Stadtwerke", "", "", "abschlag", false),
             Some((true, true))
         );
-        assert_eq!(party_rank("", "Stadtwerke", "", ""), None);
-        assert_eq!(party_rank("Max", "Stadtwerke", "", "abschlag"), None);
+        assert_eq!(party_rank("", "Stadtwerke", "", "", true), None);
+        assert_eq!(party_rank("Max", "Stadtwerke", "", "abschlag", true), None);
         assert_eq!(
-            party_rank("Stadtwerke", "Stadtwerke", "", "abschlag"),
+            party_rank("Stadtwerke", "Stadtwerke", "", "abschlag", true),
             Some((true, false))
         );
+        assert_eq!(
+            party_rank("Stadtwerke", "Stadtwerke", "", "abschlag", false),
+            Some((true, false))
+        );
+    }
+
+    #[test]
+    fn nameless_camt_side_never_takes_a_named_mt940_row_by_purpose() {
+        // Fetched camt booking without any name vs. a named stored MT940 row.
+        assert_eq!(party_rank("Stadtwerke", "", "", "abschlag", true), None);
+        // Nameless stored camt row vs. a named fetched MT940 booking.
+        assert_eq!(party_rank("", "Stadtwerke", "", "abschlag", false), None);
+    }
+
+    #[test]
+    fn switch_purpose_stops_at_every_sepa_tag_like_mt940() {
+        assert_eq!(
+            switch_purpose("EREF+X1 SVWZ+Gehalt 10/2026 PURP+SALA"),
+            switch_purpose("Gehalt 10/2026")
+        );
+        assert_eq!(switch_purpose("SVWZ+Miete ABWA+Hausverwaltung"), "miete");
+        assert_eq!(switch_purpose("Miete  Oktober"), "mieteoktober");
+    }
+
+    #[test]
+    fn differing_ibans_conflict_missing_ones_do_not() {
+        assert!(iban_conflict(
+            "DE02120300000000202051",
+            "DE02500105170137075030"
+        ));
+        assert!(!iban_conflict(
+            "DE02 1203 0000 0000 2020 51",
+            "de02120300000000202051"
+        ));
+        assert!(!iban_conflict("", "DE02120300000000202051"));
+        assert!(!iban_conflict("DE02120300000000202051", ""));
+        assert!(!iban_conflict("", ""));
     }
 }
 
@@ -716,7 +774,7 @@ mod source_switch_tests {
         db.execute_batch(
             "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
                 external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
-                amount_cents INTEGER, counterparty TEXT, purpose TEXT,
+                amount_cents INTEGER, counterparty TEXT, purpose TEXT, counterparty_iban TEXT,
                 UNIQUE(account_id, external_id))",
         )
         .unwrap();
