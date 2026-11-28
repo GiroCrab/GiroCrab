@@ -1884,8 +1884,18 @@ fn english(de: &str) -> Option<&'static str> {
             "No header row (date/booking date and amount) found."
         }
         // ------------------------------------------------------------ importers/moneymoney_db.rs
+        "Datenimport" => "Data import",
+        "Konten der Datenbank in {0} und {1} können nicht in dasselbe Konto übernommen werden – es wurde nichts übernommen." => {
+            "Accounts in {0} and {1} from the database cannot be imported into the same account – nothing was imported."
+        }
+        "Datenimport: {0} neue Buchungen, {1} Konten neu, {2} zusammengeführt" => {
+            "Data import: {0} new transactions, {1} accounts created, {2} merged"
+        }
         "Import abgebrochen – es wurde nichts übernommen." => {
             "Import cancelled – nothing was imported."
+        }
+        "Ein Konto der Datenbank in {0} kann nicht in ein Konto in {1} übernommen werden – es wurde nichts übernommen." => {
+            "An account in {0} from the database cannot be imported into an account in {1} – nothing was imported."
         }
         "Falsches Passwort oder keine unterstützte Datenbank." => {
             "Wrong password or not a supported database."

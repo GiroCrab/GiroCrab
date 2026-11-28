@@ -356,6 +356,32 @@ impl Vault {
         )?;
         prune(&db, now, keep_ms, max_bytes)
     }
+
+    /// A data import in the log: no bank login, so `name` fills the column its name fills
+    /// otherwise (an empty one shows as "–").
+    pub(crate) fn log_import(
+        &self,
+        name: &str,
+        outcome: SyncLogOutcome,
+        message: &str,
+        imported: u32,
+    ) -> CoreResult<()> {
+        let db = self.db()?;
+        let now = now_ms();
+        db.execute(
+            "INSERT INTO sync_log(ts_ms, connection_id, connection_name, source, outcome, message, imported)
+             VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                now,
+                name,
+                SyncLogSource::Manual.as_str(),
+                outcome.as_str(),
+                scrub(message, ""),
+                imported
+            ],
+        )?;
+        prune(&db, now, KEEP_MS, MAX_BYTES)
+    }
 }
 
 #[uniffi::export]
