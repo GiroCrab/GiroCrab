@@ -32,7 +32,9 @@ Rectangle {
         Spinner { visible: bar.selectingAll; size: 14; Layout.alignment: Qt.AlignVCenter }
         Text {
             Layout.alignment: bar.selectingAll ? Qt.AlignVCenter : Qt.AlignTop
-            text: bar.selectingAll ? qsTr("Alle %1 Buchungen werden ausgewählt …").arg(AppModel.bookingCountLabel)
+            // while it waits for a new list, the count on screen is still the previous list's
+            text: AppModel.selectAllAfterReload ? qsTr("Alle Buchungen werden ausgewählt …")
+                : bar.selectingAll ? qsTr("Alle %1 Buchungen werden ausgewählt …").arg(AppModel.bookingCountLabel)
                 : qsTr("%1 Buchungen ausgewählt").arg(AppModel.selectedBookings.length)
             font.pixelSize: Theme.callout; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text
         }

@@ -204,7 +204,9 @@ QtObject {
         reloadSelection(false)
     }
     property string scope: "All"               // BookingScope
-    onScopeChanged: { listLimit = defaultListLimit; if (scope === "Investments") reloadDashboard(); reloadBookings() }
+    // AppModel+Loading.swift › reloadListInBackground: the scope narrows the same view, a Strg+A
+    // pressed before selects the new list once it is published (#1696)
+    onScopeChanged: { listLimit = defaultListLimit; dropMultiSelection(true); if (scope === "Investments") reloadDashboard(); reloadBookings() }
     property string period: "all"
     onPeriodChanged: { listLimit = defaultListLimit; dropMultiSelection(); reloadSelection(true) }
     property string customPeriodFrom: ""
@@ -214,8 +216,9 @@ QtObject {
     onStatusFilterChanged: if (!ListFilters.suspendsReloads) { listLimit = defaultListLimit; reloadAfterFilterChange() }
     property string directionFilter: "All"     // BookingDirection
     onDirectionFilterChanged: if (!ListFilters.suspendsReloads) { listLimit = defaultListLimit; reloadAfterFilterChange() }
-    /// AppModel.swift › reloadAfterFilterChange: the list and the sidebar sums (#621, #357).
-    function reloadAfterFilterChange() { reloadBookings(); reloadCategories() }
+    /// AppModel.swift › reloadAfterFilterChange: the list and the sidebar sums (#621, #357). Rows chosen
+    /// in the previous list end like on a sidebar change; a Strg+A pressed before waits for the new list (#1696).
+    function reloadAfterFilterChange() { dropMultiSelection(true); reloadBookings(); reloadCategories() }
     property string searchText: ""
     /// AppModel+Selection.swift › coreSearchText: the typed text with German plurals cut back to
     /// the stem („kredite“ → „kredit“), so the substring search also finds the singular. Always a
@@ -223,13 +226,9 @@ QtObject {
     function coreSearchText() {
         try { return core("literal_search_term", { text: searchText }) } catch (e) { return searchText }
     }
-    property Timer searchTimer: Timer { interval: 250; onTriggered: model.reloadBookings() }
-    onSearchTextChanged: {
-        // AppModel+Loading.swift › reloadListInBackground: a Strg+A still loading the rest of the
-        // list waits for the search's list instead, its reload would drop the append (#1696)
-        if (isSelectingAllBookings) { isSelectingAllBookings = false; selectAllAfterReload = true }
-        searchTimer.restart()
-    }
+    // AppModel+Loading.swift › reloadListInBackground: another search, same rule as a scope change (#1696)
+    property Timer searchTimer: Timer { interval: 250; onTriggered: { model.dropMultiSelection(true); model.reloadBookings() } }
+    onSearchTextChanged: searchTimer.restart()
     /// AccountSidebarMode (byGroup | byBank | byKind): the explicit choice, else "Nach Gruppe" once a group exists.
     /// Set it with `setAccountView` (AccountGroupsModel.swift › accountView).
     readonly property string accountView: defaults.accountView !== "" ? defaults.accountView : (hasUserGroups ? "byGroup" : "byKind")
@@ -509,6 +508,10 @@ QtObject {
         refundEditing = false
         UndoManager.busy = false
         dropPendingPage()   // a "load more" page of the previous vault must not land in this list
+        // a Strg+A waiting at lock or switch time must not run on the next vault's list (#1696)
+        selectAllAfterReload = false
+        selectAllOnPublished = false
+        reloadAllPending = false
         vaultLoaded = true
         afterAccountsQueue = []
         afterBookingsQueue = []
@@ -598,13 +601,24 @@ QtObject {
     function reloadAll(then, failed) {
         refundLinksRevision++
         reloadSettings()
+        // the list is replaced from now on, though no list load is queued before the accounts are in (#1696)
+        reloadAllPending = vaultLoaded
         reloadAccounts(() => {
+            // the selection load below takes over (selectionLoadRunning or its queue entry)
+            reloadAllPending = false
             if (then) then()
             // the list first: the other loads would queue before it at the vault mutex
             afterBookingsQueue.push(() => { reloadRules(); reloadPlanning(); reloadDashboard() })
             requestSelectionLoad({ recurring: true, categories: true }, true)
-        }, failed)
+        }, err => {
+            // no new list: a Strg+A waiting for it ends with the error
+            reloadAllPending = false
+            selectAllAfterReload = false
+            if (failed) failed(err); else errorMessage = parseCoreError(err).message
+        })
     }
+    /// `reloadAll` waits for the accounts before it loads the list (`isReloadingList`).
+    property bool reloadAllPending: false
     /// While an accounts load runs, `fn` waits for it (group membership decides the account
     /// ids of a selection) and true comes back; one entry per `key`. False: nothing runs.
     property var afterAccountsQueue: []
@@ -749,15 +763,19 @@ QtObject {
         if (stickyBooking !== null && !bookings.some(b => b.id === stickyBooking.id))
             stickyBooking = freshBooking(stickyBooking) || stickyBooking
         loadMerchantStats(keepMerchantStats)
+        // after the caller's own selection (selectFirstBookingOnLoad), which would cancel it (#1696)
+        resumeSelectAll()
         const queue = afterBookingsQueue
         afterBookingsQueue = []
         for (const fn of queue) fn()
     }
     /// Every full reload calls this first: a page still on its way belongs to the old list.
+    /// The one place a list replacement meets a running Strg+A: it no longer appends to the
+    /// old rows but waits for the new list, whatever reload started (#1696).
     function dropPendingPage() {
         listGeneration++
         isLoadingMoreBookings = false
-        isSelectingAllBookings = false
+        if (isSelectingAllBookings) { isSelectingAllBookings = false; selectAllAfterReload = true }
     }
     /// The list page carries the selection's sums when no list-only filter narrows it.
     function listHasFlow(f) {
@@ -781,8 +799,9 @@ QtObject {
     /// loaded with, further pages continue with it (#1696).
     function publish(p, filter) {
         shownListFilter = filter || null
-        // taken first: the fallback selection below would otherwise cancel it
-        const selectAll = selectAllAfterReload
+        // taken first: the fallback selection below and the caller's own one would otherwise
+        // cancel it; `afterListPublished` resumes it (#1696)
+        selectAllOnPublished = selectAllAfterReload || isSelectingAllBookings
         selectAllAfterReload = false
         listGeneration++
         isLoadingMoreBookings = false
@@ -796,9 +815,6 @@ QtObject {
             selectedBookingID = bookings.length && sidebarSelection !== "newBookings" ? bookings[0].id : null
         pruneMultiSelection()
         rebuildStream()
-        // a newer list is still on its way (search typed meanwhile): the Strg+A waits for that one,
-        // set after the selection changes above, whose handlers clear it (#1696)
-        if (selectAll) { if (isReloadingList()) selectAllAfterReload = true; else selectAllShownBookings() }
     }
     /// The lingering booking (checked while selected) at its old place in a
     /// new page that no longer contains it: before the row that followed it.
@@ -1726,18 +1742,33 @@ QtObject {
             if (b && !b.checked) setChecked(true, b)
         }
     }
-    /// Strg+A is loading the rest of the list before it selects everything (#1696).
+    /// State of a pending Strg+A (AppModel+Selection.swift › selectAllBookings, #1696):
+    /// - `isSelectingAllBookings`: the rest of the shown list is loading (`appendBookings`); its
+    ///   completion selects. Every list replacement (`dropPendingPage`) turns it into the next one.
+    /// - `selectAllAfterReload`: Strg+A came while a new list loads (`isReloadingList`); `publish`
+    ///   takes it and `afterListPublished` runs it on that list.
+    /// Both end with a newer selection, `dropMultiSelection()` (another view), a failed reload and
+    /// a vault switch; never both at once.
     property bool isSelectingAllBookings: false
-    /// Strg+A came while a new list was on its way (edit, search, scope): it runs on that
-    /// list once it is published, not on the rows of the previous one (#1696).
     property bool selectAllAfterReload: false
+    /// Taken by `publish` from the two above until `afterListPublished` resumes it: in between
+    /// the caller may select a booking itself, which must not cancel it.
+    property bool selectAllOnPublished: false
     /// A new list is on its way (selection, edit, scope or search): the rows on screen belong
     /// to the previous filter, so Strg+A must neither select them nor append to them.
     function isReloadingList() {
-        return selectionLoadRunning || searchTimer.running || isLoadPending("bookings")
+        return reloadAllPending || selectionLoadRunning || searchTimer.running || isLoadPending("bookings")
             // a list reload queued behind the accounts load (whenAccountsLoaded); the queue is
             // emptied when that load publishes or fails
             || afterAccountsQueue.some(e => e.key === "bookings" || e.key === "selection")
+    }
+    /// A published list took over a Strg+A: it runs on that list, or waits again for a newer one
+    /// still on its way (AppModel+Selection.swift › runPendingSelectAll).
+    function resumeSelectAll() {
+        if (!selectAllOnPublished) return
+        selectAllOnPublished = false
+        if (isReloadingList()) selectAllAfterReload = true
+        else selectAllShownBookings()
     }
     /// Bearbeiten › Alles auswählen (Strg+A) in the booking list: every booking matching the
     /// filter, not only the loaded pages (#1696). The rest loads in the background first,
@@ -1749,7 +1780,7 @@ QtObject {
         if (isReloadingList()) { selectAllAfterReload = true; return }
         selectAllShownBookings()
     }
-    /// Strg+A on the list as published now (`publish` calls it for a Strg+A that waited for it).
+    /// Strg+A on the list as published now (`resumeSelectAll` calls it for a Strg+A that waited for it).
     function selectAllShownBookings() {
         if (hasMoreBookings) {
             if (isSelectingAllBookings) return
@@ -1792,13 +1823,20 @@ QtObject {
     /// Another account, group, category or period: a multiple selection made in the previous
     /// list ends (like a folder change in the file manager). Kept, it would cover only the rows
     /// of the new list's first page that happen to be in both (#1696).
-    function dropMultiSelection() {
+    /// `keepPendingSelectAll`: a scope, status or search change narrows the same view, so a Strg+A
+    /// pressed before selects the new list once it is published (AppModel+Selection.swift ›
+    /// dropMultiSelection(keepingPendingSelectAll:)).
+    function dropMultiSelection(keepPendingSelectAll) {
+        const pending = !!keepPendingSelectAll && (isSelectingAllBookings || selectAllAfterReload)
         isSelectingAllBookings = false
         selectAllAfterReload = false
-        if (!isMultiSelection) return
-        const ids = {}
-        if (selectedBookingID !== null) ids[selectedBookingID] = true
-        selectedBookingIDs = ids
+        if (isMultiSelection) {
+            const ids = {}
+            if (selectedBookingID !== null) ids[selectedBookingID] = true
+            selectedBookingIDs = ids
+        }
+        // set after the selection change: its handler clears a pending Strg+A
+        if (pending) selectAllAfterReload = true
     }
     function moveSelection(delta) {
         if (!bookings.length) return
