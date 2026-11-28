@@ -388,6 +388,7 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     let moved = super::merge_bookings(conn, &acc_map, &cat_map, &rule_map, &mut stats)?;
     let mut booking_map:HashMap<i64,i64>=conn.prepare("SELECT id,id FROM main.transactions WHERE id NOT IN (SELECT id FROM other.transactions)")?
         .query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
+    crate::offline::loan_payments::remap_folded(conn, &moved)?;
     booking_map.extend(moved);
     conn.execute("DELETE FROM main.refund_links WHERE refund_id IN (SELECT id FROM other.transactions) OR original_id IN (SELECT id FROM other.transactions)
         OR moved_from_refund_id IN (SELECT id FROM other.transactions) OR moved_from_original_id IN (SELECT id FROM other.transactions)",[])?;
@@ -449,6 +450,8 @@ fn fold_inner(conn: &Connection, twin: i64, bank: i64) -> CoreResult<()> {
     crate::user_groups::pass_note_on(conn, twin, bank)?;
     // and the sidebar's bank label (#1467), the same way
     crate::user_groups::pass_bank_label_on(conn, twin, bank)?;
+    // and its archive state with the #998 mark, by the merge's rule (#1691)
+    crate::user_groups::pass_archive_on(conn, twin, bank)?;
     super::soft_delete_account(conn, twin)?;
     Ok(())
 }

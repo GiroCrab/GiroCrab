@@ -1021,9 +1021,13 @@ fn call(method: &str, a: &Value) -> R {
             // SAFETY: a blocking D-Bus call on its own connection; the string outlives it.
             ok(unsafe { girocrab_show_in_file_manager(path.as_ptr()) })
         }
-        "session_start" | "session_submit" | "session_poll" | "session_confirm_payee" => {
-            session_step(method, a)
-        }
+        // "session_skip": „TAN auslassen“ (AppModel+Sync.swift › skipOrder, #1827) leaves out the
+        // order of the fetch the bank wants a TAN for; a login question is `InvalidInput`.
+        "session_start"
+        | "session_submit"
+        | "session_poll"
+        | "session_confirm_payee"
+        | "session_skip" => session_step(method, a),
         // AppModel.cancelTransferSession: for a transfer the bank's answer comes back as
         // `{"outcome": CancelOutcome}`. Anything but `Cancelled` keeps the session
         // registered, so "Status erneut prüfen" can call session_cancel again (the core
@@ -1339,10 +1343,18 @@ fn print_pdf(a: &Value) -> R {
 }
 
 /// One step of a bank dialog; a finished or failed dialog leaves the registry.
+/// A sync step carries `"fetching"` (`SyncSession::is_fetching`): the login is done, so a
+/// question now is for one order of the fetch, which "session_skip" can leave out (#1827).
 fn session_step(method: &str, a: &Value) -> R {
     use crate::sessions::{RUNTIME, Session};
     let id: u64 = arg(a, "session")?;
     let s = crate::sessions::get(id)?;
+    // a transfer has no order to leave out: refused without ending its dialog
+    if method == "session_skip" && matches!(s, Session::Transfer(_)) {
+        return Err(core_error_json(&girocrab_core::CoreError::InvalidInput {
+            message: "only a question during the fetch can be skipped".into(),
+        }));
+    }
     let code: Option<String> = arg(a, "code")?;
     let result = RUNTIME.block_on(async {
         match (&s, method) {
@@ -1355,6 +1367,9 @@ fn session_step(method: &str, a: &Value) -> R {
                 .map(|x| serde_json::to_value(x).unwrap()),
             (Session::Sync(_), "session_confirm_payee") => {
                 Err(girocrab_core::CoreError::SessionClosed)
+            }
+            (Session::Sync(s), "session_skip") => {
+                s.skip().await.map(|x| serde_json::to_value(x).unwrap())
             }
             (Session::Sync(s), _) => s.poll().await.map(|x| serde_json::to_value(x).unwrap()),
             (Session::Transfer(t), "session_start") => {
@@ -1372,7 +1387,10 @@ fn session_step(method: &str, a: &Value) -> R {
         }
     });
     match result {
-        Ok(step) => {
+        Ok(mut step) => {
+            if let (Session::Sync(s), Some(o)) = (&s, step.as_object_mut()) {
+                o.insert("fetching".into(), Value::Bool(s.is_fetching()));
+            }
             let last = ["Finished", "Done", "InstantDeclined", "OutcomeUnknown"];
             if last.iter().any(|k| step.get(k).is_some()) {
                 crate::sessions::remove(id);
@@ -1767,6 +1785,9 @@ vault_methods! {
     set_connection_pin(connection_id, pin) connection_status(connection_id)
     clear_connection_session(connection_id) set_connection_session(connection_id, cookies)
     switch_comdirect_access(connection_id)
+    // full fetch of a login at its next sync (#1043)
+    request_full_history(connection_id, range) pending_full_history(connection_id)
+    cancel_full_history(connection_id)
     // Enable Banking application per login (#824)
     connection_enable_banking_app(connection_id) connection_enable_banking_key(connection_id)
     list_connection_enable_banking_apps()
@@ -1875,6 +1896,7 @@ vault_methods! {
     restore_refund(refund_id, refund_part, original_id, original_part, token)
     refund_links(transaction_id) refund_candidates(transaction_id, own_part, query, limit)
     refund_suggestions(transaction_id, own_part)
+    net_refunds_in_stats() set_net_refunds_in_stats(on)
     // Buchungsliste: Betragsfilter (#357, ListFilters.qml)
     list_categories_filtered_amount(date_from, date_to, account_ids, checked, direction, amount_min_cents, amount_max_cents, tag_ids, untagged_only)
     category_history_by_unit(category_id, account_ids, date_from, date_to, key_length)
@@ -2321,6 +2343,47 @@ mod tests {
         );
     }
 
+    /// „TAN auslassen“ (#1827): a sync step says whether the fetch runs; a login question
+    /// cannot be skipped (`InvalidInput`, the dialog ends like a failed step) and a skip
+    /// without a session is refused.
+    #[test]
+    fn session_skip_refuses_a_login_question() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let err = |method: &str, args: Value| -> String {
+            let r: Value = serde_json::from_str(&call_json(method, &args.to_string())).unwrap();
+            r.get("err").expect("an error").to_string()
+        };
+        assert!(!err("session_skip", json!({ "session": u64::MAX })).is_empty());
+        call_ok("open_demo", json!({}));
+        let conns = call_ok("list_bank_connections", json!({}));
+        let conn = conns
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["connector"] == "FinTsGeneric")
+            .or_else(|| conns.as_array().unwrap().first())
+            .expect("the demo has bank connections")
+            .clone();
+        let id = call_ok(
+            "begin_sync",
+            json!({ "connection_id": conn["id"], "secret": "", "demo": true }),
+        );
+        let id = id.as_u64().expect("a session handle");
+        let step = call_ok("session_start", json!({ "session": id }));
+        if step.get("Finished").is_some() {
+            assert_eq!(step["fetching"], json!(true), "{step}");
+            return;
+        }
+        // the demo bank asks at the login: no order to leave out yet
+        assert_eq!(step["fetching"], json!(false), "{step}");
+        let e = err("session_skip", json!({ "session": id }));
+        assert!(e.contains("InvalidInput"), "{e}");
+        assert!(
+            crate::sessions::get(id).is_err(),
+            "the session left the registry"
+        );
+    }
+
     /// Belege & Postbox (#934): read status, the sidebar's unread count and the export of
     /// the filtered list into a subfolder, as DocumentsView.qml / AppModel.qml call them.
     #[test]
@@ -2493,6 +2556,19 @@ mod tests {
             "set_setting",
             json!({ "key": "merchants.online_logos", "value": "off" }),
         );
+    }
+
+    /// Erstattungen mit der Ursprungsbuchung verrechnen (#714, GeneralSettings.qml): off by default,
+    /// the switch round-trips.
+    #[test]
+    fn net_refunds_in_stats_round_trips() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(false));
+        call_ok("set_net_refunds_in_stats", json!({ "on": true }));
+        assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(true));
+        call_ok("set_net_refunds_in_stats", json!({ "on": false }));
+        assert_eq!(call_ok("net_refunds_in_stats", json!({})), json!(false));
     }
 
     /// AppModel.decodeLogo: PNG width, the largest image of an ICO, unknown formats.
@@ -4584,6 +4660,40 @@ mod tests {
         ))
         .unwrap();
         assert!(r.get("err").is_some(), "unknown account");
+    }
+
+    /// Zeitraum beim ersten Abruf (#1043): AddBankSheet and ConnectionEditSheet
+    /// request a full fetch, read it back and call it off with the JSON
+    /// AppModel.qml sends (`HistoryRange`: "Maximum" or {"Days":{"days":n}}).
+    #[test]
+    fn full_history_calls() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let id = call_ok("list_bank_connections", json!({}))[0]["id"].clone();
+        let pending = || {
+            call_ok(
+                "pending_full_history",
+                json!({ "connection_id": id.clone() }),
+            )
+        };
+        call_ok(
+            "request_full_history",
+            json!({ "connection_id": id, "range": "Maximum" }),
+        );
+        assert_eq!(pending(), json!("Maximum"));
+        call_ok(
+            "request_full_history",
+            json!({ "connection_id": id, "range": { "Days": { "days": 365 } } }),
+        );
+        assert_eq!(pending(), json!({ "Days": { "days": 365 } }));
+        call_ok("cancel_full_history", json!({ "connection_id": id }));
+        assert_eq!(pending(), Value::Null);
+        let r: Value = serde_json::from_str(&call_json(
+            "request_full_history",
+            &json!({ "connection_id": -1, "range": "Maximum" }).to_string(),
+        ))
+        .unwrap();
+        assert!(r.get("err").is_some(), "unknown login");
     }
 
     #[test]

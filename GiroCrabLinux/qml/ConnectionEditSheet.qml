@@ -40,9 +40,13 @@ Sheet {
         if (usesPin && (storePin !== (status ? status.has_pin : false) || pin !== "")) return true
         if (JSON.stringify(values) !== initialValues) return true
         if (documentsSupported && documentsFetch !== initialDocumentsFetch) return true
+        if (fullHistory !== initialFullHistory) return true
         return selection.hasChanges
     }
     readonly property bool isFinTs: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(kind) >= 0
+    /// Full fetch at the next sync (#1043): `max`, days, or "" for none.
+    property string fullHistory: ""
+    property string initialFullHistory: ""
 
     readonly property string kind: connection ? connection.connector : ""
     readonly property var descriptor: connection ? AppModel.descriptor(kind) : null
@@ -124,6 +128,8 @@ Sheet {
         documentsSupported = AppModel.documentsFetchSupported(connection.id)
         documentsFetch = AppModel.documentsFetchEnabled(connection.id)
         initialDocumentsFetch = documentsFetch
+        fullHistory = AppModel.pendingFullHistory(connection.id)
+        initialFullHistory = fullHistory
         revealed = ({})
         showAdvanced = false
         const v = {}
@@ -142,7 +148,19 @@ Sheet {
         values = v
         initialValues = JSON.stringify(v)
     }
+    /// ConnectionsUI.swift › saveFullHistoryIfChanged: before anything that fetches, the next sync
+    /// must reach back as chosen (#1043). `force`: a fetch starts right away, so the shown period is
+    /// stored even when it is the one loaded: a full sync that finished while the sheet was open
+    /// has deleted the stored one.
+    function saveFullHistoryIfChanged(force) {
+        if (!force && fullHistory === initialFullHistory) return true
+        if (!AppModel.setFullHistory(connection.id, fullHistory)) return false
+        initialFullHistory = fullHistory
+        return true
+    }
+    /// False when the period of the next fetch was not stored (the error is shown, nothing else saved).
     function save() {
+        if (!saveFullHistoryIfChanged(false)) return false
         if (documentsSupported && documentsFetch !== initialDocumentsFetch) {
             AppModel.setDocumentsFetch(connection.id, documentsFetch)
             initialDocumentsFetch = documentsFetch
@@ -165,6 +183,7 @@ Sheet {
         pin = ""
         // the sheet can stay open: what was saved is the new "unchanged"
         initialValues = JSON.stringify(values)
+        return true
     }
     function saveSettings(list) {
         for (const key of list) {
@@ -179,7 +198,8 @@ Sheet {
     /// saved together; a fetch only starts after the selection is stored (a switched-off
     /// account must not be fetched).
     function saveAll(thenSync) {
-        save()
+        if (thenSync && !saveFullHistoryIfChanged(true)) return
+        if (!save()) return
         const id = connection.id
         selection.saveIfChanged((ok, message) => {
             if (ok) {
@@ -195,8 +215,11 @@ Sheet {
     function current() { return AppModel.connections.find(c => c.id === connection.id) || connection }
     /// The other save-and-go actions (log in, Postbox, reconnect, import): like `saveAll`, the
     /// action starts only once the account selection is stored, never with the old one.
-    function saveThen(action) {
-        save()
+    /// `fetches`: the action starts a fetch, so the shown period is stored even when unchanged
+    /// (like `saveAll(true)`); the statement import fetches nothing and passes false.
+    function saveThen(action, fetches) {
+        if (fetches && !saveFullHistoryIfChanged(true)) return
+        if (!save()) return
         const id = connection.id
         const fallback = current()
         selection.saveIfChanged((ok, message) => {
@@ -261,7 +284,7 @@ Sheet {
         title: qsTr("CSV- oder PDF-Kontoauszug importieren …")
         nameFilters: [qsTr("Kontoauszüge (*.csv *.txt *.pdf)"), qsTr("Alle Dateien (*)")]
         currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
-        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importStatement(c, file)) }
+        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importStatement(c, file), false) }
     }
     // Finpension export (#975): CSV, JSON or plain text, like the Mac's file importer
     FileDialog {
@@ -269,7 +292,7 @@ Sheet {
         title: qsTr("Finpension-Export importieren …")
         nameFilters: [qsTr("Finpension-Export (*.csv *.json *.txt)"), qsTr("Alle Dateien (*)")]
         currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
-        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importFinpension(c, file)) }
+        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importFinpension(c, file), false) }
     }
 
     ColumnLayout {
@@ -369,7 +392,7 @@ Sheet {
                     Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                            text: qsTr("Melden Sie sich im Browser-Fenster mit Ihrem normalen Benutzernamen, Passwort und 2FA an. GiroCrab liest die Umsätze direkt aus dem Portal – es sind keine API-Schlüssel nötig. Die Sitzung bleibt für spätere Abrufe erhalten.") }
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true) }
                     IconButton { symbol: "doc.badge.plus"; text: qsTr("CSV- oder PDF-Kontoauszug importieren …"); tint: Theme.accent
                                  onClicked: statementDialog.open() }
                     Button { text: qsTr("Web-Sitzung (Cookies) löschen …"); palette.buttonText: Theme.negative
@@ -380,7 +403,7 @@ Sheet {
                     visible: sheet.kind === "SchwaebischHall"
                     title: qsTr("Direkt-Login (Web-Session)")
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true) }
                     Button { text: qsTr("Web-Sitzung (Cookies) löschen …"); palette.buttonText: Theme.negative
                              onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
                 }
@@ -391,7 +414,7 @@ Sheet {
                     title: qsTr("Advanzia-Anmeldung")
                     footer: qsTr("Melden Sie sich im Browser-Fenster bei Advanzia an und bestätigen Sie die Freigabe per SMS-Code oder in der Advanzia-App. GiroCrab speichert kein Passwort und trägt nichts ein; danach werden die Umsätze automatisch übernommen.")
                     Button { text: qsTr("Anmelden && Abrufen"); highlighted: true
-                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }) }
+                             onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true) }
                     Button { text: qsTr("Web-Sitzung löschen …"); palette.buttonText: Theme.negative
                              onClicked: { confirmClear.kind = "portal"; confirmClear.open() } }
                 }
@@ -445,7 +468,7 @@ Sheet {
                         visible: sheet.postbox
                         text: qsTr("Postbox jetzt abrufen")
                         enabled: AppModel.syncingConnectionID === null && !sheet.documentsBlocked
-                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
+                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c), true)
                     }
                 }
                 // Consorsbank via FinTS: documents from the Online-Archiv as well (#1024)
@@ -476,7 +499,23 @@ Sheet {
                         text: qsTr("Online-Archiv jetzt abrufen")
                         icon.name: SF.icon("tray.and.arrow.down")
                         enabled: AppModel.syncingConnectionID === null && !sheet.documentsBlocked
-                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c))
+                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c), true)
+                    }
+                }
+                // ConnectionsUI.swift › Section "Umsätze" (#1043)
+                SettingsFormSection {
+                    title: qsTr("Umsätze")
+                    footer: qsTr("Ein Zeitraum holt beim nächsten Abruf alle Umsätze daraus, auch für Konten, die schon Umsätze haben. Vorhandene Umsätze werden nicht doppelt angelegt. Für mehr als 90 Tage verlangen viele Banken eine TAN.")
+                    SettingsFormRow {
+                        label: qsTr("Beim nächsten Abruf")
+                        AppComboBox {
+                            readonly property var options: [{ id: "", title: qsTr("Ab dem neuesten Umsatz") }].concat(AppModel.historyOptionsWith(sheet.fullHistory))
+                            Layout.preferredWidth: 220 * Theme.textScale
+                            model: options
+                            textRole: "title"; valueRole: "id"
+                            currentIndex: options.findIndex(o => o.id === sheet.fullHistory)
+                            onActivated: sheet.fullHistory = currentValue
+                        }
                     }
                 }
                 SettingsFormSection {
@@ -517,7 +556,7 @@ Sheet {
                         visible: sheet.kind === "EnableBanking" && sheet.status !== null
                         symbol: "arrow.triangle.2.circlepath"; text: qsTr("Neu verbinden …"); tint: Theme.accent
                         ToolTip.text: qsTr("Neue Zustimmung bei der Bank erteilen (z. B. vor Ablauf oder um Konten hinzuzufügen oder zu entfernen).")
-                        onClicked: sheet.saveThen(c => AppModel.reconnect(c))
+                        onClicked: sheet.saveThen(c => AppModel.reconnect(c), true)
                     }
                     Text { visible: sheet.kind === "EnableBanking" && sheet.status !== null; Layout.fillWidth: true; wrapMode: Text.WordWrap
                            font.pixelSize: Theme.caption; color: Theme.secondary
@@ -538,7 +577,7 @@ Sheet {
                     IconButton {
                         visible: sheet.isTR
                         symbol: "safari"; text: qsTr("Im Browser-Fenster anmelden …"); tint: Theme.accent
-                        onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c })
+                        onClicked: sheet.saveThen(c => { AppModel.webLoginConnection = c }, true)
                     }
                 }
             }

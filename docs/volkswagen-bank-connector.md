@@ -1,8 +1,8 @@
 # Volkswagen-Bank-Anbindung
 
 <!-- sync:connector-note:start -->
-> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zur Volkswagen Bank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen der Bank verstoßen.
-> This connector is an independent community project and is not affiliated with Volkswagen Bank. Interface: unofficial. Using unofficial interfaces may violate the bank's terms of service.
+> **Hinweis / Note:** Dieser Connector ist ein unabhängiges Community-Projekt und steht in keiner Verbindung zum Anbieter Volkswagen Bank. Schnittstelle: inoffiziell. Bei inoffiziellen Schnittstellen kann die Nutzung gegen die Nutzungsbedingungen des Anbieters verstoßen.
+> This connector is an independent community project and is not affiliated with Volkswagen Bank. Interface: unofficial. Using unofficial interfaces may violate the provider's terms of service.
 <!-- sync:connector-note:end -->
 
 Status: **pushTAN umgesetzt, noch nicht live getestet** – `ConnectorKind::VolkswagenBank` (Schlüssel
@@ -21,7 +21,7 @@ Portal: `https://banking.volkswagenbank.de/#/login` (React-Single-Page-App) übe
 | 3 | `POST …/pushtan/transaction/checkstate` `{RequestKey}` (alle paar Sekunden) | `AuthorizationPending`, dann `TransactionConfirmed` |
 | 4 | `POST AuthenticationService/authentication/execute` (Header `X-REQUEST-KEY`, leerer Body) | `Status: Success` |
 | 5 | `GET AccountListService/accountlist` | Konten mit IBAN, Kontonummer, Saldo, `Features.CashFlow` |
-| 6 | `POST CashFlowService/cashflow/list/get` `{accountNumber, dateFrom, dateTo}` (`YYYY-MM-DDZ`) | `CashflowList` mit `CreditAmount`/`DebitAmount`, `PaymentNotes`, `ReferenceAccount` |
+| 6 | `POST CashFlowService/cashflow/list/get` `{accountNumber, dateFrom, dateTo}` (Tage wie im Mitschnitt als `YYYY-MM-DDZ`, z. B. `2026-10-23Z` für den 23.10.; siehe „Offen“) | `CashflowList` mit `CreditAmount`/`DebitAmount`, `PaymentNotes`, `ReferenceAccount` |
 
 - Jede Antwort enthält einen neuen Header `Authorization: bearer …`; der jeweils neueste wird beim
   nächsten Aufruf zurückgeschickt. **Annahme:** Der Mitschnitt zeigt keine Anfrage-Header mit
@@ -40,6 +40,9 @@ Portal: `https://banking.volkswagenbank.de/#/login` (React-Single-Page-App) übe
 ## Offen
 
 - [ ] Live-Test mit echtem Konto (Anmeldung, Zurücksenden des Bearer-Tokens, Umsätze)
+- [ ] Anfrageformat von `dateFrom`/`dateTo` bestätigen: Der Connector sendet wie der Mitschnitt
+      `YYYY-MM-DDZ`. Bisher ist nicht belegt, dass ein Datumsformat den HTTP 400 aus #1081 auslöst;
+      ein Live-Tester meldet, dass Tagesangabe und UTC-Zeitstempel beide funktionieren.
 - [ ] photoTAN: Mitschnitt einer photoTAN-Anmeldung (Code-Eingabe) und Erzeugung der Grafik aus
       `X-CHALLENGES.PhotoTan.ImageCreationChallenge` (die Portal-JavaScript baut sie)
 - [ ] Statuswerte bei falschen Zugangsdaten, abgelehnter oder abgelaufener pushTAN (bisher nur

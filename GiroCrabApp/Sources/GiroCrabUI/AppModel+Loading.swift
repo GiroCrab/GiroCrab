@@ -31,6 +31,8 @@ extension AppModel {
         reloadTags()
         reloadSettings()
         reloadDashboard()
+        // a sync can bring scheduled transfers: an open „Geplant“ page reloads via its task key (#1745)
+        plannedVersion += 1
     }
 
     /// `reloadAll` for changes nobody asked for in the UI (iCloud merge, scheduled sync): the
@@ -50,6 +52,8 @@ extension AppModel {
         reloadTags()
         reloadSettings()
         reloadDashboard()
+        // iCloud may bring only a new scheduled transfer: reload an open „Geplant“ page (#1745)
+        plannedVersion += 1
         merchantStatsCache = [:]
         loadMerchantStats(keepShown: true)
         startSelectionLoad(keepingShown: true)
@@ -93,6 +97,8 @@ extension AppModel {
             let sums = categorySumFilter
             categories = try vault.listCategoriesFilteredAmount(dateFrom: from, dateTo: to, accountIds: sums.accounts, checked: sums.checked, direction: sums.direction, amountMinCents: sums.amount.minCents, amountMaxCents: sums.amount.maxCents, tagIds: [], untaggedOnly: false)
             categoryTree = Self.buildTree(categories)
+            // also clears a set left from another scope or vault
+            loadScopeCategories()
             uncategorizedFilteredCount = Int(try vault.countTransactions(filter: uncategorizedCountFilter(sums)))
         }
     }
@@ -139,6 +145,33 @@ extension AppModel {
                 self.dashboard = d
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError), let self else { return }
+                self.errorMessage = describe(error)
+            }
+        }
+    }
+
+    /// The categories of the booking filter for the sidebar (`scopeCategoryIDs`); the core reads
+    /// every booking for it, so it runs off the main thread. Scope changes and edit refreshes call
+    /// it always, the background selection load after a sync or merge and when the set of category
+    /// ids changed: a category assigned meanwhile must not stay hidden, but a plain period or
+    /// account change (only the amounts differ) must not scan every booking again.
+    /// A failed load keeps the list empty (no fallback to every category) and reports the error.
+    func loadScopeCategories() {
+        scopeCategoryTask?.cancel()
+        let scope = scope
+        guard scope != .all, let vault else {
+            if scopeCategoryIDs != nil { scopeCategoryIDs = nil }
+            return
+        }
+        scopeCategoryTask = Task { [weak self] in
+            do {
+                let ids = try await Self.offMain { try vault.categoriesInScope(scope: scope) }
+                guard !Task.isCancelled, let self, self.vault === vault, self.scope == scope else { return }
+                let next = Set(ids)
+                if self.scopeCategoryIDs != next { self.scopeCategoryIDs = next }
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError), let self,
+                      self.vault === vault, self.scope == scope else { return }
                 self.errorMessage = describe(error)
             }
         }
@@ -945,6 +978,7 @@ extension AppModel {
             settings = try vault.listSettings()
             logoProvider = try vault.onlineLogoProvider()
             merchantRecognitionEnabled = try vault.merchantRecognitionEnabled()
+            netRefundsInStats = try vault.netRefundsInStats()
         }
         reloadProductIDState(vault)
     }
@@ -1103,7 +1137,16 @@ extension AppModel {
         default: break
         }
         switch shownSelection {
-        case .account(let id): return allAccounts.first { $0.id == id }.map { (isTangible(id) ? String(localized: "Wert heute") : depotKind(of: id) == .securities ? String(localized: "Depotwert") : String(localized: "Kontostand"), $0.balanceCents) }
+        case .account(let id):
+            return allAccounts.first { $0.id == id }.map { account in
+                if account.kind == .loan, isOffline(id), account.balanceCents <= 0 {
+                    return (String(localized: "Restschuld"), -max(account.balanceCents, -Int64.max))
+                }
+                let label = isTangible(id) ? String(localized: "Wert heute")
+                    : depotKind(of: id) == .securities ? String(localized: "Depotwert")
+                    : String(localized: "Kontostand")
+                return (label, account.balanceCents)
+            }
         case .group(let id): return groups.first { $0.id == id }.map { (String(localized: "Summe"), $0.balanceCents) }
         case .bank(let key): return bankGroup(for: key).map { (String(localized: "Summe"), $0.balanceCents) }
         case .userGroup(let uuid): return userGroups.first { $0.uuid == uuid }.map { (String(localized: "Summe"), $0.balanceCents) }

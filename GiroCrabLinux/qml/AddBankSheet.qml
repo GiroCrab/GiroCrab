@@ -96,7 +96,15 @@ Sheet {
     function commit() { const f = formLoader.item; f.commit(); if (!f.commitsAsync) close() }
     function back() { step = step === "setup" ? (isRah10 ? "bank" : "access") : "bank" }
 
-    onAboutToShow: { step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); payPalSignature = true; loadPopular(); searchField.forceActiveFocus() }
+    /// firstFetchPeriod (#1043): the setting `sync.days_back` until chosen here, applied when the login is added.
+    readonly property string firstFetchPeriod: {
+        const e = AppModel.settingEntry("sync.days_back")
+        return AppModel.newLoginHistory !== null ? AppModel.newLoginHistory : (e && e.value ? e.value : "max")
+    }
+
+    onAboutToShow: { AppModel.newLoginHistory = null; step = "bank"; query = ""; searchField.text = ""; selected = null; setupValues = ({}); payPalSignature = true; loadPopular(); searchField.forceActiveFocus() }
+    // a later login added elsewhere gets the setting again
+    onClosed: AppModel.newLoginHistory = null
 
     ColumnLayout {
         width: sheet.availableWidth
@@ -237,6 +245,28 @@ Sheet {
                             : sheet.selected.mode === "FinTs" ? finTsForm
                             : sheet.selected.connector ? kindForm : psd2Form
                     }
+                    // "Erster Abruf" (#1043): below every form, like the Mac assistant
+                    ColumnLayout {
+                        visible: formLoader.active
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text { text: qsTr("Erster Abruf"); font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.secondary }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Text { text: qsTr("Zeitraum beim ersten Abruf"); color: Theme.text; Layout.fillWidth: true }
+                            AppComboBox {
+                                readonly property var options: AppModel.historyOptionsWith(sheet.firstFetchPeriod)
+                                Layout.preferredWidth: 200 * Theme.textScale
+                                model: options
+                                textRole: "title"; valueRole: "id"
+                                currentIndex: options.findIndex(o => o.id === sheet.firstFetchPeriod)
+                                onActivated: AppModel.newLoginHistory = currentValue
+                            }
+                        }
+                        Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                               text: qsTr("„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN. Später lässt sich ein Zeitraum in den Einstellungen des Zugangs erneut abrufen.") }
+                    }
                 }
             }
 
@@ -311,6 +341,8 @@ Sheet {
             property string url: prefill ? prefill.url : ""
             property string bankName: prefill ? prefill.name : ""
             property var found: null
+            // name of the chosen preset; the directory's name replaces it like on macOS/iOS
+            property string presetName: ""
             property string autoURL: url
             property bool urlEdited: false
             readonly property bool blzValid: /^[0-9]{8}$/.test(blz)
@@ -318,16 +350,21 @@ Sheet {
             readonly property bool known: prefill !== null && found !== null
             readonly property string lc: (found ? found.name : bankName).toLowerCase()
             readonly property bool isPostbank: lc.indexOf("postbank") >= 0
+            // Deutsche Bank accounts (not the Miles & More cards, BLZ 50070439): login with the
+            // Deutsche Bank ID; wherever the app asks for the "PIN" it means that ID's password.
+            readonly property bool isDeutscheBank: blz !== "50070439" && lc.indexOf("deutsche bank") >= 0
             readonly property bool needsMediumHint: isPostbank || lc.indexOf("deutsche bank") >= 0 || lc.indexOf("norisbank") >= 0
             readonly property bool canAdd: blzValid && urlValid && login.text.trim() !== ""
             function lookup() {
                 const info = blzValid ? AppModel.core("lookup_fints_bank_by_blz", { blz: blz }) : null
+                // a name the directory filled in follows the BLZ, so no hint or name of the previous bank stays
+                const filled = found !== null && bankName === found.name
                 if (!info) {
-                    if (found) { found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
+                    if (found) { if (filled) bankName = ""; found = null; if (!urlEdited && url === autoURL) { url = ""; autoURL = "" } }
                     return
                 }
                 found = info
-                if (bankName === "") bankName = info.name
+                if (bankName === "" || filled || (presetName !== "" && bankName === presetName)) bankName = info.name
                 if (!urlEdited || url === "") { autoURL = info.url; url = info.url; urlEdited = false }
             }
             function commit() {
@@ -349,8 +386,12 @@ Sheet {
                     visible: !ff.known && ff.presets.length > 1
                     Layout.fillWidth: true
                     model: ff.presets.map(p => p.name)
-                    onActivated: i => { const p = ff.presets[i]; ff.bankName = p.id === "custom" ? "" : p.name; ff.urlEdited = false
-                                        ff.autoURL = p.url; ff.url = p.url; ff.blz = p.blz; blzField.text = p.blz; urlField.text = p.url }
+                    onActivated: i => { const p = ff.presets[i]; ff.presetName = p.id === "custom" ? "" : p.name
+                                        // the directory hit belongs to the previous BLZ: the preset's name is not its name
+                                        ff.found = null; ff.bankName = ff.presetName; ff.urlEdited = false
+                                        ff.autoURL = p.url; ff.url = p.url; ff.blz = p.blz; blzField.text = p.blz; urlField.text = p.url
+                                        // also when the BLZ is unchanged (no onBlzChanged): the directory's name applies in any order
+                                        ff.lookup() }
                 }
                 Text { visible: !ff.known; text: qsTr("Bankleitzahl"); color: Theme.text }
                 TextField {
@@ -376,7 +417,7 @@ Sheet {
             GridLayout {
                 columns: 2; columnSpacing: 12; rowSpacing: 8; Layout.fillWidth: true
                 Text { text: qsTr("Anmeldename"); color: Theme.text }
-                TextField { id: login; Layout.fillWidth: true; placeholderText: ff.isPostbank ? qsTr("Postbank ID") : qsTr("z. B. VR-NetKey oder Kontonummer") }
+                TextField { id: login; Layout.fillWidth: true; placeholderText: ff.isPostbank ? qsTr("Postbank ID") : ff.isDeutscheBank ? qsTr("Deutsche Bank ID") : qsTr("z. B. VR-NetKey oder Kontonummer") }
                 Text { text: qsTr("TAN-Medium"); color: Theme.text }
                 TextField { id: tanMedium; Layout.fillWidth: true; placeholderText: qsTr("Optional") }
             }
@@ -384,6 +425,7 @@ Sheet {
             DemoHintBanner { visible: AppModel.demoActive || ff.blz === "99999999"; Layout.fillWidth: true; onFill: login.text = "demo" }
             AddFormFooter {
                 lines: [ff.isPostbank ? qsTr("Postbank: Als Anmeldename die Postbank ID verwenden, nicht die Kontonummer.") : "",
+                        ff.isDeutscheBank ? qsTr("Deutsche Bank: Als Anmeldename die Deutsche Bank ID verwenden. Wo GiroCrab nach der PIN fragt, das Kennwort der Deutsche Bank ID eingeben, nicht die Online Banking PIN.") : "",
                         ff.needsMediumHint ? qsTr("Fordert die Bank ein TAN-Medium (Fehler 9210), tragen Sie den Gerätenamen aus der BestSign- oder App-Verwaltung ein, z. B. SO:Gerätename.")
                                            : qsTr("Das TAN-Medium brauchen Sie nur, wenn die Bank danach fragt.")]
             }

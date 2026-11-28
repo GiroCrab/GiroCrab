@@ -1005,6 +1005,19 @@ impl Vault {
         bytes: Vec<u8>,
         text_hint: Option<String>,
     ) -> Result<Option<String>, CoreError> {
+        self.auto_match_document_for_account(file_name, bytes, text_hint, None)
+    }
+
+    /// Like `auto_match_document`, imported while one account is chosen (#1967):
+    /// only that account's bookings are candidates, and an unmatched file is kept
+    /// on that account instead of without one.
+    pub fn auto_match_document_for_account(
+        &self,
+        file_name: String,
+        bytes: Vec<u8>,
+        text_hint: Option<String>,
+        account_id: Option<i64>,
+    ) -> Result<Option<String>, CoreError> {
         let mut text = format!(
             "{} {}",
             file_name.replace(['_', '-'], " "),
@@ -1014,7 +1027,10 @@ impl Vault {
             text.push(' ');
             text.push_str(&extract_pdf_text(&bytes));
         }
-        let bookings = self.bookings_for_matching(&text)?;
+        let mut bookings = self.bookings_for_matching(&text)?;
+        if let Some(acc) = account_id {
+            bookings.retain(|b| b.account_id == acc);
+        }
         let mime = sniff_mime(&bytes, &file_name);
         let found = best_match(&bookings, &text)
             .map(|(b, _)| (b.id, b.account_id, b.booking_date.clone(), label(b)));
@@ -1044,7 +1060,7 @@ impl Vault {
                 let added = insert_doc(
                     &db,
                     None,
-                    None,
+                    account_id,
                     &title_from_file(&file_name),
                     "beleg",
                     &mime,
@@ -1818,6 +1834,66 @@ mod tests {
             }
         }
         assert!(name_date_hits > 0, "a match by name and date alone");
+    }
+
+    #[test]
+    fn an_import_with_a_chosen_account_stays_on_that_account() {
+        let (_dir, v) = demo_vault();
+        let yesterday = (crate::dates::today() - crate::dates::days(1))
+            .strftime("%d.%m.%Y")
+            .to_string();
+        let lines = || {
+            simple_pdf(&[
+                "REWE Markt GmbH".into(),
+                format!("Datum {yesterday}"),
+                "Summe 47,82 EUR".into(),
+            ])
+        };
+        let rewe = v
+            .bookings_for_matching(&format!("REWE Datum {yesterday} Summe 47,82 EUR"))
+            .unwrap();
+        let rewe = best_match(&rewe, &format!("REWE Datum {yesterday} Summe 47,82 EUR"))
+            .unwrap()
+            .0
+            .account_id;
+        let other = v
+            .list_accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id != rewe)
+            .unwrap()
+            .id;
+        let docs_of = |acc: i64| {
+            v.list_all_documents(DocumentFilter {
+                account_id: Some(acc),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+
+        // The booking belongs to another account: no match, kept on the chosen one.
+        let before = docs_of(other).len();
+        let hit = v
+            .auto_match_document_for_account("a.pdf".into(), lines(), None, Some(other))
+            .unwrap();
+        assert!(hit.is_none(), "{hit:?}");
+        let docs = docs_of(other);
+        assert_eq!(docs.len(), before + 1);
+        assert!(
+            docs.iter()
+                .any(|d| d.file_name == "a.pdf" && d.booking_id.is_none())
+        );
+
+        // Its own account still finds the booking.
+        let hit = v
+            .auto_match_document_for_account("b.pdf".into(), lines(), None, Some(rewe))
+            .unwrap();
+        assert!(hit.as_deref().unwrap_or("").starts_with("REWE"), "{hit:?}");
+        assert!(
+            docs_of(rewe)
+                .iter()
+                .any(|d| d.file_name == "b.pdf" && d.booking_id.is_some())
+        );
     }
 
     #[test]

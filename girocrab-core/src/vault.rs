@@ -30,6 +30,7 @@ pub(crate) mod cache;
 mod categories;
 pub(crate) mod connections;
 pub(crate) mod enable_banking_apps;
+mod holdings;
 mod merge;
 mod rah10;
 mod rules;
@@ -214,6 +215,8 @@ pub struct Vault {
     /// Known recipients of the transfer form, kept until the data changes (#978).
     pub(crate) recipients: cache::ChangeCache<crate::recipients::Recipients>,
     pub(crate) refunds: cache::ChangeCache<crate::refunds::Resolved>,
+    /// What the statistics leave out for linked refunds (`refunds::offsets`, opt-in).
+    pub(crate) refund_offsets: crate::refunds::OffsetSlot,
     /// Merchant recognition with the user's changes (#1373), kept while its tables stay
     /// the same (`Vault::merchant_rules`); holds the merchant cache of this vault.
     pub(crate) merchant_rules: Mutex<Arc<crate::merchants::MerchantRules>>,
@@ -532,6 +535,8 @@ impl Vault {
         // Fetch and import loops cycle through about a dozen cached statements
         // per booking; an LRU smaller than the cycle would evict every one.
         conn.set_prepared_statement_cache_capacity(64);
+        let refund_offsets = crate::refunds::OffsetSlot::default();
+        refund_offsets.register(&conn)?;
         Ok(Arc::new(Vault {
             conn: Mutex::new(conn),
             pending_account_fetches: Mutex::new(std::collections::HashMap::new()),
@@ -542,6 +547,7 @@ impl Vault {
             suggestions: Default::default(),
             recipients: Default::default(),
             refunds: Default::default(),
+            refund_offsets,
             merchant_rules: Mutex::new(crate::merchants::MerchantRules::builtin().clone()),
             data_generation: AtomicU64::new(0),
             _open: OpenVault::new(),

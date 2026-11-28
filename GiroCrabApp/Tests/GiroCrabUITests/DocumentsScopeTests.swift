@@ -113,4 +113,22 @@ final class DocumentsScopeTests: XCTestCase {
         XCTAssertEqual(model.allDocuments(search: "Unbekannter Beleg", unlinkedOnly: true).count, 1)
         XCTAssertNil(model.errorMessage)
     }
+
+    /// A file imported while an account is chosen above stays on that account (#1967).
+    func testImportWithChosenAccountKeepsTheAccount() async throws {
+        let account = try XCTUnwrap(model.accountsByID.keys.sorted().first)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Konto Beleg \(UUID()).pdf")
+        try Data("%PDF-1.4\n".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let version = model.documentsVersion
+
+        XCTAssertTrue(model.dropAnywhere([url], account: account))
+        for _ in 0..<300 where model.documentsVersion == version {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let doc = try XCTUnwrap(model.allDocuments(search: "Konto Beleg", accountId: account).first)
+        XCTAssertEqual(doc.accountId, account)
+        XCTAssertNil(doc.bookingId)
+        XCTAssertNil(model.errorMessage)
+    }
 }

@@ -512,6 +512,8 @@ struct TransferDraft {
     var accountID: Int64?
     /// Umbuchung: name and IBAN come from an own account.
     var ownTransfer = false
+    /// The own account chosen as target of an Umbuchung; kept so a new attempt takes the same one (#1893).
+    var ownTargetID: Int64?
     var name = ""
     var iban = ""
     var bic = ""
@@ -633,6 +635,15 @@ extension Array where Element == CategoryNode {
             if let hit = n.children?.node(id) { return hit }
         }
         return nil
+    }
+
+    /// Only the nodes in `ids` and the parents leading to them (the categories of a booking filter).
+    func limited(to ids: Set<Int64>) -> [CategoryNode] {
+        compactMap { n in
+            let kids = n.children?.limited(to: ids)
+            guard ids.contains(n.id) || !(kids ?? []).isEmpty else { return nil }
+            return CategoryNode(category: n.category, children: (kids ?? []).isEmpty ? nil : kids)
+        }
     }
 }
 

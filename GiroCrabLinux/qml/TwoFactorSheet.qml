@@ -84,6 +84,10 @@ Sheet {
                 Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 220
                 placeholderText: qsTr("TAN / Code"); horizontalAlignment: Text.AlignHCenter
                 font.family: "monospace"; font.pixelSize: Theme.title2 + 2
+                // no input while an answer or a skip is on its way: it would be sent for the next order
+                enabled: !(sheet.active && sheet.active.busy)
+                // a disabled field loses the focus: back in it when the answer is in (wrong TAN, retry)
+                onEnabledChanged: if (enabled && visible) forceActiveFocus()
                 onAccepted: sheet.submit()
             }
             Button { visible: sheet.c !== null && sheet.c.method_name === "Online-Archiv · TAN"
@@ -138,6 +142,23 @@ Sheet {
             defaultEnabled: code.text.trim() !== "" && !(sheet.active && sheet.active.busy)
             onCancel: AppModel.skipCurrentSync()
             onAccept: sheet.submit()
+            // „TAN auslassen“ (#1827): only for a question of the fetch, not the login
+            Item {
+                visible: sheet.active !== null && sheet.active.canSkipOrder === true
+                implicitWidth: skipButton.implicitWidth; implicitHeight: skipButton.implicitHeight
+                Button {
+                    id: skipButton
+                    anchors.fill: parent
+                    text: qsTr("TAN auslassen")
+                    // also not while a poll runs: core may move on to the next order meanwhile
+                    enabled: sheet.active !== null && !sheet.active.busy && !sheet.active.polling
+                    onClicked: { code.text = ""; redirectField.text = ""; consentLoader.active = false; AppModel.skipOrder() }
+                }
+                // .help on a disabled button: the wrapper takes the hover
+                HoverHandler { id: skipHover }
+                ToolTip.visible: skipHover.hovered; ToolTip.delay: 600
+                ToolTip.text: qsTr("Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert.")
+            }
         }
     }
     component ChallengeTexts: ColumnLayout {
