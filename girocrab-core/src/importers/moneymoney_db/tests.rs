@@ -2207,7 +2207,7 @@ fn starter_categories_stay_when_the_vault_has_bookings() {
     assert_eq!(v.list_categories(None, None).unwrap().len(), starter);
 }
 
-/// Soft-deleted bookings are no bookings: the vault counts as empty.
+/// Soft-deleted bookings without a category are no bookings: the vault counts as empty.
 #[test]
 fn deleted_bookings_do_not_count_as_existing() {
     let v = vault();
@@ -3471,6 +3471,109 @@ fn starter_wipe_on_import_soft_deletes_starter_categories() {
         n("SELECT count(DISTINCT uuid) FROM categories"),
         starter + 7
     );
+}
+
+/// A deleted booking or split with a category keeps the tree: replacing it
+/// would clear the category before an import revives the account (#1992).
+#[test]
+fn categorised_deleted_bookings_keep_the_tree() {
+    for split in [false, true] {
+        let v = vault();
+        v.seed_starter_categories().unwrap();
+        {
+            let db = v.db().unwrap();
+            db.execute_batch(
+                "INSERT INTO account_groups(id, name) VALUES (1, 'G');
+                 INSERT INTO accounts(id, group_id, external_ref, name) VALUES (1, 1, 'x', 'X');
+                 INSERT INTO transactions(id, account_id, external_id, booking_date, amount_cents)
+                 VALUES (1, 1, 'e1', '2026-01-01', -5);",
+            )
+            .unwrap();
+            let cat: i64 = db
+                .query_row(
+                    "SELECT id FROM categories WHERE name = 'Supermarkt'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            let sql = if split {
+                "INSERT INTO transaction_splits(transaction_id, category_id, amount_cents, uuid, position)
+                 VALUES (1, ?1, -5, 'split-1', 0)"
+            } else {
+                "UPDATE transactions SET category_id = ?1, category_source = 'manual' WHERE id = 1"
+            };
+            db.execute(sql, [cat]).unwrap();
+        }
+        v.set_account_archived(1, true).unwrap();
+        v.delete_account(1).unwrap();
+        let p = v
+            .preview_moneymoney_database(fake_db(), PW.into(), None)
+            .unwrap();
+        assert!(!p.replaces_starter_categories, "split: {split}");
+    }
+}
+
+/// An account imported without categories, then deleted: importing it again
+/// with categories revives its bookings with their manual categories, and
+/// the starter categories and rules they belong to stay (#1992).
+#[test]
+fn revived_account_keeps_manual_categories_and_rules() {
+    let v = vault();
+    v.seed_starter_categories().unwrap();
+    let p = v
+        .preview_moneymoney_database(fake_db(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, false);
+    o.import_categories = false;
+    v.import_moneymoney_database(fake_db(), PW.into(), o)
+        .unwrap();
+    let cafe = v
+        .list_categories(None, None)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name == "Restaurants & Cafés")
+        .unwrap()
+        .id;
+    let booking: i64 = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM transactions WHERE counterparty = 'Bäckerei Schmidt'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    v.set_transaction_category(booking, Some(cafe)).unwrap();
+    let rules = v.list_rules().unwrap().len();
+    for a in v.list_accounts().unwrap() {
+        v.set_account_archived(a.id, true).unwrap();
+        v.delete_account(a.id).unwrap();
+    }
+
+    let p = v
+        .preview_moneymoney_database(fake_db(), PW.into(), None)
+        .unwrap();
+    assert!(!p.replaces_starter_categories);
+    v.import_moneymoney_database(fake_db(), PW.into(), options_from(&p, false))
+        .unwrap();
+    let (category, source): (Option<i64>, String) = v
+        .db()
+        .unwrap()
+        .query_row(
+            "SELECT category_id, category_source FROM transactions
+              WHERE id = ?1 AND deleted_ms IS NULL",
+            [booking],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((category, source.as_str()), (Some(cafe), "manual"));
+    assert!(
+        v.list_categories(None, None)
+            .unwrap()
+            .iter()
+            .any(|c| c.id == cafe)
+    );
+    assert!(v.list_rules().unwrap().len() >= rules, "starter rules stay");
 }
 
 #[test]
