@@ -64,10 +64,10 @@ struct ToolbarCustomizeSheet: View {
             Divider()
             HStack {
                 Button("Standard wiederherstellen") {
-                    store.layout = .standard
+                    store.arrange(.standard)
                     rows = ToolbarLayout.standard.listRows(oneGroup: !Self.twoGroups)
                 }
-                .disabled(store.layout == .standard)
+                .disabled(store.layout.hasStandardArrangement)
                 Spacer()
                 Button("Fertig") { dismiss() }
                     .keyboardShortcut(.defaultAction)
@@ -111,7 +111,7 @@ struct ToolbarCustomizeSheet: View {
     }
 
     private func apply(shown: Set<ToolbarLayout.Item>) {
-        store.layout = .from(rows: rows, shown: shown, showsScope: store.layout.showsScope)
+        store.arrange(.from(rows: rows, shown: shown, showsScope: store.layout.showsScope))
     }
 }
 
@@ -175,10 +175,9 @@ struct MainToolbarCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .toolbar) {
             let store = ToolbarLayoutStore.shared
-            Button(store.isToolbarShown ? "Symbolleiste ausblenden" : "Symbolleiste einblenden") {
-                guard let window = NSApp.mainWindow, let toolbar = window.toolbar else { return }
-                window.toggleToolbarShown(nil)
-                store.isToolbarShown = toolbar.isVisible
+            // stored with the layout; `MainToolbar` hides the window toolbar from it
+            Button(store.layout.toolbarShown ? "Symbolleiste ausblenden" : "Symbolleiste einblenden") {
+                store.layout.toolbarShown.toggle()
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
             Button("Symbolleiste anpassen …") { store.isCustomizing = true }

@@ -237,4 +237,20 @@ final class ToolbarLayoutTests: XCTestCase {
         store.layout = .standard
         XCTAssertEqual(ToolbarLayoutStore(defaults: defaults).layout, .standard)
     }
+
+    /// Ansicht › Symbolleiste ausblenden is stored; the dialog's edits and its reset keep it.
+    @MainActor
+    func testHiddenToolbarIsStoredAndKeptByTheDialog() {
+        let store = ToolbarLayoutStore(defaults: defaults)
+        store.layout.toolbarShown = false
+        XCTAssertFalse(ToolbarLayoutStore(defaults: defaults).layout.toolbarShown, "survives a restart")
+        store.arrange(.from(rows: store.layout.listRows(oneGroup: false), shown: [.sync], showsScope: true))
+        XCTAssertFalse(store.layout.toolbarShown)
+        XCTAssertFalse(store.layout.hasStandardArrangement)
+        store.arrange(.standard)
+        XCTAssertFalse(store.layout.toolbarShown)
+        XCTAssertTrue(store.layout.hasStandardArrangement, "a hidden toolbar does not count as a change")
+        store.layout.toolbarShown = true
+        XCTAssertEqual(ToolbarLayoutStore(defaults: defaults).layout, .standard)
+    }
 }

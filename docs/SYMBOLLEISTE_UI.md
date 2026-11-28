@@ -21,7 +21,7 @@ Ausgeblendete Symbole stehen beim nächsten Öffnen am Ende der Liste.
 
 Vor macOS 26 gibt es keinen flexiblen Zwischenraum in der Leiste. Die Liste zeigt dort keine Trennzeile und keinen Seitenwechsel, alle Symbole mit Häkchen bilden eine Gruppe.
 
-Ansicht › „Symbolleiste ausblenden/einblenden“ (⌥⌘T) blendet die Leiste aus und ein.
+Ansicht › „Symbolleiste ausblenden/einblenden“ (⌥⌘T) blendet die Leiste aus und ein. Der Zustand wird mit der Anordnung gespeichert und gilt auch nach einem Neustart. Bearbeiten im Sheet und „Standard wiederherstellen“ ändern ihn nicht.
 
 ## Darstellung und Prüfung
 

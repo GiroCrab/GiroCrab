@@ -117,6 +117,13 @@ extension ToolbarLayout {
     }
 
     var shown: Set<Item> { Set(leading + trailing) }
+
+    /// The standard buttons and scope control, whether or not the toolbar is shown („Standard wiederherstellen“).
+    var hasStandardArrangement: Bool {
+        var shownToolbar = self
+        shownToolbar.toolbarShown = true
+        return shownToolbar == .standard
+    }
 }
 
 /// Moving without dragging (context menu and VoiceOver actions of the dialog).
@@ -161,12 +168,17 @@ final class ToolbarLayoutStore {
     }
     /// The dialog „Symbolleiste anpassen“ is open (Ansicht menu, `--demo-sheet toolbar`).
     var isCustomizing = false
-    /// Whether the main window shows its toolbar, for the title of Ansicht › Symbolleiste ein-/ausblenden.
-    var isToolbarShown = true
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
         ToolbarLayout.migrateLegacy(in: defaults)
         layout = ToolbarLayout.load(from: defaults)
+    }
+
+    /// An edit from the dialog: takes the buttons and the scope control, keeps whether the toolbar is shown.
+    func arrange(_ arrangement: ToolbarLayout) {
+        var new = arrangement
+        new.toolbarShown = layout.toolbarShown
+        layout = new
     }
 }
