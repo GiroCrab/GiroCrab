@@ -234,8 +234,7 @@ struct BankSetupSheet: View {
                 // no dismiss(): clearing the request closes this sheet, and in
                 // "Alle abrufen" the next login may already have opened its own –
                 // a dismiss() here would close that one and stall the batch.
-                cancel: { model.cancelSetupRequest() },
-                leading: nil
+                cancel: { model.cancelSetupRequest() }
             ) {
                 Button { model.completeSetup(request, values: values) } label: {
                     Text("Speichern & abrufen").frame(maxWidth: .infinity)
