@@ -338,7 +338,7 @@ extension AppModel {
         guard let vault, var c = categories.first(where: { $0.id == id }) else { return }
         change(&c)
         runCore {
-            try vault.updateCategory(id: c.id, name: c.name, parentId: c.parentId,
+            try vault.updateCategory(id: c.id, name: c.editName, parentId: c.parentId,
                                      sfSymbol: c.sfSymbol, colorHex: c.colorHex)
         }
         reloadCategories()
@@ -349,7 +349,7 @@ extension AppModel {
     func renameCategory(_ id: Int64, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        editCategory(id) { $0.name = trimmed }
+        editCategory(id) { $0.editName = trimmed }
     }
 
     /// "Verschieben nach ▸" of a category: under another category, or to the

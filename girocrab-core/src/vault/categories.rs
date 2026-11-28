@@ -1,6 +1,6 @@
 //! The category tree: listing with period totals, create, edit, delete.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -16,28 +16,83 @@ pub(super) struct CategoryFlow {
     pub(super) is_transfer: bool,
 }
 
+pub(crate) type CategoryRow = (
+    i64,
+    Option<i64>,
+    String,
+    String,
+    String,
+    i32,
+    Option<i64>,
+    String,
+);
+
+type RawCategoryRow = (
+    i64,
+    Option<i64>,
+    String,
+    String,
+    String,
+    i32,
+    Option<i64>,
+    Option<String>,
+);
+
+/// Assigns deterministic display suffixes (`"Name (2)"`, …) to case-insensitively
+/// duplicate live siblings while preserving each row's clean `edit_name`.
+fn disambiguate_category_rows(mut rows: Vec<RawCategoryRow>) -> Vec<CategoryRow> {
+    // Use UUID order so peers assign the same suffixes even when their
+    // local IDs and sort orders differ. Reserve real names first so a
+    // literal name such as "Savings (2)" remains distinguishable.
+    rows.sort_by(|a, b| a.7.cmp(&b.7).then(a.0.cmp(&b.0)));
+    let mut reserved: HashSet<_> = rows
+        .iter()
+        .map(|r| (r.1, r.2.trim().to_lowercase()))
+        .collect();
+    let mut seen = HashSet::new();
+    rows.into_iter()
+        .map(|(id, parent, edit_name, symbol, color, order, budget, _)| {
+            let folded = edit_name.trim().to_lowercase();
+            let name = if seen.insert((parent, folded.clone())) {
+                edit_name.clone()
+            } else {
+                (2..)
+                    .find_map(|n| {
+                        reserved
+                            .insert((parent, format!("{folded} ({n})")))
+                            .then(|| format!("{} ({n})", edit_name.trim()))
+                    })
+                    .unwrap_or_else(|| edit_name.clone())
+            };
+            (id, parent, name, symbol, color, order, budget, edit_name)
+        })
+        .collect()
+}
+
 impl Vault {
-    fn category_rows(
-        conn: &Connection,
-    ) -> CoreResult<Vec<(i64, Option<i64>, String, String, String, i32, Option<i64>)>> {
-        let mut stmt = conn.prepare("SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role FROM categories WHERE deleted_ms IS NULL")?;
+    pub(crate) fn category_rows(conn: &Connection) -> CoreResult<Vec<CategoryRow>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, parent_id, name, sf_symbol, color_hex, sort_order, budget_cents, builtin_role, uuid
+               FROM categories WHERE deleted_ms IS NULL",
+        )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok((
-                    r.get(0)?,
-                    r.get(1)?,
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
                     role_name(
                         &r.get::<_, String>(2)?,
                         r.get::<_, Option<String>>(7)?.as_deref(),
                     ),
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i32>(5)?,
+                    r.get::<_, Option<i64>>(6)?,
+                    r.get::<_, Option<String>>(8)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        Ok(disambiguate_category_rows(rows))
     }
 
     pub(super) fn category_flows(conn: &Connection) -> CoreResult<HashMap<i64, CategoryFlow>> {
@@ -69,12 +124,16 @@ impl Vault {
     pub(crate) fn category_paths(
         conn: &Connection,
     ) -> CoreResult<HashMap<i64, (String, String, String, String)>> {
+        Ok(Self::category_paths_from_rows(&Self::category_rows(conn)?))
+    }
+
+    pub(crate) fn category_paths_from_rows(
+        rows: &[CategoryRow],
+    ) -> HashMap<i64, (String, String, String, String)> {
         // id -> (name, path, color, symbol)
-        let rows = Self::category_rows(conn)?;
-        let by_id: HashMap<i64, &(i64, Option<i64>, String, String, String, i32, Option<i64>)> =
-            rows.iter().map(|r| (r.0, r)).collect();
+        let by_id: HashMap<i64, &CategoryRow> = rows.iter().map(|r| (r.0, r)).collect();
         let mut out = HashMap::new();
-        for r in &rows {
+        for r in rows {
             let mut parts = vec![r.2.clone()];
             let mut cur = r.1;
             let mut guard = 0;
@@ -96,7 +155,7 @@ impl Vault {
                 (r.2.clone(), parts.join(" › "), r.4.clone(), r.3.clone()),
             );
         }
-        Ok(out)
+        out
     }
 }
 
@@ -554,6 +613,8 @@ impl Vault {
 }
 
 #[cfg(test)]
+mod name_tests;
+#[cfg(test)]
 mod reorder_tests;
 #[cfg(test)]
 mod role_tests;
@@ -611,10 +672,7 @@ impl Vault {
     }
 
     /// `category_id` and all its descendants (capped like the history queries).
-    fn category_subtree(
-        rows: &[(i64, Option<i64>, String, String, String, i32, Option<i64>)],
-        category_id: i64,
-    ) -> Vec<i64> {
+    fn category_subtree(rows: &[CategoryRow], category_id: i64) -> Vec<i64> {
         let mut ids = vec![category_id];
         let mut i = 0;
         while i < ids.len() && ids.len() < 4096 {
@@ -676,10 +734,7 @@ impl Vault {
                 totals.insert(c, (s, n));
             }
         }
-        let mut children: HashMap<
-            Option<i64>,
-            Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-        > = HashMap::new();
+        let mut children: HashMap<Option<i64>, Vec<&CategoryRow>> = HashMap::new();
         for r in &rows {
             children.entry(r.1).or_default().push(r);
         }
@@ -691,10 +746,7 @@ impl Vault {
         }
         fn subtotal(
             id: i64,
-            children: &HashMap<
-                Option<i64>,
-                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-            >,
+            children: &HashMap<Option<i64>, Vec<&CategoryRow>>,
             totals: &HashMap<Option<i64>, (i64, u32)>,
             depth: u32,
         ) -> (i64, u32) {
@@ -717,10 +769,7 @@ impl Vault {
             parent: Option<i64>,
             depth: u32,
             prefix: &str,
-            children: &HashMap<
-                Option<i64>,
-                Vec<&(i64, Option<i64>, String, String, String, i32, Option<i64>)>,
-            >,
+            children: &HashMap<Option<i64>, Vec<&CategoryRow>>,
             totals: &HashMap<Option<i64>, (i64, u32)>,
             out: &mut Vec<Category>,
         ) {
@@ -740,6 +789,7 @@ impl Vault {
                         id: k.0,
                         parent_id: k.1,
                         name: k.2.clone(),
+                        edit_name: k.7.clone(),
                         sf_symbol: k.3.clone(),
                         color_hex: k.4.clone(),
                         sort_order: k.5,
