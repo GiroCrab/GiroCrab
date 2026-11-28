@@ -604,9 +604,22 @@ extension AppModel {
         return f
     }
 
+    /// Whether bookings may be exported now: not in privacy mode (it hides amounts and personal data, so an export
+    /// must not write them to a file) and not with a locked vault. Checked when the dialog opens and again right
+    /// before the file is handed to the save panel or share sheet (CWE-200).
+    var exportAllowed: Bool {
+        !AppDefaults.store.bool(forKey: PrivacyMode.enabledKey) && isUnlocked
+    }
+
     /// Opens the compact export dialog (PDF / CSV / XML).
     /// - Parameter selection: use the current multi-/single selection (context menu).
     func openBookingExport(selection: Bool = false) {
+        guard exportAllowed else {
+            #if os(macOS)
+            NSSound.beep()
+            #endif
+            return
+        }
         if selection {
             if selectedBookingIDs.isEmpty, let id = selectedBookingID {
                 exportBookingIDs = [id]

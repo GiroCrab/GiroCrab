@@ -379,6 +379,23 @@ final class BookingExportTests: XCTestCase {
         XCTAssertEqual(model.exportBookingIDs, Set(ids))
     }
 
+    /// Privacy mode: no export dialog, and `exportAllowed` (checked again before the file is handed over) is false.
+    func testNoExportInPrivacyMode() {
+        let model = demoModel()
+        defer { AppDefaults.store.removeObject(forKey: PrivacyMode.enabledKey) }
+        AppDefaults.store.set(true, forKey: PrivacyMode.enabledKey)
+        XCTAssertFalse(model.exportAllowed)
+        model.openBookingExport()
+        XCTAssertFalse(model.showExportSheet)
+        model.openBookingExport(selection: true)
+        XCTAssertFalse(model.showExportSheet)
+
+        AppDefaults.store.set(false, forKey: PrivacyMode.enabledKey)
+        XCTAssertTrue(model.exportAllowed)
+        model.openBookingExport()
+        XCTAssertTrue(model.showExportSheet)
+    }
+
     func testPDFA4PageMediaBox() async throws {
         var report = report()
         report.generatedAt = Date()
