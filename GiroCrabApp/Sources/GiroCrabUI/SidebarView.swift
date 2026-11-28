@@ -852,7 +852,7 @@ struct AccountRow: View {
         let line2 = secondLine
         VStack(alignment: .leading, spacing: density.usesTighterAccountSpacing ? 0 : 1) {
             HStack(alignment: usesLargeText ? .top : .center, spacing: signetGap) {
-                AccountSignet(account: account, size: signetSize, color: model.accountColor(account.id), onSelection: onSelection)
+                accountIcon
                 if usesLargeText {
                     VStack(alignment: .leading, spacing: 2) {
                         accountName
@@ -888,6 +888,19 @@ struct AccountRow: View {
         // although its own switch is on — the group that wins, or archiving
         .helpIfPresent(model.totalExclusionReason(account, redaction: redaction))
         .accessibilityElement(children: .combine)
+    }
+
+    private var accountIcon: some View {
+        #if os(macOS)
+        Image(systemName: account.sfSymbol)
+            .appFont(.body, weight: .semibold)
+            .foregroundStyle(onSelection ? Color.primary : model.accountColor(account.id))
+            .modifier(SidebarIconColumn())
+            // Keep the account name and subtitle on the same axis in either density.
+            .frame(width: signetSize * textScale, height: signetSize * textScale, alignment: .leading)
+        #else
+        AccountSignet(account: account, size: signetSize, color: model.accountColor(account.id), onSelection: onSelection)
+        #endif
     }
 
     private var accountName: some View {
