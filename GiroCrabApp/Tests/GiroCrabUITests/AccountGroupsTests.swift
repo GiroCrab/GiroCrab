@@ -343,7 +343,7 @@ final class AccountGroupsTests: XCTestCase {
         XCTAssertTrue(model.dropUserGroup(c, onto: g(a), before: false))
         let ungrouped = UserGroup(uuid: "", name: "", sfSymbol: "", colorHex: "", sortOrder: 0, includeInTotal: true,
                                   inTotal: true, isUngrouped: true, parentUuid: nil, depth: 0,
-                                  balanceCents: 0, accounts: [])
+                                  balanceCents: 0, balances: [], accounts: [])
         XCTAssertTrue(model.dropUserGroup(c, onto: ungrouped, before: false))
         XCTAssertNil(g(c).parentUuid)
         XCTAssertEqual(groups.last?.uuid, c)

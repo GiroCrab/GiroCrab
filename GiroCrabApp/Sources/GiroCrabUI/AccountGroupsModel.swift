@@ -659,7 +659,7 @@ extension AppModel {
         userGroups.first(where: \.isUngrouped) ?? UserGroup(
             uuid: "", name: String(localized: "Ohne Gruppe"), sfSymbol: "tray", colorHex: "",
             sortOrder: .max, includeInTotal: true, inTotal: true, isUngrouped: true,
-            parentUuid: nil, depth: 0, balanceCents: 0, accounts: []
+            parentUuid: nil, depth: 0, balanceCents: 0, balances: [], accounts: []
         )
     }
 

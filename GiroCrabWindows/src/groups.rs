@@ -216,6 +216,7 @@ mod tests {
             parent_uuid: parent.map(String::from),
             depth,
             balance_cents: 0,
+            balances: Vec::new(),
             accounts: Vec::new(),
         }
     }

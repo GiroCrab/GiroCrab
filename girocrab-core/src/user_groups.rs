@@ -51,7 +51,7 @@
 //! without a user choice the colour is derived from the account's sync
 //! identity, so every device shows the same colour without storing it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -60,7 +60,7 @@ use crate::dates::now_ms;
 use crate::error::{CoreError, CoreResult};
 use crate::fnv::Fnv1a64;
 use crate::i18n::{tr, trf};
-use crate::models::{Account, UserGroup};
+use crate::models::{Account, CurrencyAmount, UserGroup};
 use crate::schema::has_column;
 use crate::vault::Vault;
 
@@ -1086,6 +1086,34 @@ impl Vault {
                 .map(|a| a.balance_cents)
                 .sum()
         };
+        // the same rules per currency (#1844); `own` = like `sum_own`
+        let per_currency = |v: &[Account], own: bool| -> BTreeMap<String, i64> {
+            let mut m = BTreeMap::new();
+            for a in v {
+                let counts = if own {
+                    a.include_in_total && a.archived_unix.is_none()
+                } else {
+                    a.in_total
+                };
+                if counts && !a.currency.is_empty() {
+                    *m.entry(a.currency.clone()).or_insert(0) += a.balance_cents;
+                }
+            }
+            m
+        };
+        // other currencies alphabetically, EUR last (like „Alle Konten“)
+        let amounts = |mut m: BTreeMap<String, i64>| -> Vec<CurrencyAmount> {
+            let eur = m.remove("EUR");
+            let mut v: Vec<CurrencyAmount> = m
+                .into_iter()
+                .map(|(currency, cents)| CurrencyAmount { currency, cents })
+                .collect();
+            v.extend(eur.map(|cents| CurrencyAmount {
+                currency: "EUR".into(),
+                cents,
+            }));
+            v
+        };
         let (parents, excluded) = {
             let db = self.db()?;
             (effective_parents(&db)?, excluded_from_total(&db)?)
@@ -1097,6 +1125,8 @@ impl Vault {
             children.entry(parent).or_default().push(i);
         }
         let mut out: Vec<UserGroup> = Vec::with_capacity(groups.len() + 1);
+        // per-currency sums, parallel to `out`
+        let mut currencies: Vec<BTreeMap<String, i64>> = Vec::with_capacity(groups.len());
         // (index into `groups`, depth); a group's subgroups follow it
         let mut stack: Vec<(usize, u32)> = children
             .get(&None)
@@ -1108,12 +1138,14 @@ impl Vault {
             if let Some(kids) = children.get(&Some(uuid.as_str())) {
                 stack.extend(kids.iter().rev().map(|k| (*k, depth + 1)));
             }
+            currencies.push(per_currency(&accs, excluded.contains(uuid)));
             out.push(UserGroup {
                 balance_cents: if excluded.contains(uuid) {
                     sum_own(&accs)
                 } else {
                     sum(&accs)
                 },
+                balances: Vec::new(),
                 uuid: uuid.clone(),
                 name: name.clone(),
                 sf_symbol: sf_symbol.clone(),
@@ -1142,7 +1174,13 @@ impl Vault {
             }
             if let Some(p) = out[i].parent_uuid.as_ref().and_then(|p| index.get(p)) {
                 out[*p].balance_cents += out[i].balance_cents;
+                for (currency, cents) in currencies[i].clone() {
+                    *currencies[*p].entry(currency).or_insert(0) += cents;
+                }
             }
+        }
+        for (g, m) in out.iter_mut().zip(currencies) {
+            g.balances = amounts(m);
         }
         let rest = members(None);
         if !rest.is_empty() {
@@ -1158,6 +1196,7 @@ impl Vault {
                 parent_uuid: None,
                 depth: 0,
                 balance_cents: sum(&rest),
+                balances: amounts(per_currency(&rest, false)),
                 accounts: rest,
             });
         }

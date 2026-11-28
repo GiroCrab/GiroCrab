@@ -249,13 +249,16 @@ fn account_matches(a: &Account, query: &str) -> bool {
             .any(|f| f.to_lowercase().contains(&q))
 }
 
-/// Account groups in the order of the chosen mode: (group label, accounts).
-fn grouped<'a>(
+/// One account group: label, the user group behind it (`Groups` mode only), accounts.
+type Group<'a, 'g> = (String, Option<&'g UserGroup>, Vec<&'a Account>);
+
+/// Account groups in the order of the chosen mode.
+fn grouped<'a, 'g>(
     accounts: &[&'a Account],
-    groups: &[UserGroup],
+    groups: &'g [UserGroup],
     mode: GroupMode,
-) -> Vec<(String, Vec<&'a Account>)> {
-    let mut out: Vec<(String, Vec<&Account>)> = Vec::new();
+) -> Vec<Group<'a, 'g>> {
+    let mut out: Vec<Group<'a, 'g>> = Vec::new();
     match mode {
         GroupMode::Groups => {
             for g in groups {
@@ -269,13 +272,13 @@ fn grouped<'a>(
                     .collect();
                 if !members.is_empty() {
                     let pad = "  ".repeat(g.depth as usize);
-                    out.push((format!("{pad}{}", g.name), members));
+                    out.push((format!("{pad}{}", g.name), Some(g), members));
                 }
             }
             // Accounts of a group the list does not know still show up.
             let known: HashSet<&str> = out
                 .iter()
-                .flat_map(|(_, m)| m.iter().map(|a| a.name.as_str()))
+                .flat_map(|(_, _, m)| m.iter().map(|a| a.name.as_str()))
                 .collect();
             let rest: Vec<_> = accounts
                 .iter()
@@ -283,7 +286,7 @@ fn grouped<'a>(
                 .filter(|a| !known.contains(a.name.as_str()))
                 .collect();
             if !rest.is_empty() {
-                out.push(("Ohne Gruppe".into(), rest));
+                out.push(("Ohne Gruppe".into(), None, rest));
             }
         }
         GroupMode::Banks => {
@@ -312,14 +315,14 @@ fn grouped<'a>(
                         name == b
                     })
                     .collect();
-                out.push((b, members));
+                out.push((b, None, members));
             }
         }
         GroupMode::Kind => {
             for k in KIND_ORDER {
                 let members: Vec<_> = accounts.iter().copied().filter(|a| a.kind == k).collect();
                 if !members.is_empty() {
-                    out.push((kind_label(k).to_string(), members));
+                    out.push((kind_label(k).to_string(), None, members));
                 }
             }
         }
@@ -437,7 +440,7 @@ fn build_with(
             .iter()
             .filter(|a| account_matches(a, input.query))
             .collect();
-        for (label, members) in grouped(&visible, input.user_groups, input.mode) {
+        for (label, group, members) in grouped(&visible, input.user_groups, input.mode) {
             let gid = format!("g:{}", label.trim());
             let mut head = SideRow::new(kind::GROUP, format!("toggle:{gid}"), label.trim());
             head.depth = 1 + (label.len() - label.trim_start().len()) as i32 / 2;
@@ -449,17 +452,66 @@ fn build_with(
             };
             let is_folded = head.fold == 2;
             // group figures are overall money sums (#337): only effectively
-            // included accounts count; every account row stays visible
-            let eur: Vec<i64> = members
-                .iter()
-                .filter(|a| a.currency == "EUR" && a.in_total)
-                .map(|a| a.balance_cents)
-                .collect();
-            if !eur.is_empty() {
-                let sum: i64 = eur.iter().sum();
-                head.amount = hide(money(sum, "EUR"));
-                head.negative = sum < 0 && !input.privacy;
+            // included accounts count; every account row stays visible.
+            // One sum per currency, other currencies alphabetically, EUR last,
+            // like the core's group balances (#1844)
+            let searching = !input.query.trim().is_empty();
+            // an excluded user group keeps its own sum: its accounts count by
+            // their own switch, like the core's `sum_own` (#1100, #1844)
+            let own_rule = group.is_some_and(|g| !g.in_total);
+            let counts = |a: &Account| {
+                if own_rule {
+                    a.include_in_total && a.archived_unix.is_none()
+                } else {
+                    a.in_total
+                }
+            };
+            // user groups without a search take the core's balances, which
+            // include the counted subgroups; a search sums only the matches,
+            // bank and account-type headers always sum their members
+            let core = group.filter(|_| !searching);
+            let mut totals: Vec<(String, i64)> = if let Some(g) = core {
+                g.balances
+                    .iter()
+                    .map(|b| (b.currency.clone(), b.cents))
+                    .collect()
+            } else {
+                let mut sums: std::collections::BTreeMap<String, i64> =
+                    std::collections::BTreeMap::new();
+                for a in members
+                    .iter()
+                    .filter(|a| counts(a) && !a.currency.is_empty())
+                {
+                    *sums.entry(a.currency.clone()).or_insert(0) += a.balance_cents;
+                }
+                let eur = sums.remove("EUR");
+                sums.into_iter()
+                    .chain(eur.map(|cents| ("EUR".to_string(), cents)))
+                    .collect()
+            };
+            if totals.is_empty() {
+                // no counted account with a currency: show an EUR sum like
+                // Linux and macOS (#1844); only currency-less accounts remain,
+                // so nothing is summed across currencies
+                let cents: i64 = match core {
+                    Some(g) => g.balance_cents,
+                    None => members
+                        .iter()
+                        .filter(|a| counts(a))
+                        .map(|a| a.balance_cents)
+                        .sum(),
+                };
+                totals.push(("EUR".to_string(), cents));
             }
+            let text = totals
+                .iter()
+                .map(|(currency, cents)| money(*cents, currency))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            // masked in privacy mode, the fallback too
+            head.amount = hide(text);
+            // red only when every sum is negative, never in privacy mode
+            head.negative = totals.iter().all(|(_, cents)| *cents < 0) && !input.privacy;
             head.icon = group_icon(label.trim()).into();
             rows.push(head);
             if is_folded {
@@ -885,6 +937,7 @@ mod tests {
             parent_uuid: None,
             depth: 0,
             balance_cents: 0,
+            balances: vec![],
             accounts: vec![],
         };
         let groups = [group("g1", "Privat", false), group("", "Ohne Gruppe", true)];
@@ -1042,6 +1095,104 @@ mod tests {
         let none = build_with(&inp, &HashSet::new(), &money);
         assert_eq!(row(&none, "acct:2").label, "Haushaltskasse");
         assert_eq!(row(&none, "acct:2").detail, "");
+    }
+
+    fn user_group(
+        uuid: &str,
+        name: &str,
+        parent: Option<&str>,
+        depth: u32,
+        in_total: bool,
+        balances: &[(&str, i64)],
+    ) -> UserGroup {
+        UserGroup {
+            uuid: uuid.into(),
+            name: name.into(),
+            sf_symbol: String::new(),
+            color_hex: String::new(),
+            sort_order: 0,
+            include_in_total: in_total,
+            in_total,
+            is_ungrouped: false,
+            parent_uuid: parent.map(Into::into),
+            depth,
+            balance_cents: 0,
+            balances: balances
+                .iter()
+                .map(|(currency, cents)| girocrab_core::CurrencyAmount {
+                    currency: (*currency).into(),
+                    cents: *cents,
+                })
+                .collect(),
+            accounts: vec![],
+        }
+    }
+
+    fn group_amount(rows: &[SideRow], label: &str) -> Option<String> {
+        rows.iter()
+            .find(|r| r.kind == kind::GROUP && r.label == label)
+            .map(|r| r.amount.clone())
+    }
+
+    #[test]
+    fn user_group_headers_include_subgroups() {
+        let mut giro = account(1, "Giro", "A", AccountKind::Checking, 100);
+        giro.currency = "USD".into();
+        giro.user_group_uuid = Some("p".into());
+        let mut trip = account(2, "Reisekasse", "A", AccountKind::Cash, 200);
+        trip.currency = "USD".into();
+        trip.user_group_uuid = Some("c".into());
+        // core balances: the parent rolls up its included subgroup
+        let groups = [
+            user_group("p", "Privat", None, 0, true, &[("USD", 300)]),
+            user_group("c", "Reise", Some("p"), 1, true, &[("USD", 200)]),
+        ];
+        let accounts = [giro, trip];
+        let folded = HashSet::new();
+        let mut inp = input(&accounts, &[], &folded, GroupMode::Groups, "");
+        inp.user_groups = &groups;
+        let rows = build_with(&inp, &HashSet::new(), &money);
+        assert_eq!(group_amount(&rows, "Privat").as_deref(), Some("300 USD"));
+        assert_eq!(group_amount(&rows, "Reise").as_deref(), Some("200 USD"));
+        // a search sums only the matching accounts
+        let mut inp = input(&accounts, &[], &folded, GroupMode::Groups, "giro");
+        inp.user_groups = &groups;
+        let rows = build_with(&inp, &HashSet::new(), &money);
+        assert_eq!(group_amount(&rows, "Privat").as_deref(), Some("100 USD"));
+        assert_eq!(group_amount(&rows, "Reise"), None);
+        // privacy masks the core figures too
+        let mut inp = input(&accounts, &[], &folded, GroupMode::Groups, "");
+        inp.user_groups = &groups;
+        inp.privacy = true;
+        let rows = build_with(&inp, &HashSet::new(), &money);
+        assert_eq!(
+            group_amount(&rows, "Privat").as_deref(),
+            Some(crate::daily::MASK)
+        );
+    }
+
+    #[test]
+    fn excluded_group_header_keeps_its_own_sum() {
+        let mut cash = account(1, "Kasse", "A", AccountKind::Cash, 500);
+        cash.user_group_uuid = Some("x".into());
+        // effective flag: the group is taken out of the total
+        cash.in_total = false;
+        let mut old = account(2, "Alt", "A", AccountKind::Cash, 70);
+        old.user_group_uuid = Some("x".into());
+        old.in_total = false;
+        old.archived_unix = Some(1);
+        let groups = [user_group("x", "Extern", None, 0, false, &[("EUR", 500)])];
+        let accounts = [cash, old];
+        let folded = HashSet::new();
+        let mut inp = input(&accounts, &[], &folded, GroupMode::Groups, "");
+        inp.user_groups = &groups;
+        let rows = build_with(&inp, &HashSet::new(), &money);
+        assert_eq!(group_amount(&rows, "Extern").as_deref(), Some("500 EUR"));
+        // member sum during a search: own switch, archived accounts skipped
+        let mut inp = input(&accounts, &[], &folded, GroupMode::Groups, "a");
+        inp.user_groups = &groups;
+        let rows = build_with(&inp, &HashSet::new(), &money);
+        assert_eq!(group_amount(&rows, "Extern").as_deref(), Some("500 EUR"));
     }
 
     #[test]

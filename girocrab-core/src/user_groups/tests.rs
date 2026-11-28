@@ -1189,6 +1189,68 @@ fn group(v: &Vault, name: &str) -> crate::models::UserGroup {
         .unwrap()
 }
 
+/// (EUR sum, per-currency sums) of a group.
+fn currency_sums(g: crate::models::UserGroup) -> (i64, Vec<(String, i64)>) {
+    (
+        g.balance_cents,
+        g.balances
+            .into_iter()
+            .map(|c| (c.currency, c.cents))
+            .collect(),
+    )
+}
+
+/// A group shows every currency, not just EUR (#1844): per currency, EUR
+/// last, rolled up into the parent; `balance_cents` stays the EUR sum.
+#[test]
+fn group_balances_list_every_currency() {
+    let dir = temp_dir("currencies");
+    let v = open(&dir, "a.db");
+    let ids = seed(&v);
+    v.db()
+        .unwrap()
+        .execute(
+            "UPDATE accounts SET currency = 'USD' WHERE id = ?1",
+            params![ids[1]],
+        )
+        .unwrap();
+    let top = v.create_user_group("Oben".into(), "folder".into()).unwrap();
+    let sub = v
+        .create_user_group("Unten".into(), "folder".into())
+        .unwrap();
+    v.set_user_group_parent(sub.clone(), Some(top.clone()))
+        .unwrap();
+    v.move_account_to_group(ids[0], Some(top.clone()), None)
+        .unwrap();
+    v.move_account_to_group(ids[1], Some(sub.clone()), None)
+        .unwrap();
+    let usd = ("USD".to_string(), 5_000_00);
+    let eur = ("EUR".to_string(), 100_00);
+    assert_eq!(currency_sums(group(&v, "Unten")), (0, vec![usd.clone()]));
+    assert_eq!(
+        currency_sums(group(&v, "Oben")),
+        (100_00, vec![usd.clone(), eur.clone()])
+    );
+    // the account left without a group: EUR only
+    let rest = v
+        .list_user_groups()
+        .unwrap()
+        .into_iter()
+        .find(|g| g.is_ungrouped)
+        .unwrap();
+    assert_eq!(
+        currency_sums(rest),
+        (-50_00, vec![("EUR".to_string(), -50_00)])
+    );
+
+    // an excluded subgroup keeps its own sums but no longer counts above
+    v.update_user_group(sub.clone(), "Unten".into(), "folder".into(), false)
+        .unwrap();
+    assert_eq!(currency_sums(group(&v, "Unten")), (0, vec![usd]));
+    assert_eq!(currency_sums(group(&v, "Oben")), (100_00, vec![eur]));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn subgroups_nest_sum_up_and_inherit_the_total_switch() {
     let dir = temp_dir("nest");
