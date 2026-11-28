@@ -203,6 +203,12 @@ object DemoData {
             Holding("h4", "a_tr", "Apple Inc.", "US0378331005", 12.0, 23_150, 24_000, wkn = "865985", currency = "USD", nativePurchasePriceCents = 2_174, fxRateToEur = 0.92),
             Holding("h5", "a_tr", "iShares MSCI World (USD)", "IE00B0M62Q58", 20.0, 11_240, 19_500, currency = "USD", nativePurchasePriceCents = 1_060, fxRateToEur = 0.92),
         )
+        // A real vault gets the runs and the next dates from the core; demo data has no core.
+        val demoRuns = listOf(
+            StandingOrderRun("so1", today.plusMonths(1).withDayOfMonth(1)),
+            StandingOrderRun("so2", today.plusMonths(1).withDayOfMonth(15)),
+            StandingOrderRun("so3", today.plusMonths(3).withDayOfMonth(1)),
+        )
         return VaultSnapshot(
             groups = groups,
             accounts = accounts.map { if (it.kind == AccountKind.Depot) it.copy(balanceCents = holdings.sumOf { h -> h.valueCents }) else it },
@@ -210,10 +216,14 @@ object DemoData {
             categories = categories,
             tags = tags,
             rules = rules,
+            // Demo runs: a real vault gets these from the core; demo data has no core behind it.
+            standingOrderRuns = demoRuns,
+            // Same rule as the mapper: the earliest run of an order is its next execution, so the card
+            // in demo mode shows the date the planned tab lists (no core to compute it here).
             standingOrders = listOf(
-                StandingOrder("so1", "a_spk", "Hausverwaltung Berlin", "DE44500105175407324931", -98_000, "Miete", "M", 1, 1, today.minusYears(2).withDayOfMonth(1), null),
-                StandingOrder("so2", "a_cdi", "Trade Republic", "DE86100123456789012345", -50_000, "Sparplan", "M", 1, 15, today.minusYears(1).withDayOfMonth(15), null),
-                StandingOrder("so3", "a_cbk", "Allianz Versicherung", "DE23100400000123456789", -12_450, "Versicherung", "M", 3, 1, today.minusYears(3).withDayOfMonth(1), null),
+                StandingOrder("so1", "a_spk", "Hausverwaltung Berlin", "DE44500105175407324931", -98_000, "Miete", "M", 1, 1, today.minusYears(2).withDayOfMonth(1), null, nextDate = demoRuns.nextRun("so1")),
+                StandingOrder("so2", "a_cdi", "Trade Republic", "DE86100123456789012345", -50_000, "Sparplan", "M", 1, 15, today.minusYears(1).withDayOfMonth(15), null, nextDate = demoRuns.nextRun("so2")),
+                StandingOrder("so3", "a_cbk", "Allianz Versicherung", "DE23100400000123456789", -12_450, "Versicherung", "M", 3, 1, today.minusYears(3).withDayOfMonth(1), null, nextDate = demoRuns.nextRun("so3")),
             ),
             mandates = listOf(
                 DirectDebitMandate("m1", "a_spk", "Vattenfall Europe Sales", "DE89370400440532013000", "VAT-2024-0042", today.minusYears(2), MandateScheme.Core, false, 8_900, "Abschlag Strom", "", true, today.withDayOfMonth(5), "RCUR"),
@@ -231,4 +241,8 @@ object DemoData {
             },
         )
     }
+
+/** The earliest demo run of [id] — the same rule the mapper applies to the core's rows. */
+private fun List<StandingOrderRun>.nextRun(id: String): LocalDate? =
+    filter { it.orderId == id }.minOfOrNull { it.date }
 }

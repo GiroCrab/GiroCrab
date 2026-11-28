@@ -18,6 +18,8 @@ import uniffi.girocrab_core.Holding as CoreHolding
 import uniffi.girocrab_core.Mandate as CoreMandate
 import uniffi.girocrab_core.MandateScheme as CoreMandateScheme
 import uniffi.girocrab_core.MatchKind as CoreMatchKind
+import uniffi.girocrab_core.PlannedKind as CorePlannedKind
+import uniffi.girocrab_core.PlannedPayment as CorePlannedPayment
 import uniffi.girocrab_core.Rule as CoreRule
 import uniffi.girocrab_core.RuleField as CoreRuleField
 import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
@@ -103,9 +105,18 @@ object VaultSnapshotMapper {
         assets: List<CoreAssetItem>,
         mandates: List<CoreMandate> = emptyList(),
         standingOrders: List<CoreStandingOrder> = emptyList(),
+        planned: List<CorePlannedPayment> = emptyList(),
     ): VaultSnapshot {
         // Holdings come back in the currency of their account; that is the label for their prices.
         val quoteCurrencies = accounts.associate { it.id to it.currency.ifBlank { "EUR" } }
+        // The core already ran the recurrence; the app only carries its dates (no second copy).
+        val runs = planned.mapNotNull { p ->
+            if (p.kind != CorePlannedKind.STANDING_ORDER) return@mapNotNull null
+            val orderId = STANDING_ORDER_ID.matchEntire(p.id)?.groupValues?.get(1)
+                ?: throw IllegalStateException("unexpected planned-payment id '${p.id}'")
+            StandingOrderRun(orderId, LocalDate.parse(p.date))
+        }.sortedBy { it.date }
+        val nextByOrder = runs.groupBy { it.orderId }.mapValues { (_, list) -> list.first().date }
         return VaultSnapshot(
             groups = groups.map { group(it, accounts) },
             bookingsTotal = bookingsTotal,
@@ -114,7 +125,8 @@ object VaultSnapshotMapper {
             categories = categories.map(::category),
             tags = tags.map(::tag),
             mandates = mandates.map(::mandate),
-            standingOrders = standingOrders.map(::standingOrder),
+            standingOrders = standingOrders.map { standingOrder(it, nextByOrder[it.id.toString()]) },
+            standingOrderRuns = runs,
             rules = rules.map(::rule),
             holdings = holdingsByAccount.flatMap { (accountId, rows) ->
                 val quote = quoteCurrencies[accountId] ?: "EUR"
@@ -219,8 +231,8 @@ object VaultSnapshotMapper {
         colorHex = color(row.colorHex, 0xFF1976D2),
     )
 
-    /** One standing order. The core has no next date — only first/last, exec day and rhythm. */
-    private fun standingOrder(row: CoreStandingOrder): StandingOrder = StandingOrder(
+    /** One standing order. The core has no next date; nextDate is the first execution it reported for this order inside the snapshot window. */
+    private fun standingOrder(row: CoreStandingOrder, nextDate: LocalDate?): StandingOrder = StandingOrder(
         id = row.id.toString(),
         accountId = row.accountId.toString(),
         recipient = row.recipientName,
@@ -232,6 +244,7 @@ object VaultSnapshotMapper {
         execDay = row.execDay.toInt(),
         firstDate = LocalDate.parse(row.firstDate),
         lastDate = parseOderNull(row.lastDate),
+        nextDate = nextDate,
     )
 
     /**
@@ -304,6 +317,9 @@ object VaultSnapshotMapper {
      * scheitern lässt. */
     private fun parseOderNull(s: String?): LocalDate? =
         s?.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+
+    /** Pattern of a standing-order planned payment: the prefix standing-, the numeric order id, the ISO date, each part separated by a hyphen. */
+    private val STANDING_ORDER_ID = Regex("^standing-(\\d+)-\\d{4}-\\d{2}-\\d{2}$")
 
     /** The core sends `#RRGGBB`; the app models carry ARGB as a Long. */
     private fun color(hex: String, fallback: Long): Long {

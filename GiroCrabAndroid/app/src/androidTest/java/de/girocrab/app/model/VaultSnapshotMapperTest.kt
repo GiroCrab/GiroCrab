@@ -21,6 +21,8 @@ import uniffi.girocrab_core.Rule as CoreRule
 import uniffi.girocrab_core.RuleField as CoreRuleField
 import uniffi.girocrab_core.SelectionFlow as CoreFlow
 import uniffi.girocrab_core.StandingOrderInfo as CoreStandingOrder
+import uniffi.girocrab_core.PlannedKind as CorePlannedKind
+import uniffi.girocrab_core.PlannedPayment as CorePlannedPayment
 import java.security.SecureRandom
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -404,6 +406,53 @@ class VaultSnapshotMapperTest {
         assertEquals("vierteljährlich", o.rhythm)
     }
 
+    /** 3.2b: the next run is what the core reported, not a date the app computed. */
+    @Test
+    fun standingOrderRunComesFromTheCore() {
+        val order = coreStandingOrder()
+        val mapped = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            rules = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            standingOrders = listOf(order),
+            planned = listOf(
+                coreStandingRun(order.id, "2026-12-01"),
+                coreStandingRun(order.id, "2026-11-01"),
+            ),
+        )
+        assertEquals(LocalDate.of(2026, 11, 1), mapped.standingOrders.single().nextDate)
+        assertEquals(
+            listOf(LocalDate.of(2026, 11, 1), LocalDate.of(2026, 12, 1)),
+            mapped.standingOrderRuns.map { it.date },
+        )
+        assertEquals(order.id.toString(), mapped.standingOrderRuns.first().orderId)
+    }
+
+    /** An order the core reports no execution for keeps null instead of an invented date. */
+    @Test
+    fun standingOrderWithoutRunHasNoNextDate() {
+        val mapped = VaultSnapshotMapper.map(
+            groups = emptyList(),
+            accounts = emptyList(),
+            bookings = emptyList(),
+            bookingsTotal = 0,
+            categories = emptyList(),
+            tags = emptyList(),
+            rules = emptyList(),
+            holdingsByAccount = emptyMap(),
+            assets = emptyList(),
+            standingOrders = listOf(coreStandingOrder()),
+        )
+        assertNull(mapped.standingOrders.single().nextDate)
+        assertTrue(mapped.standingOrderRuns.isEmpty())
+    }
+
     private fun coreStandingOrder() = CoreStandingOrder(
         id = 11,
         accountId = 4,
@@ -420,6 +469,20 @@ class VaultSnapshotMapperTest {
         execDay = 1u,
         canChange = true,
         canDelete = true,
+    )
+
+    private fun coreStandingRun(orderId: Long, date: String) = CorePlannedPayment(
+        id = "standing-$orderId-$date",
+        kind = CorePlannedKind.STANDING_ORDER,
+        accountId = 1L,
+        accountName = "Girokonto",
+        date = date,
+        counterparty = "Hausverwaltung",
+        counterpartyIban = "DE44500105175407324931",
+        amountCents = -98_000L,
+        purpose = "Miete",
+        rhythmUnit = "M",
+        rhythmInterval = 1u,
     )
 
     private fun coreMandate(

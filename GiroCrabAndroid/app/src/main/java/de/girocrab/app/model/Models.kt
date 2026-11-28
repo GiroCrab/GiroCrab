@@ -1,7 +1,6 @@
 package de.girocrab.app.model
 
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 
 /** Domain models mirroring `girocrab-core` (models.rs). All money values are cents (Long). */
 
@@ -176,8 +175,8 @@ data class Rule(
 
 /**
  * A standing order as the core stores it. There is no "next date" field in the core: the dates are
- * [firstDate], [lastDate], [execDay] plus [unit]/[every]. Everything shown as the next run is
- * derived by [nextRun]/[after] and never stored, so a stale value cannot survive a bank fetch.
+ * [firstDate], [lastDate], [execDay] plus [unit]/[every]. Everything shown as the next run comes
+ * from the core via list_planned_payments and is mapped into [nextDate].
  */
 data class StandingOrder(
     val id: String,
@@ -195,6 +194,8 @@ data class StandingOrder(
     val firstDate: LocalDate,
     /** Last execution the bank reported; `null` = open-ended. */
     val lastDate: LocalDate?,
+    /** Next execution the core computed for this order inside the snapshot window. */
+    val nextDate: LocalDate? = null,
 ) {
     /** "wöchentlich", "monatlich", "alle 2 Monate", … */
     val rhythm: String
@@ -207,50 +208,29 @@ data class StandingOrder(
             else -> "alle $step Monate"
         }
 
-    /** First run on or after [today]; `null` once [lastDate] has passed. */
-    fun nextRun(today: LocalDate): LocalDate? = after(today.minusDays(1))
-
-    /** First run strictly after [date]; `null` at the end of the order. */
-    fun after(date: LocalDate): LocalDate? {
-        // Start at the step just before [date], like the core: an old open order must not
-        // fall off the 1000-step cap.
-        val k0: Long = if (unit == "W") {
-            val monday = firstDate.minusDays(firstDate.dayOfWeek.value - 1L)
-            maxOf(0L, ChronoUnit.DAYS.between(monday, date) / (7L * step) - 1)
-        } else {
-            val firstMonths = firstDate.year * 12 + firstDate.monthValue - 1
-            val fromMonths = date.year * 12 + date.monthValue - 1
-            maxOf(0L, (fromMonths - firstMonths).toLong() / step - 1)
-        }
-        for (k in k0..k0 + 1000) {
-            val d = occurrence(k) ?: return null
-            if (d > date && d >= firstDate) return d
-        }
-        return null
-    }
-
     /** How many [unit]s lie between two runs; a stored 0 counts as one, like the core. */
     private val step: Int get() = maxOf(every, 1)
-
-    /**
-     * The k-th run, counted from [firstDate] — not iterated, so a clamped month end (31 → 28/30)
-     * cannot drift into every following month. A weekly run falls on the Monday of
-     * [firstDate]'s week plus [execDay] - 1 (1 = Monday), not on [firstDate]'s weekday;
-     * [execDay] is clamped like the core, so 0 is day 1.
-     */
-    private fun occurrence(k: Long): LocalDate? {
-        val base = if (unit == "W") {
-            val monday = firstDate.minusDays(firstDate.dayOfWeek.value - 1L)
-            val exec = monday.plusDays((execDay.coerceIn(1, 7) - 1).toLong())
-            exec.plusDays(7L * step * k)
-        } else {
-            val months = firstDate.year * 12 + firstDate.monthValue - 1 + step.toLong() * k
-            val m = LocalDate.of((months / 12).toInt(), (months % 12).toInt() + 1, 1)
-            m.withDayOfMonth(minOf(execDay.coerceIn(1, 31), m.lengthOfMonth()))
-        }
-        return if (lastDate != null && base > lastDate) null else base
-    }
 }
+
+/**
+ * What the card may claim when the core reported no run for this order (#1429, 3.2b): ended only
+ * once the bank's last reported execution lies strictly before today. An order that ran today, or an
+ * open one without a run in the window, is not called ended — the card says the window is empty.
+ */
+fun StandingOrder.noNextRunNote(today: LocalDate): String? = when {
+    nextDate != null -> null
+    lastDate != null && lastDate.isBefore(today) -> "keine (beendet)"
+    else -> "kein Termin im Zeitfenster"
+}
+
+/**
+ * One execution of a standing order, computed by the core (list_planned_payments).
+ * The app never derives these dates itself.
+ */
+data class StandingOrderRun(
+    val orderId: String,
+    val date: LocalDate,
+)
 
 /** SEPA scheme of a mandate, as the core stores it (`MandateScheme`). */
 enum class MandateScheme(val label: String) { Core("CORE"), Cor1("COR1"), B2b("B2B") }
@@ -389,6 +369,7 @@ data class VaultSnapshot(
     val tags: List<Tag> = emptyList(),
     val rules: List<Rule> = emptyList(),
     val standingOrders: List<StandingOrder> = emptyList(),
+    val standingOrderRuns: List<StandingOrderRun> = emptyList(),
     val mandates: List<DirectDebitMandate> = emptyList(),
     val holdings: List<Holding> = emptyList(),
     val loans: List<ManualLoan> = emptyList(),

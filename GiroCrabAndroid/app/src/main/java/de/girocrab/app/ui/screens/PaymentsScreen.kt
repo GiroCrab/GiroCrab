@@ -67,6 +67,8 @@ import de.girocrab.app.model.CorePaymentDetails
 import de.girocrab.app.model.CorePaymentParser
 import de.girocrab.app.model.DirectDebitMandate
 import de.girocrab.app.model.StandingOrder
+import de.girocrab.app.model.noNextRunNote
+import de.girocrab.app.model.StandingOrderRun
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -110,25 +112,31 @@ data class RecurringContract(
 )
 
 /**
- * Expands standing orders into dated occurrences within [today, today + horizon]. The dates come
- * from the core's fields through [StandingOrder.after]; nothing is stored, so a bank fetch that
- * moves `first_date`/`last_date` changes the plan without a migration.
+ * The upcoming standing-order runs as the core computed them: each date comes from
+ * list_planned_payments; the app does not recompute the recurrence.
  */
-fun expandStandingOrders(orders: List<StandingOrder>, today: LocalDate, horizon: PlannedHorizon): List<PlannedPayment> {
+fun expandStandingOrders(
+    orders: List<StandingOrder>,
+    runs: List<StandingOrderRun>,
+    today: LocalDate,
+    horizon: PlannedHorizon,
+): List<PlannedPayment> {
     val end = today.plusDays(horizon.days)
-    val out = mutableListOf<PlannedPayment>()
-    for (o in orders) {
-        var d = o.nextRun(today) ?: continue
-        var guard = 0
-        while (d <= end && guard++ < 400) {
-            out += PlannedPayment(
-                "so-${o.id}-$d", o.accountId, o.recipient, o.purpose, -abs(o.amountCents), d,
-                "Dauerauftrag · ${o.rhythm}",
-            )
-            d = o.after(d) ?: break
-        }
+    val byId = orders.associateBy { it.id }
+    return runs.mapNotNull { run ->
+        val o = byId[run.orderId] ?: return@mapNotNull null
+        // A snapshot taken before midnight can still carry yesterday's run: it is history, not planned.
+        if (run.date < today || run.date > end) return@mapNotNull null
+        PlannedPayment(
+            id = "so-${o.id}-${run.date}",
+            accountId = o.accountId,
+            counterparty = o.recipient,
+            purpose = o.purpose,
+            amountCents = -abs(o.amountCents),
+            date = run.date,
+            kindText = "Dauerauftrag · ${o.rhythm}",
+        )
     }
-    return out
 }
 
 /** Detects monthly recurring expenses: ≥3 distinct months, amounts within 10 % of each other. */
@@ -412,7 +420,7 @@ private fun PlannedTab(state: AppUiState, today: LocalDate, masked: Boolean) {
     val accounts = state.data.accounts
 
     val planned = remember(state.data, horizon, accountFilter, withContracts, today) {
-        val so = expandStandingOrders(state.data.standingOrders, today, horizon)
+        val so = expandStandingOrders(state.data.standingOrders, state.data.standingOrderRuns, today, horizon)
         val rc = if (withContracts) {
             val covered = state.data.standingOrders.map { it.recipient.lowercase(Locale.ROOT) }.toSet()
             recurringToPlanned(detectRecurring(state.data.bookings, today).filter { it.counterparty.lowercase(Locale.ROOT) !in covered }, today, horizon)
@@ -504,7 +512,7 @@ private fun TotalCell(label: String, cents: Long, masked: Boolean, modifier: Mod
 
 @Composable
 private fun StandingOrdersTab(state: AppUiState, today: LocalDate, masked: Boolean) {
-    val orders = state.data.standingOrders.sortedBy { it.nextRun(today) ?: LocalDate.MAX }
+    val orders = state.data.standingOrders.sortedBy { it.nextDate ?: LocalDate.MAX }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (orders.isEmpty()) item { Text("Keine Daueraufträge vorhanden.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(orders, key = { it.id }) { o ->
@@ -517,10 +525,11 @@ private fun StandingOrdersTab(state: AppUiState, today: LocalDate, masked: Boole
                     }
                     Text(if (masked) "••••" else formatIban(o.iban), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (o.purpose.isNotBlank() && !masked) Text(o.purpose, style = MaterialTheme.typography.bodySmall)
-                    val next = o.nextRun(today)
+                    val next = o.nextDate
+                    val note = o.noNextRunNote(today)
                     Text(
                         "${o.rhythm} · seit ${o.firstDate.format(dateFmt)} · " +
-                            "nächste Ausführung ${next?.format(dateFmt) ?: "keine (beendet)"}" +
+                            "nächste Ausführung ${next?.format(dateFmt) ?: note}" +
                             // The account name is data like the recipient: hidden while the app is masked.
                             acc?.takeUnless { masked }?.let { " · ${it.name}" }.orEmpty(),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
