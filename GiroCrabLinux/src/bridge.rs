@@ -29,6 +29,16 @@ pub mod qobject {
 
         #[qsignal]
         fn finished(self: Pin<&mut Core>, ticket: i32, result: QString);
+
+        /// Takes `girocrab://` links of later starts (src/payment_link.rs); each one comes
+        /// as `linkReceived(url)`.
+        #[qinvokable]
+        #[cxx_name = "listenForLinks"]
+        fn listen_for_links(self: Pin<&mut Core>);
+
+        #[qsignal]
+        #[cxx_name = "linkReceived"]
+        fn link_received(self: Pin<&mut Core>, url: QString);
     }
 
     impl cxx_qt::Threading for Core {}
@@ -64,5 +74,12 @@ impl qobject::Core {
             let _ = thread.queue(move |core| core.finished(ticket, QString::from(&result)));
         });
         ticket
+    }
+
+    fn listen_for_links(self: Pin<&mut Self>) {
+        let thread = self.qt_thread();
+        crate::payment_link::listen(move |url| {
+            let _ = thread.queue(move |core| core.link_received(QString::from(&url)));
+        });
     }
 }

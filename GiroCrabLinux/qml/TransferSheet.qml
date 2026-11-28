@@ -327,6 +327,30 @@ Sheet {
                 Button { text: qsTr("Übernehmen"); highlighted: true; onClicked: sheet.acceptClipboard() }
             }
         }
+        // linkWarning: filled from a `girocrab://transfer` link (src/payment_link.rs): another app
+        // or a web page chose recipient and IBAN, so the user checks them before anything is sent.
+        Rectangle {
+            visible: !sheet.confirming && AppModel.transferDraft.fromLink === true
+            Layout.fillWidth: true
+            Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.bottomMargin: 10
+            implicitHeight: linkRow.implicitHeight + 20
+            radius: 10; color: Theme.withAlpha(Theme.warning, 0.12)
+            RowLayout {
+                id: linkRow
+                x: 10; y: 10; width: parent.width - 20
+                spacing: 10
+                SFIcon { symbol: "exclamationmark.shield"; size: 14; color: Theme.warning; Layout.alignment: Qt.AlignTop }
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 2
+                    Text { text: qsTr("Aus einem Link übernommen"); font.pixelSize: Theme.callout; font.weight: Font.DemiBold; color: Theme.text }
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Empfänger, IBAN und Betrag stammen aus einer anderen App oder Webseite. Bitte mit der Rechnung vergleichen, bevor Sie die Überweisung freigeben.")
+                        wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                    }
+                }
+            }
+        }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
         ScrollView {

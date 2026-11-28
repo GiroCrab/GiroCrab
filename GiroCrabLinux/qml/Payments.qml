@@ -16,6 +16,9 @@ QtObject {
     // MARK: - Sammelüberweisung (AppModel+Batch.swift)
 
     property bool showBatchSheet: false
+    /// A transfer form is being swapped for the batch form or back: closing the one must not let a
+    /// waiting `girocrab://transfer` link take the form before the other opens (AppModel.presentPendingPaymentLink).
+    property bool transferKindSwitching: false
     /// BatchDraft without the rows (they live in `batchRows`, so editing a cell keeps its field).
     property var batchDraft: newBatchDraft(null)
     /// BatchDraft.rows: { rowKey, name, iban, bic, amountText, purpose, cents (0 = invalid), ibanValid }.
@@ -123,14 +126,24 @@ QtObject {
     }
     /// Segmented control of the batch sheet: back to the single transfer form.
     function switchToSingleTransfer() {
+        transferKindSwitching = true
         showBatchSheet = false
         AppModel.transferError = ""
-        Qt.callLater(AppModel.presentTransfer) // keeps the draft (Umbuchung chosen in the batch sheet)
+        Qt.callLater(() => { // keeps the draft (Umbuchung chosen in the batch sheet)
+            AppModel.presentTransfer()
+            transferKindSwitching = false
+            AppModel.resumePaymentLink()
+        })
     }
     /// Segmented control of the single form: on to the batch sheet.
     function switchToBatchTransfer() {
+        transferKindSwitching = true
         AppModel.showTransferSheet = false
-        Qt.callLater(openBatchTransfer)
+        Qt.callLater(() => {
+            openBatchTransfer()
+            transferKindSwitching = false
+            AppModel.resumePaymentLink()
+        })
     }
     function cancelBatchSheet() {
         showBatchSheet = false

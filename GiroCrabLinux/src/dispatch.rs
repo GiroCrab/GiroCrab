@@ -1028,6 +1028,16 @@ fn call(method: &str, a: &Value) -> R {
         }
         // --- transfer ---
         "validate_iban" => ok(girocrab_core::connectors::validate_iban(arg(a, "iban")?)),
+        // girocrab://transfer (src/payment_link.rs): null = no girocrab link (ignored), an
+        // error = the message „Link nicht übernommen“ shows. The link itself is never logged.
+        "parse_payment_link" => {
+            let url: String = arg(a, "url")?;
+            if crate::payment_link::handles(&url) {
+                ok(crate::payment_link::payment(&url).map_err(|f| f.message())?)
+            } else {
+                Ok(Value::Null)
+            }
+        }
         "parse_payment_text" => ok(girocrab_core::payment_input::parse_payment_text(arg(
             a, "text",
         )?)),
