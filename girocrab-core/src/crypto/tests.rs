@@ -562,8 +562,9 @@ fn an_unpriced_ticker_ends_the_carried_total() {
     let h = v.depot_value_history(vec![acc], 30).unwrap();
     let day = |d: &str| h.iter().find(|p| p.date == d).unwrap().covered_depots;
     assert_eq!(day(&yesterday), 1);
+    // the last day, not today's date: midnight may pass between the query and the check
     assert_eq!(
-        day(&today_iso()),
+        h.last().unwrap().covered_depots,
         0,
         "ETH has no price: today's value is unknown"
     );
@@ -700,13 +701,7 @@ fn an_unpriced_ticker_keeps_the_last_total_in_the_balance_history_without_covera
     assert_eq!(b.last().unwrap().balance_cents, 80_000_00);
     // … while the depot history does not count today as valued
     let d = v.depot_value_history(vec![acc], 30).unwrap();
-    assert_eq!(
-        d.iter()
-            .find(|p| p.date == today_iso())
-            .unwrap()
-            .covered_depots,
-        0
-    );
+    assert_eq!(d.last().unwrap().covered_depots, 0);
 }
 
 #[test]

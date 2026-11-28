@@ -203,7 +203,8 @@ struct CryptoPositionSheet: View {
             if purchase == nil {
                 Text("Bitte einen Betrag von 0 oder mehr eingeben.").foregroundStyle(Theme.negative).appFont(.caption)
             }
-            if let error { Text(error).foregroundStyle(Theme.negative).appFont(.caption) }
+            // the message can name the ticker, like the field above
+            if let error { Text(error).foregroundStyle(Theme.negative).appFont(.caption).sensitive(.labels) }
             HStack {
                 Button("Abbrechen", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction).disabled(busy)
                 Spacer()
