@@ -22,6 +22,8 @@ WebLoginFlow {
 
     property bool ready: false
     property bool running: false
+    /// „Dokumente abrufen“ of the connection (bank connection dialog, #954): off = no list, no PDFs.
+    readonly property bool documentsOn: !connection || AppModel.documentsOffConnectionIDs.indexOf(connection.id) < 0
     property string progress: ""
     property string notice: ""
     property int generation: 0
@@ -146,7 +148,7 @@ return btoa(bin);`
             })
             .then(() => {
                 if (gen !== generation) throw cancelled
-                if (!includeDocuments.checked) return null
+                if (!includeDocuments.checked || !flow.documentsOn) return null
                 progress = qsTr("Postkorb und Archiv auflisten …")
                 return run(documentsScript, {}, gen)
                     .then(list => AppModel.corePromise("pending_fnz_documents", { connection_id: id, documents_json: list }))
@@ -210,7 +212,7 @@ return btoa(bin);`
     }
 
     Button { text: qsTr("Schließen"); onClicked: flow.close(false) }
-    CheckBox { id: includeDocuments; text: qsTr("PDF-Postkorb inkl. Archiv"); checked: true; enabled: !flow.running }
+    CheckBox { id: includeDocuments; visible: flow.documentsOn; text: qsTr("PDF-Postkorb inkl. Archiv"); checked: true; enabled: !flow.running }
     Item { Layout.fillWidth: true }
     Button {
         text: qsTr("Salden und Dokumente abrufen")

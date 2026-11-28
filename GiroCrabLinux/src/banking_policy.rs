@@ -409,6 +409,7 @@ pub fn display_name(id: &str) -> String {
         "bhw" => "BHW Bausparkasse",
         "edenred" => "Edenred",
         "kontist" => "Kontist",
+        "finpension" => "Finpension",
         "monefit" => "Monefit SmartSaver",
         "bitcoin" => "Bitcoin-Wallet",
         "goandgrow" => "Go & Grow",

@@ -50,6 +50,10 @@ Sheet {
             RowLayout { Layout.alignment: Qt.AlignHCenter; spacing: 8
                 BusyIndicator { implicitWidth: 18; implicitHeight: 18; running: parent.visible }
                 Text { text: sheet.active && sheet.active.waiting ? qsTr("Warte auf Freigabe …") : qsTr("Push-Nachricht gesendet"); color: Theme.secondary; font.pixelSize: Theme.callout + 1 } }
+            // as on the bank's page: the SecurePlus generator instead of the app (#1024)
+            Button { visible: sheet.c !== null && sheet.c.method_name === "Online-Archiv · Consorsbank App"
+                     Layout.alignment: Qt.AlignHCenter; flat: true; text: qsTr("Manuell mit TAN bestätigen")
+                     enabled: !(sheet.active && sheet.active.busy); onClicked: AppModel.switchApproval("TAN") }
         }
         // .progress: approval given, a longer download runs (comdirect Postbox, #838)
         ColumnLayout {
@@ -86,6 +90,9 @@ Sheet {
                 onEnabledChanged: if (enabled && visible) forceActiveFocus()
                 onAccepted: sheet.submit()
             }
+            Button { visible: sheet.c !== null && sheet.c.method_name === "Online-Archiv · TAN"
+                     Layout.alignment: Qt.AlignHCenter; flat: true; text: qsTr("Mit Consorsbank App bestätigen")
+                     enabled: !(sheet.active && sheet.active.busy); onClicked: AppModel.switchApproval("APP") }
             Button { visible: sheet.active && sheet.active.connection.connector === "TradeRepublic" && sheet.c.kind === "Code"
                      Layout.alignment: Qt.AlignHCenter; flat: true; text: qsTr("Code per SMS anfordern"); onClicked: AppModel.submitCode("SMS") }
         }

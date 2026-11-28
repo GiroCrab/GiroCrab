@@ -8,6 +8,382 @@ Verhalten und Texte kommen dabei 1:1 aus der Mac-App, auf Deutsch und Englisch. 
 Einstellungen › Sicherheit steht deshalb „Kern-Version“: Die Nummer gehört zum Kern, nicht zum
 Funktionsumfang der Oberfläche.
 
+## Funktionsstand 0.8.6 (in Arbeit)
+
+### Seitenleiste wie in der Mac-App 0.8.6
+
+- **Kontoeinstellungen (#981):** Das Kontextmenü eines Kontos hat statt „Konto bearbeiten …“,
+  „Umbenennen …“, „Symbol & Farbe …“, „Kontoart ändern …“, „Kontoinhaber …“ und „Startsaldo …“
+  nur noch **„Einstellungen …“**. Der Dialog „Kontoeinstellungen“ enthält Kontoname mit Knopf für
+  Symbol & Farbe (gilt sofort), Kontoinhaber, Kontoart (nicht bei Offline-Konten, die immer Bargeld
+  sind), Startsaldo mit „Stichtag und Kalibrierung …“ (nur wenn der Kontostand aus den Buchungen
+  berechnet wird), Kontonummer, IBAN und Bank (nur Anzeige, markierbar), Konto-Notiz und „Das Konto
+  wurde aufgelöst“. Alles andere gilt erst mit „Sichern“. „Konto archivieren …“ und „Konto
+  löschen …“ bleiben im Menü. Der Hinweis in „Saldo korrigieren …“ auf „Einstellungen …“ stimmt
+  damit jetzt auch unter Linux.
+- **Kategorien per Drag & Drop (#977):** Kategorien lassen sich in der Seitenleiste ziehen wie Konten.
+  Auf der oberen Hälfte einer Zeile landet die Kategorie davor, auf der unteren dahinter bzw. bei einer
+  Hauptkategorie oder einer Zeile mit Unterkategorien darin (als letzte Unterkategorie). Eine Kategorie
+  lässt sich nicht unter sich selbst oder ihre eigenen Unterkategorien ziehen. Ohne Maus geht es über
+  „Nach oben“ / „Nach unten“ im Kontextmenü.
+- **Zähler der neuen Buchungen (Abweichung von der Mac-App):** Die Zahl steht als größerer Zähler am
+  Ende der Namenszeile statt klein an der Ecke des Kontosymbols, in kräftigem Blau auch im dunklen
+  Modus. Sie ist so besser lesbar und deckt auch dreistellig („100“, „999+“) nichts zu.
+
+### Abruf und Portale wie in der Mac-App 0.8.6
+
+- **American Express (#1010):** Die Kartenrunde läuft jetzt auch im Modus „Ältere Abrechnungen“.
+  Beim ersten Abruf eines Zugangs blieb das Fenster sonst dauerhaft hinter „Karten werden geladen …“
+  gesperrt. Wird die Runde nach 90 Sekunden nicht fertig, gibt sie auf („Nicht alle Karten ließen
+  sich öffnen – übernommen werden die bisher geladenen Karten.“), und die bisher geladenen Karten
+  lassen sich übernehmen.
+- **FinTS-Registrierung (#1092):** Wie in der Mac-App 0.8.6 gibt es keine Auswahl mehr. Wenn die
+  Version eine FinTS-Registrierung von GiroCrab enthält, wird sie immer verwendet; das gilt auch für
+  Tresore, die bisher auf „Eigene Registrierung“ standen. Eine eigene Registrierung bleibt
+  gespeichert.
+- **„Alle abrufen“ läuft nach einem Fehler weiter (#1041):** Bisher beendete der erste Fehler den
+  ganzen Durchlauf. Jetzt zeigt ein fehlgeschlagener Bankzugang sofort „Abruf von „…“ fehlgeschlagen“
+  mit „Überspringen“ (weiter mit dem nächsten Zugang), „Erneut versuchen“ (danach geht es weiter) und
+  „Alle abbrechen“. Lehnt die Bank die FinTS-Registrierung ab, ersetzt deren Alternative „Erneut
+  versuchen“. Browser-Login, Einrichtungsformular und der Wechsel auf GiroCrabs Registrierung behalten
+  den Durchlauf; „Eigene Registrierung eintragen …“ beendet ihn. Der automatische Abruf wartet, solange
+  der Durchlauf nicht fertig ist. Startoption `--demo-sheet error-batch`.
+- **Amazon-Bestellungen (#1008):** Während des Abrufs liegt eine Fläche über der Seite. Sie zeigt das
+  Jahr bzw. die Bestellung groß, einen Fortschrittsbalken für beide Phasen (Bestelllisten je Jahr,
+  Bestelldetails), „1 Bestellung gefunden“ / „%1 Bestellungen gefunden“ bzw. „Bestelldetails aus …“
+  und „Abrufen stoppen“. Bisher zeigte nur eine kleine Zeile im Kopf den Fortschritt.
+
+### Bankzugang und Belege wie in der Mac-App 0.8.6
+
+- **Dokumentenabruf je Bankzugang (#954):** „Bankzugang bearbeiten“ hat im Abschnitt „Zugang“ den
+  Schalter „Dokumente abrufen“, aber nur bei Banken, die Dokumente liefern. Er ist standardmäßig an
+  und gilt mit „Speichern“. Ist er aus, lädt der Abruf keine neuen Belege, Kontoauszüge oder
+  Postbox-Dokumente; gespeicherte bleiben. „Kontoauszüge abrufen“ verschwindet für die Konten des
+  Zugangs. Bei comdirect über FinTS sind der Postbox-Schalter und „Postbox jetzt abrufen“ dann
+  deaktiviert, mit einem Hinweis. FNZ, quirion und Schwäbisch Hall zeigen im Login-Fenster keinen
+  Haken für die PDFs. Wird der Schalter wieder eingeschaltet, holen die nächsten Abrufe nach, was
+  fehlt. „Belege & Postbox“ nennt die Zugänge mit ausgeschaltetem Abruf und verlinkt
+  „Einstellungen › Banken öffnen“. Neue Kernaufrufe in `src/dispatch.rs`:
+  `documents_fetch_supported`, `documents_fetch_enabled`, `set_documents_fetch`.
+- **Kompakterer Dialog „Bankzugang bearbeiten“ (#954):** „Speichern“ ist erst nach einer Änderung
+  aktiv; vorher heißt „Abbrechen“ „Schließen“. „Speichern & abrufen“ ist ein Symbolknopf mit
+  Tooltip. „Bankzugang entfernen …“ steht nur noch als Mülltonne in der Liste der Bankzugänge. Die
+  Kontenauswahl zeigt jedes Konto in einer Zeile, mit einem kurzen Hinweis (die lange Erklärung
+  steht im Tooltip). Die BLZ erscheint nur noch bei FinTS-Zugängen, und der Dialog ist höher.
+- **Konten gleichen Namens (#954):** Haben zwei Konten denselben Namen (etwa zweimal „Konto flex“
+  verschiedener Inhaber), zeigen die Kontoauswahl in „Belege & Postbox“, die Kontozeilen der
+  Dokumente, die Seitenleiste (Untertitel zwischen Bank und Notiz) und „Konto hinzufügen“ bei den
+  Regeln den Inhaber dazu. Fehlt er oder haben beide denselben, steht dort das Ende der IBAN bzw.
+  Kontonummer („…1234“).
+- **„Belege & Postbox“ nach Bankzugang filtern (#1042):** Vor der Kontoauswahl steht die Auswahl
+  „Bankzugang“ mit „Alle Bankzugänge“, „Ohne Konto“ und den Zugängen, die Konten haben. Sie erscheint
+  erst ab zwei Zugängen. Die Kontoauswahl zeigt dann nur die Konten dieses Zugangs; ein Konto eines
+  anderen Zugangs wird beim Wechsel zurückgesetzt. Bei „Ohne Konto“ ist die Kontoauswahl gesperrt.
+  „Belege anzeigen“ an einem Konto und das Verlassen der Ansicht setzen den Filter zurück. Ist der
+  Platz zu knapp, stehen die Auswahlen untereinander.
+- **FFB-Postfach (#1105):** Bei FFB-Konten (FIL Fondsbank) zeigt „Dokumente / Kontoauszüge“
+  jetzt „Kontoauszüge abrufen“. Der Kern lädt Depot- und Kontoauszüge, Abrechnungen,
+  Steuerunterlagen und Mitteilungen aus dem Postfach, höchstens 200 PDFs pro Lauf, und erkennt
+  bereits geladene an ihrer ID.
+
+### Weitere Banken und Zugänge wie in der Mac-App 0.8.6
+
+- **Consorsbank Online-Archiv (#1024):** „Bankzugang bearbeiten“ hat bei der Consorsbank über FinTS
+  den Abschnitt „Online-Archiv“ mit „Online-Archiv abrufen“ und „Online-Archiv jetzt abrufen“.
+  Kontoauszüge, Abrechnungen, Depotauszüge und Steuerdokumente kommen höchstens einmal pro Woche
+  beim Abruf mit. Ist „Dokumente abrufen“ aus, ist der Schalter gesperrt, mit Hinweis. Im
+  Freigabedialog wechselt „Manuell mit TAN bestätigen“ bzw. „Mit Consorsbank App bestätigen“ die
+  Freigabe. Die Meldung nach dem Abruf nennt die neuen Dokumente aus dem Online-Archiv.
+- **PayPal über die API-Signatur (#945):** Beim Einrichten wählt „Zugang über“ zwischen API-Signatur
+  (klassische NVP-API) und REST-App; die nötigen Felder wechseln mit. „Bankzugang bearbeiten“ hat
+  „Erweitert: API-Signatur (klassische NVP-API)“ mit API-Benutzername, API-Passwort und Signatur.
+  Passwort und Signatur sind immer verdeckt.
+- **Finpension-Import (#975):** Finpension hat keine Schnittstelle. „Bankzugang bearbeiten“ hat
+  „Finpension-Export importieren …“ für den CSV- oder JSON-Export mit Positionen und
+  Cash-Buchungen; ein erneuter Import legt keine Buchungen doppelt an. „Alle abrufen“ und der Abruf
+  einer Gruppe übergehen Finpension, ein einzelner Abruf verweist auf den Import.
+  `dispatch.rs` liest die Datei (`import_finpension_file`, höchstens 32 MB), mit Test.
+- **Enable Banking (#1005):** Neben „enablebanking.com/cp/applications öffnen“ steht der Link
+  „Interaktive Anleitung (3 Min.)“.
+
+### Suche und Privatmodus wie in der Mac-App 0.8.6
+
+- **Suche findet auch die Einzahl:** Die Suche kürzt deutsche Pluralendungen auf den Stamm
+  („kredite“ findet auch „Kredit“, „versicherungen“ auch „Versicherung“). Ein zusammengesetztes Wort
+  mit einem reinen Buchungswort sucht nur seinen Stamm („amazonbestellungen“ → „amazon“). Kurze
+  Wörter, Zahlen, Beträge und IBANs bleiben, wie sie sind, und das Suchfeld zeigt weiter den
+  getippten Text. Die Regeln aus `NaturalSearchParser.swift` stehen in `src/search_terms.rs`, mit
+  Tests. Die natürliche Suche mit dem Sprachmodell gibt es nur am Mac.
+- **Privatmodus (#1007):** Der Tooltip am Auge lautet beim Standard-Umfang „Privatmodus: Beträge und
+  persönliche Angaben ausblenden (Strg+Umschalt+H)“.
+
+### Externe Analyse: lokale Schnittstelle und MCP (#136)
+
+- **Einstellungen › Analyse:** „Lesenden Zugriff für Programme auf diesem Rechner erlauben“. Programme
+  auf demselben Rechner (eigene Auswertungen, KI-Assistenten) lesen ausgewählte Konten, Buchungen,
+  Kategorien und Summen. Sie können nichts ändern, keine Zahlungen auslösen und sehen keine
+  Zugangsdaten. Die Schnittstelle ist standardmäßig aus.
+- „Geteilte Konten“ ist eine ausdrückliche Auswahl. Unter „Geteilte Felder“ legen Sie Empfänger,
+  Verwendungszweck, IBANs/Kontonummern und Notizen fest; IBANs und Notizen sind zunächst aus.
+- Der Zugangsschlüssel wird nur einmal angezeigt; gespeichert ist nur sein Hash. Kopiert bleibt er
+  60 Sekunden in der Zwischenablage. „Zugriff widerrufen“, ein neuer Schlüssel oder das Ausschalten
+  sperren den alten sofort (#811).
+- Der Socket läuft nur, solange der eigene Tresor entsperrt ist und angezeigt wird, nie mit den
+  Demo-Daten. Beim Sperren, beim Wechsel zur Demo und beim Beenden wird er geschlossen.
+- Der Abschnitt „Für KI-Assistenten“ zeigt den Eintrag für die MCP-Konfiguration mit dem Hilfsprogramm
+  `girocrab-mcp` und bietet „Eintrag kopieren“, „Programmpfad kopieren“ und „Verbindung testen“.
+- **Abweichungen von der Mac-App:**
+  - Der Socket liegt in `$XDG_RUNTIME_DIR/girocrab/girocrab.sock`, unter Flatpak in
+    `$XDG_RUNTIME_DIR/app/<App-ID>/local-api/`. Der Ordner hat die Rechte 0700, der Socket 0600.
+  - Der MCP-Eintrag nennt zusätzlich `GIROCRAB_API_SOCKET`, weil `girocrab-mcp` nur unter macOS
+    einen Standardpfad kennt.
+  - `.deb` und Flatpak enthalten das Hilfsprogramm noch nicht. Die Seite meldet dann „Das
+    Hilfsprogramm ist in diesem Build nicht enthalten.“; gesucht wird neben `girocrab`. In
+    Entwickler-Builds dient `target/{release,debug}/girocrab-mcp` des Repositorys.
+  - Den Hinweis auf eine vorübergehende App-Kopie (App Translocation) gibt es nur unter macOS.
+
+### Advanzia-Karten (#935)
+
+- **Bank hinzufügen › „Advanzia Bank (Zugang mein.advanzia.com)“:** Abruf im Browserfenster. Sie
+  melden sich bei Advanzia an und bestätigen dort mit dem SMS-Code oder in der Advanzia-App; der
+  Kopf des Fensters zeigt, welcher Schritt gerade ansteht. Danach erkennt GiroCrab die Karte und
+  übernimmt Umsätze und Kontostand von selbst. Beim ersten Abruf wählen Sie einmal das Zielkonto
+  (neues Kreditkartenkonto oder ein vorhandenes).
+- Jeder Advanzia-Zugang hat seine eigene Sitzung; **Bankzugang bearbeiten › „Web-Sitzung löschen …“**
+  verwirft sie.
+- **Abweichung von der Mac-App:** Unter Linux trägt GiroCrab keine gespeicherten Anmeldedaten
+  automatisch ein. Es gibt kein gespeichertes Advanzia-Passwort, keine automatische Wahl des
+  Freigabeverfahrens und keine Übermittlung des SMS-Codes aus einem eigenen Dialog – Passwort und
+  Code geben Sie im Fenster der Bank selbst ein.
+
+### Amex: Partnerkarten und Kartenauswahl (#243)
+
+- Mehrere Karten eines Amex-Logins: Das Portal-Fenster öffnet jede Karte der Kartenauswahl einmal
+  („Karten werden geladen …“, „Umsätze übernehmen“ ist so lange gesperrt). Jede Karte wird ein
+  eigenes Konto; vorhandene Konten mit denselben Endziffern werden weiterverwendet.
+- Neue Karten fragt **„Welche Karten sollen abgerufen werden?“**; nicht gewählte werden übersprungen.
+- **Abweichung von der Mac-App:** Die gespeicherte Anmeldung (Benutzername und Passwort im Tresor,
+  ins Anmeldeformular eingetragen) gibt es unter Linux nicht. Sie melden sich im Fenster selbst an.
+
+### Offline-Konten mit manuellen Buchungen (#679, #81)
+
+- **Neues Offline-Konto …** (Ablage, „+“ der Seitenleiste, Befehlspalette): ein Bargeld-Konto ohne
+  Bankanbindung mit Startsaldo und Konto-Notiz. Es entsteht immer im eigenen Tresor.
+- **Buchung › Neue Buchung …** (Strg+Alt+N, auch „+“ in der Symbolleiste): Datum, Ausgabe oder
+  Einnahme, Betrag, Name, Verwendungszweck, Kategorie und Notiz. **Buchung bearbeiten …** und
+  **Buchung löschen …** im Menü Buchung und im Kontextmenü der Buchung.
+- Kontextmenü einer Buchung: **In Offline-Konto spiegeln** (Kopie mit umgekehrtem Betrag, z. B.
+  eine Abhebung am Geldautomaten als Bargeld-Einzahlung). Kontextmenü des Kontos: **Neue Buchung …**
+  und **Saldo korrigieren …** (legt eine Korrekturbuchung an).
+- Die Seitenleiste zeigt die Konto-Notiz unter dem Kontonamen; für Offline-Konten entfällt
+  „Kontoart ändern …“.
+
+### Problem melden nimmt Dialoge mit auf (#384)
+
+- **Hilfe › Problem melden** zeichnet ein geöffnetes Sheet an seiner Stelle in den Screenshot des
+  Hauptfensters, geschwärzt wie das Hauptfenster. Ist das Einstellungen-Fenster offen, kommt es
+  samt seinen Sheets mit ins Bild (unter Wayland mittig über dem Hauptfenster, weil Wayland die
+  Fensterlage nicht verrät). Ein offenes Popover schließt sich wie in der Mac-App, sobald der
+  Bericht aufgeht.
+- Textfelder, Texteditoren, Auswahlfelder und Webseiten (Bank- und Portal-Anmeldungen) in
+  Dialogen deckt die Aufnahme selbst ab.
+- Hinweise und Bestätigungsdialoge werden nicht aufgenommen; der Bericht sagt dann: „Ein
+  geöffneter Hinweis oder Bestätigungsdialog wird nicht aufgenommen; das Bild zeigt, was darunter
+  liegt.“
+- Solange der Bericht offen ist, ist „Problem melden …“ im Hilfe-Menü ausgegraut; „Neu aufnehmen“
+  aktualisiert das Bild.
+- In den Dialogen sind weitere persönliche Angaben markiert (Kontoauswahl, Dokumente, Gruppen,
+  Befehlspalette, TAN-Abfrage, Export, Importe, Empfängerüberprüfung, Druck, Regeln, Sachwerte,
+  Bankzugänge in den Einstellungen).
+- Startoption `--demo-sheet report[:<Sheet>]` für Screenshots.
+- Unter Wayland kennt GiroCrab die Lage der Fenster nicht: Das Einstellungen-Fenster steht im
+  Bild dann mittig über dem Hauptfenster.
+
+### Tags
+
+- **Regeln vergeben Tags (#580):** Im Regel-Editor gibt es das Feld **„Tags“** („Tag hinzufügen“,
+  auch „Neuer Tag …“) und als Kategorie **„Keine (nur Tags)“**. Ohne Kategorie und ohne Tag lässt
+  sich eine Regel nicht speichern („Die Regel braucht eine Kategorie oder mindestens einen Tag.“).
+  Tags werden nur hinzugefügt, nie entfernt; jede passende Regel gibt ihre Tags dazu. Die
+  Regelliste nennt die Tags einer Regel und zählt „8“, „1 | 3“ oder „– | 2“ (Tooltip „Von dieser
+  Regel kategorisiert“ / „Passend und mit ihren Tags“); die Live-Vorschau einer reinen Tag-Regel
+  zeigt keine Hand mehr bei von Hand kategorisierten Buchungen.
+- **Tags verwalten:** neue Spalte **„Regeln“** (Tooltip nennt die Regeln) und das Häkchen
+  **„Ohne Regel“** („Nur Tags zeigen, die noch keine Regel vergibt“).
+
+### Kategorie-Vorschläge (#664)
+
+- Eine Buchung ohne Kategorie bekommt in ihrer Kategorie-Karte den **„Vorschlag (aus Historie)“**:
+  die Kategorie früherer Buchungen an dieselbe IBAN, beim selben Händler oder – wenn der Händler
+  noch keine Historie hat – mit ähnlichem Buchungstext, mit Begründung („Wie alle 4 Buchungen bei
+  diesem Händler“). **Übernehmen** setzt sie, **Als Regel …** öffnet den Regel-Editor damit
+  (bei IBAN-Grundlage als IBAN-Regel).
+- In der Buchungsliste steht der Vorschlag blass neben „Ohne Kategorie“; das Zeilenmenü bietet
+  unter *Kategorie* „Vorschlag übernehmen: …“.
+- Alles wird auf dem Gerät berechnet, im Hintergrund geladen und nicht gespeichert; ein Vorschlag
+  zählt in keiner Summe, bis Sie ihn übernehmen.
+
+### Depot und Sachwerte (#564, #625)
+
+- **Eigene Depotansicht:** Ein Wertpapierdepot zeigt statt der Buchungsliste Kopfkarte mit
+  Depotwert (rechts, mit Hinweis bei Abweichung von der Summe der Positionen), vier Kennzahlen
+  (Unrealisierte GuV, Tagesveränderung, Ausschüttungen, Gebühren & Steuern), die
+  **Zusammensetzung** (Kreis, Balken oder Kacheln; nach Position, Anlageklasse oder Instrument;
+  ein Klick filtert die Tabelle) und eine sortierbare **Positionstabelle** mit Summenzeile.
+- **Positionen | Aktivitäten** in der Symbolleiste (Strg+1 / Strg+2, auch in der
+  Befehlspalette): Wertpapieraktivitäten mit Filter (Käufe, Verkäufe, Ausschüttungen, Kosten) und
+  dem Sprung **zur Buchung des Verrechnungskontos**. Das Suchfeld durchsucht hier die Positionen
+  bzw. Aktivitäten („Wertpapier, ISIN oder WKN“).
+- **Sachwerte-Konten** bekommen dieselben Bausteine: Kennzahlen (Einstandswert, Unrealisierte
+  GuV, Tagesveränderung, Größte Position), Zusammensetzung und die gemeinsame Tabelle;
+  „Goldpreis aktualisieren“ und „Sachwert hinzufügen“ im Kopf, ehemalige Positionen darunter.
+- **Vermögen › Wertpapiere / Sachwerte** nutzen dieselbe Zusammensetzung, dieselben Kennzahlen
+  und dieselbe Tabelle (gleiche Wertpapiere aus mehreren Depots in einer Zeile, mit Depotname);
+  die Summenkarte steht in voller Breite mit dem Gesamtwert rechts.
+- **Positionen in Handelswährung:** Kurs und „Marktwert (Handelswährung)“ in der Währung der
+  Position, wenn sie von der Kontowährung abweicht.
+- Alle Beträge, Mengen und Anteile sind im Privatmodus verdeckt, Wertpapiernamen auf Wunsch.
+
+### Wertverlauf der Depots (#578, #761)
+
+- **Wertverlauf im Depotkopf:** Statt „Bewertungsverlauf noch nicht verfügbar“ zeigt die
+  Kopfkarte eines Wertpapierdepots den Depotwert über den gewählten Zeitraum als Stufenlinie –
+  aus den Werten, die die Bank bei jedem Abruf meldet, und aus importierten Werten. Ein Wert gilt
+  bis zum nächsten; vor dem ersten bekannten Wert bleibt das Diagramm leer („Werte ab …“).
+  Beim Darüberfahren stehen Tag, Wert und die Änderung seit Beginn des Zeitraums oben links.
+- **Vermögen › Wertpapiere** zeigt denselben Verlauf für alle Depots; eine Teilsumme (nicht jedes
+  Depot hatte schon einen Wert) ist gestrichelt und als „Teilsumme · 2 von 3 Depots“ markiert,
+  Depots in anderer Währung bleiben draußen und werden genannt.
+- **„Wertverlauf anzeigen“** in der Positionstabelle (Diagramm-Knopf neben dem Stift und im
+  Kontextmenü) öffnet den Verlauf einer Position; **„Verkaufte Positionen“** unter der Tabelle
+  listet nicht mehr gehaltene Positionen mit Verlauf.
+- Die Kopfkarte von Depot und Sachwerten zeigt das Diagramm jetzt in voller Breite unter Name und
+  Wert; Sachwerte nutzen dasselbe Diagramm.
+- **„Vorhandene Daten importieren“ › Datenbank:** übernimmt den Wertverlauf der Depots und nennt die Zahl der
+  „Wertverlauf-Einträge“ in der Vorschau und in der Zusammenfassung.
+- Startoption `--demo-sheet position-history` (mit `--select` auf ein Depot) für Screenshots.
+
+### Kopfbereich und Diagramme
+
+- **Diagramm-Steuerung unter dem Kopf-Diagramm (#634):** Ausgeblendet / Linie / Balken / Kreis
+  und „Balken je“ direkt unter dem Diagramm, auch in Darstellung › „Diagramm anzeigen“ und
+  „Diagramm“ sowie per Rechtsklick. „Ausgeblendet“ blendet nur das Diagramm aus. Der **Kreis**
+  zeigt bei einer Kategorie die Anteile der Unterkategorien (ein Klick in der Legende öffnet
+  sie), sonst die Ausgaben nach Kategorie im Zeitraum; ab neun Teilen „Sonstige“.
+  Einstellungen › Allgemein › Saldoverlauf wählt nur noch „Balken je“.
+- **Kategorie-Diagramm:** Balken je Tag, Monat, Quartal oder Jahr (#557), als Linie oder Balken.
+- **Das Kontostandsdiagramm folgt der Buchungsliste (#593):** Beim Scrollen wandert ein Marker
+  mit Datum und Tageskontostand zum Tag am oberen Listenrand, auch zum Tag einer ausgewählten
+  Buchung; der Tageskopf dieses Tages (oder des Tages unter dem Mauszeiger im Diagramm) ist
+  hervorgehoben.
+- **Cashflow und Monatsbudgets einklappbar (#603):** Pfeil vor dem Titel; eingeklappt zeigt die
+  Karte den Saldo des letzten Zeitraums bzw. Ausgaben und Budget aller Budgets. Einheitliche,
+  engere Abstände der Karten über der Liste; im minimierten Kopfbereich stehen die Filter in der
+  Titelzeile.
+- **Kontoinhaber** unter der Bank/IBAN-Zeile (#606).
+- **Kopf-Summe nur in Basiswährung (#569):** Andere Währungen stehen darunter als „Zusätzlich: …“
+  und werden nicht mitgezählt.
+
+### Buchungsliste: Filter, Saldo, Auswahlsumme
+
+- **Nach Betrag filtern (#357):** In der Filterzeile öffnet **„Betrag“** ein Fenster mit „Von“
+  und „Bis“ („Betrag ohne Vorzeichen.“, leer = offen); die Pille zeigt dann den Bereich, das
+  Kreuz daneben setzt ihn zurück („Betragsfilter zurücksetzen“). Liste, Anzahl, Summen der
+  Seitenleiste („Summen gefiltert – Betrag“), das Kennzeichen „Ohne Kategorie“ und der Export
+  folgen dem Filter.
+- **Kontenfilter überall (#357):** Das Menü „Konten: Alle“ steht jetzt auch in „Alle Konten“, in
+  Gruppen, Banken und Kontoarten (Auswahl aus deren Konten) und in „Neue Umsätze“. Solange Konten
+  gewählt sind, zeigt der Kopf einer Gruppe keine Summe. In den Kategorieansichten zählen die
+  Kacheln, was die Liste zeigt.
+- **„Filter zurücksetzen“ (#840):** Der Knopf in der Filterzeile setzt Status, Buchungsart, Tags,
+  Konten, Betrag und Suche mit einem Neuladen zurück; der Zeitraum bleibt.
+- **Zeitraum über Neustarts (#840):** Der zuletzt gewählte Zeitraum wird beim Start
+  wiederhergestellt (QSettings `period/last`); Demo-Starts bleiben bei „Gesamter Zeitraum“.
+- **Mitlaufender Saldo (#577):** Darstellung › **„Saldo anzeigen“** bzw. Einstellungen ›
+  Allgemein › „Saldo in der Buchungsliste anzeigen“ (aus ab Werk): Kontostand nach jeder Buchung
+  unter dem Betrag (Kompakt: daneben) und „Saldo …“ am Ende jedes Tages im Tageskopf. Nur bei
+  einem Konto, einer Gruppe oder „Alle Konten“, bei mehreren Konten die Summe der Euro-Konten.
+  Der CSV-Export hat unter „Weitere Optionen“ die „Saldo-Spalte (nach jeder Buchung)“.
+- **Auswahlsumme (#878):** Bei mehreren markierten Buchungen zeigt eine Leiste unter der Liste
+  „%1 Buchungen ausgewählt“ und die Summe, je Währung eine.
+- **Letzter Abruf (#815):** Darstellung bzw. Einstellungen › „Letzten Abruf anzeigen“ (aus ab
+  Werk) zeigt unter dem Kontostand eines Kontos „Abgerufen vor …“ (Tooltip: Datum und Uhrzeit)
+  oder „Noch nie abgerufen“; nicht bei Offline-Konten.
+- **Archivierte Konten (#814):** Sind archivierte Konten ausgeblendet, verschwinden auch Gruppen,
+  Banken und Kontoarten, die nur archivierte Konten enthalten.
+- Wenn die Filterzeile nicht in den Kopf passt, lässt sie sich seitlich verschieben, statt
+  abgeschnitten zu werden.
+
+### Export, Belege und Überweisung (#831, #934, #881, #873, #879)
+
+- **Ein Exportbefehl:** Ablage › „Umsätze exportieren …“ (Strg+Umschalt+E) deckt CSV mit ab;
+  „Umsätze als CSV exportieren …“ entfällt.
+- **Kompakter Export-Dialog:** Format (PDF | CSV | CAMT.053), Zeitraum (mit „Markierte Umsätze
+  (n)“, wenn Buchungen markiert sind), Konten-Popover mit Suche und Bank-Kästchen, Umfang und
+  eingeklappte Optionen. CSV kennt zusätzlich die Spalten „IBAN der Gegenseite“ und „Tags“.
+  Zeitraum und Konten bleiben gemerkt; „Exportieren …“ fragt immer nach dem Ort, „Pro Konto eine
+  Datei“ nach einem Ordner (statt still nach Downloads zu speichern).
+- **Belege & Postbox:** Ungelesene Dokumente tragen einen Punkt und einen fetten Titel und werden
+  beim Öffnen gelesen; „Als gelesen / ungelesen markieren“, „Nur ungelesene“ und „Alle als
+  gelesen markieren“. Die Seitenleiste zählt die ungelesenen (Kontextmenü „Alle als gelesen
+  markieren“). Filter nach Typ und Jahr; „N exportieren …“ exportiert genau die gefilterte Liste,
+  bei einem gewählten Konto in einen Unterordner mit seinem Namen. „Pfad kopieren“ im
+  Kontextmenü. Die Buchungs-Detailspalte entfällt in dieser Ansicht.
+- **Überweisung übersichtlicher:** Felder mit Rahmen, keine Abschnittsüberschriften, der Zähler
+  0/140 erst ab 120 Zeichen. Ein Umschalter „Überweisung | Umbuchung | Sammelüberweisung“ (auch
+  im Sammelüberweisungs-Fenster), die Ausführung als Aufklappmenü. Bekannte Empfänger erscheinen
+  als Aufklappliste unter dem Namen (Maus, ↑/↓, Return, Esc). Eine neue Überweisung startet leer,
+  beim Sperren wird der ganze Entwurf gelöscht. Vorlage und Einfügen verlassen die Umbuchung; vom
+  Tagesgeldkonto übernehmen sie nur Betrag und Zweck. Die Prüfansicht zeigt nur „Zurück“ und
+  „Freigeben“ (Esc geht zurück zum Formular). Das Fenster folgt der Höhe des Formulars und wächst
+  innerhalb eines Schritts nur.
+- **GiroCode als Bild:** „Bild kopieren“ und „Sichern …“ (PNG) unter dem GiroCode.
+- Der Demo-Hinweis steht beim Hinzufügen einer Bank unter den Feldern statt darüber.
+- Startoptionen `--demo-sheet export` und `--demo-sheet transfer-girocode` für Screenshots.
+
+### Barrierefreiheit und Kontraste (#571, #648, #674, #827, #650)
+
+- **Geprüfte Theme-Farben statt Systemfarben:** Fehler- und Hinweistexte, das Sperrsymbol entzogener
+  Zugänge, die GuV der Depotpositionen, das Schild im Banking-Hinweis und der Hinweis bei „Andere
+  FinTS-Bank“ nutzen die Theme-Farben für negativ, Warnung und Eingang (WCAG AA) statt Rot, Orange
+  und Grün.
+- **IBAN-/BIC-Prüfung im Überweisungsdialog:** Das Prüfsymbol sagt Orca, ob die IBAN stimmt („Prüfsumme
+  korrekt“ / „IBAN ungültig (Prüfsumme/Länge)“) und ob die BIC gültig ist.
+- **Bildschirmleser (Orca):** Symbol-Buttons werden mit ihrem Tooltip-Text vorgelesen statt namenlos.
+  Diagramme haben Namen und eine Zusammenfassung wie in der Mac-App („Summen der Kategorie“ mit
+  „Summe je Monat“ / „Ausgaben je Quartal“ …, „Cashflow“, „Konsum vs. Investition“), Budgetbalken
+  sagen „85 % des Budgets verbraucht“ (über 100 % mit „überschritten“). Segment-Umschalter,
+  Symbolauswahl, Farbe zurücksetzen, Artikel aufklappen, Auswahlfelder ohne sichtbare Beschriftung
+  („Von Konto“, „Kategorie“, „Kontoart“, „Ziel“, Zugangsfelder) und Buchungszeilen (mit „ausgewählt“)
+  sind benannt; der blaue „neu“-Punkt am Händlersymbol wird mitgesprochen.
+- Im Privatmodus und beim Problem melden folgen auch die vorgelesenen Namen und Beträge der
+  Schwärzung.
+- **Große Schrift ohne Abschneiden:** Gruppennamen in der Seitenleiste, „x % getilgt“ sowie Regel- und
+  Kategoriename in der Regelliste bekommen eine zweite Zeile statt „…“. Die Spalten des
+  Datenbank-Imports und die Eingabefelder in „Bewertungen/Anzahl bearbeiten“ wachsen mit der Schrift.
+  Titel und Betrag der Kennzahl-Kacheln werden wie am Mac etwas kleiner, bevor sie abgeschnitten
+  werden.
+
+### Kleinere Punkte
+
+- **Kategoriesummen folgen den Filtern (#621):** Die Summen unter „Kategorien“ in der
+  Seitenleiste berücksichtigen neben dem Zeitraum auch Status, Einnahmen/Ausgaben und – in den
+  Kategorieansichten – den Kontenfilter. Darunter steht dann „Summen gefiltert – …“ (ohne
+  Kontonamen). Die Summen laden im Hintergrund.
+- **Umbuchung vom Tagesgeldkonto (#582):** Tagesgeldkonten mit IBAN bei einer Bank, die
+  Überweisungen ausführen kann, stehen im Überweisungsformular unter „Von Konto“. Von dort ist
+  nur eine Umbuchung auf eigene Girokonten möglich (Konten derselben Bank zuerst); statt der
+  Auswahl „Überweisung/Umbuchung“ steht „Vom Tagesgeldkonto sind nur Umbuchungen auf eigene
+  Girokonten möglich.“ Daueraufträge, Sammelüberweisungen und Lastschriften bieten
+  Tagesgeldkonten weiterhin nicht an.
+- **„Umbuchung erkannt: …“ (#574):** Bei einer Umbuchung nennt die Detailspalte den Grund:
+  eigene Gegenkonto-IBAN, Kategorie „Umbuchungen“ oder der Buchungstext.
+- **Lastschriften (#673):** Mandatsliste und Inspektor nennen die Mandatsart „Einmalmandat (EM)“
+  bzw. „Dauermandat (AM)“ mit erklärendem Tooltip, ebenso der Schalter „Einmaliges Mandat“.
+- **Beleg-Symbol in der Buchungsliste (#675):** Tooltip „2 Beleg(e) – Leertaste für Vorschau“.
+- **Vermögen (#587):** In den Kontolisten steht der Kontoname in bis zu zwei Zeilen, darunter
+  „Bank · Inhaber“.
+
 ## Funktionsstand 0.8.7
 
 ### EquatePlus (#720)

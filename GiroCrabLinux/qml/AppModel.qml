@@ -1475,10 +1475,11 @@ QtObject {
         return d === "" ? a.name : a.name + " · " + d
     }
     /// Combo box entries: "Alle Konten", then each section title and its accounts (`label(a)`).
-    function accountMenuOptions(label, withoutAccount) {
+    /// `sections` defaults to `accountMenuSections` („Belege & Postbox“ passes the ones of a bank login, #1042).
+    function accountMenuOptions(label, withoutAccount, sections) {
         const out = [{ id: null, title: qsTr("Alle Konten") }]
         if (withoutAccount) out.push({ id: documentsWithoutAccount, title: qsTr("Ohne Konto") })
-        for (const s of accountMenuSections) {
+        for (const s of (sections || accountMenuSections)) {
             out.push({ id: undefined, title: s.title, header: true })
             for (const a of s.accounts) out.push({ id: a.id, title: label(a) })
         }
@@ -1826,7 +1827,18 @@ QtObject {
         if (isMagicDemoLogin(c.login_name)) return []
         const d = descriptor(c.connector)
         if (!d) return []
+        if (c.connector === "PayPal" && payPalUsesSignature()) return missingPayPalSignatureKeys()
         return userRequiredKeys(d.required_settings).filter(key => { const e = settingEntry(key); return !(e && e.has_value) })
+    }
+    /// PayPal via API signature (classic NVP API, #752): all three are required.
+    readonly property var payPalSignatureKeys: ["paypal.api_username", "paypal.api_password", "paypal.api_signature"]
+    /// One of the API signature fields is filled in: PayPal is set up that way, not via a REST app.
+    function payPalUsesSignature() { return payPalSignatureKeys.some(k => { const e = settingEntry(k); return !!e && e.has_value }) }
+    /// The API signature fields still empty (none: complete).
+    function missingPayPalSignatureKeys() { return payPalSignatureKeys.filter(k => { const e = settingEntry(k); return !(e && e.has_value) }) }
+    /// A setting to enter masked: the core's flag, else guessed from the key (not loaded yet).
+    function isSecretSetting(key, entry) {
+        return entry ? entry.is_secret : (key.indexOf("secret") >= 0 || key.endsWith("password") || key.endsWith("signature"))
     }
     /// Settings the core lists as required that are only an optional override for the user.
     /// A custom FinTS product ID is one: GiroCrab ships its own, and a value entered once is a
@@ -2013,6 +2025,12 @@ QtObject {
         })
     }
     function requestSyncChecked(connection) {
+        // Finpension: no sync, the export file is imported from the connection's sheet.
+        if (usesFileImport(connection)) {
+            resetSyncBatch()
+            toast = qsTr("%1: Bitte den Export in den Einstellungen der Verbindung importieren.").arg(connection.display_name)
+            return
+        }
         if (usesPortal(connection)) { webLoginConnection = connection; return }
         const magicDemo = isMagicDemoLogin(connection.login_name)
         if (!isDemo && !magicDemo && connection.connector === "TradeRepublic") {
@@ -2033,7 +2051,7 @@ QtObject {
         else pendingLogin = connection
     }
     function requestSyncAll() {
-        requestSyncBatch(connections.filter(c => !usesPortal(c) && !c.all_accounts_archived))
+        requestSyncBatch(connections.filter(c => !usesPortal(c) && !usesFileImport(c) && !c.all_accounts_archived))
     }
     function requestSyncBatch(batch) {
         if (syncingConnectionID !== null || !batch.length) return
@@ -2179,12 +2197,12 @@ QtObject {
             } else if (postboxConnectionID === connection.id) {
                 postboxConnectionID = null
                 documentsVersion++
-                toast = syncNotice(connection, s) + " · " + postboxNote(s)
+                toast = syncNotice(connection, s) + " · " + postboxNote(s, connection)
             } else {
                 // scheduled syncs only speak up when something changed
                 if (quietSyncConnectionID !== connection.id || s.transactions_imported > 0 || s.new_accounts.length || s.revoked_accounts.length) {
                     toast = syncNotice(connection, s)
-                    if (s.postbox_documents > 0) toast += " · " + postboxNote(s)
+                    if (s.postbox_documents > 0) toast += " · " + postboxNote(s, connection)
                 }
                 if (s.postbox_documents > 0) documentsVersion++
             }
@@ -2247,6 +2265,12 @@ QtObject {
     function settleForeignPoll() {
         if (activeChallenge && activeChallenge.polling && sessionPollsInFlight === 0)
             activeChallenge = Object.assign({}, activeChallenge, { polling: false })
+    }
+    /// Consorsbank Online-Archiv (#1024): the approval dialog's link switches between the
+    /// app approval and a typed TAN ("TAN" / "APP", handled in `consorsbank_archive.rs`).
+    function switchApproval(word) {
+        pollTimer.stop()
+        submitCode(word)
     }
     function submitCode(code) {
         if (activeTransfer !== null && activeChallenge) { submitTransferCode(code); return }
@@ -2767,12 +2791,39 @@ QtObject {
         if (!b || !isUnlocked || b.document_count === 0) return []
         return run(() => core("list_documents_for_booking", { booking_id: b.id })) || []
     }
-    function allDocuments(search, unlinkedOnly, accountId) {
+    function allDocuments(search, unlinkedOnly, accountId, connectionId) {
         void documentsVersion
         if (!isUnlocked) return []
-        const withoutAccount = accountId === documentsWithoutAccount
-        const docs = run(() => core("list_all_documents", { filter: { account_id: withoutAccount ? null : accountId, doc_type: null, search: search || null, unlinked_only: unlinkedOnly } })) || []
+        const noConnection = connectionId === undefined || connectionId === null || connectionId === documentsWithoutAccount
+        const withoutAccount = accountId === documentsWithoutAccount || connectionId === documentsWithoutAccount
+        const docs = run(() => core("list_all_documents", { filter: { account_id: accountId === documentsWithoutAccount ? null : accountId, doc_type: null, search: search || null,
+                                                                      unlinked_only: unlinkedOnly, connection_id: noConnection ? null : connectionId } })) || []
         return withoutAccount ? docs.filter(d => d.account_id === null || d.account_id === undefined) : docs
+    }
+    /// „Belege & Postbox“ filtered to one bank login (#1042); null = all, `documentsWithoutAccount` =
+    /// documents without an account (they have no bank login). Set it with `selectDocumentsConnection`.
+    property var documentsConnectionFilter: null
+    /// Bank logins to offer in that filter: those with at least one account.
+    readonly property var documentsFilterConnections: {
+        const used = {}
+        for (const a of allAccounts) if (a.connection_id !== null) used[a.connection_id] = true
+        return connections.filter(c => used[c.id])
+    }
+    /// The account menu of „Belege & Postbox“, narrowed to the chosen bank login (#1042).
+    readonly property var documentsAccountSections: {
+        const cid = documentsConnectionFilter
+        if (cid === null || cid === documentsWithoutAccount) return accountMenuSections
+        return accountMenuSections.map(s => ({ id: s.id, title: s.title, accounts: s.accounts.filter(a => a.connection_id === cid) }))
+                                  .filter(s => s.accounts.length > 0)
+    }
+    /// Picks the bank login of the document list. An account filter that does not belong to it
+    /// (or „Ohne Konto“) is reset, otherwise the list would be empty.
+    function selectDocumentsConnection(id) {
+        documentsConnectionFilter = id
+        const account = documentsAccountFilter
+        if (id === null || account === null) return
+        if (id === documentsWithoutAccount || !accountsByID[account] || accountsByID[account].connection_id !== id)
+            documentsAccountFilter = null
     }
     function accountDocuments(accountID) { return allDocuments("", false, accountID) }
     function documentsChanged() { documentsVersion++; reloadBookings() }
@@ -2880,7 +2931,11 @@ QtObject {
         next(0)
     }
     function canFetchStatements(a) {
-        return a && a.connector && (a.kind !== "Loan" || a.connector === "Bhw") && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Bhw"].indexOf(a.connector) >= 0
+        // BHW: the Bausparvertrag (a loan) has statements too
+        if (!a || !a.connector || (a.kind === "Loan" && a.connector !== "Bhw")) return false
+        // switched off per connection (bank connection dialog, #954): the core would refuse it
+        if (a.connection_id !== null && documentsOffConnectionIDs.indexOf(a.connection_id) >= 0) return false
+        return ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Ffb", "Bhw"].indexOf(a.connector) >= 0
     }
     function fetchStatements(a) {
         if (syncingConnectionID !== null) return
@@ -2895,14 +2950,58 @@ QtObject {
     /// comdirect via FinTS: also fetch the Postbox through comdirect's API (#838).
     function comdirectPostbox(id) { return run(() => core("comdirect_postbox_enabled", { connection_id: id })) || false }
     function setComdirectPostbox(id, on) { run(() => core("set_comdirect_postbox", { connection_id: id, enabled: on })) }
+    /// AppModel+Connections.swift (#954): the connection's bank delivers documents (the switch
+    /// „Dokumente abrufen“ is offered only then) and whether its syncs fetch them (default on).
+    function documentsFetchSupported(id) { return coreOrNull("documents_fetch_supported", { connection_id: id }) === true }
+    function documentsFetchEnabled(id) { return coreOrNull("documents_fetch_enabled", { connection_id: id }) !== false }
+    /// False when the switch was not stored (the error is shown), like `setFullHistory`.
+    function setDocumentsFetch(id, on) {
+        let ok = true
+        try { core("set_documents_fetch", { connection_id: id, enabled: on }) }
+        catch (e) { errorMessage = e.message; ok = false }
+        refreshDocumentsOff()
+        return ok
+    }
+    /// Connections whose bank delivers documents but whose retrieval is switched off. Read once on
+    /// a change of the connections and of the switch, so views never ask the core while they render.
+    property var documentsOffConnectionIDs: []
+    onConnectionsChanged: refreshDocumentsOff()
+    // an unlock publishes the connections before `vaultState` turns "open"
+    onIsUnlockedChanged: refreshDocumentsOff()
+    function refreshDocumentsOff() {
+        documentsOffConnectionIDs = isUnlocked
+            ? connections.filter(c => documentsFetchSupported(c.id) && !documentsFetchEnabled(c.id)).map(c => c.id) : []
+    }
+    /// AppModel+Documents.swift › connectionsWithDocumentsOff: for the whole list, the one account
+    /// on screen (`accountFilter`) or the chosen bank login (`connectionFilter`, #1042).
+    function connectionsWithDocumentsOff(accountFilter, connectionFilter) {
+        let ids = null
+        if (accountFilter !== null && accountFilter !== undefined) {
+            if (accountFilter === documentsWithoutAccount) return []
+            const a = accountsByID[accountFilter]
+            if (!a || a.connection_id === null) return []
+            ids = [a.connection_id]
+        } else if (connectionFilter !== null && connectionFilter !== undefined) {
+            if (connectionFilter === documentsWithoutAccount) return []
+            ids = [connectionFilter]
+        }
+        return connections.filter(c => (ids === null || ids.indexOf(c.id) >= 0) && documentsOffConnectionIDs.indexOf(c.id) >= 0)
+    }
     /// "Postbox jetzt abrufen": syncs the login with the Postbox, however recent the last fetch.
     function fetchComdirectPostbox(c) {
         if (syncingConnectionID !== null) return
         postboxConnectionID = c.id
         requestSync(c)
     }
-    /// Toast suffix of a sync with the comdirect Postbox.
-    function postboxNote(s) {
+    /// Toast suffix of a sync with the comdirect Postbox (#838) or the Consorsbank Online-Archiv (#1024).
+    function postboxNote(s, c) {
+        const n = s.postbox_documents
+        if (c && c.connector === "FinTsGeneric" && c.bank_code === "76030080") {
+            if (n === null || n === undefined)
+                return qsTr("Online-Archiv nicht abgerufen. Bitte PIN und Freigabe in der Consorsbank App prüfen.")
+            return n === 0 ? qsTr("keine neuen Dokumente aus dem Online-Archiv")
+                : qsTr("%1 neue Dokumente aus dem Online-Archiv").arg(n)
+        }
         if (s.postbox_documents === null || s.postbox_documents === undefined)
             return qsTr("Postbox nicht abgerufen. Bitte Client-ID und Client-Secret der comdirect-API prüfen.")
         return s.postbox_documents === 0 ? qsTr("keine neuen Postbox-Dokumente")
@@ -3134,7 +3233,7 @@ QtObject {
         const ids = {}
         for (const x of userGroupSubtree(g.uuid))
             for (const a of x.accounts) if (a.archived_unix === null && a.connection_id !== null) ids[a.connection_id] = true
-        return connections.filter(c => ids[c.id] && !usesPortal(c))
+        return connections.filter(c => ids[c.id] && !usesPortal(c) && !usesFileImport(c))
     }
     function requestSyncGroup(g) { requestSyncBatch(groupSyncConnections(g)) }
     /// "Ohne Gruppe" for the group manager: always there, also when every account is in a group.
@@ -4886,6 +4985,33 @@ QtObject {
                 errorMessage = e.message
             }
         }
+    }
+    /// PortalUI.swift › usesFileImport (#975): connections fed by an export file the user picks (no login, no sync).
+    function usesFileImport(c) { return c.connector === "Finpension" && !isDemo && !isMagicDemoLogin(c.login_name) }
+    /// PortalUI.swift › importFinpension (#975): the Finpension export (CSV or JSON) of this connection.
+    function importFinpension(c, fileUrl) {
+        const path = localPath(fileUrl)
+        const name = path.split("/").pop()
+        const gen = vaultGeneration
+        // like `pinVault()`: the worker refuses the import once another vault is in front
+        const identity = run(() => core("refund_vault_identity"))
+        if (identity === undefined) return
+        coreAsync("import_finpension_file", { connection_id: c.id, path: path, vault_identity: identity }, s => {
+            if (gen !== vaultGeneration) return
+            toast = qsTr("%1: %2 neue Buchungen aus %3").arg(c.display_name).arg(s.transactions_imported).arg(name)
+            reloadAll()
+        }, e => {
+            // locked or switched vault meanwhile: no error over another vault
+            if (gen !== vaultGeneration) return
+            const err = parseCoreError(e)
+            if (err.kind === "InvalidInput") {
+                errorTitle = qsTr("Nichts erkannt")
+                errorMessage = qsTr("In %1 wurden keine Finpension-Positionen oder -Buchungen erkannt. Erwartet: CSV oder JSON-Export mit ISIN, Anzahl, Kurs, Marktwert bzw. Datum, Beschreibung, Betrag.").arg(name)
+            } else {
+                errorTitle = qsTr("Finpension-Import fehlgeschlagen")
+                errorMessage = err.message
+            }
+        })
     }
     /// AmazonUI.swift › importAmazonOrders. Returns true when orders were recognised.
     function importAmazonOrders(c, json) {

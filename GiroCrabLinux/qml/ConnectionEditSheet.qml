@@ -24,6 +24,26 @@ Sheet {
     property bool showAdvanced: false
     /// comdirect via FinTS: Postbox through the bank's API as well (#838).
     property bool postbox: false
+    /// Document retrieval of this connection (#954, only for banks that deliver documents).
+    property bool documentsSupported: false
+    property bool documentsFetch: true
+    property bool initialDocumentsFetch: true
+    /// „Dokumente abrufen“ is off: nothing that fetches documents runs (Postbox included).
+    readonly property bool documentsBlocked: documentsSupported && !documentsFetch
+    /// The values as loaded: „Speichern“ is only available once something differs.
+    property string initialValues: "{}"
+    /// Something in the sheet differs from what was loaded (name, login, PIN, settings, account selection).
+    readonly property bool hasChanges: {
+        if (!connection) return false
+        const l = isTR ? AppModel.coreOrNull("normalize_phone_number", { input: login }) || login : login.trim()
+        if (name !== connection.display_name || l !== connection.login_name) return true
+        if (usesPin && (storePin !== (status ? status.has_pin : false) || pin !== "")) return true
+        if (JSON.stringify(values) !== initialValues) return true
+        if (documentsSupported && documentsFetch !== initialDocumentsFetch) return true
+        if (fullHistory !== initialFullHistory) return true
+        return selection.hasChanges
+    }
+    readonly property bool isFinTs: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric"].indexOf(kind) >= 0
     /// Full fetch at the next sync (#1043): `max`, days, or "" for none.
     property string fullHistory: ""
     property string initialFullHistory: ""
@@ -35,6 +55,8 @@ Sheet {
     /// comdirect logins can switch between FinTS and comdirect's own API.
     readonly property bool isComdirect: kind === "Comdirect"
         || (kind === "FinTsGeneric" && ["20041111", "20041133", "20041144", "20041155"].indexOf(connection.bank_code) >= 0)
+    /// Consorsbank via FinTS: documents from the Online-Archiv as well (#1024).
+    readonly property bool isConsorsbankFinTS: kind === "FinTsGeneric" && connection.bank_code === "76030080"
     readonly property bool usesPin: ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Comdirect", "TradeRepublic", "Bunq", "Ibkr", "Easybank", "AlteLeipziger", "VolkswagenBank", "Uberspace", "Ffb", "FordMoney", "OpelDirektbank", "Bhw", "Kontist", "Monefit", "GoAndGrow"].indexOf(kind) >= 0
     /// ConnectionsUI.swift › ConnectionEditSheet: these portals take a password, not a PIN
     readonly property bool usesPassword: ["Easybank", "AlteLeipziger", "Uberspace", "FordMoney", "OpelDirektbank", "Bhw", "Kontist", "Monefit", "GoAndGrow"].indexOf(kind) >= 0
@@ -63,6 +85,8 @@ Sheet {
     /// Optional power-user PSD2 credentials (collapsed "Erweitert" section).
     readonly property var advancedKeys: kind === "AmericanExpress"
         ? ["enablebanking.use.amex", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amex", "enablebanking.country.amex"]
+        // Prototype #156: classic NVP API instead of the REST app.
+        : kind === "PayPal" ? AppModel.payPalSignatureKeys
         : kind === "AmazonVisa"
         ? ["enablebanking.use.amazonvisa", "enablebanking.application_id", "enablebanking.private_key_pem", "enablebanking.redirect_url", "enablebanking.aspsp.amazonvisa", "enablebanking.country.amazonvisa"]
         : []
@@ -100,7 +124,10 @@ Sheet {
         pin = ""
         status = AppModel.connectionStatus(connection.id)
         storePin = status ? status.has_pin : false
-        postbox = isComdirect && kind === "FinTsGeneric" ? AppModel.comdirectPostbox(connection.id) : false
+        postbox = (isComdirect || isConsorsbankFinTS) && kind === "FinTsGeneric" ? AppModel.comdirectPostbox(connection.id) : false
+        documentsSupported = AppModel.documentsFetchSupported(connection.id)
+        documentsFetch = AppModel.documentsFetchEnabled(connection.id)
+        initialDocumentsFetch = documentsFetch
         fullHistory = AppModel.pendingFullHistory(connection.id)
         initialFullHistory = fullHistory
         revealed = ({})
@@ -119,6 +146,7 @@ Sheet {
             v[key] = e && e.is_secret ? AppModel.revealSetting(key) : (e ? e.value : AppModel.revealSetting(key))
         }
         values = v
+        initialValues = JSON.stringify(v)
     }
     /// ConnectionsUI.swift › saveFullHistoryIfChanged: before anything that fetches, the next sync
     /// must reach back as chosen (#1043). `force`: a fetch starts right away, so the shown period is
@@ -130,9 +158,14 @@ Sheet {
         initialFullHistory = fullHistory
         return true
     }
-    /// False when the period of the next fetch was not stored (the error is shown, nothing else saved).
+    /// False when the period of the next fetch or the document retrieval was not stored (the error
+    /// is shown, nothing else saved): „Speichern & abrufen“ must not fetch with the previous switch.
     function save() {
         if (!saveFullHistoryIfChanged(false)) return false
+        if (documentsSupported && documentsFetch !== initialDocumentsFetch) {
+            if (!AppModel.setDocumentsFetch(connection.id, documentsFetch)) return false
+            initialDocumentsFetch = documentsFetch
+        }
         const l = isTR ? AppModel.core("normalize_phone_number", { input: login }) : login.trim()
         // Advanzia: another login is another profile with its own session (AdvanziaConnectionSettingsState.save)
         if (kind === "Advanzia" && l !== connection.login_name) AppModel.forgetWebCookies(connection.id)
@@ -149,6 +182,8 @@ Sheet {
                 AppModel.setConnectionEnableBankingApp(connection.id, id, pem)
         }
         pin = ""
+        // the sheet can stay open: what was saved is the new "unchanged"
+        initialValues = JSON.stringify(values)
         return true
     }
     function saveSettings(list) {
@@ -204,6 +239,21 @@ Sheet {
     readonly property int consentDaysLeft: consentEnd ? Math.floor((consentEnd - new Date()) / 86400000) : 0
     readonly property string consentStage: !consentEnd || isNaN(consentEnd) ? "none" : consentEnd <= new Date() ? "expired" : consentDaysLeft < 14 ? "expiringSoon" : "valid"
 
+    /// DisclosureGroup „Erweitert: …“: a button, so Tab reaches it and Space opens it, with a focus frame.
+    component AdvancedDisclosure: ToolButton {
+        id: disclosure
+        Layout.fillWidth: true
+        Accessible.name: text
+        onClicked: sheet.showAdvanced = !sheet.showAdvanced
+        contentItem: RowLayout {
+            spacing: 6
+            SFIcon { symbol: sheet.showAdvanced ? "chevron.down" : "chevron.right"; size: 10; color: Theme.secondary }
+            Text { text: disclosure.text; font.pixelSize: Theme.body; color: Theme.text; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        }
+        background: Rectangle { radius: 4; color: "transparent"
+                                border.width: disclosure.visualFocus ? 2 : 0; border.color: Theme.accent }
+    }
+
     FileDialog {
         id: pemDialog
         title: qsTr("PEM-Datei wählen …")
@@ -218,13 +268,6 @@ Sheet {
                 if (k.applicationID) sheet.setValue("enablebanking.application_id", k.applicationID)
             } catch (e) { AppModel.toast = e.message }
         }
-    }
-    ConfirmDialog {
-        id: confirmRemove
-        heading: sheet.connection ? qsTr("„%1“ entfernen?").arg(AppModel.masking(sheet.connection.display_name)) : ""
-        message: qsTr("Alle Konten dieses Bankzugangs werden samt Buchungen, Belegen und gespeicherten Zugangsdaten aus dem Tresor gelöscht. Das lässt sich nicht widerrufen.")
-        actionTitle: qsTr("Entfernen")
-        onConfirmed: { const id = sheet.connection.id; sheet.close(); AppModel.removeConnection(id) }
     }
     ConfirmDialog {
         id: confirmSwitch
@@ -259,6 +302,14 @@ Sheet {
         currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
         onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importStatement(c, file), false) }
     }
+    // Finpension export (#975): CSV, JSON or plain text, like the Mac's file importer
+    FileDialog {
+        id: finpensionDialog
+        title: qsTr("Finpension-Export importieren …")
+        nameFilters: [qsTr("Finpension-Export (*.csv *.json *.txt)"), qsTr("Alle Dateien (*)")]
+        currentFolder: StandardPaths.writableLocation(StandardPaths.DownloadLocation)
+        onAccepted: { const file = selectedFile; sheet.saveThen(c => AppModel.importFinpension(c, file), false) }
+    }
 
     ColumnLayout {
         width: sheet.availableWidth
@@ -275,7 +326,7 @@ Sheet {
             ScrollBar.vertical: ScrollViewBar {}
             id: scroll
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(form.implicitHeight, 520, sheet.maxBodyHeight - 150)
+            Layout.preferredHeight: Math.min(form.implicitHeight, 600, sheet.maxBodyHeight - 150)
             contentWidth: availableWidth
             clip: true
             ColumnLayout {
@@ -300,7 +351,7 @@ Sheet {
                               value: sheet.isTR && sheet.login !== "" ? AppModel.core("normalize_phone_number", { input: sheet.login }) : "" }
                     SettingsFormRow {
                         readonly property string blz: !sheet.connection ? "" : sheet.connection.bank_code !== "" ? sheet.connection.bank_code : (sheet.descriptor ? sheet.descriptor.bank_code : "")
-                        visible: blz !== ""; label: qsTr("BLZ"); value: blz
+                        visible: blz !== "" && sheet.isFinTs; label: qsTr("BLZ"); value: blz
                     }
                     CheckBox {
                         visible: sheet.usesPin
@@ -315,11 +366,36 @@ Sheet {
                         text: sheet.pin; onTextEdited: sheet.pin = text
                         placeholderText: sheet.isRah10 ? qsTr("Passwort der Schlüsseldatei (leer = unverändert)") : sheet.kind === "Bhw" ? (sheet.status && sheet.status.has_pin ? qsTr("Gespeicherte Anmeldedaten (leer = unverändert)") : qsTr("Vorname;TT.MM.JJJJ;PLZ")) : sheet.status && sheet.status.has_pin ? qsTr("Gespeicherte PIN (leer = unverändert)") : (sheet.kind === "Ibkr" ? qsTr("Flex-Query-ID") : sheet.usesPassword ? qsTr("Passwort") : qsTr("PIN"))
                     }
+                    // #954: only for banks that deliver documents; applied with „Speichern“
+                    CheckBox {
+                        visible: sheet.documentsSupported
+                        text: qsTr("Dokumente abrufen")
+                        checked: sheet.documentsFetch
+                        onToggled: sheet.documentsFetch = checked
+                        ToolTip.visible: hovered; ToolTip.delay: 600
+                        ToolTip.text: qsTr("Belege, Kontoauszüge und Postbox-Dokumente werden bei jedem Abruf geladen. Aus: keine neuen Dokumente, bereits gespeicherte bleiben. Beim Einschalten lädt der nächste Abruf fehlende Dokumente nach.")
+                    }
                 }
                 SettingsFormSection {
                     visible: sheet.keys.length > 0
                     title: sheet.sectionTitle
                     Repeater { model: sheet.keys; KeyField { required property string modelData; key: modelData } }
+                }
+                // Prototype #156: classic NVP API (API signature) instead of the REST app.
+                SettingsFormSection {
+                    visible: sheet.kind === "PayPal"
+                    AdvancedDisclosure { text: qsTr("Erweitert: API-Signatur (klassische NVP-API)") }
+                    Text { visible: sheet.showAdvanced; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                           text: qsTr("Ist die API-Signatur gesetzt, ruft GiroCrab per API-Benutzername, API-Passwort und Signatur ab; Client-ID und Secret werden dann nicht gebraucht.") }
+                    Repeater { model: sheet.showAdvanced ? sheet.advancedKeys : []; KeyField { required property string modelData; key: modelData } }
+                }
+                // Finpension (#975): no interface, the export file is imported here
+                SettingsFormSection {
+                    visible: sheet.kind === "Finpension"
+                    Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
+                           text: qsTr("Finpension hat keine Schnittstelle: Laden Sie in Ihrem Finpension-Konto den Export (CSV oder JSON) mit Positionen und Cash-Buchungen herunter und lesen Sie ihn hier ein. Säule 3a, Freizügigkeit und 1e werden gleich behandelt. Es gibt keine Anmeldung und keinen Netzwerkzugriff.") }
+                    Button { text: qsTr("Finpension-Export importieren …"); icon.name: SF.icon("doc.badge.plus"); highlighted: true
+                             onClicked: finpensionDialog.open() }
                 }
                 SettingsFormSection {
                     visible: sheet.isPortal
@@ -355,12 +431,7 @@ Sheet {
                 }
                 SettingsFormSection {
                     visible: sheet.isPortal
-                    RowLayout {
-                        Layout.fillWidth: true
-                        SFIcon { symbol: sheet.showAdvanced ? "chevron.down" : "chevron.right"; size: 10; color: Theme.secondary }
-                        Text { text: qsTr("Erweitert: Eigene PSD2/Enable-Banking API (Optional)"); font.pixelSize: Theme.body; color: Theme.text; Layout.fillWidth: true
-                               MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: sheet.showAdvanced = !sheet.showAdvanced } }
-                    }
+                    AdvancedDisclosure { text: qsTr("Erweitert: Eigene PSD2/Enable-Banking API (Optional)") }
                     Text { visible: sheet.showAdvanced; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                            text: qsTr("Nur für Power-User: Mit eigener Application-ID und PEM-Schlüssel nutzt GiroCrab statt des Web-Logins die PSD2-Schnittstelle von Enable Banking.") }
                     Repeater { model: sheet.showAdvanced ? sheet.advancedKeys : []; KeyField { required property string modelData; key: modelData } }
@@ -382,6 +453,7 @@ Sheet {
                     CheckBox {
                         text: qsTr("Postbox über die Schnittstelle der Bank abrufen")
                         checked: sheet.postbox
+                        enabled: !sheet.documentsBlocked
                         onToggled: {
                             // the switch needs the credentials stored
                             if (checked) sheet.saveSettings(sheet.postboxKeys)
@@ -390,10 +462,49 @@ Sheet {
                             checked = Qt.binding(() => sheet.postbox)
                         }
                     }
+                    RowLayout {
+                        visible: sheet.documentsBlocked
+                        Layout.fillWidth: true
+                        spacing: 4
+                        SFIcon { symbol: "info.circle"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop }
+                        Text { text: qsTr("Wird nicht abgerufen, solange „Dokumente abrufen“ oben ausgeschaltet ist.")
+                               font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
                     Button {
                         visible: sheet.postbox
                         text: qsTr("Postbox jetzt abrufen")
-                        enabled: AppModel.syncingConnectionID === null
+                        enabled: AppModel.syncingConnectionID === null && !sheet.documentsBlocked
+                        onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c), true)
+                    }
+                }
+                // Consorsbank via FinTS: documents from the Online-Archiv as well (#1024)
+                SettingsFormSection {
+                    visible: sheet.isConsorsbankFinTS
+                    title: qsTr("Online-Archiv")
+                    footer: qsTr("Kontoauszüge, Abrechnungen, Depotauszüge und Steuerdokumente aus dem Online-Archiv der Consorsbank, höchstens einmal pro Woche beim Abruf. GiroCrab meldet sich dafür mit Kontonummer und PIN dieses Zugangs im Online-Banking an, die Anmeldung geben Sie in der Consorsbank App frei. Die Schnittstelle ist inoffiziell. Gespeicherte Dokumente werden nicht erneut geladen, denn jeder Abruf markiert ein Dokument bei der Bank als gelesen.")
+                    CheckBox {
+                        text: qsTr("Online-Archiv abrufen")
+                        checked: sheet.postbox
+                        enabled: !sheet.documentsBlocked
+                        onToggled: {
+                            AppModel.setComdirectPostbox(sheet.connection.id, checked)
+                            sheet.postbox = AppModel.comdirectPostbox(sheet.connection.id)
+                            checked = Qt.binding(() => sheet.postbox)
+                        }
+                    }
+                    RowLayout {
+                        visible: sheet.documentsBlocked
+                        Layout.fillWidth: true
+                        spacing: 4
+                        SFIcon { symbol: "info.circle"; size: 11; color: Theme.secondary; Layout.alignment: Qt.AlignTop }
+                        Text { text: qsTr("Wird nicht abgerufen, solange „Dokumente abrufen“ oben ausgeschaltet ist.")
+                               font.pixelSize: Theme.caption; color: Theme.secondary; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    }
+                    Button {
+                        visible: sheet.postbox
+                        text: qsTr("Online-Archiv jetzt abrufen")
+                        icon.name: SF.icon("tray.and.arrow.down")
+                        enabled: AppModel.syncingConnectionID === null && !sheet.documentsBlocked
                         onClicked: sheet.saveThen(c => AppModel.fetchComdirectPostbox(c), true)
                     }
                 }
@@ -479,13 +590,19 @@ Sheet {
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
         // HIG: the default button (Return) is the rightmost one.
+        // #954: no „Bankzugang entfernen …“ here (the trash in the list of logins removes it, like on
+        // the Mac); „Speichern & abrufen“ as an icon; „Speichern“ only after a change, else „Schließen“.
         RowLayout {
             Layout.fillWidth: true
-            Button { text: qsTr("Bankzugang entfernen …"); palette.buttonText: Theme.negative; onClicked: confirmRemove.open() }
             Item { Layout.fillWidth: true }
-            Button { text: qsTr("Abbrechen"); onClicked: sheet.close() }
-            Button { text: qsTr("Speichern && abrufen"); onClicked: sheet.saveAll(true) }
-            Button { text: qsTr("Speichern"); highlighted: true; onClicked: sheet.saveAll(false) }
+            Button { text: sheet.hasChanges ? qsTr("Abbrechen") : qsTr("Schließen"); onClicked: sheet.close() }
+            Button {
+                icon.name: SF.icon("arrow.triangle.2.circlepath"); display: AbstractButton.IconOnly
+                onClicked: sheet.saveAll(true)
+                Accessible.name: qsTr("Speichern & abrufen")
+                ToolTip.text: qsTr("Speichern & abrufen"); ToolTip.visible: hovered; ToolTip.delay: 600
+            }
+            Button { text: qsTr("Speichern"); highlighted: true; enabled: sheet.hasChanges; onClicked: sheet.saveAll(false) }
         }
     }
 
@@ -495,7 +612,7 @@ Sheet {
         property string key
         readonly property var entry: AppModel.settingEntry(key)
         readonly property string label: AppModel.settingLabel(key)
-        readonly property bool secret: entry ? entry.is_secret : false
+        readonly property bool secret: AppModel.isSecretSetting(key, entry)
         readonly property bool isRevealed: !!sheet.revealed[key]
         readonly property bool isPem: key.indexOf("private_key") >= 0
         Layout.fillWidth: true

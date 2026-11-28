@@ -102,9 +102,16 @@ ColumnLayout {
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
-                Text { text: row.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Layout.fillWidth: true }
-                Text { visible: text !== ""; text: list.detail(row.modelData); font.pixelSize: Theme.caption; color: Theme.secondary
-                       elide: Text.ElideRight; Layout.fillWidth: true }
+                // one line per account (#954): name, then number and owner on the right
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text { text: row.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight
+                           Layout.fillWidth: true; Layout.minimumWidth: Math.min(implicitWidth, 120); Sensitive {} }
+                    Text { visible: text !== ""; text: list.detail(row.modelData); font.pixelSize: Theme.caption; color: Theme.secondary
+                           elide: Text.ElideMiddle; Layout.maximumWidth: implicitWidth; Layout.fillWidth: true
+                           horizontalAlignment: Text.AlignRight; Sensitive {} }
+                }
                 RowLayout {
                     // a new card of the same login (#243) is held back without another login
                     visible: row.modelData.pending && row.modelData.existing_connection !== ""
@@ -124,8 +131,11 @@ ColumnLayout {
     Text {
         visible: list.loaded && list.choices.length > 0
         Layout.fillWidth: true; wrapMode: Text.WordWrap
-        text: qsTr("Abrufen: Konto, Umsätze und Dokumente werden über diesen Zugang importiert. Überspringen: nichts davon; das Konto wird archiviert und ausgeblendet und behält seine gespeicherten Daten. Das Archiv-Symbol in der Seitenleiste zeigt archivierte Konten wieder an.")
+        text: qsTr("Aus: Das Konto wird archiviert und ausgeblendet, seine Daten bleiben erhalten.")
         font.pixelSize: Theme.caption; color: Theme.secondary
+        HoverHandler { id: hintHover }
+        ToolTip.visible: hintHover.hovered; ToolTip.delay: 600
+        ToolTip.text: qsTr("Abrufen: Konto, Umsätze und Dokumente werden über diesen Zugang importiert. Überspringen: nichts davon; das Konto wird archiviert und ausgeblendet und behält seine gespeicherten Daten. Das Archiv-Symbol in der Seitenleiste zeigt archivierte Konten wieder an.")
     }
     Text {
         visible: list.error !== ""
