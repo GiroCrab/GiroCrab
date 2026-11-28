@@ -27,7 +27,7 @@ use super::{
     BankConnector, ChallengeResponse, ConnectContext, ContentIds, FetchResult, Phase,
     RemoteAccount, RemoteHolding, RemoteSecurityTransaction, RemoteTransaction,
 };
-use crate::error::{CoreError, CoreResult};
+use crate::error::{CoreError, CoreResult, error_chain, strip_url};
 use crate::i18n::{tr, trf};
 use crate::models::{AccountKind, Holding, SecurityDirection, SecurityTransaction};
 use crate::money;
@@ -218,31 +218,6 @@ fn net_err(e: reqwest::Error) -> CoreError {
 /// Connection drops, timeouts and failed connects are worth another attempt.
 fn is_transient(e: &reqwest::Error) -> bool {
     e.is_timeout() || e.is_connect() || e.is_request()
-}
-
-/// `error` plus its whole `source()` chain, joined with ": " (URLs removed).
-fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(error);
-    while let Some(e) = cur {
-        let text = strip_url(&e.to_string());
-        if !text.is_empty() && parts.last() != Some(&text) {
-            parts.push(text);
-        }
-        cur = e.source();
-    }
-    parts.join(": ")
-}
-
-/// Drops `(url: …)`-style fragments (they would contain the token).
-fn strip_url(message: &str) -> String {
-    match message.find("http") {
-        Some(i) => message[..i]
-            .trim_end()
-            .trim_end_matches(['(', ':'])
-            .to_string(),
-        None => message.to_string(),
-    }
 }
 
 fn flex_error(r: &StatusResponse) -> CoreError {
@@ -1421,30 +1396,6 @@ mod tests {
         let xml = r#"<FlexQueryResponse><FlexStatements><FlexStatement accountId="U1" toDate="2026-11-12"></FlexStatement></FlexStatements></FlexQueryResponse>"#;
         let r = build_fetch(xml, "2026-01-01").unwrap();
         assert_eq!(r.accounts[0].currency, "EUR");
-    }
-
-    #[test]
-    fn error_chain_lists_all_causes() {
-        #[derive(Debug)]
-        struct Outer(std::io::Error);
-        impl std::fmt::Display for Outer {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "error sending request")
-            }
-        }
-        impl std::error::Error for Outer {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-                Some(&self.0)
-            }
-        }
-        let e = Outer(std::io::Error::new(
-            std::io::ErrorKind::ConnectionReset,
-            "connection reset by peer",
-        ));
-        assert_eq!(
-            error_chain(&e),
-            "error sending request: connection reset by peer"
-        );
     }
 
     #[tokio::test]

@@ -83,8 +83,10 @@ impl From<reqwest::Error> for CoreError {
     fn from(e: reqwest::Error) -> Self {
         // The URL of a failed request can carry session paths or query
         // strings (FNZ): it never ends up in the error text, only the cause.
+        // The whole cause chain: "error sending request" alone does not tell a
+        // missing server (DNS) from a refused connection or a TLS failure.
         CoreError::Network {
-            message: e.without_url().to_string(),
+            message: error_chain(&e.without_url()),
         }
     }
 }
@@ -140,3 +142,80 @@ impl fmt::Display for CoreError {
 }
 
 pub type CoreResult<T> = Result<T, CoreError>;
+
+/// `error` plus its whole `source()` chain, joined with ": " (URLs removed).
+pub(crate) fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(e) = cur {
+        let text = strip_url(&e.to_string());
+        if !text.is_empty() && parts.last() != Some(&text) {
+            parts.push(text);
+        }
+        cur = e.source();
+    }
+    parts.join(": ")
+}
+
+/// Drops `(url: …)`-style fragments (they can carry tokens or session paths).
+pub(crate) fn strip_url(message: &str) -> String {
+    match message.find("http") {
+        Some(i) => message[..i]
+            .trim_end()
+            .trim_end_matches(['(', ':'])
+            .to_string(),
+        None => message.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_chain_lists_all_causes() {
+        #[derive(Debug)]
+        struct Outer(std::io::Error);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "error sending request")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let e = Outer(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "connection reset by peer",
+        ));
+        assert_eq!(
+            error_chain(&e),
+            "error sending request: connection reset by peer"
+        );
+    }
+
+    /// A failed request names its cause (#2020: a FinTS server that no longer
+    /// exists showed only "error sending request"), never the URL's path or query.
+    #[tokio::test]
+    async fn network_error_names_the_cause_without_the_url() {
+        // nothing listens on this port
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        drop(l);
+        let e = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{port}/session/4711?fnz=secret"))
+            .send()
+            .await
+            .unwrap_err();
+        let CoreError::Network { message } = CoreError::from(e) else {
+            panic!("not a network error");
+        };
+        assert!(message.starts_with("error sending request: "), "{message}");
+        assert!(message.len() > "error sending request: ".len(), "{message}");
+        for leak in ["session", "4711", "secret", "http"] {
+            assert!(!message.contains(leak), "{leak} in {message}");
+        }
+    }
+}
