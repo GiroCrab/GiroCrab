@@ -24,7 +24,9 @@ Fenster und Hinweise.
   „Bankzugang X von Y“ und ohne eigenes „Alle abbrechen“. Läuft ein Zugang ohne Eingabe,
   steht dort „<Name> wird abgerufen …“. Am Ende folgt ein Satz zum Ergebnis.
 - **Browser-Anmeldungen** (Trade Republic, FNZ, eine Bank, die eine verlangt) öffnen sich als
-  Fenster über dem Abruf-Fenster. Ihr „Abbrechen“ überspringt den Zugang.
+  Fenster über dem Abruf-Fenster. Ihr „Abbrechen“ überspringt den Zugang. Als abgerufen zählt
+  er nur, wenn danach ein Abruf lief oder das Browser-Fenster einen Import gemeldet hat (FNZ);
+  jedes andere Schließen ergibt „Browser-Fenster ohne Abruf geschlossen“.
 - **Fußzeile:** Während des Laufs „Alle abbrechen“ links. Rechts steht „Überspringen“, solange
   keine Eingabe ein eigenes hat. Am Ende steht dort nur „Fertig“ (Standardtaste).
 
@@ -51,7 +53,11 @@ Fenster und Hinweise.
 - Was ein Fehler zusätzlich anbietet (eine andere FinTS-Registrierung, die eigene eintragen),
   erscheint nach dem Ende in der Zeile. Ein Klick schließt das Fenster und führt es aus.
 - „Alle abbrechen“ beendet den laufenden Abruf und markiert alle offenen Zugänge als
-  „Abruf abgebrochen“. Das Fenster bleibt mit dem Ergebnis stehen.
+  „Abruf abgebrochen“. Das Fenster bleibt mit dem Ergebnis stehen. Ein „Erneut versuchen“
+  startet erst, wenn der Bankdialog des abgebrochenen Zugangs beendet ist. Ein Zugang, der
+  gerade noch auf die Prüfung der Sicherheitssperre wartete, startet danach nicht mehr.
+- Zusatzaktionen eines Fehlers behalten keine eingegebene PIN; ein erneuter Versuch fragt sie
+  wie gewohnt ab, sofern sie nicht gespeichert ist.
 - Eine Sicherheitssperre für einen Zugang überspringt ihn, eine Sperre für alle überspringt
   alle offenen Zugänge. Den Grund nennt die Zeile.
 - Das Sperren des Tresors schließt das Fenster sofort.

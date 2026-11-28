@@ -34,7 +34,15 @@ extension AppModel {
             showSettings = false
             return
         }
+        // A login of a run waits here for the policy check: "Alle abbrechen", a lock or a
+        // closed window meanwhile must not start it afterwards (#2055 review).
+        let runGeneration = syncRunActive && syncRun?.contains(connection.id) == true ? syncGeneration : nil
         withFreshBankingPolicy { [self] in
+            if let runGeneration {
+                guard syncGeneration == runGeneration,
+                      let status = syncRun?.status(of: connection.id), status == .waiting || status == .running
+                else { return }
+            }
             if let gate = bankingGate(for: connection) {
                 clearSyncTargets()
                 if syncRunActive {
@@ -43,6 +51,7 @@ extension AppModel {
                     if gate.all {
                         syncQueue = []
                         syncRun?.skipRemaining(reason: String(localized: "Übersprungen: \(gate.title)"))
+                        syncNextInQueue()   // the run is over: announce its summary
                     } else {
                         syncRun?.skip(connection.id, reason: Self.skippedByLock)
                         syncNextInQueue()
@@ -386,6 +395,7 @@ extension AppModel {
         syncQueue = []
         syncRun = nil
         syncRunActions = [:]
+        syncRunBrowserImports = [:]
     }
 
     /// "Fertig" in the sync window once the run is over.
@@ -393,6 +403,7 @@ extension AppModel {
         guard let run = syncRun, run.isFinished else { return }
         syncRun = nil
         syncRunActions = [:]
+        syncRunBrowserImports = [:]
         // held back while the window was open: its sheet cannot show over it (#346)
         checkPendingAccountSelection()
     }
@@ -418,8 +429,16 @@ extension AppModel {
         action()
     }
 
-    /// A browser login of the run closed without a sync of its own (an import in the
-    /// browser window, a close button that only clears it): the run goes on.
+    /// The browser window of a run's login imported it itself (FNZ): its row is done.
+    /// Counted when the window closes, which moves the run on.
+    func webLoginImportedInSyncRun(_ id: Int64, imported: Int) {
+        guard syncRun?.status(of: id) == .running else { return }
+        syncRunBrowserImports[id] = imported
+    }
+
+    /// A browser login of the run closed without a sync of its own: the run goes on. Only an
+    /// import the window reported (`webLoginImportedInSyncRun`) counts as fetched; any other
+    /// close leaves the login out.
     func webLoginClosedInSyncRun(_ connection: BankConnection) {
         guard syncRunActive else { return }
         let generation = syncGeneration
@@ -429,8 +448,12 @@ extension AppModel {
                   self.syncRun?.running?.connectionID == connection.id,
                   self.pendingLogin == nil, self.setupRequest == nil, self.activeChallenge == nil,
                   self.webLoginConnection == nil else { return }
-            self.syncRun?.finish(connection.id, imported: nil,
-                                 detail: String(localized: "Im Browser-Fenster beendet"))
+            if let imported = self.syncRunBrowserImports.removeValue(forKey: connection.id) {
+                self.syncRun?.finish(connection.id, imported: imported,
+                                     detail: String(localized: "Im Browser-Fenster abgerufen"))
+            } else {
+                self.syncRun?.skip(connection.id, reason: Self.browserClosed)
+            }
             self.syncNextInQueue()
         }
     }
@@ -826,13 +849,26 @@ extension AppModel {
         activeSession = nil
         activeChallenge = nil
         pendingLogin = nil
-        syncingConnectionID = nil
         clearSyncTargets()
         syncGeneration &+= 1
+        let generation = syncGeneration
         // "Alle abbrechen": the window stays and shows the rest as skipped
         syncQueue = []
+        let inRun = syncRunActive
         syncRun?.skipRemaining(reason: Self.syncRunCancelled)
-        Task { await s?.cancel() }
+        guard inRun, s != nil else {
+            syncingConnectionID = nil
+            Task { await s?.cancel() }
+            return
+        }
+        // As in skipCurrentSync: the bank dialog ends first, so an "Erneut versuchen" in the
+        // window (queued meanwhile) never meets it still open at the same bank.
+        Task {
+            await s?.cancel()
+            guard self.syncGeneration == generation else { return }
+            self.syncingConnectionID = nil
+            self.syncNextInQueue()
+        }
     }
 
     func finishSync(error: Error) {
@@ -889,7 +925,8 @@ extension AppModel {
         if syncRunActive, !Self.errorOpensPrompt(error),
            let conn = connections.first(where: { $0.id == syncingConnectionIDBeforeError }) {
             syncRun?.fail(conn.id, message: describe(error))
-            let alternatives = productIDAlternatives(for: conn, error: error, secret: retrySecret)
+            // without the PIN: the window may keep these until "Fertig"; a retry asks for it the normal way
+            let alternatives = productIDAlternatives(for: conn, error: error, secret: nil)
             syncRunActions[conn.id] = alternatives.isEmpty ? nil : alternatives
             syncNextInQueue()
             return
@@ -979,8 +1016,11 @@ extension AppModel {
 
     /// Skipped by the user or by "Alle abbrechen": worth another try (a lock is not).
     static func retryableSkip(_ reason: String) -> Bool {
-        reason == skippedByUser || reason == syncRunCancelled
+        reason == skippedByUser || reason == syncRunCancelled || reason == browserClosed
     }
+
+    /// Reason for a login whose browser window closed without a fetch.
+    static var browserClosed: String { String(localized: "Browser-Fenster ohne Abruf geschlossen") }
 
     /// What the running login waits for, for its row.
     func syncRunPromptText(for id: Int64) -> String {

@@ -308,6 +308,8 @@ struct FnzWebSheet: View {
                 }
                 let message = String(localized: "FNZ: \(summary.accountsUpdated) Konten/Depots aktualisiert, \(summary.transactionsImported) neue Buchungen, \(downloaded) neue PDFs.")
                 model.toast = message
+                // "Alle abrufen": the sync window counts this login as fetched once the window closes
+                model.webLoginImportedInSyncRun(connectionId, imported: Int(summary.transactionsImported))
                 if failed == 0 && totalsOnly == 0 { close() }
                 else {
                     notice = message

@@ -9461,6 +9461,17 @@
         }
       }
     },
+    "Browser-Fenster ohne Abruf geschlossen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browser window closed without a fetch"
+          }
+        }
+      }
+    },
     "Brutto · %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19331,6 +19342,17 @@
         }
       }
     },
+    "Im Browser-Fenster abgerufen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fetched in the browser window"
+          }
+        }
+      }
+    },
     "Im Browser-Fenster anmelden …" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19338,17 +19360,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sign In with Browser…"
-          }
-        }
-      }
-    },
-    "Im Browser-Fenster beendet" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Finished in the browser window"
           }
         }
       }

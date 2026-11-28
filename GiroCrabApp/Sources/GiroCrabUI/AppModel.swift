@@ -945,6 +945,8 @@ public final class AppModel {
     /// What a failed login of the run offers besides "Erneut versuchen" (another FinTS
     /// registration …). Shown once the run is over; using one closes the window first.
     @ObservationIgnored var syncRunActions: [Int64: [(title: String, action: @MainActor () -> Void)]] = [:]
+    /// Bookings a browser window of the run imported itself (FNZ), counted when it closes.
+    @ObservationIgnored var syncRunBrowserImports: [Int64: Int] = [:]
     /// Bumped by every sync start, cancel, skip and lock: a deferred step of
     /// an older one (e.g. the end of "Überspringen") checks it before acting.
     @ObservationIgnored var syncGeneration = 0

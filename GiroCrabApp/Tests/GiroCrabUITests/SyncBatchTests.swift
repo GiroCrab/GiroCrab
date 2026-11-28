@@ -283,6 +283,55 @@ final class SyncBatchTests: XCTestCase {
         XCTAssertEqual(model.syncBatchProgress?.current, 2)
     }
 
+    /// A browser window closed without a fetch is no success: the login is skipped
+    /// (with "Erneut versuchen"), and the run goes on exactly once.
+    func testClosingTheBrowserWindowWithoutAnImportSkipsTheLogin() async throws {
+        let logins = batch
+        try XCTSkipIf(logins.count < 3, "demo vault needs at least three logins")
+        model.requestSyncAll()
+        try await waitForChallenge(of: logins[0])
+        model.finishSync(error: CoreError.BrowserLoginRequired(message: "Bitte im Browser anmelden"))
+        model.webLoginConnection = nil   // a window's own close button
+        try await waitForChallenge(of: logins[1])
+        XCTAssertEqual(model.syncRun?.status(of: logins[0].id), .skipped(reason: AppModel.browserClosed))
+        XCTAssertTrue(AppModel.retryableSkip(AppModel.browserClosed))
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.activeChallenge?.connection.id, logins[1].id, "not advanced twice")
+        XCTAssertEqual(model.syncRun?.status(of: logins[2].id), .waiting)
+    }
+
+    /// A browser window that imported the login itself (FNZ) marks it fetched when it closes.
+    func testABrowserImportCountsWhenTheWindowCloses() async throws {
+        let logins = batch
+        try XCTSkipIf(logins.count < 2, "demo vault needs at least two logins")
+        model.requestSyncAll()
+        try await waitForChallenge(of: logins[0])
+        model.finishSync(error: CoreError.BrowserLoginRequired(message: "Bitte im Browser anmelden"))
+        model.webLoginImportedInSyncRun(logins[0].id, imported: 7)
+        XCTAssertEqual(model.syncRun?.status(of: logins[0].id), .running, "counted only once the window closes")
+        model.webLoginConnection = nil
+        try await waitForChallenge(of: logins[1])
+        guard case .done(let imported, _)? = model.syncRun?.status(of: logins[0].id) else {
+            return XCTFail("browser import not counted")
+        }
+        XCTAssertEqual(imported, 7)
+    }
+
+    /// "Alle abbrechen" ends the bank dialog before the window lets another login start:
+    /// a retry right after it waits for that, then runs.
+    func testRetryRightAfterCancelAllWaitsForTheClosingDialog() async throws {
+        let logins = batch
+        try XCTSkipIf(logins.count < 2, "demo vault needs at least two logins")
+        model.requestSyncAll()
+        try await waitForChallenge(of: logins[0])
+        model.cancelAllSync()
+        XCTAssertEqual(model.syncingConnectionID, logins[0].id, "kept until the bank dialog is closed")
+        model.retryInSyncRun(logins[1].id)
+        XCTAssertEqual(model.syncRun?.status(of: logins[1].id), .waiting, "queued, not started yet")
+        try await waitForChallenge(of: logins[1])
+        XCTAssertEqual(model.syncRun?.status(of: logins[1].id), .running)
+    }
+
     /// Trade Republic with an expired session and no stored PIN (#1128): the core asks
     /// for the PIN, so the PIN sheet opens (with its browser login) instead of an alert
     /// whose "Erneut versuchen" fails the same way. In a batch it waits for the sheet.
