@@ -630,7 +630,8 @@ impl FinTsConnector {
             SegmentBuilder::new("HKSYN", 5, 3).raw("0").build(),
         ];
         let reply = self.send(ctx, payload, "999", None).await?;
-        self.blz_rejected = blz_mismatch(&reply);
+        // a locked access is locked under every bank code of the login
+        self.blz_rejected = blz_mismatch(&reply) && !access_locked(&reply);
         if let Some(e) = self.refused_login(&reply) {
             return Err(e);
         }
@@ -906,8 +907,8 @@ impl FinTsConnector {
         let mut sec = self.sec();
         let mut reply = self.send_dialog_init(ctx, &sec).await?;
         // wrong bank code for this login: nothing below can help (`login` may
-        // try another one)
-        if blz_mismatch(&reply) {
+        // try another one), unless the access is locked (3938, reported below)
+        if blz_mismatch(&reply) && !access_locked(&reply) {
             self.blz_rejected = true;
             reply.check()?;
         }

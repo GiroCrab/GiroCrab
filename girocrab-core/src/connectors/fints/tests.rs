@@ -199,6 +199,21 @@ async fn comdirect_login_gives_up_with_the_first_error_when_no_code_fits() {
 }
 
 #[tokio::test]
+async fn comdirect_login_with_a_locked_access_tries_no_other_bank_code() {
+    // the lock (3938) holds under every bank code: no other one is tried, and the lock is
+    // what the user is told, for a new login (sync dialog) as for a saved one (dialog init)
+    let locked: &'static str = format!("{WRONG_BLZ}HIRMS:4:2:3{LOCKED_3938}'").leak();
+    let new_login = serde_json::json!({"system_id": "", "sec_func": "", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
+    for state in [new_login, synced()] {
+        let (url, seen) = mock_bank(vec![locked, ACCEPT, ACCEPT]);
+        let mut c = comdirect_connector("20041177", &url, state);
+        assert_access_locked(c.login(&test_ctx()).await);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(c.blz, "20041177");
+    }
+}
+
+#[tokio::test]
 async fn other_banks_and_other_errors_are_not_retried() {
     // not comdirect: the bank code is the bank's, nothing to try
     let (url, seen) = mock_bank(vec![WRONG_BLZ, ACCEPT]);
