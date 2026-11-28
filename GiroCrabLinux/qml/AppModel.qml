@@ -553,6 +553,7 @@ QtObject {
         ++loanGeneration; loans = []; loanLinks = ({}); loanEditor = null; openingBalanceRequest = null
         tangibleAccountIDs = ({}); assetItemsByAccount = ({}); selectedAssetItemID = null; selectedAssetHistory = []
         assetEditor = null; assetAction = null
+        newCategoryRequest = null   // may carry this vault's booking ids
     }
 
     // MARK: - App zurücksetzen (AppModel+Reset.swift, #241)
@@ -1671,15 +1672,21 @@ QtObject {
         selectedBookingIDs = ids
         if (selectedBookingID === null || !ids[selectedBookingID]) selectedBookingID = bookings[0].id
     }
+    /// Rows per Bild↑/Bild↓ step in the booking list (AppModel+Selection.swift, #1561).
+    readonly property int keyboardPageStep: 10
+    /// `delta` may be ±Infinity (Pos1/Ende); nothing selected counts as just above the first row.
+    /// Moves in the order shown (AppModel+Selection.swift › moveSelection, visibleBookings):
+    /// „Neue Umsätze“ groups by account and leaves checked bookings out.
     function moveSelection(delta) {
-        if (!bookings.length) return
-        const i = bookings.findIndex(b => b.id === selectedBookingID)
-        const j = Math.max(0, Math.min(bookings.length - 1, i + delta))
+        const list = sidebarSelection === "newBookings" ? newBookingSections().flatMap(s => s.bookings) : bookings
+        if (!list.length) return
+        const i = list.findIndex(b => b.id === selectedBookingID)
+        const j = Math.max(0, Math.min(list.length - 1, i + delta))
         // a plain move replaces a multiple selection (also at the ends of the list)
         const ids = {}
-        ids[bookings[j].id] = true
+        ids[list[j].id] = true
         selectedBookingIDs = ids
-        selectedBookingID = bookings[j].id
+        selectedBookingID = list[j].id
     }
     /// Select the booking and put the cursor into its note field in the inspector.
     function editNote(b) {
@@ -3372,9 +3379,11 @@ QtObject {
         if (scope === "Investments") reloadDashboard()
     }
 
-    function createCategory(name, parent, symbol, color) {
-        run(() => core("create_category", { name: name, parent_id: parent, sf_symbol: symbol, color_hex: color }))
+    /// `bookingIDs`: the bookings of the row menu's „Neue Kategorie …“ get the new category.
+    function createCategory(name, parent, symbol, color, bookingIDs) {
+        const id = run(() => core("create_category", { name: name, parent_id: parent, sf_symbol: symbol, color_hex: color }))
         reloadCategories()
+        if (id !== undefined && bookingIDs && bookingIDs.length) setCategoryFor(bookingIDs.map(b => ({ id: b })), id)
     }
     /// Changes one property of a category and keeps the others (the core only
     /// updates a category as a whole).

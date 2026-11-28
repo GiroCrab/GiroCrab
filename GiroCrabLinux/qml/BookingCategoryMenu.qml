@@ -31,8 +31,14 @@ AppMenu {
         AppModel.setCategoryFor(targets, id)
     }
 
+    /// „Neue Kategorie …“ (#366): the new category under `parentID` is assigned to the targets.
+    function create(parentID) {
+        AppModel.newCategoryRequest = { parent: parentID, bookingIDs: targets.map(b => b.id) }
+    }
+
     property Component itemComponent: Component { AppMenuItem { property var categoryID: null } }
     property Component menuComponent: Component { AppMenu {} }
+    property Component separatorComponent: Component { AppMenuSeparator {} }
     property bool dirty: true
     property var built: []
     /// Every created entry (items get no QObject parent: a menu is no Item), destroyed on rebuild.
@@ -45,18 +51,19 @@ AppMenu {
         for (const o of created) o.destroy()
         built = []
         created = []
-        fill(root, AppModel.categoryTree, true, leading)
+        fill(root, AppModel.categoryTree, null, true, leading)
         dirty = false
     }
-    // CategoryMenuItems: nested menus for categories with sub-categories, ticks on leaves
-    function fill(menu, nodes, top, offset) {
+    // CategoryMenuItems: nested menus for categories with sub-categories, ticks on leaves,
+    // then „Neue Kategorie …“ on the same level (`parentID`: the category whose menu this is)
+    function fill(menu, nodes, parentID, top, offset) {
         nodes.forEach((n, i) => {
             const c = n.category
             if (n.children) {
                 const sub = menuComponent.createObject(menu, { title: AppModel.menuText(c.name) })
                 created.push(sub)
                 sub.icon.name = SF.icon(c.sf_symbol)
-                fill(sub, n.children, false)
+                fill(sub, n.children, c.id, false)
                 if (top) { menu.insertMenu(offset + i, sub); built.push({ menu: true, obj: sub }) } else menu.addMenu(sub)
             } else {
                 const item = itemComponent.createObject(null, { text: AppModel.menuText(c.name), checkable: true, categoryID: c.id })
@@ -69,6 +76,16 @@ AppMenu {
                 })
                 if (top) { menu.insertItem(offset + i, item); built.push({ menu: false, obj: item }) } else menu.addItem(item)
             }
+        })
+        const tail = []
+        if (nodes.length) tail.push(separatorComponent.createObject(null))
+        const add = itemComponent.createObject(null, { text: qsTr("Neue Kategorie …") })
+        add.icon.name = SF.icon("plus")
+        add.triggered.connect(() => root.create(parentID))
+        tail.push(add)
+        tail.forEach((o, i) => {
+            created.push(o)
+            if (top) { menu.insertItem(offset + nodes.length + i, o); built.push({ menu: false, obj: o }) } else menu.addItem(o)
         })
     }
 

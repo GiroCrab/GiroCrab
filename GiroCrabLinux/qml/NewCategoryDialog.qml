@@ -3,7 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 // NewCategoryDialog.swift › NewCategorySheet: name, symbol and colour of a new
-// category, driven by `AppModel.newCategoryRequest` ({ parent: id | null }).
+// category, driven by `AppModel.newCategoryRequest` ({ parent: id | null, bookingIDs: the
+// bookings of the row menu's „Neue Kategorie …“, which get the new category }).
 // Changing an existing category goes through its context menu.
 Sheet {
     id: sheet
@@ -26,7 +27,7 @@ Sheet {
     onClosed: AppModel.newCategoryRequest = null
     function create() {
         if (trimmed === "") return
-        AppModel.createCategory(trimmed, parentId, symbol, colorHex)
+        AppModel.createCategory(trimmed, parentId, symbol, colorHex, request.bookingIDs)
         close()
     }
 
