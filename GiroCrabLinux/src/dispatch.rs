@@ -1362,6 +1362,16 @@ fn session_step(method: &str, a: &Value) -> R {
             if let (Session::Sync(s), Some(o)) = (&s, step.as_object_mut()) {
                 o.insert("fetching".into(), Value::Bool(s.is_fetching()));
             }
+            // AppModel+Transfer.swift › tanComparison (#949, #1475): whether this step's
+            // challenge is the TAN of the order itself (not its login SCA), read right after
+            // the step on the same thread, so the flag belongs to this reply and QML never
+            // reads it from the session's state when a later reply arrives.
+            if let (Session::Transfer(t), Some(o)) = (&s, step.as_object_mut()) {
+                o.insert(
+                    "order_approval".into(),
+                    Value::Bool(t.awaits_order_approval()),
+                );
+            }
             let last = ["Finished", "Done", "InstantDeclined", "OutcomeUnknown"];
             if last.iter().any(|k| step.get(k).is_some()) {
                 crate::sessions::remove(id);
@@ -2159,6 +2169,60 @@ mod tests {
         assert_eq!(card(refund)[0]["booking"]["id"], original);
         drop(v);
         let _ = std::fs::remove_file(path);
+    }
+
+    /// TAN-Abgleich (#949): every step of a transfer says whether its challenge is the TAN of
+    /// the order itself. The demo bank asks for a push at the login first (`false`), then for
+    /// the order's push once it was sent (`true`).
+    #[test]
+    fn transfer_step_carries_order_approval() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        call_ok("open_demo", json!({}));
+        let pushes: Vec<Value> = call_ok("list_bank_connections", json!({}))
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["connector"] == "VolksbankKasselGoettingen")
+            .map(|c| c["id"].clone())
+            .collect();
+        let mut session = None;
+        for a in call_ok("list_accounts", json!({})).as_array().unwrap() {
+            if !pushes.contains(&a["connection_id"]) {
+                continue;
+            }
+            let r: Value = serde_json::from_str(&call_json(
+                "begin_transfer",
+                &json!({ "request": { "account_id": a["id"], "recipient_name": "Mia Beispiel",
+                    "recipient_iban": "DE89370400440532013000", "recipient_bic": null,
+                    "amount_cents": 1250, "purpose": "Test", "instant": false,
+                    "execution_date": null }, "secret": "", "demo": true })
+                .to_string(),
+            ))
+            .unwrap();
+            if let Some(id) = r["ok"].as_u64() {
+                session = Some(id);
+                break;
+            }
+        }
+        let id = session.expect("a demo account accepts a transfer");
+        let mut step = call_ok("session_start", json!({ "session": id }));
+        assert!(step.get("NeedsChallenge").is_some(), "{step}");
+        // the login's push: nothing to compare yet
+        assert_eq!(step["order_approval"], json!(false), "{step}");
+        for _ in 0..5 {
+            if step["order_approval"] == json!(true) {
+                break;
+            }
+            assert!(
+                step.get("NeedsChallenge").is_some() || step.get("StillWaiting").is_some(),
+                "{step}"
+            );
+            step = call_ok("session_poll", json!({ "session": id }));
+        }
+        // the order was sent: its own TAN, the one the sheet compares
+        assert!(step.get("NeedsChallenge").is_some(), "{step}");
+        assert_eq!(step["order_approval"], json!(true), "{step}");
+        crate::sessions::remove(id);
     }
 
     /// Automatischer Abruf (#546, AutoSync.qml): `begin_quiet_sync` registers a SyncSession in
