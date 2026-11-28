@@ -173,9 +173,10 @@ extension AppModel {
         var items: [SubscriptionItem] = recurring.compactMap { s in
             guard let details = subscriptionData.entries[s.seriesKey] else { return nil }
             return SubscriptionItem(
-                id: s.seriesKey, name: s.name, amountCents: s.amountCents, group: SubscriptionGroup(s.interval),
-                interval: s.interval, customCount: s.customDates.count, currency: currency(ofAccount: s.accountId),
-                accountId: s.accountId, categorySymbol: s.categorySymbol, nextDue: s.nextDue, lastDate: s.lastDate,
+                id: s.seriesKey, name: details.displayName(detected: s.name), amountCents: s.amountCents,
+                group: SubscriptionGroup(s.interval), interval: s.interval, customCount: s.customDates.count,
+                currency: currency(ofAccount: s.accountId), accountId: s.accountId,
+                categorySymbol: details.symbol ?? s.categorySymbol, nextDue: s.nextDue, lastDate: s.lastDate,
                 series: s, manual: nil, details: details)
         }
         items += subscriptionData.manual.map { m in

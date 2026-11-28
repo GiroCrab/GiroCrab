@@ -45,22 +45,21 @@ private struct SubscriptionDetailView: View {
     private static let fallbackDate = Calendar.current.startOfDay(for: Date())
 
     var body: some View {
+        inspector.confirmationDialog("Abo „\(item.name)“ löschen?", isPresented: $confirmRemove) {
+            Button("Löschen", role: .destructive) {
+                model.removeManualSubscription(id: item.manual?.id ?? "")
+                model.selectedSubscriptionID = nil
+            }
+        }
+    }
+
+    /// Own expression: with the name and symbol fields of #2026 the view grew past what the type
+    /// checker manages in reasonable time, so the body is split into `inspector` and `information`.
+    private var inspector: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Information").appFont(.callout, weight: .semibold)
-                if manual != nil { manualFields }
-                rhythmField
-                contractFields
-                // below the fields: a line that appears or disappears must not push the controls above it
-                VStack(alignment: .leading, spacing: 4) {
-                    SubscriptionContractLine(item: item)
-                    SubscriptionExtraLines(item: item)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .flatSection()
+            information
             if !item.isManual {
                 Divider()
                 bookingList.frame(maxWidth: .infinity, alignment: .leading).flatSection()
@@ -70,7 +69,7 @@ private struct SubscriptionDetailView: View {
         }
         .onChange(of: draft) { old, new in
             // text is saved after a pause, switches and pickers at once
-            scheduleSave(delay: old.note == new.note ? 0 : 400)
+            scheduleSave(delay: Self.saveDelay(old: old, new: new))
         }
         .onChange(of: manual) { _, _ in scheduleSave(delay: 400) }
         .onAppear {
@@ -78,12 +77,11 @@ private struct SubscriptionDetailView: View {
             if draft.cancelled, draft.contractEnd == nil, let due = item.nextDue { draft.contractEnd = due }
         }
         .onDisappear { flush() }
-        .confirmationDialog("Abo „\(item.name)“ löschen?", isPresented: $confirmRemove) {
-            Button("Löschen", role: .destructive) {
-                model.removeManualSubscription(id: item.manual?.id ?? "")
-                model.selectedSubscriptionID = nil
-            }
-        }
+    }
+
+    /// Text fields (note, name) save after a pause; switches and pickers at once.
+    private static func saveDelay(old: SubscriptionDetails, new: SubscriptionDetails) -> Int {
+        old.note == new.note && old.name == new.name ? 0 : 400
     }
 
     // MARK: saving
@@ -145,6 +143,24 @@ private struct SubscriptionDetailView: View {
 
     // MARK: fields
 
+    /// Own expression: with the name and symbol fields of #2026 the whole `body` was too much for
+    /// the type checker, which gave up on it ("unable to type-check in reasonable time").
+    private var information: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Information").appFont(.callout, weight: .semibold)
+            if manual != nil { manualFields } else if let s = item.series { seriesFields(s) }
+            rhythmField
+            contractFields
+            // below the fields: a line that appears or disappears must not push the controls above it
+            VStack(alignment: .leading, spacing: 4) {
+                SubscriptionContractLine(item: item)
+                SubscriptionExtraLines(item: item)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .flatSection()
+    }
+
     private func fieldRow<Content: View>(_ title: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).appFont(.caption).foregroundStyle(Theme.secondary)
@@ -185,11 +201,49 @@ private struct SubscriptionDetailView: View {
             fieldRow("Symbol") {
                 SubscriptionSymbolPicker(symbol: Binding(get: { manual?.symbol }, set: { manual?.symbol = $0 }))
             }
+            fieldRow("Logo-Domain") {
+                TextField("Logo-Domain", text: Binding(get: { manual?.domain ?? "" },
+                                                       set: { manual?.domain = $0.isEmpty ? nil : $0 }),
+                          prompt: Text("z. B. enbw.com"))
+                    .textFieldStyle(.roundedBorder).autocorrectionDisabled().sensitive()
+            }
             fieldRow("Eine Zahlung am") {
                 DatePicker("", selection: Binding(
                     get: { DateText.parseISODay(manual?.startDate ?? "") ?? Self.fallbackDate },
                     set: { manual?.startDate = DateText.iso($0) }), displayedComponents: .date)
                     .labelsHidden()
+            }
+        }
+    }
+
+    /// Name and symbol of a detected series (#2026): empty name = the detected one, shown as the prompt.
+    private func seriesFields(_ s: RecurringSeries) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            fieldRow("Name") {
+                TextField("Name", text: Binding(get: { draft.name ?? "" }, set: { draft.name = $0.isEmpty ? nil : $0 }),
+                          prompt: Text(s.name))
+                    .textFieldStyle(.roundedBorder).sensitive()
+            }
+            fieldRow("Symbol") {
+                HStack(spacing: 8) {
+                    SubscriptionSymbolPicker(symbol: $draft.symbol)
+                    if draft.symbol != nil {
+                        Button("Händler-Logo") { draft.symbol = nil }
+                            .buttonStyle(.borderless).appFont(.caption)
+                            .help("Statt des Symbols wieder das Logo des Händlers zeigen")
+                    }
+                }
+            }
+            // the logo domain belongs to the merchant (all its bookings), like in the booking inspector
+            if draft.symbol == nil, model.merchantRecognitionEnabled,
+               let merchant = model.subscriptionBookings[item.id]?.first?.merchant {
+                fieldRow("Logo") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        MerchantDomainRow(merchant: merchant)
+                        Text("Gilt für alle Buchungen von „\(merchant.name)“.")
+                            .appFont(.caption2).foregroundStyle(Theme.tertiary).sensitive()
+                    }
+                }
             }
         }
     }

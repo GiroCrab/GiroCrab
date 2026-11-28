@@ -31,7 +31,9 @@ struct SubscriptionsView: View {
             statusFilter.matches(i) && kindFilter.matches(i)
                 && !(hideEnded && i.isEnded && statusFilter != .inactive)
                 && (rhythmFilter == nil || i.group == rhythmFilter)
-                && (q.isEmpty || i.name.localizedCaseInsensitiveContains(q) || i.details.note.localizedCaseInsensitiveContains(q))
+                && (q.isEmpty || i.name.localizedCaseInsensitiveContains(q) || i.details.note.localizedCaseInsensitiveContains(q)
+                    // a renamed series is still found by the name the detection gave it
+                    || (i.series?.name.localizedCaseInsensitiveContains(q) ?? false))
         }
     }
 

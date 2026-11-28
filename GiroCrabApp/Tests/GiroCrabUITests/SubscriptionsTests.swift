@@ -265,6 +265,57 @@ final class SubscriptionsTests: XCTestCase {
         XCTAssertFalse(model.isSubscription(first))
     }
 
+    /// #2026: a detected series takes an own name and symbol; an empty name falls back to the detected one.
+    @MainActor
+    func testDetectedSeriesCanBeRenamed() throws {
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.refreshRecurring()
+        let first = try XCTUnwrap(model.recurring.first { $0.amountCents < 0 }, "the demo vault has recurring expenses")
+        model.setSubscription(first, marked: true)
+        var item = try XCTUnwrap(model.subscriptionItems.first { $0.id == first.seriesKey })
+        XCTAssertEqual(item.name, first.name)
+
+        var details = item.details
+        details.name = "  Handyvertrag  "
+        details.symbol = "phone"
+        model.setSubscriptionDetails(item, details)
+        model.subscriptionData = SubscriptionData()
+        model.loadSubscriptionData()
+        item = try XCTUnwrap(model.subscriptionItems.first { $0.id == first.seriesKey })
+        XCTAssertEqual(item.name, "Handyvertrag")
+        XCTAssertEqual(item.categorySymbol, "phone")
+
+        details.name = "   "
+        model.setSubscriptionDetails(item, details)
+        XCTAssertEqual(model.subscriptionItems.first { $0.id == first.seriesKey }?.name, first.name)
+        model.setSubscription(first, marked: false)
+    }
+
+    /// #2026: a manual entry shows the logo of the domain typed in, normalised like the core does.
+    func testManualDomainIsNormalisedForTheLogo() throws {
+        XCTAssertEqual(ManualSubscription.normalizedDomain(" https://www.Muster-Werke.de/kontakt?x=1 "), "muster-werke.de")
+        XCTAssertNil(ManualSubscription.normalizedDomain("kein punkt"))
+        XCTAssertNil(ManualSubscription.normalizedDomain(nil))
+        var m = ManualSubscription(id: "1", name: "Stadtwerke", amountCents: -5_000, group: SubscriptionGroup.monthly.rawValue,
+                                   currency: "EUR", startDate: "2026-01-01")
+        XCTAssertNil(m.logoMerchant)
+        m.domain = "www.stadtwerke-muster.de"
+        let logo = try XCTUnwrap(m.logoMerchant)
+        XCTAssertEqual(logo.domainCandidates, ["stadtwerke-muster.de"])
+        XCTAssertEqual(logo.domainSource, "override")
+        // entries stored before the field existed still load
+        let old = try JSONDecoder().decode(ManualSubscription.self, from: Data(
+            #"{"id":"1","name":"A","amountCents":-1,"group":0,"currency":"EUR","startDate":"2026-01-01","details":{}}"#.utf8))
+        XCTAssertNil(old.domain)
+    }
+
+    func testDetailsWithoutNameStillDecode() throws {
+        let d = try JSONDecoder().decode(SubscriptionDetails.self, from: Data(#"{"note":"x"}"#.utf8))
+        XCTAssertNil(d.name)
+        XCTAssertNil(d.symbol)
+        XCTAssertEqual(d.displayName(detected: "Anbieter"), "Anbieter")
+    }
+
     @MainActor
     func testManualSubscriptionCanBeAddedChangedAndRemoved() throws {
         let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))

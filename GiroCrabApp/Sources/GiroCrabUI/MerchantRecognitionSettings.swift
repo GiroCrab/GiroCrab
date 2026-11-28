@@ -137,6 +137,8 @@ struct MerchantRecognitionSettings: View {
                 if let base = baseName(m) {
                     Text("Kopie von „\(base)“").appFont(.caption2).foregroundStyle(Theme.tertiary)
                 }
+                // logo domain, set here or in a booking's inspector
+                MerchantDomainRow(merchant: m.merchant)
             }
             Spacer()
             Button { editing = MerchantDraft(m) } label: {
@@ -222,6 +224,9 @@ struct MerchantRecognitionSettings: View {
                     .appFont(.caption).foregroundStyle(Theme.secondary).lineLimit(2)
                 if m.replaced {
                     Text("Ersetzt durch eigenen Händler").appFont(.caption2).foregroundStyle(Theme.tertiary)
+                } else {
+                    // a replaced one has no bookings of its own: its copy's row sets the domain
+                    MerchantDomainRow(merchant: m.merchant)
                 }
             }
             Spacer()
