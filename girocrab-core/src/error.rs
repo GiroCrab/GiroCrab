@@ -158,12 +158,14 @@ pub(crate) fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
 }
 
 /// Drops `(url: …)`-style fragments (they can carry tokens or session paths).
+/// Cuts at the URL scheme only, so a cause such as "http2 error" stays.
 pub(crate) fn strip_url(message: &str) -> String {
-    match message.find("http") {
-        Some(i) => message[..i]
-            .trim_end()
-            .trim_end_matches(['(', ':'])
-            .to_string(),
+    let start = ["http://", "https://"]
+        .iter()
+        .filter_map(|scheme| message.find(scheme))
+        .min();
+    match start {
+        Some(i) => message[..i].trim_end_matches([' ', '(', ':']).to_string(),
         None => message.to_string(),
     }
 }
@@ -196,6 +198,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn strip_url_drops_the_url_but_keeps_http_in_the_cause() {
+        assert_eq!(
+            strip_url("error sending request for url (https://bank.example/s/4711?fnz=1)"),
+            "error sending request for url"
+        );
+        assert_eq!(strip_url("redirect to http://a.example/x"), "redirect to");
+        assert_eq!(strip_url("http2 error"), "http2 error");
+    }
+
     /// A failed request names its cause (#2020: a FinTS server that no longer
     /// exists showed only "error sending request"), never the URL's path or query.
     #[tokio::test]
@@ -204,7 +216,11 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
         drop(l);
-        let e = reqwest::Client::new()
+        // no_proxy: a proxy from the environment would answer instead of the port
+        let e = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
             .get(format!("http://127.0.0.1:{port}/session/4711?fnz=secret"))
             .send()
             .await
