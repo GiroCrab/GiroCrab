@@ -749,7 +749,15 @@ impl BankConnector for FinTsConnector {
                     .statements_card(ctx, card_tx, acc, label, &currency)
                     .await
                 {
-                    Ok((t, bal)) => {
+                    Ok((t, bal, all_read)) => {
+                        // card holds ("Vorgemerkt", #2113) share the FinTS hold list;
+                        // a booking group it could not read may be one of them
+                        holds_listed = true;
+                        holds_complete &= all_read;
+                        if std::mem::take(&mut self.truncated_statements) {
+                            holds_complete = false;
+                            errors.push(statements::truncated_warning(label));
+                        }
                         txs = t;
                         if let Some(b) = bal {
                             balance = Some(b.cents);
@@ -762,10 +770,14 @@ impl BankConnector for FinTsConnector {
                         }
                         ok_any = true;
                     }
-                    Err(e) => errors.push(trf(
-                        "{0}: Kartenumsätze ({1}) – {2}",
-                        &[&label, &card_tx, &e],
-                    )),
+                    Err(e) => {
+                        // the stored holds of this login stay as they are
+                        holds_complete = false;
+                        errors.push(trf(
+                            "{0}: Kartenumsätze ({1}) – {2}",
+                            &[&label, &card_tx, &e],
+                        ))
+                    }
                 }
                 // a debit card adds nothing to the overview and the totals (#967)
                 balance = accounts::card_balance(kind, balance);

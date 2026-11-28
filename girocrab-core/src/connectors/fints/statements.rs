@@ -313,7 +313,8 @@ impl FinTsConnector {
         b.build()
     }
 
-    /// HKKKU / DKKKU (`tx`): bookings and balance of a credit card account, all pages.
+    /// HKKKU / DKKKU (`tx`): bookings and balance of a credit card account, all pages, and
+    /// whether every booking group could be read.
     pub(super) async fn statements_card(
         &mut self,
         ctx: &ConnectContext,
@@ -321,7 +322,7 @@ impl FinTsConnector {
         acc: &SepaAccount,
         label: &str,
         currency: &str,
-    ) -> CoreResult<(Vec<RemoteTransaction>, Option<kku::CardBalance>)> {
+    ) -> CoreResult<(Vec<RemoteTransaction>, Option<kku::CardBalance>, bool)> {
         let v = self.version(tx);
         // HIKKU / DIKKU
         let reply_id = format!("{}I{}", &tx[..1], &tx[2..]);
@@ -335,6 +336,7 @@ impl FinTsConnector {
         let mut touchdown: Option<String> = None;
         let mut txs = Vec::new();
         let mut balance = None;
+        let mut read = kku::CardRead::default();
         for page in 0..50 {
             let seg = Self::card_request(
                 tx,
@@ -346,7 +348,7 @@ impl FinTsConnector {
                 touchdown.as_deref(),
             );
             let r = self.request(ctx, tx, seg).await?;
-            let (t, bal) = kku::parse(r.all(&reply_id), label, currency);
+            let (t, bal) = kku::parse(r.all(&reply_id), label, currency, &mut read);
             if crate::depot_debug::enabled() {
                 let groups: Vec<usize> = r
                     .all(&reply_id)
@@ -373,7 +375,9 @@ impl FinTsConnector {
                 break;
             }
         }
-        Ok((txs, balance))
+        // unread pages may list holds (#2113): the stored ones stay
+        self.truncated_statements |= touchdown.is_some();
+        Ok((txs, balance, !read.unreadable))
     }
 
     pub(super) async fn statements_mt940(
