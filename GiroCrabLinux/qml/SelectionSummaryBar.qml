@@ -6,10 +6,12 @@ import QtQuick.Layouts
 // selectionTotals: currencies are never added together, sorted by currency code).
 Rectangle {
     id: bar
-    readonly property bool shown: AppModel.isMultiSelection
+    /// Strg+A loads the rest of the list first (#1696): no partial count or sum meanwhile.
+    readonly property bool selectingAll: AppModel.isSelectingAllBookings || AppModel.selectAllAfterReload
+    readonly property bool shown: AppModel.isMultiSelection || selectingAll
     /// [{ currency, cents }] of the selected bookings.
     readonly property var totals: {
-        if (!shown) return []
+        if (!shown || selectingAll) return []
         const sums = {}
         for (const b of AppModel.selectedBookings) {
             const c = b.currency || "EUR"
@@ -27,9 +29,11 @@ Rectangle {
         id: content
         anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; anchors.topMargin: 10; anchors.bottomMargin: 10
         spacing: 12
+        Spinner { visible: bar.selectingAll; size: 14; Layout.alignment: Qt.AlignVCenter }
         Text {
-            Layout.alignment: Qt.AlignTop
-            text: qsTr("%1 Buchungen ausgewählt").arg(AppModel.selectedBookings.length)
+            Layout.alignment: bar.selectingAll ? Qt.AlignVCenter : Qt.AlignTop
+            text: bar.selectingAll ? qsTr("Alle %1 Buchungen werden ausgewählt …").arg(AppModel.bookingCountLabel)
+                : qsTr("%1 Buchungen ausgewählt").arg(AppModel.selectedBookings.length)
             font.pixelSize: Theme.callout; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text
         }
         Item { Layout.fillWidth: true; Layout.minimumWidth: 12 }

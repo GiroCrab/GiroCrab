@@ -249,7 +249,7 @@ Rectangle {
                         Layout.alignment: Qt.AlignHCenter; Layout.maximumWidth: list.width - 40
                         horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
                         text: qsTr("%1 von %2 Buchungen geladen – ältere Buchungen sind noch nicht sichtbar.")
-                              .arg(AppModel.bookings.length).arg(AppModel.bookings.length + AppModel.remainingBookingCount)
+                              .arg(AppModel.loadedMatchingCount).arg(AppModel.loadedMatchingCount + AppModel.remainingBookingCount)
                         font.pixelSize: Theme.caption; color: Theme.secondary
                     }
                     BusyIndicator { Layout.alignment: Qt.AlignHCenter; implicitWidth: 18; implicitHeight: 18; opacity: AppModel.isLoadingMoreBookings ? 1 : 0; running: AppModel.isLoadingMoreBookings }
