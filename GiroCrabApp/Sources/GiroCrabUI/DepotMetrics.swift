@@ -58,7 +58,10 @@ enum HoldingFigures {
     }
 
     static func priceBasis(_ h: Holding, isBond: Bool) -> PriceBasis {
-        guard h.quantity.isFinite, h.quantity > 0, h.currentPriceCents > 0, h.valueCents > 0 else { return .unknown }
+        guard h.quantity.isFinite, h.quantity > 0 else { return .unknown }
+        // a worthless position (#2077): quantity × 0 = 0 fits; its purchase price still gives the loss
+        if h.currentPriceCents == 0, h.valueCents == 0 { return isBond ? .percentOfNominal : .perUnit }
+        guard h.currentPriceCents > 0, h.valueCents > 0 else { return .unknown }
         let perUnit = h.quantity * Double(h.currentPriceCents)
         if matches(perUnit, h.valueCents) { return .perUnit }
         if isBond, matches(perUnit / 100, h.valueCents) { return .percentOfNominal }
