@@ -1541,6 +1541,8 @@ struct MainToolbar: ViewModifier {
                 ToolbarItemGroup(placement: .primaryAction) { MainToolbarButtons(items: layout.leading + layout.trailing) }
             }
         }
+        // Ansicht › Symbolleiste ausblenden (⌥⌘T), stored with the layout so it survives a restart
+        .toolbar(layout.toolbarShown ? .automatic : .hidden, for: .windowToolbar)
         #endif
     }
 }
