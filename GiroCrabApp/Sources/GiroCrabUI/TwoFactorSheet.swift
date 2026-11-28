@@ -205,12 +205,21 @@ struct TwoFactorSheet: View {
                 if let s = c.expiresInSeconds {
                     Text("Gültig noch etwa \(s / 60) Min.").appFont(.caption).foregroundStyle(.tertiary)
                 }
-
-                SyncPromptButtons(cancel: model.skipCurrentSync, leading: active.canSkipOrder ? AnyView(
+                if active.canSkipOrder {
+                    // HIG: not in the button row, which keeps at most three buttons;
+                    // in "Alle abrufen" a fourth one there was cut off to "TA…"
                     Button("TAN auslassen") { consent = nil; code = ""; model.skipOrder() }
+                        #if os(macOS)
+                        .buttonStyle(.link)
+                        #else
+                        .buttonStyle(.plain)
+                        #endif
+                        .appFont(.callout)
                         .disabled(active.busy || active.polling)
                         .help("Nur diese Abfrage auslassen. Der Rest des Abrufs wird gespeichert.")
-                ) : nil) {
+                }
+
+                SyncPromptButtons(cancel: model.skipCurrentSync) {
                     if c.kind == .code || c.kind == .imageCode || (c.kind == .redirect && showManualRedirect) {
                         Button(action: submit) {
                             Text("Weiter").frame(maxWidth: .infinity)
@@ -290,8 +299,6 @@ struct SyncPromptButtons<Default: View>: View {
     @Environment(AppModel.self) private var model
     /// Cancel this prompt: skips the login in a batch, otherwise just cancels.
     let cancel: () -> Void
-    /// Extra buttons after the leading one (e.g. "Demo-Daten ansehen").
-    var leading: AnyView? = nil
     /// The default button; its label should use `.frame(maxWidth: .infinity)`.
     @ViewBuilder let defaultButton: () -> Default
 
@@ -308,7 +315,6 @@ struct SyncPromptButtons<Default: View>: View {
             } else {
                 Button("Abbrechen", role: .cancel, action: cancel)
             }
-            if let leading { leading }
         }
         .frame(maxWidth: .infinity)
         .interactiveDismissDisabled(model.syncBatchProgress != nil)
@@ -322,7 +328,6 @@ struct SyncPromptButtons<Default: View>: View {
                 Button("Abbrechen", role: .cancel, action: cancel)
                     .keyboardShortcut(.cancelAction)
             }
-            if let leading { leading }
             Spacer()
             EqualWidthHStack {
                 if model.canSkipInSyncBatch {
