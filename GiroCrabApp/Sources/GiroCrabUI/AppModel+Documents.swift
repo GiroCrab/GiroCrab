@@ -317,7 +317,7 @@ extension AppModel {
             let result = try await pin.run { try $0.resortPortalDocuments(connectionId: id) }
             guard isCurrent(pin) else { return }
             let message = String(localized: "\(Int(result.resorted)) Dokumente neu einsortiert · \(Int(result.linked)) Buchungen verknüpft")
-            toast = message
+            showToast(message)
             logSync(connectionID: id, source: .manual, outcome: .ok, message: message)
             if result.resorted > 0 || result.linked > 0 { documentsChanged() }
         } catch {
@@ -441,7 +441,7 @@ extension AppModel {
         guard let url = writeTemporaryFile(for: doc) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.path, forType: .string)
-        toast = String(localized: "Pfad kopiert")
+        showToast(String(localized: "Pfad kopiert"))
     }
     #endif
 
@@ -479,7 +479,7 @@ extension AppModel {
         runCore {
             let n = try vault.exportDocuments(destDir: folder.path, docIds: ids ?? [], subfolder: subfolder ?? "")
             let target = subfolder.map { "\(folder.lastPathComponent)/\($0)" } ?? folder.lastPathComponent
-            toast = String(localized: "\(n) Belege nach „\(target)“ exportiert")
+            showToast(String(localized: "\(n) Belege nach „\(target)“ exportiert"), hiding: [target])
         }
     }
 }

@@ -53,4 +53,13 @@ final class ToastTextTests: XCTestCase {
     func testAmountsOnlyRedactionKeepsCheckedNames() {
         XCTAssertEqual(ToastText.shown(toast, hiding: ["Girokonto Muster"], redaction: [.amounts]), toast)
     }
+
+    func testExportToastMasksOnlyTheTargetFolder() {
+        let shown = ToastText.shown("3 Belege nach „Steuer 2025“ exportiert", hiding: ["Steuer 2025"], redaction: [.personal])
+        XCTAssertEqual(shown, "3 Belege nach „•••“ exportiert")
+    }
+
+    func testPathCopiedToastStaysReadableInPrivacyMode() {
+        XCTAssertEqual(ToastText.shown("Pfad kopiert", hiding: [], redaction: [.personal]), "Pfad kopiert")
+    }
 }
