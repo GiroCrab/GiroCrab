@@ -171,7 +171,7 @@ Rectangle {
                     // a selectable row is a button for the keyboard too: Tab reaches it, Space selects,
                     // Return / Enter opens like the double click
                     activeFocusOnTab: table.selectable
-                    // a pending single click of the mouse must not override the key or the accessibility action afterwards
+                    // a pending single click of the mouse must not override the key, the accessibility action or the context menu afterwards
                     Keys.onSpacePressed: { clickTimer.stop(); table.selected(rowBox.p) }
                     Keys.onReturnPressed: { clickTimer.stop(); table.opened(rowBox.p) }
                     Keys.onEnterPressed: { clickTimer.stop(); table.opened(rowBox.p) }
@@ -184,7 +184,7 @@ Rectangle {
                         anchors.fill: parent
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: m => {
-                            if (m.button === Qt.RightButton) { rowMenu.position = rowBox.p; rowMenu.rebuild(); rowMenu.popup(); return }
+                            if (m.button === Qt.RightButton) { clickTimer.stop(); rowMenu.position = rowBox.p; rowMenu.rebuild(); rowMenu.popup(); return }
                             if (table.selectable) { clickTimer.position = rowBox.p; clickTimer.restart() }
                         }
                         onDoubleClicked: m => {
