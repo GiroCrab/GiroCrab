@@ -433,6 +433,39 @@ final class CloudSyncTests: XCTestCase {
         XCTAssertFalse(sync.isSyncing)
     }
 
+    /// Locked while the sync started by unlocking still runs: its continuation
+    /// must not hand the released vault back to the automatic sync.
+    @MainActor
+    func test_lock_during_sync_after_unlock_keeps_auto_sync_off() async throws {
+        let folder = try tempDir()
+        let (v, _) = try device(folder, seeded: true)
+        let sync = CloudSyncManager.shared
+        let wasEnabled = sync.isEnabled
+        if !wasEnabled { sync.isEnabled = true }
+        sync.setFolderForTesting(folder)
+        defer {
+            sync.setFolderForTesting(nil)
+            sync.stopAutoSync()
+            if sync.isEnabled != wasEnabled { sync.isEnabled = wasEnabled }
+        }
+        let model = AppModel(options: LaunchOptions(arguments: ["--demo-seed"], environment: [:]))
+        model.vaultState = .unlocking
+        await model.adoptOpenedOwnVault(v, isEmpty: false)
+        model.stopAutoSync()
+        XCTAssertEqual(model.vaultState, .open)
+
+        XCTAssertTrue(model.syncNow())
+        for _ in 0..<1000 where !sync.isSyncing { await Task.yield() }
+        XCTAssertTrue(sync.isSyncing, "the sync should be running")
+        model.lock()
+        await sync.waitUntilIdle()
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(model.vaultState, .locked)
+        XCTAssertFalse(model.isUnlocked)
+        XCTAssertFalse(sync.hasAutoVaultForTesting, "automatic sync must not hold the locked vault")
+    }
+
     /// Holds the next automatic run inside `inFlight` until released; turns
     /// iCloud Sync on for the test (the manager reads it from its defaults).
     @MainActor
