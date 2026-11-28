@@ -157,7 +157,8 @@ final class MacAutoLockTests: XCTestCase {
     }
 
     /// Locked and unlocked again with no check in between (the lock screen unlocks on its
-    /// own): the unlock restarts the interval, the next check does not lock at once.
+    /// own): the interval runs from the unlock, not from the last check before it nor
+    /// from the first check after it.
     func testUnlockBetweenChecksRestartsTheInterval() {
         store.set(true, forKey: MacAutoLock.idleKey)
         store.set(1, forKey: MacAutoLock.idleMinutesKey)
@@ -175,7 +176,7 @@ final class MacAutoLockTests: XCTestCase {
         clock += 50
         autoLock.checkIdle()
         XCTAssertEqual(locks, [], "only 55 s since the unlock")
-        clock += 10
+        clock += 5 // 60 s since the unlock
         autoLock.checkIdle()
         XCTAssertEqual(locks, [.idle])
     }
