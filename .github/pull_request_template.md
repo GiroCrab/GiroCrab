@@ -30,3 +30,12 @@
 - **Review-Focus:**
 - [ ] **Security-Check:** <!-- Pflicht bei Änderungen an Vault/Secrets/SEPA/Konnektoren/Local-API/Workflows/scripts: abhaken ([x]) und begründen. Required for security-critical paths: tick and explain. -->
 - **Perf-Check:**
+
+## Sichtbare UI-Änderung (nur bei Oberflächen-Änderungen – sonst streichen)
+
+- **Was ändert sich konkret?** 
+- [ ] Vorher- und Nachher-Screenshots (Demo-Daten: macOS/Linux `--demo-seed`, Windows `GIROCRAB_DEMO_SEED=1`, Android „Demo-Bank ausprobieren“; ohne echte Kontodaten) sind angehängt:
+
+| Vorher | Nachher |
+| --- | --- |
+| *(Screenshot vorher)* | *(Screenshot nachher)* |

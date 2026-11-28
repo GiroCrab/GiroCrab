@@ -274,3 +274,9 @@ whenever `README.md`, `docs/screenshots/**`, `docs/assets/**` or a release chang
   3. FFI-Anbindung (`girocrab-core` / UniFFI)
   4. UI-Einrichtung & Tests in `GiroCrabApp`
 - Vor jedem PR `bash scripts/lint-connectors.sh` ausführen (und bei Nacharbeit an `finpension` / `paypal_nvp` deren Eintrag aus der Allowlist entfernen).
+
+### UI-Änderungen in Pull Requests (Pflicht: Vorher / Nachher)
+
+- Jeder PR, der sichtbare Oberflächen ändert (`GiroCrabApp/**/*.swift`, `GiroCrabLinux/qml/**`, `GiroCrabWindows/ui/**`, `GiroCrabAndroid/**`), **muss** in der PR-Beschreibung:
+  1. **konkret beschreiben**, was sich sichtbar und im Verhalten ändert (Ansicht, Element, Vorher vs. Nachher),
+  2. **Vorher- und Nachher-Screenshots** nebeneinander zeigen (ausschließlich mit Demo-Daten – macOS/Linux `--demo-seed`, Windows `GIROCRAB_DEMO_SEED=1`, Android „Demo-Bank ausprobieren“ –, niemals echte Bank-/Personendaten).
