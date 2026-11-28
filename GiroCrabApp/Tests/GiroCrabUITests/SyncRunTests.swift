@@ -61,6 +61,24 @@ final class SyncRunTests: XCTestCase {
         XCTAssertEqual(r.status(of: 3), .skipped(reason: "z"))
     }
 
+    func testStartNeverReopensAnEndedLogin() {
+        var r = run(3)
+        r.finish(1, imported: 3, detail: nil)
+        r.fail(2, message: "x")
+        r.skip(3, reason: "z")
+        for id in Int64(1)...3 { r.start(id) }
+        r.fail(1, message: "late")
+        XCTAssertEqual(r.status(of: 1), .done(imported: 3, detail: nil))
+        XCTAssertEqual(r.status(of: 2), .failed(message: "x"))
+        XCTAssertEqual(r.status(of: 3), .skipped(reason: "z"))
+        XCTAssertTrue(r.isFinished)
+        // after a retry it runs again, also when started twice (a prompt in between)
+        XCTAssertTrue(r.retry(2))
+        r.start(2)
+        r.start(2)
+        XCTAssertEqual(r.status(of: 2), .running)
+    }
+
     func testAFetchedLoginIsNotRetried() {
         var r = run(2)
         r.finish(1, imported: 3, detail: nil)
