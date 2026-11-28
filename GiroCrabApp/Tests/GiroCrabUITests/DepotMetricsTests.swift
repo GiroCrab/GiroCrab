@@ -70,6 +70,31 @@ final class DepotMetricsTests: XCTestCase {
         XCTAssertEqual(HoldingFigures.priceBasis(bond, isBond: true), .unknown)
     }
 
+    func testAWorthlessPositionKeepsItsPriceBasisAndShowsTheFullLoss() throws {
+        // synthetic data (#2077): price and value 0, still held
+        let share = Holding(isin: "DE0002", wkn: "", name: "Aktie", quantity: 10, currentPriceCents: 0,
+                            purchasePriceCents: 12_00, valueCents: 0)
+        XCTAssertEqual(HoldingFigures.priceBasis(share, isBond: false), .perUnit)
+        let gain = try XCTUnwrap(HoldingFigures.gain(share, basis: .perUnit))
+        XCTAssertEqual(gain.cents, -120_00)
+        XCTAssertEqual(try XCTUnwrap(gain.percent), -100, accuracy: 0.0001)
+        let bond = Holding(isin: "DE0003", wkn: "", name: "Anleihe", quantity: 1_000, currentPriceCents: 0,
+                           purchasePriceCents: 0, valueCents: 0)
+        XCTAssertEqual(HoldingFigures.priceBasis(bond, isBond: true), .percentOfNominal)
+        // asset class unknown (wealth view): a bond would be taken per unit, 100 × too large, so no basis
+        XCTAssertEqual(HoldingFigures.priceBasis(share, isBond: nil), .unknown)
+        XCTAssertNil(WealthPosition.aggregate([[share]]).first?.gainCents)
+        // in the depot an unclassified position counts as a share: single shares usually stay unclassified,
+        // and the worthless share must keep "Einstandskurs bearbeiten …" (a bond is set via the classification)
+        XCTAssertEqual(DepotPosition.make([asset(share, .unclassified)]).first?.basis, .perUnit)
+        XCTAssertEqual(HoldingFigures.gain(asset(share, .unclassified))?.cents, -120_00)
+        XCTAssertEqual(DepotPosition.make([asset(bond, .bond)]).first?.basis, .percentOfNominal)
+        // nothing held: no basis
+        var sold = share
+        sold.quantity = 0
+        XCTAssertEqual(HoldingFigures.priceBasis(sold, isBond: false), .unknown)
+    }
+
     func testForeignCurrencyPriceWithoutMatchingValueGivesNoCalculatedGain() {
         // price in USD, value in EUR: quantity × price does not match, so no gain is derived
         let h = Holding(isin: "US1", wkn: "", name: "US", quantity: 10, currentPriceCents: 21_000, purchasePriceCents: 16_000, valueCents: 180_000)
