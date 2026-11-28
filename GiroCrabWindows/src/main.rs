@@ -2476,6 +2476,8 @@ fn main() -> Result<(), slint::PlatformError> {
             win.set_add_period(index);
         });
     }
+    // Raised on lock: an add_bank worker started before it must not touch the dialog or show the old vault.
+    static ADD_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     {
         let (weak, vault, hits) = (win.as_weak(), vault.clone(), hits.clone());
         win.on_bank_add(move |choice, login, period| {
@@ -2496,9 +2498,13 @@ fn main() -> Result<(), slint::PlatformError> {
             let login = login.to_string();
             // captured at the click, not after the add (#1767)
             let range = history_ui::range_of(period);
+            let generation = ADD_GENERATION.load(Ordering::SeqCst);
             std::thread::spawn(move || {
                 let result = add_bank(&v, hit.as_ref(), &login, range);
                 let _ = weak.upgrade_in_event_loop(move |win| {
+                    if ADD_GENERATION.load(Ordering::SeqCst) != generation {
+                        return; // locked meanwhile: stale completion
+                    }
                     win.set_add_busy(false);
                     match result {
                         Ok(msg) => {
@@ -2731,7 +2737,10 @@ fn main() -> Result<(), slint::PlatformError> {
             SESSION.store(0, Ordering::SeqCst);
             win.set_busy(false);
             refunds_ui::reset(&win);
+            ADD_GENERATION.fetch_add(1, Ordering::SeqCst);
             win.set_add_open(false);
+            win.set_add_busy(false);
+            win.set_add_status("".into());
             win.set_add_period(history_ui::MAX_INDEX);
             *vault.lock().unwrap() = None;
             bug_report_ui::reset(&win);

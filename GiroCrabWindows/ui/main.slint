@@ -1391,7 +1391,7 @@ export component MainWindow inherits Window {
                     MenuEntry { text: "Regeln …"; clicked => { root.rules-request(); } }
                     MenuEntry { text: "Tags verwalten …"; clicked => { root.tags-request(); } }
                     MenuEntry { text: "Kategorien …"; clicked => { root.categories-open(); } }
-                    MenuEntry { text: "Bankverbindungen …"; clicked => { root.add-open = true; } }
+                    MenuEntry { text: "Bankverbindungen …"; clicked => { root.add-status = ""; root.bank-search(""); root.add-period-reset(); root.add-open = true; } }
                     MenuEntry { text: "Tresor wechseln / Neuer Tresor …"; clicked => { root.vaults-open = true; } }
                     MenuEntry { text: "Tresor-Synchronisation …"; clicked => { root.vaults-open = true; } }
                     MenuSep {}
@@ -2295,6 +2295,7 @@ export component MainWindow inherits Window {
                 }
                 Rectangle {
                     vertical-stretch: 1;
+                    min-height: 96px;
                     border-width: 1px;
                     border-color: Theme.border;
                     border-radius: 8px;
@@ -2314,26 +2315,37 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-                login := LineEdit {
-                    placeholder-text: "Zugangskennung / Login (bei der Demo-Bank leer lassen)";
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text { text: "Zeitraum beim ersten Abruf"; color: Theme.text; font-size: 12px; vertical-alignment: center; }
-                    ComboBox {
-                        model: ["90 Tage", "1 Jahr", "2 Jahre", "Maximum"];
-                        current-index <=> root.add-period;
+                // Growing form body scrolls; the buttons below stay reachable.
+                add-form-scroll := ScrollView {
+                    vertical-stretch: 0;
+                    min-height: 96px;
+                    preferred-height: add-form.preferred-height;
+                    max-height: 200px;
+                    add-form := VerticalLayout {
+                        width: add-form-scroll.visible-width;
+                        spacing: 10px;
+                        login := LineEdit {
+                            placeholder-text: "Zugangskennung / Login (bei der Demo-Bank leer lassen)";
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "Zeitraum beim ersten Abruf"; color: Theme.text; font-size: 12px; vertical-alignment: center; }
+                            ComboBox {
+                                model: ["90 Tage", "1 Jahr", "2 Jahre", "Maximum"];
+                                current-index <=> root.add-period;
+                            }
+                        }
+                        Text {
+                            text: "„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN.";
+                            color: Theme.muted; font-size: 11px; wrap: word-wrap;
+                        }
+                        Text {
+                            text: "PIN und TAN werden erst beim Abruf abgefragt, nur im Speicher gehalten und nie gespeichert.";
+                            color: Theme.muted; font-size: 11px; wrap: word-wrap;
+                        }
+                        if root.add-status != "": Text { text: root.add-status; color: Theme.negative; font-size: 12px; wrap: word-wrap; }
                     }
                 }
-                Text {
-                    text: "„Maximum“ reicht so weit zurück, wie Bank und Anbindung es zulassen. Für mehr als 90 Tage verlangen viele Banken eine TAN.";
-                    color: Theme.muted; font-size: 11px; wrap: word-wrap;
-                }
-                Text {
-                    text: "PIN und TAN werden erst beim Abruf abgefragt, nur im Speicher gehalten und nie gespeichert.";
-                    color: Theme.muted; font-size: 11px; wrap: word-wrap;
-                }
-                if root.add-status != "": Text { text: root.add-status; color: Theme.negative; font-size: 12px; wrap: word-wrap; }
                 HorizontalLayout {
                     alignment: end;
                     spacing: 8px;
