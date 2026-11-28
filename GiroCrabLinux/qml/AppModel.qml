@@ -1980,6 +1980,11 @@ QtObject {
     property var activeChallenge: null
     property var pendingLogin: null          // BankConnection asking for the PIN
     property var setupRequest: null          // { connection, keys }
+    property var advanziaStatementRequest: null
+    onWebLoginConnectionChanged: {
+        if (!webLoginConnection || (advanziaStatementRequest && advanziaStatementRequest.connection !== webLoginConnection.id))
+            advanziaStatementRequest = null
+    }
     property var webLoginConnection: null    // portal login (QtWebEngine)
     /// The running sync was started by the schedule (AutoSync.qml): no login prompts, no error dialogs.
     property var quietSyncConnectionID: null
@@ -2880,12 +2885,28 @@ QtObject {
         next(0)
     }
     function canFetchStatements(a) {
+        if (a && a.connector === "Advanzia")
+            return !isDemo && a.kind === "CreditCard" && a.connection_id !== null && a.archived_unix === null
         return a && a.connector && (a.kind !== "Loan" || a.connector === "Bhw") && ["VolksbankKasselGoettingen", "Direkt1822", "FinTsGeneric", "Easybank", "FordMoney", "OpelDirektbank", "Bhw"].indexOf(a.connector) >= 0
     }
-    function fetchStatements(a) {
+    function fetchStatements(a, months) {
         if (syncingConnectionID !== null) return
         const c = connections.find(x => x.id === a.connection_id)
         if (!c) return
+        if (c.connector === "Advanzia") {
+            if (webLoginConnection || !usesPortalLogin(c)) return
+            const vault = vaultGeneration
+            withFreshBankingPolicy(() => {
+                if (!isUnlocked || vault !== vaultGeneration || syncingConnectionID !== null || webLoginConnection) return
+                const current = connections.find(x => x.id === c.id)
+                if (!current || !usesPortalLogin(current) || accountsByID[a.id]?.connection_id !== current.id) return
+                const gate = bankingGate(current)
+                if (gate) { showBankingGate(gate); return }
+                advanziaStatementRequest = { connection: current.id, account: a.id, months: months || 0 }
+                webLoginConnection = current
+            })
+            return
+        }
         statementsAccountID = a.id
         statementsCountBefore = accountDocuments(a.id).length
         requestSync(c)

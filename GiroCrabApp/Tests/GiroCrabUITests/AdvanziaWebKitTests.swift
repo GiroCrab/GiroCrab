@@ -58,6 +58,41 @@ final class AdvanziaWebKitTests: XCTestCase {
             }
         }
     }
+    func testPDFBridgeTransfersBinaryThroughWebKit() async throws {
+        _ = NSApplication.shared
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        let web = WKWebView(frame: .zero, configuration: config)
+        defer { web.stopLoading() }
+        web.loadHTMLString("<script>window.fixtureReady = true</script>", baseURL: nil)
+        for _ in 0..<200 {
+            if (try? await web.evaluateJavaScript("window.fixtureReady") as? Bool) == true { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let account = "00000000-0000-4000-8000-000000000001"
+        let statementID = "00000000-0000-4000-8000-000000000002"
+        let endpoint = "/api/accounts/\(account)/statements/\(statementID)"
+        let script = """
+        const locationFixture = {origin:'https://mein.advanzia.com'};
+        window.fetch = (url, options) => {
+            if (url !== endpoint || options.method !== 'GET' || options.credentials !== 'same-origin' ||
+                options.redirect !== 'error' || options.headers) throw Error('Unexpected request');
+            return Promise.resolve(new Response(new Uint8Array([37,80,68,70,45,255]), {
+                headers: {'content-type':'application/pdf'}
+            }));
+        };
+        (function(location) {
+        \(AdvanziaScripts.hook)
+        })(locationFixture);
+        return await window.__gcAdvanzia.statement(account, statementID);
+        """
+        let value = try await web.callAsyncJavaScript(script, arguments: [
+            "account": account, "statementID": statementID, "endpoint": endpoint
+        ], in: nil, contentWorld: .page)
+        let encoded = (value as? [String: String])?["pdf"]
+        XCTAssertEqual(encoded.flatMap { Data(base64Encoded: $0) }, Data([37, 80, 68, 70, 45, 255]))
+    }
+
     func testInvisibleHostExecutesJavaScriptAndKeepsStateWhenMoved() async throws {
         _ = NSApplication.shared
         let browser = PortalBrowser(url: URL(string: "about:blank")!, domains: PortalDomains([]),

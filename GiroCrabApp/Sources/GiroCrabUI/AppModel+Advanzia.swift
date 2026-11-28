@@ -2,16 +2,20 @@ import Foundation
 import GiroCrabCore
 
 extension AppModel {
-    func startAdvanzia(_ connection: BankConnection, password: String? = nil) {
+    func startAdvanzia(_ connection: BankConnection, password: String? = nil, statementAccount: Int64? = nil, months: UInt8 = 0) {
         guard !isDemo, !Self.isMagicDemoLogin(connection.loginName), let pin = pinVault() else {
             if Self.isMagicDemoLogin(connection.loginName) { requestSync(connection) }
             return
         }
         if let running = advanziaWorkflow {
-            if running.connection.id == connection.id && password == nil { running.showPrompt = true; return }
+            if running.connection.id == connection.id && password == nil {
+                running.showPrompt = true
+                return
+            }
             running.cancel()
         }
-        let flow = AdvanziaWorkflow(connection: connection, model: self, pin: pin, password: password)
+        let flow = AdvanziaWorkflow(connection: connection, model: self, pin: pin, password: password,
+            statementAccount: statementAccount, months: months)
         advanziaWorkflow = flow
         if !showAddBank { flow.start() }
     }

@@ -29,7 +29,15 @@ struct AccountDocumentsSheet: View {
                     Text(account.name).appFont(.caption).foregroundStyle(Theme.secondary).sensitive()
                 }
                 Spacer()
-                if model.canFetchStatements(account) {
+                if account.connector == .advanzia && model.canFetchStatements(account) {
+                    Menu {
+                        Button("Letzte 12 Monate") { model.fetchStatements(for: account, months: 12); dismiss() }
+                        Button("Alle Kontoauszüge laden") { model.fetchStatements(for: account); dismiss() }
+                    } label: {
+                        Label("Kontoauszüge abrufen", systemImage: "arrow.down.doc")
+                    }
+                    .disabled(model.advanziaWorkflow != nil || model.syncingConnectionID != nil)
+                } else if model.canFetchStatements(account) {
                     Button {
                         model.fetchStatements(for: account)
                         dismiss()
@@ -41,7 +49,7 @@ struct AccountDocumentsSheet: View {
                 Button("Fertig") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             .padding()
-            if model.canFetchStatements(account) {
+            if account.connector != .advanzia && model.canFetchStatements(account) {
                 AutoStatementsToggle(account: account)
                     .padding(.horizontal)
                     .padding(.bottom, 10)
@@ -51,7 +59,7 @@ struct AccountDocumentsSheet: View {
                 ContentUnavailableView(
                     "Keine Dokumente",
                     systemImage: "doc.text",
-                    description: Text(model.canFetchStatements(account)
+                    description: Text(account.connector != .advanzia && model.canFetchStatements(account)
                         ? "Mit „Kontoauszüge abrufen“ lädt GiroCrab die PDF-Kontoauszüge per FinTS (ggf. mit TAN)."
                         : "Importierte oder abgelegte Dokumente dieses Kontos erscheinen hier.")
                 )

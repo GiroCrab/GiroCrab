@@ -26,13 +26,14 @@ WebLoginFlow {
     domains: ["mein.advanzia.com"]
     userScript: hook
     readyToLoad: profile !== null
-    busy: phase === "importing"
+    busy: phase === "importing" || phase === "statements"
     infoWarning: error !== "" || browser.blockedHost !== "" || authentication === "rejected"
     info: {
         if (error !== "") return error
         if (browser.blockedHost !== "")
             return qsTr("Unsichere Seite blockiert (%1) – nur HTTPS-Seiten werden geöffnet.").arg(browser.blockedHost)
         if (phase === "finished") return qsTr("Advanzia-Abruf abgeschlossen.")
+        if (phase === "statements") return qsTr("Kontoauszüge werden geladen …")
         if (phase === "importing") return qsTr("Advanzia-Umsätze und Bankkontostand werden übernommen …")
         if (needsAccountChoice && ready) return qsTr("Bitte einmalig das Zielkonto auswählen. Danach beginnt die Übernahme automatisch.")
         if (onLogin) {
@@ -48,6 +49,7 @@ WebLoginFlow {
     // MARK: workflow state (AdvanziaWorkflow)
     /// preparing | signingIn | importing | failed | finished
     property string phase: "preparing"
+    property var statementRequest: null
     property var profile: null              // AdvanziaProfile
     property string error: ""
     /// Hint that does not stop the flow (card not discovered yet).
@@ -106,7 +108,7 @@ WebLoginFlow {
             .sort((a, b) => a.name.localeCompare(b.name))
     }
     readonly property bool hasLegacy: !!profile && profile.legacy_account_id !== null && profile.legacy_account_id !== undefined
-    readonly property bool needsAccountChoice: !!profile && !profile.has_account && target < 0
+    readonly property bool needsAccountChoice: !statementRequest && !!profile && !profile.has_account && target < 0
 
     Component.onCompleted: loadProfile()
     /// AdvanziaWorkflow.run: the login's profile first (random per-login namespace, no bank access).
@@ -185,6 +187,62 @@ WebLoginFlow {
     }
     return JSON.parse(text + decoder.decode());
   };
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const sameAccount = id => location.origin === 'https://mein.advanzia.com' &&
+    typeof id === 'string' && uuid.test(id) && id === id.toLowerCase() &&
+    (accounts.size === 0 || (accounts.size === 1 && accounts.has(id)));
+  const statement = async (id, document) => {
+    if (!sameAccount(id) || (document !== null && (typeof document !== 'string' || !uuid.test(document))))
+      return {error:'ACCOUNT'};
+    const c = new AbortController(); controllers.add(c);
+    const timeout = setTimeout(() => c.abort(),30000);
+    try {
+      const listing = document === null;
+      const mime = listing ? 'application/json' : 'application/pdf';
+      const limit = listing ? 512 * 1024 : 8 * 1024 * 1024;
+      const url = '/api/accounts/' + id + '/statements' + (listing ? '' : '/' + document);
+      const r = await nativeFetch(url,{method:'GET',credentials:'same-origin',cache:'no-store',redirect:'error',signal:c.signal});
+      if (r.status === 401 || r.status === 403) throw new Error('AUTH');
+      if (r.status !== 200 || r.redirected) throw new Error('HTTP');
+      if ((r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase() !== mime || !r.body)
+        throw new Error('SCHEMA');
+      if (Number(r.headers.get('content-length')) > limit) throw new Error('SIZE');
+      const reader = r.body.getReader();
+      let size = 0;
+      const chunks = [];
+      while (true) {
+        const {done,value} = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) throw new Error('SIZE');
+        chunks.push(value);
+      }
+      if (!sameAccount(id)) throw new Error('ACCOUNT');
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+      if (listing) {
+        const list = JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(bytes));
+        if (!Array.isArray(list) || list.length > 600) throw new Error('SCHEMA');
+        return {listing:JSON.stringify(list.map(item => {
+          if (!item || typeof item.statementId !== 'string' || !uuid.test(item.statementId) ||
+              typeof item.fileReference !== 'string' || item.fileReference.length > 512 ||
+              !Number.isInteger(item.forYear) || !Number.isInteger(item.forMonth))
+            throw new Error('SCHEMA');
+          return {statementId:item.statementId,fileReference:item.fileReference,forYear:item.forYear,forMonth:item.forMonth};
+        }))};
+      }
+      if (String.fromCharCode(...bytes.subarray(0,5)) !== '%PDF-') throw new Error('SCHEMA');
+      const chunks64 = [];
+      // Multiples of three allow independent encoding without interior padding.
+      for (let i = 0; i < size; i += 24576)
+        chunks64.push(btoa(String.fromCharCode(...bytes.subarray(i,i+24576))));
+      return {pdf:chunks64.join('')};
+    } catch(e) {
+      const safe = ['AUTH','HTTP','SCHEMA','SIZE','ACCOUNT'];
+      return {error:c.signal.aborted?'TIMEOUT':safe.includes(e.message)?e.message:'NETWORK'};
+    } finally { c.abort(); clearTimeout(timeout); controllers.delete(c); }
+  };
   window.__gcAdvanzia = {
     discover: () => {
       for (const r of performance.getEntriesByType('resource')) { const p=path(r.name); if(p) accounts.add(p.id); }
@@ -200,9 +258,10 @@ WebLoginFlow {
       if(link.href && new URL(link.href,location.href).origin!==location.origin) return false;
       link.click();return true;
     },
+    statement,
     cancel: () => { for (const c of controllers) c.abort(); },
     collect: async id => {
-      if (location.origin !== 'https://mein.advanzia.com' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || accounts.size > 1 || (accounts.size === 1 && !accounts.has(id))) return {error:'ACCOUNT'};
+      if (!sameAccount(id)) return {error:'ACCOUNT'};
       const c = new AbortController(); controllers.add(c);
       const timeout = setTimeout(() => c.abort(),30000);
       try {
@@ -241,6 +300,7 @@ return 'unknown';`
     readonly property string discover: `if(location.origin !== 'https://mein.advanzia.com') return []; return window.__gcAdvanzia?.discover() ?? [];`
     readonly property string openTransactions: `return window.__gcAdvanzia?.openTransactions() ?? false;`
     readonly property string collect: `if(location.origin !== 'https://mein.advanzia.com' || !window.__gcAdvanzia) return {error:'AUTH'}; return await window.__gcAdvanzia.collect(account);`
+    readonly property string statementScript: `if(location.origin !== 'https://mein.advanzia.com' || !window.__gcAdvanzia) return {error:'AUTH'}; return await window.__gcAdvanzia.statement(account, statementID || null);`
     readonly property string cancelScript: `window.__gcAdvanzia?.cancel()`
     // END generated
 
@@ -252,7 +312,7 @@ return 'unknown';`
         onTriggered: flow.tick()
     }
     function tick() {
-        if (ticking || phase === "importing") return
+        if (ticking || busy) return
         ticking = true
         const gen = generation
         const done = () => { if (gen === generation) ticking = false }
@@ -290,7 +350,10 @@ return 'unknown';`
                     ready = accountID !== "" && stablePortalTicks >= 2
                     if (accountID === "" && stablePortalTicks >= 10) notice = errorMessage("DISCOVERY")
                     if (ready) notice = ""
-                    if (ready && !needsAccountChoice && automatic === "waiting") { automatic = "running"; ticking = false; importCapture(); return }
+                    if (ready && !needsAccountChoice && automatic === "waiting") { automatic = "running"; ticking = false
+                        if (statementRequest) finishStatements()
+                        else importCapture()
+                        return }
                     done()
                 }
                 if (accountID === "" && !openedTransactions) {
@@ -321,11 +384,10 @@ return 'unknown';`
                                                             json_bodies: fields.bodies, balance_json_number: fields.balance,
                                                             target_account_id: selected }, s => {
                 if (gen !== generation) return
-                automatic = "finished"; phase = "finished"
-                AppModel.toast = qsTr("Advanzia: %1 Konten aktualisiert, %2 neue Buchungen.").arg(s.accounts_updated).arg(s.transactions_imported)
+                const note = qsTr("Advanzia: %1 Konten aktualisiert, %2 neue Buchungen.").arg(s.accounts_updated).arg(s.transactions_imported)
                 AppModel.saveWebCookies(connection)   // signed in: keep the session
                 AppModel.reloadAll()
-                close(true)
+                finishStatements(note)
             }, err => {
                 if (gen !== generation) return
                 const e = AppModel.parseCoreError(err)
@@ -333,6 +395,60 @@ return 'unknown';`
                      : qsTr("Advanzia-Import abgebrochen. Bitte Konto-Zuordnung und Umsatzdaten prüfen; es wurden keine unvollständigen Daten übernommen."))
             })
         }, () => { if (gen === generation) fail(errorMessage("NETWORK")) })
+    }
+    function finishStatements(note) {
+        phase = "statements"
+        const gen = generation
+        const vault = AppModel.vaultGeneration
+        const current = () => gen === generation && vault === AppModel.vaultGeneration
+        const account = accountID
+        const args = { connection_id: connection.id, bank_account_id: account, profile_id: profile.profile_id,
+                       target_account_id: statementRequest ? statementRequest.account : null }
+        let added = 0, failed = 0, attempted = false
+        const download = (pending, index) => {
+            if (!current() || index >= pending.length) return
+            const statement = pending[index]
+            return browser.runAsync(statementScript, { account: account, statementID: statement.id }, browser.mainWorld)
+                .then(file => {
+                    if (!current()) return
+                    if (["AUTH", "ACCOUNT", "TIMEOUT"].includes(file?.error)) {
+                        failed += pending.length - index
+                        return
+                    }
+                    if (typeof file?.pdf !== "string") { failed++; return download(pending, index + 1) }
+                    return AppModel.corePromise("import_advanzia_statement", Object.assign({}, args, { statement: statement, pdf: file.pdf }))
+                        .then(stored => {
+                            if (current() && stored) { added++; AppModel.documentsVersion++ }
+                        }, () => failed++)
+                        .then(() => download(pending, index + 1))
+                }, () => { failed++; return download(pending, index + 1) })
+        }
+        return AppModel.corePromise("advanzia_statements_enabled", args).then(enabled => {
+            if (!enabled || !current()) return
+            attempted = true
+            return browser.runAsync(statementScript, { account: account, statementID: "" }, browser.mainWorld)
+                .then(list => {
+                    if (!current()) return
+                    if (typeof list?.listing !== "string") throw Error()
+                    return AppModel.corePromise("pending_advanzia_statements",
+                        Object.assign({}, args, { listing: list.listing, months: statementRequest ? statementRequest.months : 24 }))
+                        .then(pending => download(pending, 0))
+                })
+        }).catch(() => failed++).then(() => {
+            if (!current()) return
+            const messages = note ? [note] : []
+            if (attempted || failed) {
+                const result = [added ? qsTr("%1 neue Kontoauszüge").arg(added) : qsTr("Keine neuen Kontoauszüge")]
+                if (failed) result.push(qsTr("%1 Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.").arg(failed))
+                const outcome = failed ? (added ? "Partial" : "Error") : "Ok"
+                AppModel.logSync(args.connection_id, outcome, result.join(" · "), 0, "Statements")
+                messages.push(result.join(" · "))
+            }
+            if (!messages.length) messages.push(qsTr("Dokumentenabruf aus"))
+            AppModel.toast = messages.join(" · ")
+            automatic = "finished"; phase = "finished"
+            close(true)
+        })
     }
     function fail(message) {
         phase = "failed"; error = message; ready = false

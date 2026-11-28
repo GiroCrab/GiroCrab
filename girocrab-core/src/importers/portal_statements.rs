@@ -405,6 +405,30 @@ fn card_account(
         .map(|(id, _, _)| *id))
 }
 
+/// Shared storage for a validated portal PDF associated with an explicit account.
+pub(crate) fn store_statement_pdf(
+    db: &rusqlite::Connection,
+    account: i64,
+    name: &str,
+    date: &str,
+    bytes: &[u8],
+    source: &str,
+) -> Result<bool, CoreError> {
+    Ok(crate::documents::insert_doc(
+        db,
+        None,
+        Some(account),
+        &format!("Kontoauszug {name} {}", german_date(date)),
+        "kontoauszug",
+        "application/pdf",
+        &format!("{date}_Kontoauszug.pdf"),
+        bytes,
+        source,
+        date,
+    )?
+    .is_some())
+}
+
 #[uniffi::export]
 impl Vault {
     /// Closing dates of the portal statements the card (`card_key`, its digits
@@ -459,21 +483,14 @@ impl Vault {
             if !s.bytes.starts_with(b"%PDF") || s.date.len() != 10 {
                 continue;
             }
-            let title = format!("Kontoauszug {name} {}", german_date(&s.date));
-            let file_name = format!("{}_Kontoauszug.pdf", s.date);
-            let stored = crate::documents::insert_doc(
+            added += u32::from(store_statement_pdf(
                 &tx,
-                None,
-                Some(account),
-                &title,
-                "kontoauszug",
-                "application/pdf",
-                &file_name,
+                account,
+                &name,
+                &s.date,
                 &s.bytes,
                 &source_of(account, &s.date),
-                &s.date,
-            )?;
-            added += u32::from(stored.is_some());
+            )?);
         }
         tx.commit()?;
         Ok(added)

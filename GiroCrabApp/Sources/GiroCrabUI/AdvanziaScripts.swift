@@ -68,6 +68,62 @@ enum AdvanziaScripts {
         }
         return JSON.parse(text + decoder.decode());
       };
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const sameAccount = id => location.origin === 'https://mein.advanzia.com' &&
+        typeof id === 'string' && uuid.test(id) && id === id.toLowerCase() &&
+        (accounts.size === 0 || (accounts.size === 1 && accounts.has(id)));
+      const statement = async (id, document) => {
+        if (!sameAccount(id) || (document !== null && (typeof document !== 'string' || !uuid.test(document))))
+          return {error:'ACCOUNT'};
+        const c = new AbortController(); controllers.add(c);
+        const timeout = setTimeout(() => c.abort(),30000);
+        try {
+          const listing = document === null;
+          const mime = listing ? 'application/json' : 'application/pdf';
+          const limit = listing ? 512 * 1024 : 8 * 1024 * 1024;
+          const url = '/api/accounts/' + id + '/statements' + (listing ? '' : '/' + document);
+          const r = await nativeFetch(url,{method:'GET',credentials:'same-origin',cache:'no-store',redirect:'error',signal:c.signal});
+          if (r.status === 401 || r.status === 403) throw new Error('AUTH');
+          if (r.status !== 200 || r.redirected) throw new Error('HTTP');
+          if ((r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase() !== mime || !r.body)
+            throw new Error('SCHEMA');
+          if (Number(r.headers.get('content-length')) > limit) throw new Error('SIZE');
+          const reader = r.body.getReader();
+          let size = 0;
+          const chunks = [];
+          while (true) {
+            const {done,value} = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > limit) throw new Error('SIZE');
+            chunks.push(value);
+          }
+          if (!sameAccount(id)) throw new Error('ACCOUNT');
+          const bytes = new Uint8Array(size);
+          let offset = 0;
+          for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+          if (listing) {
+            const list = JSON.parse(new TextDecoder('utf-8', {fatal:true}).decode(bytes));
+            if (!Array.isArray(list) || list.length > 600) throw new Error('SCHEMA');
+            return {listing:JSON.stringify(list.map(item => {
+              if (!item || typeof item.statementId !== 'string' || !uuid.test(item.statementId) ||
+                  typeof item.fileReference !== 'string' || item.fileReference.length > 512 ||
+                  !Number.isInteger(item.forYear) || !Number.isInteger(item.forMonth))
+                throw new Error('SCHEMA');
+              return {statementId:item.statementId,fileReference:item.fileReference,forYear:item.forYear,forMonth:item.forMonth};
+            }))};
+          }
+          if (String.fromCharCode(...bytes.subarray(0,5)) !== '%PDF-') throw new Error('SCHEMA');
+          const chunks64 = [];
+          // Multiples of three allow independent encoding without interior padding.
+          for (let i = 0; i < size; i += 24576)
+            chunks64.push(btoa(String.fromCharCode(...bytes.subarray(i,i+24576))));
+          return {pdf:chunks64.join('')};
+        } catch(e) {
+          const safe = ['AUTH','HTTP','SCHEMA','SIZE','ACCOUNT'];
+          return {error:c.signal.aborted?'TIMEOUT':safe.includes(e.message)?e.message:'NETWORK'};
+        } finally { c.abort(); clearTimeout(timeout); controllers.delete(c); }
+      };
       window.__gcAdvanzia = {
         discover: () => {
           for (const r of performance.getEntriesByType('resource')) { const p=path(r.name); if(p) accounts.add(p.id); }
@@ -83,9 +139,10 @@ enum AdvanziaScripts {
           if(link.href && new URL(link.href,location.href).origin!==location.origin) return false;
           link.click();return true;
         },
+        statement,
         cancel: () => { for (const c of controllers) c.abort(); },
         collect: async id => {
-          if (location.origin !== 'https://mein.advanzia.com' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || accounts.size > 1 || (accounts.size === 1 && !accounts.has(id))) return {error:'ACCOUNT'};
+          if (!sameAccount(id)) return {error:'ACCOUNT'};
           const c = new AbortController(); controllers.add(c);
           const timeout = setTimeout(() => c.abort(),30000);
           try {

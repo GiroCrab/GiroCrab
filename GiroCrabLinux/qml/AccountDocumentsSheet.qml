@@ -13,6 +13,7 @@ Sheet {
     onClosed: { AppModel.accountDocumentsFor = null; preview = null }
     sheetWidth: preview ? 760 : 560
     readonly property var docs: account ? AppModel.accountDocuments(account.id) : []
+    readonly property bool advanzia: account !== null && account.connector === "Advanzia"
     readonly property bool canFetch: AppModel.canFetchStatements(account)
     // DocumentPreviewSheet's "Schließen" (.cancelAction): Esc closes the preview, not the sheet
     closePolicy: preview ? Popup.NoAutoClose : Popup.CloseOnEscape
@@ -47,13 +48,25 @@ Sheet {
             Button { visible: sheet.preview !== null; text: qsTr("Sichern …"); icon.name: SF.icon("square.and.arrow.down"); onClicked: sheet.saveDocument() }
             Button { visible: sheet.preview !== null; text: qsTr("Öffnen …"); onClicked: AppModel.quickLook(sheet.preview) }
             Button { visible: sheet.preview !== null; text: qsTr("Schließen"); onClicked: sheet.preview = null }
-            Button { visible: sheet.canFetch && sheet.preview === null; text: qsTr("Kontoauszüge abrufen"); icon.name: SF.icon("arrow.down.doc")
+            Button {
+                visible: sheet.advanzia && sheet.canFetch && sheet.preview === null
+                enabled: AppModel.webLoginConnection === null && AppModel.syncingConnectionID === null
+                text: qsTr("Kontoauszüge abrufen")
+                icon.name: SF.icon("arrow.down.doc")
+                onClicked: periods.open()
+                Menu {
+                    id: periods
+                    MenuItem { text: qsTr("Letzte 12 Monate"); onTriggered: { AppModel.fetchStatements(sheet.account, 12); sheet.close() } }
+                    MenuItem { text: qsTr("Alle Kontoauszüge laden"); onTriggered: { AppModel.fetchStatements(sheet.account, 0); sheet.close() } }
+                }
+            }
+            Button { visible: !sheet.advanzia && sheet.canFetch && sheet.preview === null; text: qsTr("Kontoauszüge abrufen"); icon.name: SF.icon("arrow.down.doc")
                      enabled: AppModel.statementsAccountID !== (sheet.account ? sheet.account.id : -1) && AppModel.syncingConnectionID === null
                      onClicked: { AppModel.fetchStatements(sheet.account); sheet.close() } }
             Button { visible: sheet.preview === null; text: qsTr("Fertig"); highlighted: true; onClicked: sheet.close() }
         }
         ColumnLayout {
-            visible: sheet.canFetch && sheet.preview === null
+            visible: !sheet.advanzia && sheet.canFetch && sheet.preview === null
             spacing: 3; Layout.fillWidth: true
             Switch { id: auto; text: qsTr("Kontoauszüge automatisch beim Sync abrufen")
                      checked: sheet.account ? AppModel.autoStatements(sheet.account) : false
@@ -70,7 +83,7 @@ Sheet {
             SFIcon { Layout.alignment: Qt.AlignHCenter; symbol: "doc.text"; size: 30 }
             Text { Layout.alignment: Qt.AlignHCenter; text: qsTr("Keine Dokumente"); font.pixelSize: Theme.title3 + 1; font.weight: Font.Bold; color: Theme.text }
             Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; color: Theme.secondary
-                   text: sheet.canFetch ? qsTr("Mit „Kontoauszüge abrufen“ lädt GiroCrab die PDF-Kontoauszüge per FinTS (ggf. mit TAN).")
+                   text: !sheet.advanzia && sheet.canFetch ? qsTr("Mit „Kontoauszüge abrufen“ lädt GiroCrab die PDF-Kontoauszüge per FinTS (ggf. mit TAN).")
                                         : qsTr("Importierte oder abgelegte Dokumente dieses Kontos erscheinen hier.") }
             Item { Layout.fillHeight: true }
         }

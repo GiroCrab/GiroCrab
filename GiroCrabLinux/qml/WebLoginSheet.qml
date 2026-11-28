@@ -214,7 +214,9 @@ Item {
             restoreSettle.restart()
             const files = { TradeRepublic: "TrWebLoginFlow.qml", AmazonOrders: "AmazonWebLoginFlow.qml", Fnz: "FnzWebLoginFlow.qml", Quirion: "QuirionWebLoginFlow.qml",
                             SchwaebischHall: "SchwaebischHallWebLoginFlow.qml", EquatePlus: "EquatePlusWebLoginFlow.qml", Advanzia: "AdvanziaWebLoginFlow.qml" }
-            flowLoader.setSource(files[kind] || "PortalWebLoginFlow.qml", { browser: sheet, connection: connection })
+            const args = { browser: sheet, connection: connection }
+            if (kind === "Advanzia") args.statementRequest = AppModel.advanziaStatementRequest
+            flowLoader.setSource(files[kind] || "PortalWebLoginFlow.qml", args)
         }
         Component.onCompleted: if (connection) { lastConnection = connection; Qt.callLater(startFlow) }
 

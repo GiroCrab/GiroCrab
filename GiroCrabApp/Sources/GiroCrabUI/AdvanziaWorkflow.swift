@@ -5,7 +5,7 @@ import GiroCrabCore
 @MainActor
 @Observable
 final class AdvanziaWorkflow {
-    enum Phase { case preparing, signingIn, credentials, sms, app, authorizing, importing, failed, finished }
+    enum Phase { case preparing, signingIn, credentials, sms, app, authorizing, importing, statements, failed, finished }
     private(set) var phase = Phase.preparing
     private(set) var session: (any AdvanziaSessionDriving)?
     private(set) var error: String?
@@ -16,6 +16,8 @@ final class AdvanziaWorkflow {
     let connection: BankConnection
     private weak var model: AppModel?
     private let pin: VaultPin
+    private let statementAccount: Int64?
+    private let months: UInt8
     private let makeSession: @MainActor (AdvanziaProfile, VaultPin, String?) -> any AdvanziaSessionDriving
     private let keychain: AdvanziaKeychainClient
     private var initialPassword: String?
@@ -34,18 +36,20 @@ final class AdvanziaWorkflow {
             return $0.kind == .creditCard && $0.connectionId == nil && $0.currency == "EUR" && !$0.isArchived
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } ?? []
     }
-    var needsAccountChoice: Bool { session?.profile.hasAccount == false && target < 0 }
+    var needsAccountChoice: Bool { statementAccount == nil && session?.profile.hasAccount == false && target < 0 }
     var browser: PortalBrowser? { session?.portal }
     var active: Bool { !stopped && model?.isCurrent(pin) == true }
     var canSubmitCode: Bool { active && phase == .sms && !submittingCode }
 
     init(connection: BankConnection, model: AppModel, pin: VaultPin,
-         password: String? = nil, keychain: AdvanziaKeychainClient = .system,
+         password: String? = nil, statementAccount: Int64? = nil, months: UInt8 = 0,
+         keychain: AdvanziaKeychainClient = .system,
          makeSession: @escaping @MainActor (AdvanziaProfile, VaultPin, String?) -> any AdvanziaSessionDriving = {
              AdvanziaBrowserSession(profile: $0, pin: $1, savedPassword: $2)
          }) {
         self.connection = connection; self.model = model; self.pin = pin
         self.initialPassword = password
+        self.statementAccount = statementAccount; self.months = months
         self.keychain = keychain; self.makeSession = makeSession
     }
     func start() {
@@ -91,7 +95,8 @@ final class AdvanziaWorkflow {
             stalledTicks = 0
             guard !needsAccountChoice else { showPrompt = true; return }
             guard automatic.claim(ready: true, targetSelected: true) else { return }
-            await importCapture(session)
+            if statementAccount == nil { await importCapture(session) }
+            else { await finishStatements(session) }
             return
         }
         stalledTicks += 1
@@ -180,9 +185,8 @@ final class AdvanziaWorkflow {
                 balanceJsonNumber: capture.balance, targetAccountId: selected) }
             await model?.advanziaDidImport(pin: pin)
             guard active, !Task.isCancelled else { return }
-            automatic.finish(success: true); phase = .finished
-            model?.toast = String(localized: "Advanzia: \(Int(summary.accountsUpdated)) Konten aktualisiert, \(Int(summary.transactionsImported)) neue Buchungen.")
-            cancel()
+            let note = String(localized: "Advanzia: \(Int(summary.accountsUpdated)) Konten aktualisiert, \(Int(summary.transactionsImported)) neue Buchungen.")
+            await finishStatements(session, after: note)
         } catch is CancellationError { }
         catch let e as AdvanziaBrowserError { fail(AdvanziaSecurity.errorMessage(e.code)) }
         catch let e as CoreError {
@@ -190,6 +194,72 @@ final class AdvanziaWorkflow {
             else { fail(String(localized: "Advanzia-Import abgebrochen. Bitte Konto-Zuordnung und Umsatzdaten prüfen; es wurden keine unvollständigen Daten übernommen.")) }
         } catch { fail(String(localized: "Advanzia konnte nicht sicher abgerufen werden. Bitte die Bankseite prüfen.")) }
     }
+    /// The capture has committed before any document work starts. Each valid PDF
+    /// commits separately, so an interrupted download leaves it available.
+    private func finishStatements(_ session: any AdvanziaSessionDriving, after note: String? = nil) async {
+        phase = .statements
+        if !showBrowser { showPrompt = false }
+        var added = 0, failed = 0
+        var attempted = false
+        var completed = false
+        defer {
+            if let model, model.isCurrent(pin), attempted || failed > 0 {
+                let outcome: SyncLogOutcome = failed == 0 ? .ok : (added > 0 ? .partial : .error)
+                model.logSync(connectionID: connection.id, source: .statements, outcome: completed ? outcome : .cancelled,
+                              message: statementResult(added: added, failed: failed))
+                if added > 0 { model.documentsVersion += 1 }
+            }
+        }
+        do {
+            if let browser = session.portal, let account = session.accountID {
+                let id = connection.id, profile = session.profile.profileId
+                let target = statementAccount, period: UInt8 = note == nil ? months : 24
+                let enabled = try await pin.run { try $0.advanziaStatementsEnabled(connectionId: id,
+                    bankAccountId: account, profileId: profile, targetAccountId: target) }
+                guard active, !Task.isCancelled else { return }
+                if enabled {
+                    attempted = true
+                    let listing = try await AdvanziaBrowserSession.statementResponse(browser: browser, account: account)
+                    let pending = try await pin.run { try $0.pendingAdvanziaStatements(connectionId: id,
+                        bankAccountId: account, profileId: profile, targetAccountId: target, listing: listing, months: period) }
+                    for (index, statement) in pending.enumerated() {
+                        guard active, !Task.isCancelled else { return }
+                        do {
+                            let bytes = try await AdvanziaBrowserSession.statementResponse(browser: browser,
+                                account: account, document: statement.id)
+                            guard active, !Task.isCancelled else { return }
+                            let stored = try await pin.run { try $0.importAdvanziaStatement(connectionId: id,
+                                bankAccountId: account, profileId: profile, targetAccountId: target, statement: statement,
+                                pdfBase64: bytes) }
+                            if stored { added += 1 }
+                            guard active, !Task.isCancelled else { return }
+                        } catch is CancellationError { return }
+                        catch let error as AdvanziaBrowserError where ["AUTH", "ACCOUNT", "TIMEOUT"].contains(error.code) {
+                            failed += pending.count - index
+                            break
+                        } catch { failed += 1 }
+                    }
+                }
+            }
+        } catch is CancellationError { return }
+        catch { failed += 1 }
+        guard active, !Task.isCancelled else { return }
+        let result = attempted || failed > 0 ? statementResult(added: added, failed: failed) : nil
+        model?.toast = [note, result ?? (note == nil ? String(localized: "Dokumentenabruf aus") : nil)]
+            .compactMap { $0 }.joined(separator: " · ")
+        completed = true
+        automatic.finish(success: true); phase = .finished
+        cancel()
+    }
+
+    private func statementResult(added: Int, failed: Int) -> String {
+        let imported = added > 0 ? String(localized: "\(added) neue Kontoauszüge")
+            : String(localized: "Keine neuen Kontoauszüge")
+        guard failed > 0 else { return imported }
+        let retry = String(localized: "\(failed) Kontoauszüge konnten nicht geladen werden – beim nächsten Abruf erneut versuchen.")
+        return imported + " · " + retry
+    }
+
     private func fail(_ message: String) {
         guard active else { return }
         phase = .failed; error = message; showPrompt = true
@@ -203,7 +273,7 @@ final class AdvanziaWorkflow {
     func restart() {
         guard let model else { return }
         cancel()
-        model.startAdvanzia(connection)
+        model.startAdvanzia(connection, statementAccount: statementAccount, months: months)
     }
     func cancel() {
         guard !stopped else { return }

@@ -5,7 +5,7 @@ into GiroCrabLinux/qml/AdvanziaWebLoginFlow.qml, between the "BEGIN generated" a
 
 - hook:             AdvanziaScripts.hook (user script, main frame, document start, page world)
 - inspect:          AdvanziaAuthenticationScripts.inspect (structural login state only)
-- discover, openTransactions, collect, cancelScript: the scripts of AdvanziaBrowserSession
+- discover, openTransactions, collect, statementScript, cancelScript: the scripts of AdvanziaBrowserSession
 
 The Linux flow fills nothing into the bank's pages: the scripts that type the password
 (AdvanziaLoginScripts.credentials), pick the release method (AdvanziaLoginScripts.method)
@@ -21,7 +21,7 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 UI = ROOT / "GiroCrabApp/Sources/GiroCrabUI"
 QML = ROOT / "GiroCrabLinux/qml/AdvanziaWebLoginFlow.qml"
-NAMES = ["hook", "inspect", "discover", "openTransactions", "collect", "cancelScript"]
+NAMES = ["hook", "inspect", "discover", "openTransactions", "collect", "statementScript", "cancelScript"]
 BEGIN, END = "    // BEGIN generated: Advanzia scripts", "    // END generated"
 
 
@@ -58,6 +58,7 @@ def swift_scripts():
         "discover": plain(session, r'let script = "([^"\n]*discover\(\)[^"\n]*)"', "discover"),
         "openTransactions": plain(session, r'callAsyncJavaScript\("([^"\n]*openTransactions\(\)[^"\n]*)"', "openTransactions"),
         "collect": plain(session, r'let script = "([^"\n]*\.collect\(account\);)"', "collect"),
+        "statementScript": plain(session, r'static let statementScript = "([^"\n]*)"', "statement"),
         "cancelScript": plain(session, r'evaluateJavaScript\("([^"\n]*cancel\(\))"', "cancel"),
     }
 

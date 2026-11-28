@@ -1,6 +1,7 @@
 //! Advanzia browser adapter, ported from the private 9a3d7a6 implementation (#177).
-//! Authentication stays in WebKit. Only transaction JSON and a checked scalar balance
-//! cross the FFI boundary. No cookie, password or OTP enters this module.
+//! Authentication stays in the frontend browser. Transaction JSON, the checked
+//! balance and statement data cross the FFI boundary. No cookie, password or OTP
+//! enters this module.
 use super::{
     BankConnector, ChallengeResponse, ConnectContext, FetchResult, Phase, RemoteAccount,
     SyncSummary,
@@ -24,6 +25,7 @@ pub(crate) use compatibility::is_hold as is_advanzia_hold;
 mod parser;
 mod reconcile;
 mod settings;
+mod statements;
 use parser::{parse_balance, parse_captures};
 pub(crate) use reconcile::settle_holds;
 #[cfg(test)]

@@ -128,6 +128,9 @@ extension AppModel {
         guard let c = account.connector, account.kind != .loan || c == .bhw else { return false }
         // switched off per connection (bank connection dialog): the core would refuse it
         if let cid = account.connectionId, documentsOffConnectionIDs.contains(cid) { return false }
+        if c == .advanzia {
+            return !isDemo && account.connectionId != nil && account.kind == .creditCard && !account.isArchived
+        }
         return [.volksbankKasselGoettingen, .direkt1822, .finTsGeneric, .easybank, .fordMoney, .opelDirektbank, .bhw, .hanseaticBank, .ffb].contains(c)
     }
 
@@ -156,10 +159,21 @@ extension AppModel {
     }
 
     /// Explicit "Kontoauszüge abrufen": regular syncs never fetch statements (speed, no extra TAN).
-    func fetchStatements(for account: Account) {
+    func fetchStatements(for account: Account, months: UInt8 = 0) {
         guard syncingConnectionID == nil,
               let cid = account.connectionId,
               let connection = connections.first(where: { $0.id == cid }) else { return }
+        if connection.connector == .advanzia {
+            guard let pin = pinVault() else { return }
+            withFreshBankingPolicy { [self] in
+                guard isCurrent(pin) else { return }
+                if let gate = bankingGate(for: connection) { showError(gate.title, gate.detail) }
+                else if advanziaWorkflow == nil && syncingConnectionID == nil {
+                    startAdvanzia(connection, statementAccount: account.id, months: months)
+                }
+            }
+            return
+        }
         statementsAccountID = account.id
         statementsCountBefore = accountDocuments(account.id).count
         requestSync(connection)
