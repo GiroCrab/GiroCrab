@@ -2645,6 +2645,109 @@ fn brand_banks_with_pseudo_bank_code_map_to_their_connector() {
         Some(ConnectorKind::GoAndGrow)
     );
     assert_eq!(connector_for("", "Bondora"), Some(ConnectorKind::GoAndGrow));
+    // banks without FinTS that GiroCrab reaches through its own login
+    for (code, name) in [("10110600", "Quirin Privatbank"), ("", "quirion")] {
+        assert_eq!(
+            connector_for(code, name),
+            Some(ConnectorKind::Quirion),
+            "{name}"
+        );
+    }
+    for (code, name) in [("70013000", "FNZ Bank"), ("", "ebase")] {
+        assert_eq!(
+            connector_for(code, name),
+            Some(ConnectorKind::Fnz),
+            "{name}"
+        );
+    }
+}
+
+/// A quirion login gets the quirion connector, and its first fetch takes over
+/// the imported clearing account (same IBAN) and depot (the only one without an
+/// IBAN) instead of adding them a second time.
+#[test]
+fn quirion_login_is_connected_and_its_first_fetch_adopts_the_imported_accounts() {
+    let path = fake_db_with(
+        false,
+        "INSERT INTO banks (rowid, country, bankcode, username, customer, credential, name, systemid, local_storage) VALUES
+           (4, 'DE', '10110600', 'max@example.com', '', 'GEHEIM-4', 'quirion', 'SYS', 'LS');
+         INSERT INTO accounts (rowid, bank_key, account, bankcode, portfolio, iban, currency, name, owner, kind, type, sort, initial_balance, group_key, cred) VALUES
+           (6, 4, '1234567890', '10110600', 0, 'DE44101106001234567890', 'EUR', 'Verrechnungskonto', 'Max Mustermann', 0, 0, 6, 0, 0, 'GEHEIM'),
+           (7, 4, '4711', '10110600', 1, '', 'EUR', 'quirion Depot', 'Max Mustermann', 0, 7, 7, 0, 0, 'GEHEIM');",
+    );
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    let bank = p.banks.iter().find(|b| b.mm_id == 4).unwrap();
+    assert_eq!(bank.connector, Some(ConnectorKind::Quirion));
+    assert_eq!(
+        bank.connection_options
+            .first()
+            .map(|o| (o.via, o.key.as_str())),
+        Some((MoneyMoneyDbConnectionVia::OwnApi, "quirion"))
+    );
+    v.import_moneymoney_database(path, PW.into(), options_from(&p, true))
+        .unwrap();
+    let clearing = account_by_name(&v, "Verrechnungskonto").id;
+    let depot = account_by_name(&v, "quirion Depot").id;
+    let (connection, accounts) = {
+        let db = v.db().unwrap();
+        let connection: i64 = db
+            .query_row(
+                "SELECT id FROM bank_connections WHERE connector = 'quirion'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let accounts: i64 = db
+            .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+            .unwrap();
+        (connection, accounts)
+    };
+    let remote = |external_ref: &str, iban: &str, kind| crate::connectors::RemoteAccount {
+        external_ref: external_ref.into(),
+        name: external_ref.into(),
+        owner: "Max Mustermann".into(),
+        iban: iban.into(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind,
+        balance_cents: 100,
+        balance_date: "2026-11-20".into(),
+    };
+    crate::connectors::store_fetch(
+        &v,
+        ConnectorKind::Quirion,
+        connection,
+        crate::connectors::FetchResult {
+            accounts: vec![
+                remote(
+                    "clearing:1",
+                    "DE44101106001234567890",
+                    AccountKind::Checking,
+                ),
+                remote("depot:1:2", "", AccountKind::Brokerage),
+            ],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let db = v.db().unwrap();
+    let after: i64 = db
+        .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, accounts, "no second clearing account or depot");
+    for (id, external_ref) in [(clearing, "clearing:1"), (depot, "depot:1:2")] {
+        let (cid, found): (i64, String) = db
+            .query_row(
+                "SELECT connection_id, external_ref FROM accounts WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((cid, found.as_str()), (connection, external_ref));
+    }
 }
 
 #[test]
