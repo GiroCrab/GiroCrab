@@ -313,15 +313,50 @@ data class Holding(
     val nativeCurrency get() = currency.ifEmpty { quoteCurrency }
 }
 
+/**
+ * A manual loan as the core stores it (GitHub #36): a loan account whose debt comes from a Stand —
+ * the outstanding balance at the end of [anchorDate] — minus the repayments the core links to it,
+ * with only the principal share counting once a rate is set.
+ *
+ * Nothing in this class is calculated here: [remainingCents] and everything below it is the core's
+ * `LoanStatus`. The account itself already carries the debt as a negative balance, so every sum has
+ * to count the loan once — never the account *and* [remainingCents].
+ */
 data class ManualLoan(
-    val id: String,
+    /** The loan account; its balance is the core's own figure for the same debt. */
+    val accountId: String,
     val name: String,
-    val principalCents: Long,
+    /** Original amount for the progress bar; null = not set, the Stand then stands for itself. */
+    val originalCents: Long?,
+    /** Stand date: repayments booked after this day reduce the balance. */
+    val anchorDate: LocalDate,
+    /** Outstanding balance at the end of [anchorDate] (positive cents). */
+    val anchorBalanceCents: Long,
+    /** Nominal rate p.a. in millionths (4.99 % = 49_900); null = no interest. */
+    val interestRatePpm: Long?,
+    /** Rule syntax that links repayments by itself; "" = none. */
+    val matchExpr: String,
     val remainingCents: Long,
-    val interestRatePct: Double,
-    val monthlyPaymentCents: Long,
-    val startDate: LocalDate,
-)
+    /** Date [remainingCents] refers to: the last counted payment, else [anchorDate]. */
+    val asOfDate: LocalDate?,
+    val paymentCount: Int,
+    val paidCents: Long,
+    /** Part of [paidCents] that reduced the debt. */
+    val principalCents: Long,
+    val interestCents: Long,
+    /** Linked bookings on or before the Stand date — shown, not counted. */
+    val beforeAnchorCount: Int,
+    val lastPaymentCents: Long?,
+    val lastPaymentDate: LocalDate?,
+    /** Monthly payments still needed at the last payment's amount; null = not known. */
+    val monthsLeft: Int?,
+) {
+    /** Share repaid, 0…1; null while no original amount is stored. */
+    val repaid: Double?
+        get() = originalCents
+            ?.takeIf { it > 0 }
+            ?.let { (1.0 - remainingCents.toDouble() / it).coerceIn(0.0, 1.0) }
+}
 
 /**
  * The currency most of the money sits in — the one the app adds up in.

@@ -190,20 +190,52 @@ private fun LoansTab(state: AppUiState, onUpsert: (ManualLoan) -> Unit, onDelete
         empty = loans.isEmpty(),
         emptyText = "Keine Kredite oder Darlehen.",
         addLabel = "Kredit anlegen",
-        onAdd = { creating = true },
+        onAdd = { if (state.demoActive) creating = true },
     ) {
-        items(loans, key = { it.id }) { l ->
-            Card(Modifier.fillMaxWidth().clickable { editing = l }) {
+        // The figures belong to the core: a Stand, its repayments and their split. Only the demo
+        // keeps its own records; a real vault is edited on the desktop until Stufe 2 (#1430).
+        if (!state.demoActive) {
+            item {
+                Text(
+                    "Restschuld, Stichtag und Zinssatz pflegt der Desktop-Client. Bearbeiten auf Android " +
+                        "kommt mit den Schreibpfaden (Stufe 2, #1430).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        items(loans, key = { it.accountId }) { l ->
+            val card = if (state.demoActive) Modifier.clickable { editing = l } else Modifier
+            Card(Modifier.fillMaxWidth().then(card)) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(l.name, Modifier.weight(1f), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(money(-l.remainingCents, masked = m), color = LossRed, fontWeight = FontWeight.SemiBold)
                     }
-                    val paid = if (l.principalCents > 0) (1 - l.remainingCents.toDouble() / l.principalCents).coerceIn(0.0, 1.0) else 0.0
-                    androidx.compose.material3.LinearProgressIndicator(progress = { paid.toFloat() }, Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                    val repaid = l.repaid
+                    if (repaid != null) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { repaid.toFloat() },
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        )
+                        Text(
+                            "${(repaid * 100).toInt()} % getilgt von ${money(l.originalCents!!, masked = m)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        Text(
+                            "Ursprünglicher Kreditbetrag fehlt im Tresor — kein Fortschritt rechenbar.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Text(
-                        "Ursprünglich ${money(l.principalCents, masked = m)} · " +
-                            "${String.format(Locale.GERMANY, "%.2f", l.interestRatePct)} % p. a. · Rate ${money(l.monthlyPaymentCents, masked = m)}",
+                        loanPayments(l, m),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        loanSchedule(l) + (l.asOfDate?.let { " · Stand $it" } ?: ""),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -211,16 +243,43 @@ private fun LoansTab(state: AppUiState, onUpsert: (ManualLoan) -> Unit, onDelete
             }
         }
     }
-    if (creating || editing != null) {
+    if (state.demoActive && (creating || editing != null)) {
         LoanEditorDialog(
             initial = editing,
             onDismiss = { creating = false; editing = null },
             onSave = { onUpsert(it); creating = false; editing = null },
-            onDelete = editing?.let { e -> { onDelete(e.id); editing = null } },
+            onDelete = editing?.let { e -> { onDelete(e.accountId); editing = null } },
         )
     }
 }
 
+/** What the core reports about the repayments: how many, how much, and how it split. */
+private fun loanPayments(l: ManualLoan, masked: Boolean): String =
+    if (l.paymentCount == 0) {
+        "Noch keine Rate verknüpft"
+    } else {
+        "Raten: ${l.paymentCount} · gezahlt ${money(l.paidCents, masked = masked)} " +
+            "(Tilgung ${money(l.principalCents, masked = masked)}, Zins ${money(l.interestCents, masked = masked)})"
+    }
+
+/** Rate and remaining term; both come from the core, nothing is projected here. */
+private fun loanSchedule(l: ManualLoan): String {
+    val rate = l.interestRatePpm
+        ?.let { String.format(Locale.GERMANY, "%.2f %% p. a.", it / 10_000.0) }
+        ?: "zinsfrei"
+    val rest = when (l.monthsLeft) {
+        null -> "Restlaufzeit unbekannt"
+        0 -> "getilgt"
+        else -> "noch ${l.monthsLeft} Raten"
+    }
+    return "$rate · $rest"
+}
+
+/**
+ * Demo editor. A real loan is a core account with a Stand, so writing one needs the core's
+ * `createManualLoan`/`updateManualLoan` — Stufe 2 (#1430). Until then the fields here only fill
+ * the demo snapshot, where no core knows better.
+ */
 @Composable
 private fun LoanEditorDialog(
     initial: ManualLoan?,
@@ -229,24 +288,21 @@ private fun LoanEditorDialog(
     onDelete: (() -> Unit)?,
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    var principal by remember { mutableStateOf(initial?.let { plainCents(it.principalCents) } ?: "") }
-    var remaining by remember { mutableStateOf(initial?.let { plainCents(it.remainingCents) } ?: "") }
-    var rate by remember { mutableStateOf(initial?.let { String.format(Locale.GERMANY, "%.2f", it.interestRatePct) } ?: "") }
-    var payment by remember { mutableStateOf(initial?.let { plainCents(it.monthlyPaymentCents) } ?: "") }
-    var start by remember { mutableStateOf((initial?.startDate ?: LocalDate.now()).toString()) }
+    var principal by remember { mutableStateOf(initial?.originalCents?.let { plainCents(it) } ?: "") }
+    var balance by remember { mutableStateOf(initial?.let { plainCents(it.anchorBalanceCents) } ?: "") }
+    var rate by remember { mutableStateOf(initial?.interestRatePpm?.let { String.format(Locale.GERMANY, "%.2f", it / 10_000.0) } ?: "") }
+    var stand by remember { mutableStateOf((initial?.anchorDate ?: LocalDate.now()).toString()) }
 
-    val principalC = parsePortfolioCents(principal)
-    val remainingC = parsePortfolioCents(remaining)
-    val rateV = if (rate.isBlank()) 0.0 else parseDecimal(rate)
-    val paymentC = if (payment.isBlank()) 0L else parsePortfolioCents(payment)
-    val startD = parseDate(start)
+    val principalC = if (principal.isBlank()) null else parsePortfolioCents(principal)
+    val balanceC = parsePortfolioCents(balance)
+    val ratePct = if (rate.isBlank()) 0.0 else parseDecimal(rate)
+    val standD = parseDate(stand)
     val error = when {
         name.isBlank() -> "Bitte einen Namen angeben."
-        remainingC == null || remainingC < 0 -> "Restschuld ungültig."
-        principalC == null || principalC < 0 -> "Kreditbetrag ungültig."
-        rateV == null || rateV < 0 || rateV > 100 -> "Zinssatz ungültig."
-        paymentC == null || paymentC < 0 -> "Rate ungültig."
-        startD == null -> "Datum im Format JJJJ-MM-TT."
+        balanceC == null || balanceC < 0 -> "Restschuld ungültig."
+        principal.isNotBlank() && (principalC == null || principalC <= 0) -> "Kreditbetrag ungültig."
+        ratePct == null || ratePct < 0 || ratePct > 30 -> "Zinssatz muss zwischen 0 und 30 % liegen."
+        standD == null -> "Datum im Format JJJJ-MM-TT."
         else -> null
     }
 
@@ -256,16 +312,16 @@ private fun LoanEditorDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Für Kredite ohne eigenes Konto bei der Bank, z. B. einen Autokredit.",
+                    "Für Kredite ohne eigenes Konto bei der Bank, z. B. einen Autokredit. Die Restschuld gilt " +
+                        "zum Stichtag; Raten danach zieht der Kern ab.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Field("Name", name, { name = it }, "z. B. Autokredit", KeyboardType.Text)
                 Field("Ursprünglicher Kreditbetrag (€)", principal, { principal = it })
-                Field("Restschuld (€)", remaining, { remaining = it })
+                Field("Restschuld am Stichtag (€)", balance, { balance = it })
                 Field("Sollzins p. a. in %", rate, { rate = it }, "z. B. 4,99")
-                Field("Monatliche Rate (€)", payment, { payment = it })
-                Field("Startdatum (JJJJ-MM-TT)", start, { start = it }, keyboard = KeyboardType.Text)
+                Field("Stichtag (JJJJ-MM-TT)", stand, { stand = it }, keyboard = KeyboardType.Text)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
         },
@@ -273,15 +329,26 @@ private fun LoanEditorDialog(
             TextButton(
                 enabled = error == null,
                 onClick = {
+                    val day = standD!!
                     onSave(
                         ManualLoan(
-                            id = initial?.id ?: "l_${System.nanoTime()}",
+                            accountId = initial?.accountId ?: "l_${System.nanoTime()}",
                             name = name.trim(),
-                            principalCents = principalC!!,
-                            remainingCents = remainingC!!,
-                            interestRatePct = rateV!!,
-                            monthlyPaymentCents = paymentC!!,
-                            startDate = startD!!,
+                            originalCents = principalC,
+                            anchorDate = day,
+                            anchorBalanceCents = balanceC!!,
+                            interestRatePpm = ratePct!!.let { if (it > 0) Math.round(it * 10_000) else null },
+                            matchExpr = "",
+                            remainingCents = balanceC,
+                            asOfDate = day,
+                            paymentCount = 0,
+                            paidCents = 0,
+                            principalCents = 0,
+                            interestCents = 0,
+                            beforeAnchorCount = 0,
+                            lastPaymentCents = null,
+                            lastPaymentDate = null,
+                            monthsLeft = null,
                         ),
                     )
                 },
