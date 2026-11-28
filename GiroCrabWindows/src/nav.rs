@@ -461,20 +461,30 @@ fn build_with(
                 *sums.entry(a.currency.clone()).or_insert(0) += a.balance_cents;
             }
             let eur = sums.remove("EUR");
-            let totals: Vec<(String, i64)> = sums
+            let mut totals: Vec<(String, i64)> = sums
                 .into_iter()
                 .chain(eur.map(|cents| ("EUR".to_string(), cents)))
                 .collect();
-            if !totals.is_empty() {
-                let text = totals
+            if totals.is_empty() {
+                // no counted account with a currency: show an EUR sum like
+                // Linux and macOS (#1844); only currency-less accounts remain,
+                // so nothing is summed across currencies
+                let cents: i64 = members
                     .iter()
-                    .map(|(currency, cents)| money(*cents, currency))
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                head.amount = hide(text);
-                // red only when every sum is negative, never in privacy mode
-                head.negative = totals.iter().all(|(_, cents)| *cents < 0) && !input.privacy;
+                    .filter(|a| a.in_total)
+                    .map(|a| a.balance_cents)
+                    .sum();
+                totals.push(("EUR".to_string(), cents));
             }
+            let text = totals
+                .iter()
+                .map(|(currency, cents)| money(*cents, currency))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            // masked in privacy mode, the fallback too
+            head.amount = hide(text);
+            // red only when every sum is negative, never in privacy mode
+            head.negative = totals.iter().all(|(_, cents)| *cents < 0) && !input.privacy;
             head.icon = group_icon(label.trim()).into();
             rows.push(head);
             if is_folded {
