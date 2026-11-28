@@ -49,9 +49,16 @@ def gh_graphql(query: str, variables: dict) -> dict:
     return res.get("data", {}) if isinstance(res, dict) else {}
 
 
+SEVERITY_BADGE_RE = re.compile(
+    r"^\*{0,2}\s*(?:Critical|Major|Minor|Trivial|Nitpick|Potential issue|Refactor suggestion|Warning)\s*\*{0,2}\s*·",
+    re.IGNORECASE,
+)
+
+
 def extract_ai_prompt(body: str) -> str:
     m = re.search(
-        r"<summary>🤖 Prompt for (?:AI Agents|all issues)</summary>\s*```[^\n]*\n([\s\S]*?)\n```",
+        r"<summary>(?:(?!</summary>)[\s\S])*?Prompt (?:for (?:AI Agents|all issues)|to fix (?:issue|all issues))</summary>"
+        r"(?:(?!</details>)[\s\S])*?```[^\n]*\n([\s\S]*?)\n```",
         body or "",
     )
     return m.group(1).strip() if m else ""
@@ -59,9 +66,19 @@ def extract_ai_prompt(body: str) -> str:
 
 def summarize_comment(body: str) -> str:
     cleaned = re.sub(r"<!--[\s\S]*?-->", "", body or "")
-    cleaned = cleaned.split("<details>")[0].strip()
-    lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip() and not ln.strip().startswith("_")]
-    title = lines[0] if lines else "CodeRabbit review note"
+    cleaned = cleaned.split("<details>")[0]
+    cleaned = re.sub(r"<[^>]+>", "", cleaned).strip()
+    lines = []
+    for ln in cleaned.splitlines():
+        normalized = re.sub(r"\s+", " ", ln).strip()
+        if normalized and not normalized.startswith("_"):
+            lines.append(normalized)
+    if len(lines) >= 2 and SEVERITY_BADGE_RE.match(lines[0]):
+        title = lines[1]
+    elif lines:
+        title = lines[0]
+    else:
+        title = "CodeRabbit review note"
     return title[:140]
 
 
