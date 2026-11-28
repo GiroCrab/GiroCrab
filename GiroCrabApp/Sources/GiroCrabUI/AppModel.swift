@@ -812,7 +812,11 @@ public final class AppModel {
     /// `vaultRevision` when the running sync started: a result from another vault must not
     /// write this vault's per-connection state (`historyIncomplete`, #1660).
     @ObservationIgnored var syncVaultRevision = 0
-    var toast: String?
+    /// Any assignment other than `showToast` marks the text as unchecked again.
+    var toast: String? { didSet { toastHiding = nil } }
+    /// Names inside `toast` to mask while personal data is hidden; nil = not checked,
+    /// the whole toast is hidden then (`ToastText`, #1998).
+    var toastHiding: [String]?
     /// Text of the error alert. Clearing it also clears title and retry.
     var errorMessage: String? {
         didSet {
