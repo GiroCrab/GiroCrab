@@ -169,7 +169,7 @@ const SEPA_KEYS: [&str; 10] = [
 ];
 
 /// Extracts the human purpose ("SVWZ+") from SEPA keyword text if present.
-fn sepa_purpose(text: &str) -> String {
+pub(crate) fn sepa_purpose(text: &str) -> String {
     if let Some(pos) = text.find("SVWZ+") {
         let rest = &text[pos + 5..];
         let end = SEPA_KEYS

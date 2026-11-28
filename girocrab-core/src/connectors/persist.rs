@@ -79,41 +79,797 @@ fn kept_purchase_for<'a>(
 /// party replaced it matches by `original_counterparty` (#1721). The IBAN alone
 /// is no identity: another booking at the same payment provider can share it
 /// and every other compared field.
-/// The caller checks that no row holds the new id yet: the UPDATE would hit
-/// the unique key. Returns true when a row was adopted.
-fn adopt_legacy_content_id(
+/// This lists those rows for one fetched booking, best first, with their
+/// current id; [`plan_switched_rows`] pairs them one-to-one together with the
+/// rows of the other source, so nothing is renamed here.
+fn legacy_candidates(
     tx: &rusqlite::Connection,
     account_id: i64,
     t: &RemoteTransaction,
-) -> CoreResult<bool> {
+) -> CoreResult<Vec<(i64, String)>> {
     if !is_content_id(&t.external_id, CONTENT_ID_PREFIX) {
-        return Ok(false);
+        return Ok(Vec::new());
     }
     let pattern = format!("h{}", "[0-9a-f]".repeat(16));
-    let n = tx
-        .prepare_cached(
-            "UPDATE transactions SET external_id = ?1
-              WHERE id = (SELECT id FROM transactions
-                           WHERE account_id = ?2 AND external_id GLOB ?3
-                             AND booking_date = ?4 AND value_date = ?5 AND amount_cents = ?6
-                             AND purpose = ?8
-                             AND (counterparty = ?7
-                                  OR (?9 != '' AND counterparty = ?9))
-                           ORDER BY (?9 != '' AND counterparty = ?9) DESC,
-                                    (counterparty = ?7) DESC, id LIMIT 1)",
+    let mut stmt = tx.prepare_cached(
+        "SELECT id, external_id FROM transactions
+          WHERE account_id = ?1 AND external_id GLOB ?2
+            AND booking_date = ?3 AND value_date = ?4 AND amount_cents = ?5
+            AND purpose = ?7
+            AND (counterparty = ?6
+                 OR (?8 != '' AND counterparty = ?8))
+          ORDER BY (?8 != '' AND counterparty = ?8) DESC,
+                   (counterparty = ?6) DESC, id",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![
+                account_id,
+                pattern,
+                t.booking_date,
+                t.value_date,
+                t.amount_cents,
+                t.counterparty,
+                t.purpose,
+                t.original_counterparty
+            ],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
         )?
-        .execute(params![
-            t.external_id,
+        .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+    Ok(rows)
+}
+
+/// Id prefix of camt entries with a bank reference (`fints/camt.rs`).
+const CAMT_ID_PREFIX: &str = "camt:";
+
+/// A FinTS account can deliver the same booking via MT940 (content id `c…`)
+/// and later via camt (`camt:<ref>`), or the other way round (#1715). A stored
+/// row of the other source with the same content takes the new id instead of
+/// being imported a second time. This lists those rows for one fetched
+/// booking, best first, with their current id. Rows whose id the same account
+/// delivers in this fetch are skipped (`fetched` holds `(account id, external
+/// id)`; content ids do not include the account), so two real, identical
+/// bookings stay two rows. Same-source ids are never candidates.
+/// `store_fetch` pairs the lists one-to-one ([`assign_one_to_one`]) and checks
+/// that no row holds the new id yet.
+fn switched_source_candidates(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+    fetched: &HashSet<(i64, &str)>,
+) -> CoreResult<Vec<(i64, String)>> {
+    let other = if is_content_id(&t.external_id, CONTENT_ID_PREFIX) {
+        format!("{CAMT_ID_PREFIX}*")
+    } else if t.external_id.starts_with(CAMT_ID_PREFIX) {
+        format!("{CONTENT_ID_PREFIX}{}", "[0-9a-f]".repeat(16))
+    } else {
+        return Ok(Vec::new());
+    };
+    // Purpose and name differ in form between the two formats, so they are
+    // compared normalised here instead of in SQL (`switch_purpose`, `same_party`).
+    let mut candidates = tx.prepare_cached(
+        "SELECT id, external_id, counterparty, purpose, counterparty_iban FROM transactions
+          WHERE account_id = ?1 AND external_id GLOB ?2
+            AND booking_date = ?3 AND value_date = ?4 AND amount_cents = ?5
+          ORDER BY id",
+    )?;
+    let rows = candidates.query_map(
+        params![
             account_id,
-            pattern,
+            other,
             t.booking_date,
             t.value_date,
-            t.amount_cents,
-            t.counterparty,
-            t.purpose,
-            t.original_counterparty
-        ])?;
+            t.amount_cents
+        ],
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            ))
+        },
+    )?;
+    let purpose = switch_purpose(&t.purpose);
+    // The stored row comes from the other source: MT940 when the fetched booking is camt.
+    let stored_is_mt940 = t.external_id.starts_with(CAMT_ID_PREFIX);
+    let mut found = Vec::new();
+    for row in rows {
+        let (id, external_id, counterparty, stored_purpose, stored_iban) = row?;
+        if fetched.contains(&(account_id, external_id.as_str()))
+            || switch_purpose(&stored_purpose) != purpose
+            || iban_conflict(&stored_iban, &t.counterparty_iban)
+        {
+            continue;
+        }
+        if let Some(rank) = party_rank(
+            &counterparty,
+            &t.counterparty,
+            &t.original_counterparty,
+            &purpose,
+            stored_is_mt940,
+        ) {
+            found.push((rank, id, external_id));
+        }
+    }
+    // Stable: equal ranks keep the id order of the query.
+    found.sort_by_key(|(rank, _, _)| *rank);
+    Ok(found
+        .into_iter()
+        .map(|(_, id, external_id)| (id, external_id))
+        .collect())
+}
+
+/// Lowercase text without whitespace: camt joins parts with spaces, MT940
+/// joins `?2x`/`?3x` parts without a separator (#1715).
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Purpose as both FinTS formats carry it (#1715): camt writes the SEPA tags
+/// (`EREF+… MREF+… SVWZ+text`), MT940 often only the `SVWZ` text. Compares the
+/// text after `SVWZ+` up to the next SEPA tag, as the MT940 parser stores it
+/// (`mt940::sepa_purpose`), else the whole purpose.
+fn switch_purpose(purpose: &str) -> String {
+    squash(&crate::connectors::fints::mt940::sepa_purpose(purpose))
+}
+
+/// Both sides name a counterparty IBAN and they differ (#1715): then the rows
+/// are different payments even when everything else matches. A missing IBAN on
+/// either side is no conflict.
+fn iban_conflict(stored: &str, fetched: &str) -> bool {
+    let (a, b) = (squash(stored), squash(fetched));
+    !a.is_empty() && !b.is_empty() && a != b
+}
+
+/// Same counterparty across camt and MT940 (#1715): equal without whitespace,
+/// or the name MT940 cut (`?32`+`?33`) is a prefix of at least 20 characters
+/// of the full one. An empty name never matches.
+fn same_party(stored: &str, fetched: &str) -> bool {
+    let (a, b) = (squash(stored), squash(fetched));
+    let (short, long) = if a.len() <= b.len() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    !short.is_empty()
+        && (short == long || (short.chars().count() >= 20 && long.starts_with(short.as_str())))
+}
+
+/// Rank of a stored row's counterparty for a fetched booking (#1715), lower is
+/// better: by the original counterparty, by the name, and last, when the MT940
+/// side carries no name at all (MT940 without name data), by the other fields
+/// alone. `stored_is_mt940` says which side that is (the stored row when the
+/// fetched booking is camt). A nameless camt entry never takes a named MT940
+/// row by purpose alone. That last case needs a purpose (`switch_purpose`,
+/// non-empty): date and amount alone are no identity. A named row always ranks
+/// before it, and an empty name still never equals a name ([`same_party`]).
+/// `None`: different parties.
+fn party_rank(
+    stored: &str,
+    name: &str,
+    original: &str,
+    purpose: &str,
+    stored_is_mt940: bool,
+) -> Option<(bool, bool)> {
+    let by_original = same_party(stored, original);
+    let by_name = same_party(stored, name);
+    let nameless = if stored_is_mt940 {
+        squash(stored).is_empty()
+    } else {
+        squash(name).is_empty() && squash(original).is_empty()
+    };
+    (by_original || by_name || (nameless && !purpose.is_empty()))
+        .then_some((!by_original, !by_name))
+}
+
+/// Gives the stored row `(id, id when paired)` that was paired with a fetched
+/// booking that booking's id. False when there is no row or it changed its id
+/// since the pairing.
+fn take_switched_row(
+    tx: &rusqlite::Connection,
+    row: Option<&(i64, String)>,
+    external_id: &str,
+) -> CoreResult<bool> {
+    let Some((id, old)) = row else {
+        return Ok(false);
+    };
+    let n = tx
+        .prepare_cached(
+            "UPDATE transactions SET external_id = ?1 WHERE id = ?2 AND external_id = ?3",
+        )?
+        .execute(params![external_id, *id, old.as_str()])?;
     Ok(n > 0)
+}
+
+/// Pairs fetched bookings `(fetch index, account id, booking)` with stored rows
+/// one-to-one across the whole fetch before any of them changes its id. Rows
+/// under a legacy content id (`h…`, listed first) and rows of the other source
+/// (MT940 <-> camt, #1715) enter the same allocation, sorted so the fetch order
+/// does not decide which booking gets which row: a booking whose only row is
+/// an `h…` row gets it even when another booking could also take that row.
+/// A repeated `(account, id)` is planned once: only its first entry could take
+/// a row. Returns, per fetch index, the row and its id at planning time.
+fn plan_switched_rows<'a>(
+    tx: &rusqlite::Connection,
+    fetch: impl IntoIterator<Item = (usize, i64, &'a RemoteTransaction)>,
+    fetched: &HashSet<(i64, &str)>,
+) -> CoreResult<std::collections::HashMap<usize, (i64, String)>> {
+    let mut known =
+        tx.prepare_cached("SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2")?;
+    let mut open: Vec<((i64, &'a str), usize, Vec<i64>)> = Vec::new();
+    let mut planned: HashSet<(i64, &'a str)> = HashSet::new();
+    let mut old_ids = std::collections::HashMap::new();
+    for (i, acc_id, t) in fetch {
+        if known.exists(params![acc_id, t.external_id])? {
+            continue;
+        }
+        let mut rows = legacy_candidates(tx, acc_id, t)?;
+        rows.extend(switched_source_candidates(tx, acc_id, t, fetched)?);
+        if rows.is_empty() || !planned.insert((acc_id, t.external_id.as_str())) {
+            continue;
+        }
+        let ids = rows.iter().map(|(id, _)| *id).collect();
+        old_ids.extend(rows);
+        open.push(((acc_id, t.external_id.as_str()), i, ids));
+    }
+    open.sort_by(|a, b| a.0.cmp(&b.0));
+    let (order, lists): (Vec<usize>, Vec<Vec<i64>>) =
+        open.into_iter().map(|(_, i, ids)| (i, ids)).unzip();
+    Ok(order
+        .into_iter()
+        .zip(assign_one_to_one(&lists))
+        .filter_map(|(i, row)| {
+            let row = row?;
+            Some((i, (row, old_ids.get(&row)?.clone())))
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod switch_planning_tests {
+    use super::*;
+
+    fn content_id(n: u64) -> String {
+        format!("{CONTENT_ID_PREFIX}{n:016x}")
+    }
+
+    fn db(rows: &[&str]) -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
+               external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
+               amount_cents INTEGER, counterparty TEXT, purpose TEXT, counterparty_iban TEXT,
+               UNIQUE(account_id, external_id))",
+        )
+        .unwrap();
+        for id in rows {
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
+                   amount_cents, counterparty, purpose)
+                 VALUES (1, ?1, '2026-11-02', '2026-11-02', -1999, 'Stadtwerke Musterstadt',
+                   'Abschlag November')",
+                [*id],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    fn booking(id: &str) -> RemoteTransaction {
+        RemoteTransaction {
+            account_ref: "giro".into(),
+            external_id: id.into(),
+            booking_date: "2026-11-02".into(),
+            value_date: "2026-11-02".into(),
+            amount_cents: -1999,
+            counterparty: "Stadtwerke Musterstadt".into(),
+            purpose: "Abschlag November".into(),
+            ..Default::default()
+        }
+    }
+
+    fn plan(
+        db: &rusqlite::Connection,
+        fetch: &[RemoteTransaction],
+    ) -> std::collections::HashMap<usize, (i64, String)> {
+        let fetched: HashSet<(i64, &str)> =
+            fetch.iter().map(|t| (1, t.external_id.as_str())).collect();
+        plan_switched_rows(
+            db,
+            fetch.iter().enumerate().map(|(i, t)| (i, 1, t)),
+            &fetched,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn repeated_id_reserves_one_row() {
+        let db = db(&["camt:a", "camt:b"]);
+        let id = content_id(1);
+        let plan = plan(&db, &[booking(&id), booking(&id)]);
+        assert_eq!(plan.len(), 1);
+        assert!(plan.contains_key(&0));
+    }
+
+    #[test]
+    fn legacy_row_and_switched_row_go_to_different_bookings() {
+        for reversed in [false, true] {
+            let db = db(&["h0000000000000001", "camt:a"]);
+            let (one, two) = (content_id(1), content_id(2));
+            let mut fetch = vec![booking(&one), booking(&two)];
+            if reversed {
+                fetch.reverse();
+            }
+            let plan = plan(&db, &fetch);
+            // Planning renames nothing; both rows are shared out one-to-one,
+            // the legacy row first, independent of the fetch order.
+            let old_of = |id: &str| {
+                let i = fetch.iter().position(|t| t.external_id == id).unwrap();
+                plan[&i].1.as_str()
+            };
+            assert_eq!(plan.len(), 2, "reversed: {reversed}");
+            assert_eq!(old_of(&one), "h0000000000000001", "reversed: {reversed}");
+            assert_eq!(old_of(&two), "camt:a", "reversed: {reversed}");
+        }
+    }
+
+    #[test]
+    fn purpose_matches_across_camt_and_mt940() {
+        assert_eq!(
+            switch_purpose(
+                "EREF+E2E-1 MREF+M-7 CRED+DE98ZZZ09999999999 SVWZ+Abschlag November Kd 4711"
+            ),
+            switch_purpose("Abschlag NovemberKd 4711")
+        );
+        assert_eq!(
+            switch_purpose("SVWZ+Miete Dezember ABWA+Hausverwaltung"),
+            switch_purpose("Miete Dezember")
+        );
+        assert_ne!(
+            switch_purpose("SVWZ+Abschlag Oktober"),
+            switch_purpose("Abschlag November")
+        );
+    }
+
+    #[test]
+    fn party_matches_a_cut_mt940_name() {
+        assert!(same_party(
+            "Stadtwerke Musterstadt",
+            "Stadtwerke  Musterstadt"
+        ));
+        assert!(same_party(
+            "Stadtwerke Musterstadt Versorgungs GmbH und Co KG Nord",
+            "Stadtwerke Musterstadt Versorgungs GmbHund Co"
+        ));
+        assert!(!same_party("Stadtwerke", "Stadtwerke Nord"));
+        assert!(!same_party("", ""));
+    }
+}
+
+/// Single-booking form for the unit tests below: the best free candidate of
+/// one booking, `fetched` being ids of the same account.
+#[cfg(test)]
+fn adopt_switched_source_id(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+    fetched: &HashSet<&str>,
+) -> CoreResult<bool> {
+    let fetched: HashSet<(i64, &str)> = fetched.iter().map(|id| (account_id, *id)).collect();
+    let rows = switched_source_candidates(tx, account_id, t, &fetched)?;
+    take_switched_row(tx, rows.first(), &t.external_id)
+}
+
+/// Pairs fetched bookings with stored rows one-to-one (#1715): `candidates[i]`
+/// lists the rows booking `i` may take, best first. An augmenting path moves an
+/// earlier booking to its next row when a later one has no other choice, so
+/// every booking gets a row whenever the lists allow it; otherwise earlier
+/// bookings keep their better row.
+fn assign_one_to_one(candidates: &[Vec<i64>]) -> Vec<Option<i64>> {
+    fn augment(
+        i: usize,
+        candidates: &[Vec<i64>],
+        owner: &mut std::collections::HashMap<i64, usize>,
+        seen: &mut HashSet<i64>,
+    ) -> bool {
+        // A free row first: moving another booking is only for the case that
+        // no row is free, so equal candidate lists keep the best row in order.
+        for &row in &candidates[i] {
+            if !owner.contains_key(&row) && seen.insert(row) {
+                owner.insert(row, i);
+                return true;
+            }
+        }
+        for &row in &candidates[i] {
+            if !seen.insert(row) {
+                continue;
+            }
+            let free = match owner.get(&row).copied() {
+                None => true,
+                Some(j) => augment(j, candidates, owner, seen),
+            };
+            if free {
+                owner.insert(row, i);
+                return true;
+            }
+        }
+        false
+    }
+    let mut owner = std::collections::HashMap::new();
+    for i in 0..candidates.len() {
+        augment(i, candidates, &mut owner, &mut HashSet::new());
+    }
+    let mut assigned = vec![None; candidates.len()];
+    for (row, i) in owner {
+        assigned[i] = Some(row);
+    }
+    assigned
+}
+
+#[cfg(test)]
+mod switch_pairing_tests {
+    use super::assign_one_to_one;
+
+    /// Stored rows A (1) and B (2) with equal content: R1 may take both (A
+    /// first via its original counterparty), R2 only A. Both bookings get a
+    /// row of their own, whichever comes first in the fetch.
+    #[test]
+    fn crossed_counterparties_pair_regardless_of_fetch_order() {
+        assert_eq!(
+            assign_one_to_one(&[vec![1, 2], vec![1]]),
+            [Some(2), Some(1)]
+        );
+        assert_eq!(
+            assign_one_to_one(&[vec![1], vec![1, 2]]),
+            [Some(1), Some(2)]
+        );
+    }
+
+    #[test]
+    fn equal_lists_keep_the_best_row_for_the_first() {
+        assert_eq!(
+            assign_one_to_one(&[vec![1, 2], vec![1, 2]]),
+            [Some(1), Some(2)]
+        );
+    }
+
+    #[test]
+    fn ranking_decides_when_rows_are_free() {
+        assert_eq!(
+            assign_one_to_one(&[vec![1, 2], vec![2, 1]]),
+            [Some(1), Some(2)]
+        );
+    }
+
+    #[test]
+    fn a_row_is_taken_at_most_once() {
+        assert_eq!(
+            assign_one_to_one(&[vec![7], vec![7], vec![]]),
+            [Some(7), None, None]
+        );
+    }
+}
+
+#[cfg(test)]
+mod joint_planning_tests {
+    use super::*;
+
+    fn content_id(n: u64) -> String {
+        format!("{CONTENT_ID_PREFIX}{n:016x}")
+    }
+
+    fn booking(external_id: String, name: &str, original: &str) -> RemoteTransaction {
+        RemoteTransaction {
+            external_id,
+            amount_cents: -1250,
+            counterparty: name.into(),
+            original_counterparty: original.into(),
+            purpose: "Rechnung 42".into(),
+            ..Default::default()
+        }
+    }
+
+    /// Account 1 with stored rows `(external id, counterparty)`, otherwise
+    /// with the content of `t`.
+    fn with_rows(t: &RemoteTransaction, rows: &[(&str, &str)]) -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
+               external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
+               amount_cents INTEGER, counterparty TEXT, purpose TEXT, counterparty_iban TEXT,
+               UNIQUE(account_id, external_id))",
+        )
+        .unwrap();
+        for (id, name) in rows {
+            db.execute(
+                "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
+                   amount_cents, counterparty, purpose) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id,
+                    t.booking_date,
+                    t.value_date,
+                    t.amount_cents,
+                    name,
+                    t.purpose
+                ],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    /// Plans `fetch` in this order, applies the plan and returns the stored
+    /// `(external id, counterparty)` rows.
+    fn store(db: &rusqlite::Connection, fetch: &[&RemoteTransaction]) -> Vec<(String, String)> {
+        let fetched: HashSet<(i64, &str)> =
+            fetch.iter().map(|t| (1, t.external_id.as_str())).collect();
+        let plan = plan_switched_rows(
+            db,
+            fetch.iter().enumerate().map(|(i, t)| (i, 1, *t)),
+            &fetched,
+        )
+        .unwrap();
+        for (i, t) in fetch.iter().enumerate() {
+            assert!(
+                take_switched_row(db, plan.get(&i), &t.external_id).unwrap(),
+                "{} got no row",
+                t.external_id
+            );
+        }
+        db.prepare("SELECT external_id, counterparty FROM transactions ORDER BY external_id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<(String, String)>>>()
+            .unwrap()
+    }
+
+    /// `c1` (B, original A) may take the legacy row A or the camt row B, `c2`
+    /// (A) only the legacy row: both get a row of their own in either fetch
+    /// order, no third row stays behind.
+    #[test]
+    fn legacy_and_switched_rows_pair_regardless_of_fetch_order() {
+        let c1 = booking(content_id(1), "B", "A");
+        let c2 = booking(content_id(2), "A", "");
+        let want = [
+            (c1.external_id.clone(), "B".to_string()),
+            (c2.external_id.clone(), "A".to_string()),
+        ];
+        for fetch in [[&c1, &c2], [&c2, &c1]] {
+            let db = with_rows(&c1, &[("h0000000000000001", "A"), ("camt:old", "B")]);
+            assert_eq!(store(&db, &fetch), want);
+        }
+    }
+
+    #[test]
+    fn ordinary_legacy_row_is_adopted() {
+        let c = booking(content_id(1), "A", "");
+        let db = with_rows(&c, &[("h0000000000000001", "A")]);
+        assert_eq!(
+            store(&db, &[&c]),
+            [(c.external_id.clone(), "A".to_string())]
+        );
+    }
+
+    /// MT940 delivered the booking without name data; camt later with name.
+    #[test]
+    fn nameless_mt940_row_is_taken_by_camt() {
+        let camt = booking("camt:ref-1".into(), "Stadtwerke", "");
+        let mt940 = content_id(1);
+        let db = with_rows(&camt, &[(mt940.as_str(), "")]);
+        assert_eq!(
+            store(&db, &[&camt]),
+            [("camt:ref-1".to_string(), String::new())]
+        );
+    }
+
+    #[test]
+    fn other_named_party_keeps_its_row() {
+        let camt = booking("camt:ref-1".into(), "Stadtwerke", "");
+        let mt940 = content_id(1);
+        let db = with_rows(&camt, &[(mt940.as_str(), "Max Muster")]);
+        let fetched = HashSet::from([(1, "camt:ref-1")]);
+        assert!(
+            plan_switched_rows(&db, [(0, 1, &camt)], &fetched)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Stored `h…` (A) and `camt:old` (B) with equal content; c1 is B with the
+    /// original counterparty A, c2 is A. The legacy row and the switched row
+    /// enter one allocation: c2 gets `h…`, c1 `camt:old`, in either fetch order.
+    #[test]
+    fn legacy_and_switched_rows_pair_independent_of_fetch_order() {
+        let c1 = booking(content_id(1), "B", "A");
+        let c2 = booking(content_id(2), "A", "");
+        let db = with_rows(&c1, &[("h0000000000000001", "A"), ("camt:old", "B")]);
+        let fetched = HashSet::from([(1, c1.external_id.as_str()), (1, c2.external_id.as_str())]);
+        for order in [[&c1, &c2], [&c2, &c1]] {
+            let plan = plan_switched_rows(
+                &db,
+                order.iter().enumerate().map(|(i, t)| (i, 1, *t)),
+                &fetched,
+            )
+            .unwrap();
+            let by_id: std::collections::HashMap<&str, &str> = plan
+                .iter()
+                .map(|(i, (_, old))| (order[*i].external_id.as_str(), old.as_str()))
+                .collect();
+            assert_eq!(by_id.len(), 2);
+            assert_eq!(by_id[c1.external_id.as_str()], "camt:old");
+            assert_eq!(by_id[c2.external_id.as_str()], "h0000000000000001");
+        }
+    }
+
+    #[test]
+    fn nameless_side_needs_a_purpose_and_ranks_last() {
+        // Nameless stored MT940 row, named camt booking.
+        assert_eq!(
+            party_rank("", "Stadtwerke", "", "abschlag", true),
+            Some((true, true))
+        );
+        // Nameless fetched MT940 booking, named stored camt row.
+        assert_eq!(
+            party_rank("Stadtwerke", "", "", "abschlag", false),
+            Some((true, true))
+        );
+        assert_eq!(party_rank("", "Stadtwerke", "", "", true), None);
+        assert_eq!(party_rank("Max", "Stadtwerke", "", "abschlag", true), None);
+        assert_eq!(
+            party_rank("Stadtwerke", "Stadtwerke", "", "abschlag", true),
+            Some((true, false))
+        );
+        assert_eq!(
+            party_rank("Stadtwerke", "Stadtwerke", "", "abschlag", false),
+            Some((true, false))
+        );
+    }
+
+    #[test]
+    fn nameless_camt_side_never_takes_a_named_mt940_row_by_purpose() {
+        // Fetched camt booking without any name vs. a named stored MT940 row.
+        assert_eq!(party_rank("Stadtwerke", "", "", "abschlag", true), None);
+        // Nameless stored camt row vs. a named fetched MT940 booking.
+        assert_eq!(party_rank("", "Stadtwerke", "", "abschlag", false), None);
+    }
+
+    #[test]
+    fn switch_purpose_stops_at_every_sepa_tag_like_mt940() {
+        assert_eq!(
+            switch_purpose("EREF+X1 SVWZ+Gehalt 10/2026 PURP+SALA"),
+            switch_purpose("Gehalt 10/2026")
+        );
+        assert_eq!(switch_purpose("SVWZ+Miete ABWA+Hausverwaltung"), "miete");
+        assert_eq!(switch_purpose("Miete  Oktober"), "mieteoktober");
+    }
+
+    #[test]
+    fn differing_ibans_conflict_missing_ones_do_not() {
+        assert!(iban_conflict(
+            "DE02120300000000202051",
+            "DE02500105170137075030"
+        ));
+        assert!(!iban_conflict(
+            "DE02 1203 0000 0000 2020 51",
+            "de02120300000000202051"
+        ));
+        assert!(!iban_conflict("", "DE02120300000000202051"));
+        assert!(!iban_conflict("DE02120300000000202051", ""));
+        assert!(!iban_conflict("", ""));
+    }
+}
+
+#[cfg(test)]
+mod source_switch_tests {
+    use super::*;
+
+    fn db() -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE transactions(id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL,
+                external_id TEXT NOT NULL, booking_date TEXT, value_date TEXT,
+                amount_cents INTEGER, counterparty TEXT, purpose TEXT, counterparty_iban TEXT,
+                UNIQUE(account_id, external_id))",
+        )
+        .unwrap();
+        db
+    }
+
+    fn booking(external_id: &str) -> RemoteTransaction {
+        RemoteTransaction {
+            external_id: external_id.into(),
+            booking_date: "2026-11-02".into(),
+            value_date: "2026-11-02".into(),
+            amount_cents: -1999,
+            counterparty: "Muster GmbH".into(),
+            purpose: "Abo Monat 11".into(),
+            ..Default::default()
+        }
+    }
+
+    fn store(db: &rusqlite::Connection, t: &RemoteTransaction) {
+        db.execute(
+            "INSERT INTO transactions(account_id, external_id, booking_date, value_date,
+                    amount_cents, counterparty, purpose) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                t.external_id,
+                t.booking_date,
+                t.value_date,
+                t.amount_cents,
+                t.counterparty,
+                t.purpose
+            ],
+        )
+        .unwrap();
+    }
+
+    fn ids(db: &rusqlite::Connection) -> Vec<String> {
+        let mut q = db
+            .prepare("SELECT external_id FROM transactions ORDER BY id")
+            .unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn cid(n: u64) -> String {
+        format!("{CONTENT_ID_PREFIX}{n:016x}")
+    }
+
+    fn adopt(db: &rusqlite::Connection, t: &RemoteTransaction, fetch: &[&str]) -> bool {
+        let fetched: HashSet<&str> = fetch.iter().copied().collect();
+        adopt_switched_source_id(db, 1, t, &fetched).unwrap()
+    }
+
+    #[test]
+    fn mt940_rows_take_camt_ids_one_each() {
+        let db = db();
+        store(&db, &booking(&cid(1)));
+        store(&db, &booking(&cid(2)));
+        let fetch = ["camt:R1", "camt:R2", "camt:R3"];
+        assert!(adopt(&db, &booking("camt:R1"), &fetch));
+        assert!(adopt(&db, &booking("camt:R2"), &fetch));
+        // A third identical booking is new: no stored row is left for it.
+        assert!(!adopt(&db, &booking("camt:R3"), &fetch));
+        assert_eq!(ids(&db), ["camt:R1", "camt:R2"]);
+    }
+
+    #[test]
+    fn camt_row_takes_mt940_id() {
+        let db = db();
+        store(&db, &booking("camt:R1"));
+        let id = cid(1);
+        assert!(adopt(&db, &booking(&id), &[id.as_str()]));
+        assert_eq!(ids(&db), [id]);
+    }
+
+    #[test]
+    fn row_delivered_in_the_same_fetch_is_not_taken() {
+        let db = db();
+        store(&db, &booking("camt:R1"));
+        let id = cid(1);
+        assert!(!adopt(&db, &booking(&id), &["camt:R1", id.as_str()]));
+        assert_eq!(ids(&db), ["camt:R1"]);
+    }
+
+    #[test]
+    fn same_source_or_other_content_is_not_adopted() {
+        let db = db();
+        store(&db, &booking(&cid(1)));
+        let id = cid(2);
+        assert!(!adopt(&db, &booking(&id), &[id.as_str()]));
+        let mut other = booking("camt:R9");
+        other.amount_cents = -2000;
+        assert!(!adopt(&db, &other, &["camt:R9"]));
+        assert_eq!(ids(&db), [cid(1)]);
+    }
 }
 
 /// Safety net for every connector: repairs UTF-8/Latin-1 mojibake in a
@@ -164,6 +920,25 @@ fn rename_taken_over(
         t.original_counterparty.trim()
     ])?;
     Ok(())
+}
+
+/// Test helper for `legacy_adoption_tests`: gives the best row of
+/// [`legacy_candidates`] the booking's id. Production code pairs and renames
+/// in [`plan_switched_rows`] / [`take_switched_row`] instead.
+#[cfg(test)]
+fn adopt_legacy_content_id(
+    tx: &rusqlite::Connection,
+    account_id: i64,
+    t: &RemoteTransaction,
+) -> CoreResult<bool> {
+    let Some((id, _)) = legacy_candidates(tx, account_id, t)?.into_iter().next() else {
+        return Ok(false);
+    };
+    let n = tx.execute(
+        "UPDATE transactions SET external_id = ?1 WHERE id = ?2",
+        params![t.external_id, id],
+    )?;
+    Ok(n > 0)
 }
 
 #[cfg(test)]
@@ -805,7 +1580,25 @@ pub(crate) fn store_fetch(
                          end_to_end_id, mandate_id, creditor_id, item_refs)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             )?;
-            for t in &data.transactions {
+            // (account, id) pairs this fetch delivers: a stored row under such an
+            // id stays with its own booking. Per account, as content ids do not
+            // include the account.
+            let fetched: HashSet<(i64, &str)> = data
+                .transactions
+                .iter()
+                .filter_map(|t| Some((*account_ids.get(&t.account_ref)?, t.external_id.as_str())))
+                .collect();
+            // Rows under legacy content ids and of the other source (MT940 <->
+            // camt, #1715), paired one-to-one before any booking is applied.
+            let switched = plan_switched_rows(
+                &tx,
+                data.transactions
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, t)| Some((i, *account_ids.get(&t.account_ref)?, t))),
+                &fetched,
+            )?;
+            for (i, t) in data.transactions.iter().enumerate() {
                 let Some(acc_id) = account_ids.get(&t.account_ref) else {
                     if let Some(id) = archived_ids.get(&t.account_ref)
                         && !deleted_refs.contains(&t.account_ref)
@@ -815,8 +1608,9 @@ pub(crate) fn store_fetch(
                     }
                     continue;
                 };
+                // Legacy and switched rows take the new id as planned (`plan_switched_rows`).
                 let stored = match Stored::read(&tx, *acc_id, &t.external_id)? {
-                    None if adopt_legacy_content_id(&tx, *acc_id, t)? => {
+                    None if take_switched_row(&tx, switched.get(&i), &t.external_id)? => {
                         Stored::read(&tx, *acc_id, &t.external_id)?
                     }
                     stored => stored,
