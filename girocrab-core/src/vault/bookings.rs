@@ -62,6 +62,67 @@ fn category_match_sql(cat_match: &str) -> String {
     )
 }
 
+/// The specific MoneyMoney category used for security purchases. Match complete
+/// category components to avoid reclassifying unrelated purchases or savings.
+fn is_imported_security_purchase_category(path: &str) -> bool {
+    let parts: Vec<_> = path.split('›').map(|p| p.trim()).collect();
+    parts.len() >= 2
+        && parts.last().is_some_and(|p| {
+            matches!(
+                p.to_lowercase().as_str(),
+                "wertpapieranlage" | "etf-sparpläne"
+            )
+        })
+        && (parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Anlegen")
+            || parts[parts.len() - 2].eq_ignore_ascii_case("Sparen & Investieren"))
+}
+
+/// Explicit custom category for security sale proceeds.
+fn is_security_sale_category(path: &str) -> bool {
+    path.rsplit('›')
+        .next()
+        .is_some_and(|p| p.trim().to_lowercase() == "wertpapierverkäufe")
+}
+
+/// Extract a security name from a broker purpose ending in a quantity and Stk.
+fn security_display_name(purpose: &str) -> Option<&str> {
+    let purpose = purpose.trim();
+    let (prefix, unit) = purpose.rsplit_once(char::is_whitespace)?;
+    if !unit.eq_ignore_ascii_case("Stk") && !unit.eq_ignore_ascii_case("Stk.") {
+        return None;
+    }
+    let (name, quantity) = prefix.trim_end().rsplit_once(char::is_whitespace)?;
+    let name = name.trim();
+    if name.is_empty()
+        || !name.chars().any(char::is_alphabetic)
+        || !quantity.chars().any(|c| c.is_ascii_digit())
+        || !quantity
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
+    {
+        return None;
+    }
+    Some(name)
+}
+
+/// Curated issuer domains for security names, never guessed from arbitrary text.
+fn security_issuer_logo(name: &str) -> Option<(&'static str, &'static str)> {
+    let name = name.to_lowercase();
+    [
+        ("vanguard ", "de.vanguard", "#96151D"),
+        ("wisdomtree ", "wisdomtree.eu", "#166534"),
+        ("vaneck ", "vaneck.com", "#003B71"),
+        ("ishares ", "ishares.com", "#1A1A1A"),
+        ("boerse stuttgart ", "euwaxgold.de", "#005CA9"),
+        ("börse stuttgart ", "euwaxgold.de", "#005CA9"),
+        ("xtrackers ", "dws.com", "#0B7FAB"),
+        ("amundi ", "amundi.de", "#0F2B5B"),
+        ("spdr ", "ssga.com", "#003B71"),
+    ]
+    .into_iter()
+    .find_map(|(prefix, domain, color)| name.starts_with(prefix).then_some((domain, color)))
+}
+
 /// Adds merchant, flow kind, payment method and clean purpose to a booking.
 /// `rules`: the vault's merchant recognition (#1373); `paypal`: its account is a
 /// PayPal account (see `BookingFinisher`).
@@ -342,6 +403,10 @@ impl BookingFinisher {
             self.paypal_accounts.contains(&t.account_id),
             top_role,
         );
+        // MoneyMoney imports can retain their category names without a built-in
+        // GiroCrab category role. Recognise the specific security-purchase category
+        // rather than treating every custom savings category as an investment.
+        // This runs on reads, so previously imported bookings are covered too.
         t.is_salary = crate::salary::is_salary(t, &self.salary_ibans);
         // A salary stays income although its booking text names a transfer
         // (comdirect: "Übertrag / Überweisung"); a transfer category still wins.
@@ -359,6 +424,16 @@ impl BookingFinisher {
             } else {
                 FlowKind::Consumption
             };
+        }
+        if !transfer_category
+            && ((t.amount_cents < 0
+                && t.flow == FlowKind::Consumption
+                && is_imported_security_purchase_category(&t.category_path))
+                || (t.amount_cents > 0
+                    && t.flow == FlowKind::Income
+                    && is_security_sale_category(&t.category_path)))
+        {
+            t.flow = FlowKind::Investment;
         }
         if is_own_transfer(t, &self.own_ibans, transfer_category)
             || (self.pair_transfers.contains(&t.id)
@@ -383,6 +458,41 @@ impl BookingFinisher {
                 Some(v) if !v.contains(loan) => FlowKind::Transfer,
                 _ => FlowKind::Loan,
             };
+        }
+        if t.flow == FlowKind::Investment
+            && self.merchants.enabled()
+            && !t.merchant.key.starts_with("u:")
+            && ((t.amount_cents < 0 && is_imported_security_purchase_category(&t.category_path))
+                || (t.amount_cents > 0 && is_security_sale_category(&t.category_path)))
+            && let Some(name) = security_display_name(&t.purpose)
+        {
+            t.merchant.name = name.to_owned();
+            t.merchant_name = name.to_owned();
+            if !t.merchant.known && t.merchant.domain_source != "override" {
+                t.merchant.is_person = false;
+                t.merchant.sf_symbol = "chart.line.uptrend.xyaxis".into();
+                if let Some((domain, color)) = security_issuer_logo(name) {
+                    t.merchant.domain = domain.into();
+                    t.merchant.domain_candidates = match domain {
+                        "euwaxgold.de" => vec![
+                            domain.into(),
+                            "euwax-gold.de".into(),
+                            "boerse-stuttgart.de".into(),
+                        ],
+                        "vaneck.com" => vec![domain.into(), "www.vaneck.com".into()],
+                        _ => vec![domain.into()],
+                    };
+                    t.merchant.domain_source = "dictionary".into();
+                    t.merchant.color_hex = color.into();
+                    t.merchant_domain = Some(domain.into());
+                    t.merchant_hex_color = color.into();
+                } else if t.merchant.domain_source == "company" {
+                    t.merchant.domain.clear();
+                    t.merchant.domain_candidates.clear();
+                    t.merchant.domain_source.clear();
+                    t.merchant_domain = None;
+                }
+            }
         }
     }
 }
@@ -2237,6 +2347,133 @@ mod own_transfer_tests {
     }
 
     #[test]
+    fn imported_moneymoney_security_purchases_are_investments_on_read() {
+        let (_dir, v, ids) = vault_with(&[
+            (
+                "Unbekanntes Wertpapier",
+                -250_00,
+                "Kauf",
+                Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage"),
+            ),
+            (
+                "Supermarkt",
+                -40_00,
+                "Einkauf",
+                Some("Ausgaben/Lebensmittel"),
+            ),
+            (
+                "Tagesgeld",
+                -75_00,
+                "Sparen",
+                Some("Ausgaben/Sparen & Anlegen/Tagesgeld"),
+            ),
+        ]);
+        assert_eq!(flow_of(&v, ids[0]), FlowKind::Investment);
+        assert_eq!(flow_of(&v, ids[1]), FlowKind::Consumption);
+        assert_eq!(flow_of(&v, ids[2]), FlowKind::Consumption);
+        let page = v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!(page.investment_cents, -250_00);
+        assert_eq!(page.consumption_cents, -115_00);
+    }
+
+    #[test]
+    fn security_custom_merchant_and_fallback_logo_are_preserved() {
+        use crate::merchants::{CustomSpec, MerchantSettings};
+
+        let (_dir, v, ids) = vault_with(&[(
+            "Zorvexa GmbH",
+            -250_00,
+            "Unknown Fund 1 Stk",
+            Some("Ausgaben/Sparen & Anlegen/Wertpapieranlage"),
+        )]);
+        let db = v.db().unwrap();
+        let raw = || {
+            db.query_row(
+                &format!(
+                    "SELECT {} {} WHERE t.id = ?1",
+                    booking_columns("0"),
+                    BOOKING_FROM_SQL
+                ),
+                [ids[0]],
+                booking_from_row,
+            )
+            .unwrap()
+            .1
+        };
+        let mut booking = raw();
+        let mut finisher = BookingFinisher::load(&db, MerchantRules::builtin().clone()).unwrap();
+        enrich(&mut booking, &finisher.merchants, false, "");
+        assert_eq!(booking.merchant.domain_source, "company");
+        finisher.finish(&mut booking, None);
+        assert_eq!(booking.flow, FlowKind::Investment);
+        assert_eq!(booking.merchant.name, "Unknown Fund");
+        assert_eq!(booking.merchant.sf_symbol, "chart.line.uptrend.xyaxis");
+        assert!(booking.merchant.domain.is_empty());
+        assert!(booking.merchant.domain_candidates.is_empty());
+        assert!(booking.merchant.domain_source.is_empty());
+        assert!(booking.merchant_domain.is_none());
+
+        let mut booking = raw();
+        enrich(&mut booking, &finisher.merchants, false, "");
+        finisher
+            .overrides
+            .insert(booking.merchant.key.clone(), "example.org".into());
+        finisher.finish(&mut booking, None);
+        assert_eq!(booking.merchant.domain, "example.org");
+        assert_eq!(booking.merchant.domain_source, "override");
+
+        let rules = MerchantRules::for_settings(MerchantSettings {
+            custom: vec![CustomSpec {
+                uuid: "test".into(),
+                name: "My custom fund".into(),
+                needles: vec!["zorvexa".into()],
+                based_on: String::new(),
+            }],
+            ..MerchantSettings::default()
+        });
+        let finisher = BookingFinisher::load(&db, rules).unwrap();
+        let mut booking = raw();
+        finisher.finish(&mut booking, None);
+        assert_eq!(booking.flow, FlowKind::Investment);
+        assert_eq!(booking.merchant.key, "u:test");
+        assert_eq!(booking.merchant.name, "My custom fund");
+        assert_eq!(booking.merchant_name, "My custom fund");
+    }
+
+    #[test]
+    fn imported_security_sales_reduce_net_investment() {
+        let (_dir, v, ids) = vault_with(&[
+            (
+                "Unbekanntes Wertpapier",
+                -250_00,
+                "Kauf",
+                Some("Ausgaben/Sparen & Investieren/ETF-SPARPLÄNE"),
+            ),
+            (
+                "Unbekanntes Wertpapier",
+                100_00,
+                "Verkauf",
+                Some("Einnahmen/Sparen & Investieren/Wertpapierverkäufe"),
+            ),
+            ("Depot", 20_00, "Dividende", Some("Einnahmen/Dividenden")),
+            ("Bank", 5_00, "Zinsen", Some("Einnahmen/Zinsen")),
+        ]);
+        assert_eq!(flow_of(&v, ids[0]), FlowKind::Investment);
+        assert_eq!(flow_of(&v, ids[1]), FlowKind::Investment);
+        assert_eq!(flow_of(&v, ids[2]), FlowKind::Income);
+        assert_eq!(flow_of(&v, ids[3]), FlowKind::Income);
+        let page = v.list_transactions(BookingFilter::default()).unwrap();
+        assert_eq!(page.investment_cents, -150_00);
+        assert_eq!(page.income_cents, 25_00);
+        assert_eq!(page.consumption_cents, 0);
+        assert_eq!(page.flow.invested_cents, 150_00);
+        assert_eq!(
+            v.selection_flow(vec![], None, None).unwrap().invested_cents,
+            150_00
+        );
+    }
+
+    #[test]
     fn uncategorised_booking_between_own_accounts_is_a_transfer() {
         let (_d, v, ids) = vault_with(&[("Papa", 500_00, "Taschengeld", None)]);
         assert_eq!(flow_of(&v, ids[0]), FlowKind::Transfer);
@@ -2709,6 +2946,66 @@ mod list_cache_tests {
         let after = v.list_transactions(BookingFilter::default()).unwrap();
         let b = after.transactions.iter().find(|b| b.id == target).unwrap();
         assert_eq!(b.category_id, Some(cat[3].id));
+    }
+
+    #[test]
+    fn security_issuer_logo_matches_known_prefixes() {
+        for (name, domain) in [
+            ("Vanguard FTSE Global All-Cap", "de.vanguard"),
+            ("WisdomTree Global High Dividend", "wisdomtree.eu"),
+            ("Boerse Stuttgart EUWAX Gold II", "euwaxgold.de"),
+            ("VanEck Morningstar Developed Markets", "vaneck.com"),
+            ("iShares Edge MSCI World", "ishares.com"),
+        ] {
+            assert_eq!(super::security_issuer_logo(name).map(|v| v.0), Some(domain));
+        }
+        assert!(super::security_issuer_logo("Unknown Fund").is_none());
+    }
+
+    #[test]
+    fn security_display_name_preserves_full_fund_name() {
+        for (purpose, expected) in [
+            (
+                "Vanguard FTSE All-World High Dividend Yield (Dist) 0.931214 Stk",
+                Some("Vanguard FTSE All-World High Dividend Yield (Dist)"),
+            ),
+            (
+                "WisdomTree Global High Dividend (Dist) 3.289473 Stk",
+                Some("WisdomTree Global High Dividend (Dist)"),
+            ),
+            (
+                "Boerse Stuttgart EUWAX Gold II 0.919278 Stk",
+                Some("Boerse Stuttgart EUWAX Gold II"),
+            ),
+            (
+                "VanEck Morningstar Developed Markets Dividend Leaders (Dist) 1.36215 Stk",
+                Some("VanEck Morningstar Developed Markets Dividend Leaders (Dist)"),
+            ),
+            ("ETF 1,25 Stk.", Some("ETF")),
+            ("Kauf ohne Stückzahl", None),
+            ("ETF abc Stk", None),
+        ] {
+            assert_eq!(super::security_display_name(purpose), expected);
+        }
+    }
+
+    #[test]
+    fn moneymoney_security_purchase_category_is_specific() {
+        assert!(super::is_imported_security_purchase_category(
+            "Ausgaben › Sparen & Anlegen › Wertpapieranlage"
+        ));
+        assert!(super::is_imported_security_purchase_category(
+            "Sparen & Anlegen › Wertpapieranlage"
+        ));
+        assert!(super::is_imported_security_purchase_category(
+            "Ausgaben › SPAREN & INVESTIEREN › ETF-SPARPLÄNE"
+        ));
+        assert!(!super::is_imported_security_purchase_category(
+            "Ausgaben › Sparen & Anlegen › Tagesgeld"
+        ));
+        assert!(!super::is_imported_security_purchase_category(
+            "Ausgaben › Einkaufen › Wertpapieranlage"
+        ));
     }
 
     /// #357: the category sums of the sidebar follow the same amount range as the list.
