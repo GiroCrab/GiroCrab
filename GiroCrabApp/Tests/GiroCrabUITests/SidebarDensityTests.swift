@@ -20,6 +20,8 @@ final class SidebarDensityTests: XCTestCase {
         XCTAssertTrue(SidebarDensity.compact.showsSubtitle("Musterbank · Erika", bank: "Musterbank"))
         XCTAssertTrue(SidebarDensity.compact.showsSubtitle("Erika Mustermann", bank: "Musterbank"))
         XCTAssertFalse(SidebarDensity.compact.showsSubtitle("", bank: ""))
+        // a namesake without owner or number: the bank is all that tells the accounts apart
+        XCTAssertTrue(SidebarDensity.compact.showsSubtitle("Musterbank", bank: "Musterbank", hasNamesake: true))
         XCTAssertFalse(SidebarDensity.spacious.showsSubtitle("", bank: "Musterbank"))
     }
 

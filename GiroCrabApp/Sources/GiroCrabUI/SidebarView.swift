@@ -939,17 +939,17 @@ struct AccountRow: View {
     }
 
     private var secondLine: SecondLine {
-        if let repaid { return .loan(repaid) }
-        if let date = account.archivedDate { return .archived(date) }
+        // compact has no repayment or archive line; a loan or archived account then still shows what
+        // tells it apart (namesake distinction, search hit), like any other account
+        if density.showsStatusLine {
+            if let repaid { return .loan(repaid) }
+            if let date = account.archivedDate { return .archived(date) }
+        }
         return .subtitle(searchAwareSubtitle)
     }
 
     @ViewBuilder private func detailLine(_ line: SecondLine) -> some View {
         switch line {
-        case .archived where !density.showsStatusLine:
-            EmptyView()
-        case .loan where !density.showsStatusLine:
-            EmptyView()
         case .archived(let date):
             archivedLabel(date)
                 .padding(.leading, detailIndent)
@@ -976,7 +976,7 @@ struct AccountRow: View {
             }
             .padding(.leading, detailIndent)
         case .subtitle(let text):
-            if density.showsSubtitle(text, bank: account.sidebarBankName) {
+            if density.showsSubtitle(text, bank: account.sidebarBankName, hasNamesake: model.hasNamesake(account)) {
                 subtitle(text)
                     .padding(.leading, detailIndent)
             }

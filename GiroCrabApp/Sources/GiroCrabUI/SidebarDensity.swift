@@ -25,8 +25,9 @@ enum SidebarDensity: String, CaseIterable, Identifiable {
 
     /// The line under the name. Compact keeps it to one line: the bank alone stays out, while
     /// what tells accounts apart (namesake distinction, owner or IBAN hit while searching) stays.
-    func showsSubtitle(_ text: String, bank: String) -> Bool {
-        !text.isEmpty && !(self == .compact && text == bank)
+    /// A namesake keeps the bank line: then the bank may be all that tells the two apart.
+    func showsSubtitle(_ text: String, bank: String, hasNamesake: Bool = false) -> Bool {
+        !text.isEmpty && !(self == .compact && text == bank && !hasNamesake)
     }
 
     var title: String {
