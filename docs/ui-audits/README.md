@@ -8,7 +8,7 @@ beschreibt den Ablauf.
 
 | Ansicht und Prüfnachweis | Stand und nächste Prüfung |
 |---|---|
-| [Seitenleiste](seitenleiste.md#seitenleiste) | SEI-1 und SEI-2 offen. Kontonamen und Symbolabstände bei großer Schrift prüfen. Pfeiltasten-Fokus in [#1883](https://github.com/GiroCrab/GiroCrab/pull/1883). |
+| [Seitenleiste](seitenleiste.md#seitenleiste) | SEI-1 und SEI-2 behoben und bei großer Schrift nachgeprüft. Pfeiltasten-Fokus in [#1883](https://github.com/GiroCrab/GiroCrab/pull/1883). |
 | [Buchungsliste](buchungen.md#buchungsliste) | BUC-1 bis BUC-3 offen. Kategorienamen, Direktwahl und Kontrast prüfen. Tastaturfokus und Kategorie-Popover auf dem Mac stehen aus. |
 | [Buchungsinspektor](buchungen.md#buchungsinspektor) | Neun Befunde behoben. INS-12 und INS-13 offen. INS-6 ist eine gemeinsame Designentscheidung. |
 | [Buchungssuche und Filter](buchungen.md#buchungssuche-und-filter) | SUC-1 offen. Weitere Filter bei großer Schrift auffindbar machen. |

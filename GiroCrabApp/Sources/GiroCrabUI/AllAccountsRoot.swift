@@ -54,6 +54,7 @@ enum HeaderTotal {
 /// every group away and shows the total per currency.
 struct AllAccountsRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.sidebarUsesLargeText) private var usesLargeText
 
     var body: some View {
         let hasAccounts = !model.allAccounts.isEmpty
@@ -72,19 +73,29 @@ struct AllAccountsRow: View {
             } else {
                 Color.clear.frame(width: DisclosureChevron.width, height: 18) // keeps the icon axis
             }
-            Image(systemName: "square.grid.2x2").foregroundStyle(Theme.secondary).frame(width: 20)
-                .accessibilityHidden(true)
-            Text("Alle Konten").fontWeight(.medium).lineLimit(1).appDefaultFont()
-            Spacer(minLength: 2)
-            ForEach(AllAccountsTotal.totals(of: model.allAccounts), id: \.currency) { total in
-                Text(Money.format(total.cents, currency: total.currency))
-                    .sensitive(.amounts)
-                    .appFont(.footnote, weight: .semibold, monospacedDigit: true)
-                    .foregroundStyle(total.cents < 0 ? Theme.negative : Theme.secondary)
-                    .lineLimit(1)
-                    // amounts never truncate; the name gives way (#343)
-                    .fixedSize()
+            SidebarNavigationIcon(systemName: "square.grid.2x2")
+            let layout = usesLargeText
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                : AnyLayout(HStackLayout(spacing: DisclosureChevron.gap))
+            layout {
+                Text("Alle Konten")
+                    .fontWeight(.medium)
+                    .lineLimit(usesLargeText ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: usesLargeText)
+                    .appDefaultFont()
+                if !usesLargeText {
+                    Spacer(minLength: 2)
+                }
+                ForEach(AllAccountsTotal.totals(of: model.allAccounts), id: \.currency) { total in
+                    Text(Money.format(total.cents, currency: total.currency))
+                        .sensitive(.amounts)
+                        .appFont(.footnote, weight: .semibold, monospacedDigit: true)
+                        .foregroundStyle(total.cents < 0 ? Theme.negative : Theme.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

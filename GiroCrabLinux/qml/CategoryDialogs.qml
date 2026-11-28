@@ -12,7 +12,7 @@ Item {
         visible: category !== null
         sheetWidth: 340
         parent: Overlay.overlay
-        onAboutToShow: { field.text = category.name; field.selectAll(); field.forceActiveFocus() }
+        onAboutToShow: { field.text = category.edit_name; field.selectAll(); field.forceActiveFocus() }
         onClosed: AppModel.renameCategoryTarget = null
         function submit() {
             const c = category
