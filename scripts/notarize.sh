@@ -320,6 +320,14 @@ if [ -z "$IDENTITY" ]; then
 fi
 echo "==> Identity: $IDENTITY"
 
+# scripts/make-dmg.sh has Finder lay out the disk image window: check what it
+# needs now (asks for the Automation permission once), not after notarization.
+[ ! -e /Volumes/GiroCrab ] || { echo "error: eject /Volumes/GiroCrab first" >&2; exit 1; }
+osascript -e 'tell application "Finder" to get name' >/dev/null || {
+  echo "error: allow this terminal to control Finder (Privacy & Security › Automation)" >&2
+  exit 1
+}
+
 # Outside build/ and dist/: both are wiped while packaging.
 POLICY_DIR="$(mktemp -d)"
 # Bundled as the floor for a fresh install; published in policy/ on main.

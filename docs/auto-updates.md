@@ -14,7 +14,7 @@ Changelog. Tester können versteckt auf **Beta** oder **Nightly** wechseln.
 | Einstellungen › Updates (eigener Tab, auch ohne Tresor bedienbar) | `SettingsView.swift` (`UpdateSettings`) |
 | Framework einbetten, Info.plist-Schlüssel | `package-macos-app.sh` |
 | Signieren (inside-out, ohne `--deep`) | `scripts/sign-app.sh` |
-| Disk-Image bauen und signieren | `scripts/make-dmg.sh` |
+| Disk-Image bauen und signieren | `scripts/make-dmg.sh` (Fensterhintergrund: `scripts/make-dmg-background.swift`) |
 | Appcast erzeugen, zusammenführen, signieren | `scripts/make-appcast.sh` (aufgerufen von `notarize.sh`) |
 
 * **Ein Feed für alle Kanäle:** Die App liest
@@ -170,6 +170,12 @@ stabiles Release ein Entwurf, ist sein Feed noch nicht live – erst beim
 Veröffentlichen. `make-appcast.sh` bricht ab, wenn der Schlüssel im
 Schlüsselbund nicht zu `scripts/sparkle-public-ed-key.txt` passt oder der
 vorhandene Feed nicht verifiziert.
+
+Das Fenster des Images (Hintergrund mit Hinweis und Pfeil, App-Symbol als
+Volume-Symbol) ordnet der Finder per AppleScript an. Beim ersten Lauf fragt macOS
+deshalb einmal, ob das Terminal den Finder steuern darf (Datenschutz & Sicherheit ›
+Automation), und ein noch eingehängtes Volume „GiroCrab“ muss vorher ausgeworfen
+sein; `notarize.sh` prüft beides vor dem Bauen.
 
 **Wichtig:** Erst Versionen *mit* eingebautem Updater können Updates empfangen.
 Wer eine ältere Version nutzt, muss einmal manuell aktualisieren.
