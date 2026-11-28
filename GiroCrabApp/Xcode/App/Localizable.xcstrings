@@ -24321,6 +24321,28 @@
         }
       }
     },
+    "Minuten" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minutes"
+          }
+        }
+      }
+    },
+    "Minuten Inaktivität" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "minutes of inactivity"
+          }
+        }
+      }
+    },
     "Mischanlagen / Multi-Asset" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31306,6 +31328,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Try Lock Screen"
+          }
+        }
+      }
+    },
+    "Sperren beim Ablegen im Dock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lock when minimized to the Dock"
+          }
+        }
+      }
+    },
+    "Sperren nach" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lock after"
+          }
+        }
+      }
+    },
+    "Sperrt, sobald das Hauptfenster im Dock abgelegt (⌘M) oder GiroCrab ausgeblendet wird (⌘H)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Locks as soon as the main window is minimized to the Dock (⌘M) or GiroCrab is hidden (⌘H)."
           }
         }
       }

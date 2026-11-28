@@ -32,6 +32,9 @@ public struct GiroCrabScenes: Scene {
         let model = AppModel(options: options)
         sharedModel = model
         GiroCrabTips.configure(options)
+        #if os(macOS)
+        MacAutoLock.install(for: model)
+        #endif
         return model
     }
 

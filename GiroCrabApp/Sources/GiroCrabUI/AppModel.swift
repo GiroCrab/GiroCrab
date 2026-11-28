@@ -51,6 +51,10 @@ public final class AppModel {
             reconcileLocalApiServer()
             // A link held on the lock screen or while unlocking (docs/payment-link.md).
             if vaultState == .open { resumePaymentLink() }
+            #if os(macOS)
+            // the idle interval starts at the unlock, also when no check saw the lock
+            if vaultState == .open { MacAutoLock.shared?.vaultOpened() }
+            #endif
         }
     }
     /// The vault is open and the lock screen shows the crab's unlock hop for a moment.

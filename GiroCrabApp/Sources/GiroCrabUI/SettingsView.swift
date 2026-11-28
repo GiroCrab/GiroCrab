@@ -487,10 +487,13 @@ struct SecuritySettings: View {
                 LabeledContent("Verschlüsselung", value: "SQLCipher 4 (AES-256)")
                 LabeledContent("Hauptschlüssel", value: model.isDemo ? String(localized: "Demo-Schlüssel (Wegwerf)") : String(localized: "Schlüsselbund, geschützt durch \(VaultKeyManager.shared.biometryName)"))
                 #if os(macOS)
-                if !model.isDemo {
+                // `--demo-settings security:touchid` shows these rows in the demo (screenshots)
+                if !model.isDemo || model.demoSettingsSheet == "touchid" {
                     Toggle("Beim Entsperren \(VaultKeyManager.shared.biometryName) verlangen", isOn: $requireBiometrics)
+                        .disabled(model.isDemo)
                         .onChange(of: requireBiometrics) { _, on in
-                            guard on != VaultKeyManager.shared.requireBiometrics else { return }
+                            // the demo (screenshot rows) never changes the real key protection
+                            guard !model.isDemo, on != VaultKeyManager.shared.requireBiometrics else { return }
                             Task {
                                 do { try await VaultKeyManager.shared.setRequireBiometrics(on) }
                                 catch {
@@ -499,6 +502,8 @@ struct SecuritySettings: View {
                                 }
                             }
                         }
+                    // read-only in the demo: these are the real device settings
+                    if requireBiometrics { MacAutoLockRows().disabled(model.isDemo) }
                 }
                 #endif
                 LabeledContent("Datei") { Text(vaultPath).sensitive() } // the path names the user
@@ -543,6 +548,46 @@ struct SecuritySettings: View {
 }
 
 #if os(macOS)
+/// Einstellungen › Sicherheit › Tresor, below "Beim Entsperren Touch ID verlangen" (only while
+/// that is on): lock when the main window goes into the Dock or the app is hidden, and after a time
+/// without input (`MacAutoLock`).
+struct MacAutoLockRows: View {
+    @AppStorage(MacAutoLock.onMinimizeKey, store: AppDefaults.store) private var lockOnMinimize = false
+    @AppStorage(MacAutoLock.idleKey, store: AppDefaults.store) private var lockWhenIdle = false
+    @AppStorage(MacAutoLock.idleMinutesKey, store: AppDefaults.store) private var idleMinutes = MacAutoLock.defaultIdleMinutes
+    @Environment(\.textScale) private var textScale
+
+    var body: some View {
+        Toggle("Sperren beim Ablegen im Dock", isOn: $lockOnMinimize)
+            .toggleStyle(.checkbox)
+            .help("Sperrt, sobald das Hauptfenster im Dock abgelegt (⌘M) oder GiroCrab ausgeblendet wird (⌘H).")
+        Toggle(isOn: $lockWhenIdle) {
+            HStack(spacing: 6) {
+                Text("Sperren nach")
+                TextField("Minuten", value: minutes, format: .number)
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 52 * textScale)
+                    .disabled(!lockWhenIdle)
+                Stepper("Minuten", value: minutes, in: MacAutoLock.idleMinutesRange)
+                    .labelsHidden()
+                    .disabled(!lockWhenIdle)
+                Text("Minuten Inaktivität")
+            }
+        }
+        .toggleStyle(.checkbox)
+    }
+
+    /// The stored minutes, kept inside `MacAutoLock.idleMinutesRange`.
+    private var minutes: Binding<Int> {
+        Binding(
+            get: { MacAutoLock.idleMinutes(in: AppDefaults.store) },
+            set: { idleMinutes = min(max($0, MacAutoLock.idleMinutesRange.lowerBound), MacAutoLock.idleMinutesRange.upperBound) }
+        )
+    }
+}
+
 /// Einstellungen › Updates (nur im Developer-ID-Build mit Sparkle; im App-Store-
 /// oder Xcode-Build ist kein Updater registriert und der Tab fehlt). Bedienbar
 /// auch ohne geöffneten Tresor.
