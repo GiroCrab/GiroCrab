@@ -30,7 +30,6 @@ Sheet {
     property string importNote: ""
     /// Linux only: a dropped invoice is being read (large PDFs take seconds) – the sheet shows a spinner.
     property bool readingInvoice: false
-    property var templates: []
     readonly property int maxPurpose: 140
     /// "Umbuchung": the recipient is one of the user's own accounts. Kept in the draft so the
     /// batch sheet's switch can open the form in this mode.
@@ -88,8 +87,7 @@ Sheet {
     readonly property string accountLabel: account ? account.name + " · " + Fmt.iban(account.iban) : "–"
     /// Own accounts that can receive a transfer: any kind, but with an IBAN, not archived, not the sender.
     /// Tagesgeld books only to own checking accounts (#582).
-    readonly property var ownTargets: internalOnly ? AppModel.internalTransferTargets(account)
-        : AppModel.allAccounts.filter(a => a.iban !== "" && a.archived_unix === null && a.id !== draft.account_id)
+    readonly property var ownTargets: AppModel.ownTransferTargets(account)
     /// Savings account as sender: the bank allows only an internal transfer (#582).
     readonly property bool internalOnly: account !== null && account.kind === "Savings"
     /// The sender as a plain value: .onChange(of: transferDraft.accountID) for every way it changes.
@@ -115,7 +113,6 @@ Sheet {
         highlighted = -1
         pickedName = null
         heightFloor = 0
-        templates = AppModel.transferTemplates()
         checkClipboard()
         // .onAppear: from a Tagesgeld account only an Umbuchung (#582)
         if (internalOnly && !ownTransfer) setOwnTransfer(true)
@@ -141,16 +138,9 @@ Sheet {
         AppModel.fillTransferDraft(PaymentParser.patch(p))
         importNote = qsTr("Felder ausgefüllt – bitte prüfen")
     }
-    /// Known recipients for what was typed: only once something is typed, one row per IBAN
-    /// (the most used spelling), at most five.
-    function recipients(query) {
-        if ((query || "").trim() === "") return []
-        const seen = {}
-        return AppModel.suggestRecipients(query).filter(r => { if (seen[r.iban]) return false; seen[r.iban] = true; return true }).slice(0, 5)
-    }
     function refreshSuggestions() {
         if (draft.name === pickedName) { suggestions = []; return }
-        suggestions = nameField.activeFocus ? recipients(draft.name) : []
+        suggestions = nameField.activeFocus ? suggestionList.recipients(draft.name) : []
     }
     onSuggestionsChanged: highlighted = -1
     function moveHighlight(by) {
@@ -168,7 +158,7 @@ Sheet {
     /// "Nicht mehr vorschlagen" (#978): the list is read again in place, whatever has the focus.
     function hideRecipient(iban) {
         AppModel.setRecipientHidden(iban, true)
-        suggestions = recipients(draft.name)
+        suggestions = suggestionList.recipients(draft.name)
     }
 
     /// Fills name and IBAN from the chosen own account (owner, else account name).
@@ -270,11 +260,9 @@ Sheet {
             }
             Item { Layout.fillWidth: true }
             // TransferTemplatesMenu (PlanningUI.swift)
-            Button {
+            TransferTemplatesMenu {
                 id: templatesButton
                 visible: !sheet.confirming
-                flat: true; icon.name: SF.icon("doc.on.doc"); text: qsTr("Vorlagen")
-                onClicked: templatesMenu.popup(templatesButton, 0, templatesButton.height)
             }
             Button {
                 visible: !sheet.confirming
@@ -793,7 +781,7 @@ Sheet {
     // .keyboardShortcut(.defaultAction)
     Shortcut {
         sequences: ["Return", "Enter"]
-        enabled: sheet.visible && !templateName.visible && !deleteConfirm.visible && !giroCodeSaveDialog.visible
+        enabled: sheet.visible && !templatesButton.dialogOpen && !giroCodeSaveDialog.visible
         onActivated: {
             // Return takes the recipient chosen with ↑/↓
             if (!sheet.confirming && sheet.highlighted >= 0 && sheet.highlighted < sheet.suggestions.length) {
@@ -809,62 +797,22 @@ Sheet {
     // review: Esc goes back to the form (.keyboardShortcut(.cancelAction) on „Zurück“)
     Shortcut {
         sequence: "Escape"
-        enabled: sheet.visible && sheet.showsReview && !AppModel.transferBusy && !templateName.visible && !deleteConfirm.visible
+        enabled: sheet.visible && sheet.showsReview && !AppModel.transferBusy && !templatesButton.dialogOpen
         onActivated: sheet.goBack()
     }
 
-    // Known recipients as a drop-down under the name (#881): one row each, pick with the
-    // mouse or ↑/↓ and Return; Esc closes it. It floats over the form below the name field,
-    // so the sheet keeps its size while typing.
-    Rectangle {
+    // Known recipients as a drop-down under the name (#881)
+    RecipientSuggestionList {
         id: suggestionList
         parent: sheet.contentItem
-        z: 6
-        visible: !sheet.confirming && sheet.suggestions.length > 0 && nameField.visible
-        readonly property point at: {
-            void scroll.contentItem.contentY; void scroll.height; void nameField.y; void sheet.width; void sheet.ownTransfer
-            return nameField.mapToItem(sheet.contentItem, 0, nameField.height + 4)
-        }
-        x: at.x; y: at.y; width: nameField.width
-        height: suggestionColumn.implicitHeight + 8
-        radius: 8; color: Theme.card; border.color: Theme.border
-        Column {
-            id: suggestionColumn
-            x: 4; y: 4; width: parent.width - 8
-            Repeater {
-                model: sheet.suggestions
-                Rectangle {
-                    id: suggestionRow
-                    required property var modelData
-                    required property int index
-                    width: suggestionColumn.width; height: rowText.implicitHeight + 8
-                    radius: 6
-                    color: index === sheet.highlighted ? Theme.selection : "transparent"
-                    // one row per IBAN with its last use; ✕: "Nicht mehr vorschlagen" (#978). No
-                    // context menu: a menu takes the focus from the name field, which clears the list.
-                    Column {
-                        id: rowText
-                        x: 8; y: 4; width: parent.width - 16 - hideButton.width
-                        spacing: 1
-                        Text { width: parent.width; text: suggestionRow.modelData.name; font.pixelSize: Theme.body; color: Theme.text; elide: Text.ElideRight; Sensitive {} }
-                        RecipientIBANLine { width: parent.width; maxWidth: parent.width; iban: suggestionRow.modelData.iban }
-                        Text { width: parent.width; text: qsTr("zuletzt %1").arg(Fmt.medium(suggestionRow.modelData.last_used)); font.pixelSize: Theme.caption2; color: Theme.tertiary }
-                    }
-                    HoverHandler { onHoveredChanged: if (hovered) sheet.highlighted = suggestionRow.index }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: sheet.pick(suggestionRow.modelData) }
-                    IconButton {
-                        id: hideButton
-                        anchors.right: parent.right; anchors.rightMargin: 4; anchors.verticalCenter: parent.verticalCenter
-                        // a click must leave the focus in the name field (it keeps the list)
-                        focusPolicy: Qt.NoFocus
-                        symbol: "xmark.circle.fill"; symbolSize: 13; implicitWidth: 22; implicitHeight: 22
-                        ToolTip.text: qsTr("Nicht mehr vorschlagen")
-                        Accessible.name: qsTr("Nicht mehr vorschlagen")
-                        onClicked: sheet.hideRecipient(suggestionRow.modelData.iban)
-                    }
-                }
-            }
-        }
+        active: !sheet.confirming
+        field: nameField
+        scrollView: scroll
+        suggestions: sheet.suggestions
+        highlighted: sheet.highlighted
+        onPicked: r => sheet.pick(r)
+        onHideRequested: iban => sheet.hideRecipient(iban)
+        onHoveredRow: i => sheet.highlighted = i
     }
 
     // GiroCode as PNG: „Bild kopieren“ puts it on the clipboard, „Sichern …“ writes it (GiroCode.png).
@@ -929,101 +877,8 @@ Sheet {
         }
     }
 
-    AppMenu {
-        id: templatesMenu
-        // `if !templates.isEmpty { Menu("Vorlage löschen") }`: the submenu's entry
-        // is hidden while there are no templates.
-        onAboutToShow: {
-            for (let i = 0; i < count; ++i) {
-                const item = itemAt(i)
-                if (item && item.subMenu === deleteMenu) {
-                    item.visible = sheet.templates.length > 0
-                    item.height = item.visible ? item.implicitHeight : 0
-                }
-            }
-        }
-        Instantiator {
-            model: sheet.templates
-            delegate: AppMenuItem {
-                required property var modelData
-                text: modelData.name + " · " + modelData.recipient_name
-                // leaves Umbuchung; from a Tagesgeld account only amount and purpose (fillTransferDraft, #881)
-                onTriggered: AppModel.applyTransferTemplate(modelData)
-            }
-            onObjectAdded: (i, o) => templatesMenu.insertItem(i, o)
-            onObjectRemoved: (i, o) => templatesMenu.removeItem(o)
-        }
-        AppMenuSeparator { visible: sheet.templates.length > 0; height: visible ? implicitHeight : 0 }
-        AppMenu {
-            id: deleteMenu
-            title: qsTr("Vorlage löschen")
-            enabled: sheet.templates.length > 0
-            Instantiator {
-                model: sheet.templates
-                delegate: AppMenuItem {
-                    required property var modelData
-                    text: modelData.name + " …"
-                    onTriggered: { deleteConfirm.template = modelData; deleteConfirm.open() }
-                }
-                onObjectAdded: (i, o) => deleteMenu.insertItem(i, o)
-                onObjectRemoved: (i, o) => deleteMenu.removeItem(o)
-            }
-        }
-        AppMenuItem {
-            text: qsTr("Als Vorlage speichern …"); icon.name: SF.icon("square.and.arrow.down")
-            enabled: sheet.draft.name.trim() !== "" && sheet.draft.iban !== ""
-            onTriggered: { templateNameField.text = sheet.draft.name; templateName.open() }
-        }
-    }
-
     // .capturableSheet { KnownRecipientsSheet() }: hidden IBANs drop out of the chips at once
     KnownRecipientsDialog { id: recipientsDialog; onClosed: sheet.refreshSuggestions() }
-
-    // .alert("Vorlage speichern") { TextField("Name der Vorlage") }
-    Sheet {
-        id: templateName
-        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
-        sheetWidth: 340
-        ColumnLayout {
-            width: templateName.availableWidth
-            spacing: 12
-            Text { text: qsTr("Vorlage speichern"); font.pixelSize: Theme.body + 2; font.weight: Font.Bold; color: Theme.text }
-            TextField { id: templateNameField; Layout.fillWidth: true; placeholderText: qsTr("Name der Vorlage"); onAccepted: saveButton.clicked() }
-            RowLayout {
-                Item { Layout.fillWidth: true }
-                Button { text: qsTr("Abbrechen"); onClicked: templateName.close() }
-                Button {
-                    id: saveButton
-                    text: qsTr("Speichern"); highlighted: true
-                    onClicked: { AppModel.saveTransferTemplate(templateNameField.text); sheet.templates = AppModel.transferTemplates(); templateName.close() }
-                }
-            }
-        }
-    }
-
-    // .confirmationDialog("Vorlage „…“ löschen?")
-    Sheet {
-        id: deleteConfirm
-        reportCapturable: false   // an alert on the Mac (ReportDialogs.qml)
-        property var template: null
-        sheetWidth: 340
-        ColumnLayout {
-            width: deleteConfirm.availableWidth
-            spacing: 12
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap
-                   text: qsTr("Vorlage „%1“ löschen?").arg(deleteConfirm.template ? deleteConfirm.template.name : "")
-                   font.pixelSize: Theme.body + 2; font.weight: Font.Bold; color: Theme.text }
-            RowLayout {
-                Item { Layout.fillWidth: true }
-                Button { text: qsTr("Abbrechen"); onClicked: deleteConfirm.close() }
-                Button {
-                    text: qsTr("Löschen")
-                    palette.buttonText: Theme.negative
-                    onClicked: { AppModel.deleteTransferTemplate(deleteConfirm.template.id); sheet.templates = AppModel.transferTemplates(); deleteConfirm.close() }
-                }
-            }
-        }
-    }
 
     /// transferField(): a bezeled text field of the transfer form (#881), so an empty field reads as a field.
     component TransferField: TextField {
