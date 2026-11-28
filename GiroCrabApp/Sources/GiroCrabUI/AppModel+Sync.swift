@@ -867,6 +867,8 @@ extension AppModel {
         guard inRun, s != nil else {
             syncingConnectionID = nil
             Task { await s?.cancel() }
+            // no bank dialog to wait for (a PIN or setup prompt was open): the run is over now
+            if inRun { syncNextInQueue() }
             return
         }
         // As in skipCurrentSync: the bank dialog ends first, so an "Erneut versuchen" in the

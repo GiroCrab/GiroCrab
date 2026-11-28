@@ -317,6 +317,22 @@ final class SyncBatchTests: XCTestCase {
         XCTAssertEqual(imported, 7)
     }
 
+    /// "Alle abbrechen" while a PIN prompt is open (no bank dialog yet) ends the run at once:
+    /// nothing stays waiting, and a retry starts right away.
+    func testCancelAllAtAPromptEndsTheRunAtOnce() async throws {
+        let logins = batch
+        try XCTSkipIf(logins.count < 2, "demo vault needs at least two logins")
+        model.requestSyncAll()
+        try await waitForChallenge(of: logins[0])
+        model.finishSync(error: CoreError.MissingSetting(key: "x"))   // setup prompt, no session
+        XCTAssertNotNil(model.setupRequest)
+        model.cancelAllSync()
+        XCTAssertEqual(model.syncRun?.isFinished, true)
+        XCTAssertNil(model.syncingConnectionID)
+        model.retryInSyncRun(logins[1].id)
+        try await waitForChallenge(of: logins[1])
+    }
+
     /// An import reported by an earlier attempt never counts for a retry of the login.
     func testABrowserImportOfAnEarlierAttemptIsNotCountedForARetry() async throws {
         let logins = batch

@@ -107,10 +107,9 @@ final class SyncRunTests: XCTestCase {
         var r = run(3)
         r.finish(1, imported: 1, detail: nil)
         r.finish(2, imported: 1, detail: nil)
-        r.finish(3, imported: 1, detail: nil)
         XCTAssertFalse(SyncRunSheet.counts(r).contains("übersprungen"))
-        r.retry(3)
         r.skip(3, reason: "x")
         XCTAssertTrue(SyncRunSheet.counts(r).contains("1 übersprungen"))
+        XCTAssertFalse(SyncRunSheet.counts(r).contains("Fehler"))
     }
 }
