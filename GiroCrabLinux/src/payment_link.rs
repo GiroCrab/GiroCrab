@@ -214,8 +214,15 @@ pub fn listen(mut on_link: impl FnMut(String) + Send + 'static) {
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     *listening = Some(path);
     std::thread::spawn(move || {
+        let mut failures = 0;
         for stream in listener.incoming() {
-            let Ok(stream) = stream else { continue };
+            // A persistent error (EMFILE …) would spin: wait longer after each one in a row.
+            let Ok(stream) = stream else {
+                failures = failures.saturating_add(1);
+                std::thread::sleep(accept_backoff(failures));
+                continue;
+            };
+            failures = 0;
             let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
             let mut buf = Vec::new();
             if stream
@@ -233,6 +240,15 @@ pub fn listen(mut on_link: impl FnMut(String) + Send + 'static) {
             }
         }
     });
+}
+
+/// Pause after `failures` accept errors in a row: 50 ms, doubling, at most 5 s.
+fn accept_backoff(failures: u32) -> Duration {
+    Duration::from_millis(
+        50u64
+            .saturating_mul(1 << failures.saturating_sub(1).min(7))
+            .min(5000),
+    )
 }
 
 /// Quitting: the socket file goes (a file left by a crash is replaced by the next `listen`).
@@ -334,6 +350,15 @@ mod tests {
         .unwrap();
         assert_eq!(p.name.as_deref(), Some("A B C"));
         assert_eq!(p.purpose.as_deref(), Some("1+2"));
+    }
+
+    #[test]
+    fn accept_errors_back_off_up_to_five_seconds() {
+        assert_eq!(accept_backoff(1), Duration::from_millis(50));
+        assert_eq!(accept_backoff(2), Duration::from_millis(100));
+        assert_eq!(accept_backoff(7), Duration::from_millis(3200));
+        assert_eq!(accept_backoff(8), Duration::from_secs(5));
+        assert_eq!(accept_backoff(u32::MAX), Duration::from_secs(5));
     }
 
     #[test]

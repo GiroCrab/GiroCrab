@@ -633,6 +633,8 @@ QtObject {
         }, err => {
             afterAccountsQueue = []
             if (failed) failed(err); else errorMessage = parseCoreError(err).message
+            // a link that waited for this load uses the list loaded before
+            resumePaymentLink()
         })
     }
     function rebuildAccountIndex() {
@@ -3926,12 +3928,12 @@ QtObject {
         pendingPaymentLink = payment
         presentPendingPaymentLink()
     }
-    /// Opens the form for `pendingPaymentLink` once the vault is open, its accounts are loaded,
-    /// no sync or bank order is running and no form is open (also not one on its result step:
+    /// Opens the form for `pendingPaymentLink` once the vault is open, its accounts are loaded
+    /// (also not while they load again, e.g. after a sync: the source account comes from the new list), no sync or bank order is running and no form is open (also not one on its result step:
     /// the link waits until it is closed, never replaces it). Later changes retry (`resumePaymentLink`).
     function presentPendingPaymentLink() {
         const payment = pendingPaymentLink
-        if (payment === null || !vaultLoaded || vaultState !== "open" || !accountsLoaded
+        if (payment === null || !vaultLoaded || vaultState !== "open" || !accountsLoaded || isLoadPending("accounts")
             || syncingConnectionID !== null || activeTransfer !== null || Payments.transferKindSwitching
             || showTransferSheet || Payments.showBatchSheet || Payments.showStandingSheet) return
         pendingPaymentLink = null
