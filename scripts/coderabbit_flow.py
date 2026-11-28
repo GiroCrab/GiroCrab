@@ -53,7 +53,13 @@ SEVERITY_BADGE_RE = re.compile(
     r"^\*{0,2}\s*(?:Critical|Major|Minor|Trivial|Nitpick|Potential issue|Refactor suggestion|Warning)\s*\*{0,2}\s*·",
     re.IGNORECASE,
 )
-INLINE_CODE_OR_HTML_RE = re.compile(r"(`+)(?:(?!\1)[\s\S])*\1|</?[a-zA-Z][^>]*>")
+INLINE_CODE_OR_HTML_RE = re.compile(
+    r"(`+)(?:(?!\1)[\s\S])*\1|</?(?:picture|source|img|br)(?=[\s/>])[^>]*>",
+    re.IGNORECASE,
+)
+PROMPT_SUMMARY_RE = re.compile(
+    r"<summary>(?:(?!</summary>)[\s\S])*?Prompt (?:for (?:AI Agents|all issues)|to fix (?:issue|all issues))</summary>",
+)
 
 
 def strip_html_outside_code(text: str) -> str:
@@ -61,15 +67,25 @@ def strip_html_outside_code(text: str) -> str:
 
 
 def extract_ai_prompt(body: str) -> str:
-    details = re.search(
-        r"<summary>(?:(?!</summary>)[\s\S])*?Prompt (?:for (?:AI Agents|all issues)|to fix (?:issue|all issues))</summary>"
-        r"([\s\S]*?)</details>",
-        body or "",
-    )
-    if not details:
+    text = body or ""
+    summary = PROMPT_SUMMARY_RE.search(text)
+    if not summary:
         return ""
-    fence = re.search(r"```[^\n]*\n([\s\S]*?)\n```", details.group(1))
-    return fence.group(1).strip() if fence else ""
+    rest = text[summary.end():]
+    open_match = re.match(r"(?:(?!</details>)[\s\S])*?^[ \t]*(`{3,})[^\n]*\n", rest, re.MULTILINE | re.IGNORECASE)
+    if not open_match:
+        return ""
+    fence_len = len(open_match.group(1))
+    after_open = rest[open_match.end():]
+    close_re = re.compile(rf"^[ \t]*`{{{fence_len},}}[ \t]*$")
+    lines: list[str] = []
+    for line in after_open.splitlines():
+        if close_re.match(line):
+            return "\n".join(lines).strip()
+        if line.strip().lower() == "</details>":
+            return ""
+        lines.append(line)
+    return ""
 
 
 def summarize_comment(body: str) -> str:

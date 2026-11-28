@@ -134,14 +134,28 @@ class FlowTests(unittest.TestCase):
         )
         self.assertEqual(coderabbit_flow.extract_ai_prompt(unclosed_fence_in_details), "")
 
+        literal_closing_tag_and_nested_fence = (
+            "<details><summary>🤖 Prompt for AI Agents</summary>\n\n"
+            "````markdown\n"
+            "Replace the literal </details> tag with escaped text.\n"
+            "```python\nx = 1\n```\n"
+            "Keep tests green.\n"
+            "````\n"
+            "</details>\n"
+        )
+        self.assertEqual(
+            coderabbit_flow.extract_ai_prompt(literal_closing_tag_and_nested_fence),
+            "Replace the literal </details> tag with escaped text.\n```python\nx = 1\n```\nKeep tests green.",
+        )
+
     def test_preserves_inline_code_and_comparisons_when_stripping_html(self):
         body = (
             '**<picture><img src="https://example.com/amber.svg" alt=""></picture> Minor** · **Correctness**\n\n'
-            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b and c > d.**\n"
+            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b, c > d, and a<b.length and c>d.length.**\n"
         )
         self.assertEqual(
             coderabbit_flow.summarize_comment(body),
-            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b and c > d.**",
+            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b, c > d, and a<b.length and c>d.length.**",
         )
 
 
