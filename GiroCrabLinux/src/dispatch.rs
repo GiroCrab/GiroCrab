@@ -3326,17 +3326,33 @@ mod tests {
                 .is_err()
         );
         assert_eq!(account(&id)["balance_cents"], json!(-1_499_900));
-        // more than the payment is refused
+        // more than the payment is refused: a fresh loan, so the duplicate check cannot answer
+        let fresh = call(
+            "create_offline_loan",
+            json!({ "name": "Ratenkredit", "currency": "EUR", "original_cents": 500_000,
+                    "remaining_cents": 400_000 }),
+        );
         let too_much = -payment["amount_cents"].as_i64().unwrap() + 1;
         assert!(
             dispatch_vault(
                 &v,
                 "mirror_offline_loan_payment",
-                &json!({ "booking_id": payment["id"], "account_id": id, "principal_cents": too_much }),
+                &json!({ "booking_id": payment["id"], "account_id": fresh, "principal_cents": too_much }),
             )
             .unwrap()
             .is_err()
         );
+        assert_eq!(account(&fresh)["balance_cents"], json!(-400_000));
+        // the whole payment is the upper bound and still allowed
+        let whole = too_much - 1;
+        assert!(
+            call(
+                "mirror_offline_loan_payment",
+                json!({ "booking_id": payment["id"], "account_id": fresh, "principal_cents": whole }),
+            )
+            .is_i64()
+        );
+        assert_eq!(account(&fresh)["balance_cents"], json!(-400_000 + whole));
         drop(v);
         let _ = std::fs::remove_file(&path);
     }
