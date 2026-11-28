@@ -2,9 +2,9 @@ import SwiftUI
 
 /// How the sidebar lays out its account rows (#884). Local presentation preference.
 enum SidebarDensity: String, CaseIterable, Identifiable {
-    /// Name, owner initials, new-bookings count and balance in one line.
+    /// Larger signet and title, owner initials, the bank below the name.
     case spacious
-    /// Smaller signet and title, with the bank below the name when present.
+    /// Smaller signet and title, one line per account; the bank only where it tells accounts apart.
     case compact
 
     static let defaultsKey = "sidebarDensity"
@@ -20,11 +20,26 @@ enum SidebarDensity: String, CaseIterable, Identifiable {
         #endif
     }
 
+    /// Repayment bar of a loan and the archive date: a second line only the spacious layout has.
+    var showsStatusLine: Bool { self == .spacious }
+
+    /// The line under the name. Compact keeps it to one line: the bank alone stays out, while
+    /// what tells accounts apart (namesake distinction, owner or IBAN hit while searching) stays.
+    /// A namesake keeps the bank line: then the bank may be all that tells the two apart.
+    func showsSubtitle(_ text: String, bank: String, hasNamesake: Bool = false) -> Bool {
+        !text.isEmpty && !(self == .compact && text == bank && !hasNamesake)
+    }
+
     var title: String {
         switch self {
         case .spacious: String(localized: "Großzügig")
         case .compact: String(localized: "Kompakt")
         }
+    }
+
+    /// Initials tell accounts apart only when there is more than one owner.
+    static func hasSeveralOwners(_ owners: [String]) -> Bool {
+        Set(owners.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }).count > 1
     }
 
     /// Owner initials as shown next to the name: first and last name ("Erika Mustermann" → "EM").

@@ -197,6 +197,7 @@ struct UserGroupHeader: View {
                                  ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.readable(hex: group.colorHex)))
                 .modifier(SidebarIconColumn())
             Text(group.name).lineLimit(2).fixedSize(horizontal: false, vertical: true).sensitive(.labels)
+                .foregroundStyle(.primary)
             if !group.inTotal {
                 Image(systemName: "eye.slash")
                     .appFont(.caption)

@@ -11305,13 +11305,13 @@
         }
       }
     },
-    "Der Saldo steht in beiden Ansichten neben dem Kontonamen. Großzügig zeigt zusätzlich die Initialen des Kontoinhabers. Kompakt verwendet kleinere Kontosymbole." : {
+    "Der Saldo steht in beiden Ansichten neben dem Kontonamen. Großzügig zeigt die Bank unter dem Namen und bei mehreren Kontoinhabern deren Initialen. Kompakt verwendet kleinere Kontosymbole und zeigt Konten einzeilig, außer bei gleichnamigen Konten und Suchtreffern." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The balance appears beside the account name in both layouts. Spacious also shows the account holder’s initials. Compact uses smaller account icons."
+            "value" : "The balance appears beside the account name in both layouts. Spacious shows the bank below the name and, with several account holders, their initials. Compact uses smaller account icons and keeps accounts to one line, except for accounts with the same name and search hits."
           }
         }
       }

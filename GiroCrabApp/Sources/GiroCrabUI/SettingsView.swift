@@ -116,7 +116,7 @@ struct GeneralSettings: View {
                 Picker("Seitenleiste", selection: $sidebarDensity) {
                     ForEach(SidebarDensity.allCases) { Text($0.title).appFont(.body).tag($0) }
                 }
-                Text("Der Saldo steht in beiden Ansichten neben dem Kontonamen. Großzügig zeigt zusätzlich die Initialen des Kontoinhabers. Kompakt verwendet kleinere Kontosymbole.")
+                Text("Der Saldo steht in beiden Ansichten neben dem Kontonamen. Großzügig zeigt die Bank unter dem Namen und bei mehreren Kontoinhabern deren Initialen. Kompakt verwendet kleinere Kontosymbole und zeigt Konten einzeilig, außer bei gleichnamigen Konten und Suchtreffern.")
                     .appFont(.caption).foregroundStyle(.secondary)
                 #if os(macOS)
                 // iOS: the system's Dynamic Type setting (Einstellungen › Anzeige & Helligkeit).
