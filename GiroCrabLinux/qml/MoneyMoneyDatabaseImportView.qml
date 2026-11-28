@@ -202,6 +202,7 @@ ColumnLayout {
         if (a.first_date && a.last_date) parts.push(Fmt.medium(a.first_date) + " – " + Fmt.medium(a.last_date))
         if (a.pending_count > 0) parts.push(qsTr("%1 vorgemerkt").arg(a.pending_count))
         if (a.holding_count > 0) parts.push(qsTr("%1 Depotpositionen").arg(a.holding_count))
+        if (a.value_history_count > 0) parts.push(qsTr("%1 Wertverlauf-Einträge").arg(a.value_history_count))
         if (a.statement_count > 0) parts.push(qsTr("%1 Dokumente").arg(a.statement_count))
         if (a.group_name !== "") parts.push(qsTr("Gruppe „%1“").arg(a.group_name))
         return parts.join(" · ")
@@ -739,6 +740,7 @@ ColumnLayout {
                     CountRow { label: qsTr("Depotpositionen"); n: doneCol.r ? doneCol.r.holdings_imported : 0 }
                     CountRow { label: qsTr("Überweisungsvorlagen"); n: doneCol.r ? doneCol.r.transfer_templates_created : 0
                                detail: doneCol.r && doneCol.r.transfer_templates_existing > 0 ? qsTr("%1 bereits vorhanden").arg(doneCol.r.transfer_templates_existing) : "" }
+                    CountRow { label: qsTr("Wertverlauf-Einträge"); n: doneCol.r ? doneCol.r.value_history_imported || 0 : 0 }
                     CountRow { label: qsTr("Bankzugänge"); n: doneCol.r ? doneCol.r.connections_created : 0
                                detail: doneCol.r && doneCol.r.connections_existing > 0 ? qsTr("%1 bereits vorhanden").arg(doneCol.r.connections_existing) : "" }
                 }

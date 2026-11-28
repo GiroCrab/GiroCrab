@@ -25,7 +25,7 @@ Sheet {
             title: title, subtitle: subtitle, symbol: symbol, action: fn, hides: hides || 0, subtitleHides: subtitleHides || 0 }, extra || {}))
         for (const s of m.scopes) add(s.title, view, "rectangle.split.3x1", () => m.scope = s.id)
         // the list's scopes only over the booking list: the depot tabs while a securities depot
-        // is shown (#564)
+        // is shown, nothing for Sachwerte (#564)
         if (DepotState.presentation !== "bookings") out.length = 0
         if (DepotState.presentation === "securities")
             for (const t of DepotState.depotTabs) add(t.title, view, "rectangle.split.3x1", () => DepotState.depotTab = t.id)

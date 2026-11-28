@@ -212,7 +212,7 @@ ApplicationWindow {
             Action { text: qsTr("Nächste Buchung"); shortcut: "Ctrl+Meta+Down"; onTriggered: AppModel.moveSelection(1) }
             Action { text: qsTr("Vorherige Buchung"); shortcut: "Ctrl+Meta+Up"; onTriggered: AppModel.moveSelection(-1) }
             AppMenuSeparator {}
-            // AccountPresentation.menuTitle: booking scopes or the depot tabs (#564)
+            // AccountPresentation.menuTitle: booking scopes, the depot tabs (#564) or nothing for Sachwerte
             Action { text: DepotState.menuTitle(0, qsTr("Alle Buchungen")); shortcut: "Ctrl+1"; onTriggered: DepotState.applyScopeShortcut(0, "All") }
             Action { text: DepotState.menuTitle(1, qsTr("Alltag && Konsum")); shortcut: "Ctrl+2"; onTriggered: DepotState.applyScopeShortcut(1, "Everyday") }
             Action { text: DepotState.menuTitle(2, qsTr("Sparpläne && Perks")); shortcut: "Ctrl+3"; onTriggered: DepotState.applyScopeShortcut(2, "Investments") }
@@ -304,7 +304,7 @@ ApplicationWindow {
             StackLayout {
                 SplitView.minimumWidth: Math.max(360, Math.min(560, window.width - sidebarPane.width - (inspectorPane.visible ? 280 : 0) - 2))
                 SplitView.fillWidth: true
-                currentIndex: DepotState.presentation === "securities" ? 5
+                currentIndex: DepotState.presentation === "securities" ? 5 : DepotState.presentation === "tangible" ? 6
                               : ({ documents: 1, wealth: 2, planned: 3, directDebits: 4 })[AppModel.sidebarSelection] ?? 0
                 BookingStreamView {}
                 DocumentsView {}
@@ -312,12 +312,18 @@ ApplicationWindow {
                 Loader { active: AppModel.sidebarSelection === "wealth"; sourceComponent: Component { WealthView {} } }
                 Loader { active: AppModel.sidebarSelection === "planned"; sourceComponent: Component { PlannedPaymentsView {} } }
                 Loader { active: AppModel.sidebarSelection === "directDebits"; sourceComponent: Component { DirectDebitsView {} } }
-                // accountColumn (RootView.swift, #564): a securities depot has its own view; one instance
-                // per account (`.id(account.id)`), so no state of another account stays
+                // accountColumn (RootView.swift, #564): a securities depot and a Sachwerte account each have their
+                // own view; one instance per account (`.id(account.id)`), so no state of another account stays
                 Item {
                     Repeater {
                         model: DepotState.selectedSecuritiesDepot ? [DepotState.selectedSecuritiesDepot.id] : []
                         DepotDetailView { required property var modelData; anchors.fill: parent; account: AppModel.account(modelData) }
+                    }
+                }
+                Item {
+                    Repeater {
+                        model: DepotState.selectedTangibleAccount ? [DepotState.selectedTangibleAccount.id] : []
+                        TangibleAccountDetailView { required property var modelData; anchors.fill: parent; account: AppModel.account(modelData) }
                     }
                 }
             }
@@ -362,7 +368,7 @@ ApplicationWindow {
                 HoverHandler { id: docScopeHover }
                 ToolTip.text: qsTr("Alle Dokumente, eigene Belege oder Bankdokumente anzeigen"); ToolTip.visible: docScopeHover.hovered; ToolTip.delay: 600
             }
-            // DepotTabPicker (DepotDetailView.swift, #564)
+            // DepotTabPicker (DepotDetailView.swift, #564); Sachwerte have neither booking scopes nor depot tabs
             Segmented {
                 visible: DepotState.presentation === "securities"
                 options: DepotState.depotTabs

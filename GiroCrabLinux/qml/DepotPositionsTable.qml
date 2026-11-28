@@ -4,10 +4,12 @@ import QtQuick.Layouts
 
 // DepotPositionsTable.swift (#564, #625): the positions of a holdings view – a compact sortable
 // table in wide windows, two-line rows with unfoldable details in narrow ones. Shares are relative
-// to the whole inventory, so a search changes the rows but never the percentages.
+// to the whole inventory, so a search changes the rows but never the percentages. One table for the
+// depot, the Sachwerte account and the Vermögen tabs; a view that lets rows be selected or opened
+// sets `selectable` and handles `selected` / `opened`, and adds its own menu entries (`rowActions`).
 Rectangle {
     id: table
-    /// DepotPosition list (DepotMetrics.makePositions), sorted and filtered.
+    /// DepotPosition list (DepotMetrics.makePositions / mergedPositions / tangiblePositions), sorted and filtered.
     property var positions: []
     /// Positions of the whole inventory (the rows shown may be a search result).
     property int totalCount: 0
@@ -18,7 +20,30 @@ Rectangle {
     property string currency: "EUR"
     /// Securities without a bank figure get one from the cost price: the table says so (not Sachwerte).
     property bool notesCalculatedGain: true
+    property string selectedID: ""
+    property bool selectable: false
+    signal selected(var position)
+    signal opened(var position)
+    /// RowTaps (macOS): a double click first – a single click may leave the view, so it waits
+    /// out the double-click interval before `selected`.
+    Timer {
+        id: clickTimer
+        property var position: null
+        interval: Qt.styleHints.mouseDoubleClickInterval
+        onTriggered: { if (table.visible) table.selected(position) }
+    }
+    // a scope switch within the interval hides the table: the pending click no longer selects
+    onVisibleChanged: if (!visible) clickTimer.stop()
     signal copyAll()
+    /// Extra context-menu entries of the host: position => [{ title, action, separator }]
+    property var rowActions: null
+    /// valueHistory(available:open:) (#578): positions with a value history get a chart button and
+    /// a menu item that emit `historyRequested`. null: no history column.
+    property var historyAvailable: null
+    signal historyRequested(var position)
+    function hasHistory(p) { return !!historyAvailable && !!p && historyAvailable(p) }
+    /// Which depot(s) hold a position, where the table spans several (Vermögen).
+    property var depotLabel: null
     /// Rows unfolded in the narrow layout (`--expand-rows`: the first two).
     property var expanded: ({})
     /// `--expand-rows`: the first two rows start unfolded, once there are rows (screenshots).
@@ -36,7 +61,7 @@ Rectangle {
     readonly property real valueW: 104 * Theme.textScale
     readonly property real shareW: 64 * Theme.textScale
     readonly property real gainW: 124 * Theme.textScale
-    readonly property real editW: 22 * Theme.textScale
+    readonly property real editW: (historyAvailable ? 44 : 22) * Theme.textScale
     readonly property bool anyCalculatedGain: positions.some(p => p.gain && !p.gain.reported)
 
     implicitHeight: col.implicitHeight
@@ -144,13 +169,34 @@ Rectangle {
                 Layout.fillWidth: true
                 spacing: 0
                 Rectangle {
+                    id: rowArea
                     Layout.fillWidth: true
                     implicitHeight: (table.wide ? Math.max(44, wideRow.implicitHeight) : Math.max(44, narrowRow.implicitHeight) + (rowBox.open ? details.implicitHeight + 14 : 0)) + 10
-                    color: "transparent"
+                    color: table.selectedID !== "" && table.selectedID === rowBox.p.id ? Theme.selection : "transparent"
+                    // a selectable row is a button for the keyboard too: Tab reaches it, Space selects,
+                    // Return / Enter opens like the double click
+                    activeFocusOnTab: table.selectable
+                    // a pending single click of the mouse must not override the key, the accessibility action or the context menu afterwards
+                    Keys.onSpacePressed: { clickTimer.stop(); table.selected(rowBox.p) }
+                    Keys.onReturnPressed: { clickTimer.stop(); table.opened(rowBox.p) }
+                    Keys.onEnterPressed: { clickTimer.stop(); table.opened(rowBox.p) }
+                    Accessible.role: table.selectable ? Accessible.Button : Accessible.Row
+                    Accessible.name: AppModel.masking(rowBox.p.displayName, rowBox.p.isOwnItem ? undefined : AppModel.redactLabels)
+                    Accessible.onPressAction: { if (table.selectable) { clickTimer.stop(); table.opened(rowBox.p) } }
+                    Rectangle { visible: rowArea.activeFocus; anchors.fill: parent; anchors.margins: 1
+                                radius: 4; color: "transparent"; border.width: 2; border.color: Theme.accent }
                     MouseArea {
                         anchors.fill: parent
-                        acceptedButtons: Qt.RightButton
-                        onClicked: { rowMenu.position = rowBox.p; rowMenu.popup() }
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: m => {
+                            if (m.button === Qt.RightButton) { clickTimer.stop(); rowMenu.position = rowBox.p; rowMenu.rebuild(); rowMenu.popup(); return }
+                            if (table.selectable) { clickTimer.position = rowBox.p; clickTimer.restart() }
+                        }
+                        onDoubleClicked: m => {
+                            if (m.button !== Qt.LeftButton || !table.selectable) return
+                            clickTimer.stop()
+                            table.opened(rowBox.p)
+                        }
                     }
                     // wide: the columns
                     RowLayout {
@@ -174,7 +220,7 @@ Rectangle {
                                text: table.shareText(rowBox.p); font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.secondary
                                Sensitive { amounts: true } }
                         GainBlock { p: rowBox.p; Layout.preferredWidth: table.gainW }
-                        EditButton { p: rowBox.p; Layout.preferredWidth: table.editW }
+                        RowButtons { p: rowBox.p; Layout.preferredWidth: table.editW }
                     }
                     // narrow: name with its subline on the left, value with gain and share on the right
                     ColumnLayout {
@@ -193,7 +239,10 @@ Rectangle {
                                 // quantity and price are figures: protected like amounts
                                 Text { text: table.narrowSubline(rowBox.p); Layout.fillWidth: true; elide: Text.ElideRight
                                        font.pixelSize: Theme.callout; font.features: { "tnum": 1 }; color: Theme.secondary
-                                       Sensitive { amounts: true } } }
+                                       Sensitive { amounts: true } }
+                                Text { readonly property var label: table.depotLabel ? table.depotLabel(rowBox.p) : null
+                                       visible: !!label; text: label || ""; Layout.fillWidth: true; elide: Text.ElideRight
+                                       font.pixelSize: Theme.caption; color: Theme.tertiary; Sensitive {} } }
                             ColumnLayout { spacing: 2
                                 Text { Layout.alignment: Qt.AlignRight; text: table.valueText(rowBox.p)
                                        font.pixelSize: Theme.body; font.weight: Font.Medium; font.features: { "tnum": 1 }; color: Theme.text; Sensitive { amounts: true } }
@@ -201,7 +250,7 @@ Rectangle {
                                        font.pixelSize: Theme.caption; font.features: { "tnum": 1 }
                                        color: rowBox.p.gain ? DepotMetrics.tint(rowBox.p.gain.cents) : Theme.secondary; Sensitive { amounts: true } } }
                             // a narrow window keeps the pencil at hand
-                            EditButton { p: rowBox.p }
+                            RowButtons { p: rowBox.p }
                             Item {
                                 id: detailsButton
                                 implicitWidth: 18; implicitHeight: 18
@@ -294,13 +343,30 @@ Rectangle {
         }
     }
 
-    // MARK: context menu – classification, copying
+    // MARK: context menu – classification, the host's entries, copying
+    Component { id: actionEntry; AppMenuItem { property var run; onTriggered: run() } }
+    Component { id: actionDivider; AppMenuSeparator {} }
     AppMenu {
         id: rowMenu
         property var position: null
+        property var entries: []
+        function rebuild() {
+            for (const o of entries) removeItem(o)
+            const built = []
+            const actions = table.rowActions && position ? table.rowActions(position) : []
+            for (const a of actions) {
+                if (a.separator) built.push(actionDivider.createObject(null))
+                else built.push(actionEntry.createObject(null, { text: a.title, run: a.action }))
+            }
+            built.forEach((o, i) => insertItem(i + 2, o))
+            entries = built
+        }
         AppMenuItem { text: qsTr("Klassifizierung bearbeiten"); icon.name: SF.icon("pencil")
                       visible: !!rowMenu.position && !!rowMenu.position.asset.classification.security_key; height: visible ? implicitHeight : 0
                       onTriggered: table.classify(rowMenu.position) }
+        AppMenuItem { text: qsTr("Wertverlauf anzeigen"); icon.name: SF.icon("chart.xyaxis.line")
+                      visible: table.hasHistory(rowMenu.position); height: visible ? implicitHeight : 0
+                      onTriggered: table.historyRequested(rowMenu.position) }
         AppMenuItem { text: qsTr("Position kopieren"); icon.name: SF.icon("doc.on.doc")
                       onTriggered: AppModel.copyToClipboard(DepotMetrics.clipboardLine(rowMenu.position.holding, table.currency)) }
         AppMenuItem { text: qsTr("Alle Positionen kopieren"); icon.name: SF.icon("doc.on.doc"); onTriggered: table.copyAll() }
@@ -354,10 +420,13 @@ Rectangle {
             spacing: 3
             Text { visible: nb.p.identifier !== ""; text: nb.p.identifier + " ·"; font.pixelSize: Theme.callout; color: Theme.secondary; Sensitive {} }
             Text { text: AssetClassification.compactTitle(nb.p.asset.classification); font.pixelSize: Theme.callout; color: Theme.secondary
-                   Layout.fillWidth: true; elide: Text.ElideRight
+                   Layout.fillWidth: !depotText.visible; elide: Text.ElideRight
                    Sensitive { labels: true }
                    HoverHandler { id: classHover }
                    ToolTip.visible: classHover.hovered; ToolTip.delay: 600; ToolTip.text: AssetClassification.sourceDescription(nb.p.asset.classification) }
+            Text { id: depotText; readonly property var label: table.depotLabel ? table.depotLabel(nb.p) : null
+                   visible: !!label; text: "· " + (label || ""); Layout.fillWidth: true; elide: Text.ElideRight
+                   font.pixelSize: Theme.callout; color: Theme.secondary; Sensitive {} }
         }
     }
     component GainBlock: ColumnLayout {
@@ -375,6 +444,24 @@ Rectangle {
         HoverHandler { id: gainHover }
         ToolTip.visible: gainHover.hovered; ToolTip.delay: 600
         ToolTip.text: !gb.p.gain ? qsTr("Kein Einstandskurs geliefert") : gb.p.gain.reported ? qsTr("Unrealisierte GuV laut Bank") : qsTr("Aus dem Einstandskurs berechnet")
+    }
+    /// The chart button (only with a value history) beside the pencil.
+    component RowButtons: RowLayout {
+        id: rb
+        property var p
+        spacing: 0
+        Item {
+            visible: table.hasHistory(rb.p)
+            implicitWidth: 22; implicitHeight: 22
+            IconButton {
+                anchors.centerIn: parent
+                symbol: "chart.xyaxis.line"; symbolSize: 12
+                onClicked: table.historyRequested(rb.p)
+                ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: qsTr("Wertverlauf anzeigen")
+                Accessible.name: qsTr("Wertverlauf anzeigen")
+            }
+        }
+        EditButton { p: rb.p }
     }
     /// Edits asset class and instrument; only where the position has a stable classification key.
     component EditButton: Item {
