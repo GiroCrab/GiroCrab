@@ -245,7 +245,7 @@ Rectangle {
                     selectionKey: "userGroup:" + g.uuid
                     // taller hit area for the drop zones (.padding(.vertical, 3))
                     topGap: g.depth === 0 ? 10 : 4
-                    rowHeight: Math.max(30, Math.ceil(userGroupName.implicitHeight) + 10)   // a second line instead of "…" (#650)
+                    rowHeight: Math.max(30, Math.ceil(userGroupName.implicitHeight) + 10, Math.ceil(groupBalances.implicitHeight) + 10)   // a second line instead of "…" (#650); one line per currency (#1844)
                     TapHandler { acceptedButtons: Qt.RightButton; onTapped: sidebar.openGroupMenu(groupRow.g, groupRow) }
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: SidebarModel.rowLeading + g.depth * SidebarModel.iconInset; anchors.rightMargin: SidebarModel.rowTrailing
@@ -265,6 +265,7 @@ Rectangle {
                         // one sum per currency, EUR last, like „Alle Konten“ (#1844);
                         // stacked, so several currencies never widen the row
                         ColumnLayout {
+                            id: groupBalances
                             spacing: 1
                             Repeater {
                                 model: g.balances && g.balances.length > 0
