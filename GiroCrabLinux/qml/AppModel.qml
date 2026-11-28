@@ -2962,6 +2962,8 @@ QtObject {
     /// a change of the connections and of the switch, so views never ask the core while they render.
     property var documentsOffConnectionIDs: []
     onConnectionsChanged: refreshDocumentsOff()
+    // an unlock publishes the connections before `vaultState` turns "open"
+    onIsUnlockedChanged: refreshDocumentsOff()
     function refreshDocumentsOff() {
         documentsOffConnectionIDs = isUnlocked
             ? connections.filter(c => documentsFetchSupported(c.id) && !documentsFetchEnabled(c.id)).map(c => c.id) : []
@@ -4987,7 +4989,10 @@ QtObject {
         const path = localPath(fileUrl)
         const name = path.split("/").pop()
         const gen = vaultGeneration
-        coreAsync("import_finpension_file", { connection_id: c.id, path: path }, s => {
+        // like `pinVault()`: the worker refuses the import once another vault is in front
+        const identity = run(() => core("refund_vault_identity"))
+        if (identity === undefined) return
+        coreAsync("import_finpension_file", { connection_id: c.id, path: path, vault_identity: identity }, s => {
             if (gen !== vaultGeneration) return
             toast = qsTr("%1: %2 neue Buchungen aus %3").arg(c.display_name).arg(s.transactions_imported).arg(name)
             reloadAll()

@@ -238,6 +238,21 @@ Sheet {
     readonly property int consentDaysLeft: consentEnd ? Math.floor((consentEnd - new Date()) / 86400000) : 0
     readonly property string consentStage: !consentEnd || isNaN(consentEnd) ? "none" : consentEnd <= new Date() ? "expired" : consentDaysLeft < 14 ? "expiringSoon" : "valid"
 
+    /// DisclosureGroup „Erweitert: …“: a button, so Tab reaches it and Space opens it, with a focus frame.
+    component AdvancedDisclosure: ToolButton {
+        id: disclosure
+        Layout.fillWidth: true
+        Accessible.name: text
+        onClicked: sheet.showAdvanced = !sheet.showAdvanced
+        contentItem: RowLayout {
+            spacing: 6
+            SFIcon { symbol: sheet.showAdvanced ? "chevron.down" : "chevron.right"; size: 10; color: Theme.secondary }
+            Text { text: disclosure.text; font.pixelSize: Theme.body; color: Theme.text; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        }
+        background: Rectangle { radius: 4; color: "transparent"
+                                border.width: disclosure.visualFocus ? 2 : 0; border.color: Theme.accent }
+    }
+
     FileDialog {
         id: pemDialog
         title: qsTr("PEM-Datei wählen …")
@@ -368,12 +383,7 @@ Sheet {
                 // Prototype #156: classic NVP API (API signature) instead of the REST app.
                 SettingsFormSection {
                     visible: sheet.kind === "PayPal"
-                    RowLayout {
-                        Layout.fillWidth: true
-                        SFIcon { symbol: sheet.showAdvanced ? "chevron.down" : "chevron.right"; size: 10; color: Theme.secondary }
-                        Text { text: qsTr("Erweitert: API-Signatur (klassische NVP-API)"); font.pixelSize: Theme.body; color: Theme.text; Layout.fillWidth: true
-                               MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: sheet.showAdvanced = !sheet.showAdvanced } }
-                    }
+                    AdvancedDisclosure { text: qsTr("Erweitert: API-Signatur (klassische NVP-API)") }
                     Text { visible: sheet.showAdvanced; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                            text: qsTr("Ist die API-Signatur gesetzt, ruft GiroCrab per API-Benutzername, API-Passwort und Signatur ab; Client-ID und Secret werden dann nicht gebraucht.") }
                     Repeater { model: sheet.showAdvanced ? sheet.advancedKeys : []; KeyField { required property string modelData; key: modelData } }
@@ -420,12 +430,7 @@ Sheet {
                 }
                 SettingsFormSection {
                     visible: sheet.isPortal
-                    RowLayout {
-                        Layout.fillWidth: true
-                        SFIcon { symbol: sheet.showAdvanced ? "chevron.down" : "chevron.right"; size: 10; color: Theme.secondary }
-                        Text { text: qsTr("Erweitert: Eigene PSD2/Enable-Banking API (Optional)"); font.pixelSize: Theme.body; color: Theme.text; Layout.fillWidth: true
-                               MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: sheet.showAdvanced = !sheet.showAdvanced } }
-                    }
+                    AdvancedDisclosure { text: qsTr("Erweitert: Eigene PSD2/Enable-Banking API (Optional)") }
                     Text { visible: sheet.showAdvanced; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.caption; color: Theme.secondary
                            text: qsTr("Nur für Power-User: Mit eigener Application-ID und PEM-Schlüssel nutzt GiroCrab statt des Web-Logins die PSD2-Schnittstelle von Enable Banking.") }
                     Repeater { model: sheet.showAdvanced ? sheet.advancedKeys : []; KeyField { required property string modelData; key: modelData } }

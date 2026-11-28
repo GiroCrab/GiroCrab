@@ -52,6 +52,17 @@ fn set_active_vault(v: Option<Arc<Vault>>) {
     *target = None;
 }
 
+/// Whether `identity` (from `pin_refund_target`) still names `v`: every activation of a vault
+/// ends the token (`set_active_vault`), so a request issued before a lock or switch fails.
+fn is_pinned_vault(v: &Vault, identity: &str) -> bool {
+    REFUND_TARGET
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|(token, vault)| (token == identity).then(|| vault.upgrade()).flatten())
+        .is_some_and(|target| std::ptr::eq(target.as_ref(), v))
+}
+
 fn pin_refund_target(v: &Arc<Vault>) -> String {
     let mut target = REFUND_TARGET.lock().unwrap();
     if let Some((token, current)) = &*target
@@ -295,13 +306,24 @@ const MAX_FINPENSION_FILE: u64 = 32 * 1024 * 1024;
 /// its bytes never travel through QML. Takes `self: Arc<Vault>`, so not part of `vault_methods!`.
 /// An `InvalidInput` (nothing recognised) comes back as `{kind, message}` for
 /// `AppModel.parseCoreError`, the sheet then shows its own hint (`catch CoreError.InvalidInput`).
+/// `vault_identity` (`refund_vault_identity` when the import started) binds it to that vault
+/// like `pinVault()` on the Mac: a request that reaches the worker after a lock or switch
+/// is refused instead of writing to the vault now in front.
 fn import_finpension_file(v: &Arc<Vault>, a: &Value) -> R {
+    use std::io::Read;
+    let identity: String = arg(a, "vault_identity")?;
+    if !is_pinned_vault(v, &identity) {
+        return Err(crate::i18n::tr("Tresor ist gesperrt"));
+    }
     let path: String = arg(a, "path")?;
-    let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
-    if size > MAX_FINPENSION_FILE {
+    // the read itself is bounded: a file that grows while it is read stays capped
+    let mut data = Vec::new();
+    std::fs::File::open(&path)
+        .and_then(|f| f.take(MAX_FINPENSION_FILE + 1).read_to_end(&mut data))
+        .map_err(|e| e.to_string())?;
+    if data.len() as u64 > MAX_FINPENSION_FILE {
         return Err(crate::i18n::tr("Die Datei ist zu groß."));
     }
-    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
     ok(v.clone()
         .import_finpension_export(arg(a, "connection_id")?, data)
         .map_err(|e| {
@@ -2260,21 +2282,31 @@ mod tests {
              2026-03-31,Verwaltungsgebühr,-12.34,CHF,R-2\n",
         )
         .unwrap();
-        let args = json!({ "connection_id": id, "path": file.display().to_string() });
+        let identity = call_ok("refund_vault_identity", json!({}));
+        let args = json!({ "connection_id": id, "path": file.display().to_string(),
+                           "vault_identity": identity });
         let s = call_ok("import_finpension_file", args.clone());
         assert_eq!(s["transactions_imported"], json!(2));
-        let again = call_ok("import_finpension_file", args);
+        let again = call_ok("import_finpension_file", args.clone());
         assert_eq!(again["transactions_imported"], json!(0), "no duplicates");
         let junk = dir.join("junk.txt");
         std::fs::write(&junk, "x").unwrap();
         let r: Value = serde_json::from_str(&call_json(
             "import_finpension_file",
-            &json!({ "connection_id": id, "path": junk.display().to_string() }).to_string(),
+            &json!({ "connection_id": id, "path": junk.display().to_string(),
+                     "vault_identity": identity })
+            .to_string(),
         ))
         .unwrap();
         let e = r["err"].as_str().expect("refused");
         let e: Value = serde_json::from_str(e.strip_prefix('\u{1}').unwrap()).unwrap();
         assert_eq!(e["kind"], json!("InvalidInput"));
+        // started before another vault came to the front: refused, nothing written there
+        call_ok("open_demo", json!({}));
+        let r: Value =
+            serde_json::from_str(&call_json("import_finpension_file", &args.to_string())).unwrap();
+        let e = r["err"].as_str().expect("a stale import is refused");
+        assert!(!e.starts_with('\u{1}'), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
