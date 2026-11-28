@@ -70,13 +70,22 @@ final class MacAutoLockTests: XCTestCase {
         XCTAssertEqual(locks, [.windowClosed])
     }
 
+    /// One main window in the Dock, the other closed: nothing shows the vault any more.
+    func testClosingTheLastWindowOnScreenLocksWithAnotherInTheDock() {
+        store.set(true, forKey: MacAutoLock.onMinimizeKey)
+        let autoLock = makeAutoLock()
+        let closing = window(), docked = window()
+        autoLock.windowWillClose(closing, mainWindows: [closing, docked], isOnScreen: { _ in false })
+        XCTAssertEqual(locks, [.windowClosed])
+    }
+
     func testAnotherOpenMainWindowKeepsTheVaultOpen() {
         store.set(true, forKey: MacAutoLock.onMinimizeKey)
         let autoLock = makeAutoLock()
         let closing = window(), other = window()
-        autoLock.windowWillClose(closing, mainWindows: [closing, other], isShown: { $0 === other })
+        autoLock.windowWillClose(closing, mainWindows: [closing, other], isOnScreen: { $0 === other })
         XCTAssertEqual(locks, [])
-        autoLock.windowWillClose(closing, mainWindows: [closing, other], isShown: { _ in false })
+        autoLock.windowWillClose(closing, mainWindows: [closing, other], isOnScreen: { _ in false })
         XCTAssertEqual(locks, [.windowClosed], "the other one was already closed")
     }
 
@@ -110,6 +119,7 @@ final class MacAutoLockTests: XCTestCase {
         store.set(true, forKey: MacAutoLock.idleKey)
         store.set(2, forKey: MacAutoLock.idleMinutesKey)
         let autoLock = makeAutoLock()
+        autoLock.checkIdle() // first check while armed starts the interval
         clock += 90
         autoLock.checkIdle()
         XCTAssertEqual(locks, [])
@@ -125,17 +135,25 @@ final class MacAutoLockTests: XCTestCase {
         XCTAssertEqual(locks, [.idle], "locks once, then counts afresh")
     }
 
-    /// Locked for an hour, then unlocked: the interval starts at the unlock, not before.
-    func testIdleClockRestartsWhileDisarmed() {
+    /// Locked, then unlocked between two checks: the interval starts at the first check
+    /// after the unlock, not at the last check before it.
+    func testIdleIntervalStartsWhenArmed() {
         store.set(true, forKey: MacAutoLock.idleKey)
+        store.set(1, forKey: MacAutoLock.idleMinutesKey)
         let autoLock = makeAutoLock()
         armed = false
         clock += 3600
         autoLock.checkIdle()
-        armed = true
-        clock += 60
+        clock += 9
+        armed = true // unlocked, no input since
+        clock += 1
         autoLock.checkIdle()
-        XCTAssertEqual(locks, [])
+        clock += 51
+        autoLock.checkIdle()
+        XCTAssertEqual(locks, [], "only 51 s since arming")
+        clock += 9
+        autoLock.checkIdle()
+        XCTAssertEqual(locks, [.idle])
     }
 
     func testIdleTimerFiresWithAShortInterval() async {

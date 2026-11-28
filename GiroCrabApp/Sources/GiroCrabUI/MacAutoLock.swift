@@ -54,6 +54,7 @@ final class MacAutoLock {
     /// Replaces the minutes setting (tests run with fractions of a second).
     var idleIntervalOverride: TimeInterval?
     private(set) var lastActivity: Date
+    private var armedAtLastCheck = false
     private var eventMonitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var ticker: Task<Void, Never>?
@@ -83,29 +84,35 @@ final class MacAutoLock {
 
     /// `window` went into the Dock; locks when no other window shows the vault on screen.
     func windowDidMiniaturize(_ window: NSWindow, mainWindows: [NSWindow],
-                              isOnScreen: (NSWindow) -> Bool = { $0.isVisible && !$0.isMiniaturized }) {
+                              isOnScreen: (NSWindow) -> Bool = MacAutoLock.isOnScreen) {
         guard mainWindows.contains(window) else { return }
         guard !mainWindows.contains(where: { $0 !== window && isOnScreen($0) }) else { return }
         lockIfArmed(.minimized, enabled: lockOnMinimize)
     }
 
-    /// Locks once the app saw no input for `idleInterval`. While nothing is armed the
-    /// clock restarts, so unlocking (or switching the setting on) starts a fresh interval.
+    /// Locks once the app saw no input for `idleInterval`. The interval starts afresh on
+    /// the first check after arming (unlock, switching the setting on), not at the last
+    /// check before it.
     func checkIdle() {
-        guard lockWhenIdle, isArmed() else { noteActivity(); return }
+        let armedNow = lockWhenIdle && isArmed()
+        defer { armedAtLastCheck = armedNow }
+        guard armedNow, armedAtLastCheck else { noteActivity(); return }
         guard now().timeIntervalSince(lastActivity) >= idleInterval else { return }
         noteActivity()
         lock(.idle)
     }
 
-    /// `window` is closing; locks when no other window shows the vault.
+    /// `window` is closing; locks when no other window shows the vault on screen (a
+    /// minimized one does not count, the same rule as for minimizing).
     func windowWillClose(_ window: NSWindow, mainWindows: [NSWindow],
-                         isShown: (NSWindow) -> Bool = { $0.isVisible || $0.isMiniaturized }) {
+                         isOnScreen: (NSWindow) -> Bool = MacAutoLock.isOnScreen) {
         guard mainWindows.contains(window) else { return }
-        let others = mainWindows.filter { $0 !== window && isShown($0) }
-        guard others.isEmpty else { return }
+        guard !mainWindows.contains(where: { $0 !== window && isOnScreen($0) }) else { return }
         mainWindowClosed()
     }
+
+    /// A main window that shows the vault right now: visible and not in the Dock.
+    static func isOnScreen(_ window: NSWindow) -> Bool { window.isVisible && !window.isMiniaturized }
 
     private func lockIfArmed(_ reason: Reason, enabled: Bool) {
         guard enabled, isArmed() else { return }

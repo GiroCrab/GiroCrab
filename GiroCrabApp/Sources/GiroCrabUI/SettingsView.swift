@@ -490,8 +490,10 @@ struct SecuritySettings: View {
                 // `--demo-settings security:touchid` shows these rows in the demo (screenshots)
                 if !model.isDemo || model.demoSettingsSheet == "touchid" {
                     Toggle("Beim Entsperren \(VaultKeyManager.shared.biometryName) verlangen", isOn: $requireBiometrics)
+                        .disabled(model.isDemo)
                         .onChange(of: requireBiometrics) { _, on in
-                            guard on != VaultKeyManager.shared.requireBiometrics else { return }
+                            // the demo (screenshot rows) never changes the real key protection
+                            guard !model.isDemo, on != VaultKeyManager.shared.requireBiometrics else { return }
                             Task {
                                 do { try await VaultKeyManager.shared.setRequireBiometrics(on) }
                                 catch {
@@ -500,7 +502,8 @@ struct SecuritySettings: View {
                                 }
                             }
                         }
-                    if requireBiometrics { MacAutoLockRows() }
+                    // read-only in the demo: these are the real device settings
+                    if requireBiometrics { MacAutoLockRows().disabled(model.isDemo) }
                 }
                 #endif
                 LabeledContent("Datei") { Text(vaultPath).sensitive() } // the path names the user
