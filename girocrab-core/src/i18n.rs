@@ -1086,6 +1086,9 @@ fn english(de: &str) -> Option<&'static str> {
             "Wrong password, or the key file was modified."
         }
         "Ungültige gespeicherte Schlüsseldatei." => "Invalid stored key file.",
+        "Diese Bank bietet kein FinTS mehr an. Über diesen Zugang lassen sich keine Konten abrufen." => {
+            "This bank no longer offers FinTS. No accounts can be fetched through this login."
+        }
         "RAH-10-Nachricht unvollständig oder kryptografisch nicht verifiziert." => {
             "RAH-10 message incomplete or not cryptographically verified."
         }

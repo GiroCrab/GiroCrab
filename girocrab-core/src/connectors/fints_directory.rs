@@ -133,6 +133,28 @@ pub fn url_for_blz(blz: &str) -> Option<&'static str> {
     find(blz).map(|e| e.2)
 }
 
+/// Bank codes that offer no FinTS any more and are therefore missing from the
+/// directory, with the host earlier directory versions handed out for them: the
+/// Wüstenrot Bank AG Pfandbriefbank merged into the Oldenburgische Landesbank on
+/// 29.11.2019, its customers got new IBANs there and `fints.wuestenrot.de` no
+/// longer resolves (#2020).
+const FINTS_DISCONTINUED: &[(&str, &str)] = &[
+    ("60420000", "fints.wuestenrot.de"),
+    ("60420020", "fints1.atruvia.de"),
+];
+
+/// No FinTS to reach for `blz` at `url`: the bank shut down its FinTS access (see
+/// [`FINTS_DISCONTINUED`]) and `url` is empty or on the host the directory used
+/// to hand out (a login from the bank list or an import stored it). Another
+/// address set by hand is still tried.
+pub fn fints_discontinued(blz: &str, url: &str) -> bool {
+    let url = url.trim();
+    FINTS_DISCONTINUED.iter().any(|(code, host)| {
+        *code == blz.trim()
+            && (url.is_empty() || url::Url::parse(url).is_ok_and(|u| u.host_str() == Some(host)))
+    })
+}
+
 /// Endpoints earlier directory versions handed out that the bank has moved on from
 /// (apoBank left Atruvia in 2020, #1385; the Sparkassen host hs5 of 1822direkt no
 /// longer resolves; flatex switched from its former "biw Bank" host to
@@ -419,6 +441,31 @@ mod tests {
         );
         for (blz, url) in RETIRED_URLS {
             assert!(url_for_blz(blz).is_some_and(|u| u != *url), "{blz}");
+        }
+    }
+
+    /// #2020: an empty address or the one the directory used to hand out leads
+    /// nowhere; Atruvia still serves the other banks, an own address is tried.
+    #[test]
+    fn discontinued_banks_only_with_their_old_address() {
+        const ATRUVIA: &str = "https://fints1.atruvia.de/cgi-bin/hbciservlet";
+        for url in [
+            "",
+            " ",
+            "https://fints.wuestenrot.de",
+            "https://FINTS.wuestenrot.de/x",
+        ] {
+            assert!(fints_discontinued("60420000", url), "{url}");
+        }
+        assert!(fints_discontinued("60420020", ATRUVIA));
+        assert!(!fints_discontinued(
+            "60420000",
+            "https://example.invalid/fints"
+        ));
+        assert!(!fints_discontinued("66090800", ATRUVIA));
+        assert!(!fints_discontinued("66090800", ""));
+        for (blz, _) in FINTS_DISCONTINUED {
+            assert_eq!(url_for_blz(blz), None, "{blz}");
         }
     }
 
