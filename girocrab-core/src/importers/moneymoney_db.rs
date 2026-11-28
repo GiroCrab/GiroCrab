@@ -2793,8 +2793,11 @@ fn replaces_starter_categories(conn: &Connection, src: &Source) -> CoreResult<bo
     if src.categories.order.is_empty() {
         return Ok(false);
     }
+    // A deleted booking (or a split of one) with a category counts too: the
+    // wipe would clear it, and the import may revive its account (#1992).
     let bookings: i64 = conn.query_row(
-        "SELECT count(*) FROM transactions WHERE deleted_ms IS NULL",
+        "SELECT EXISTS(SELECT 1 FROM transactions WHERE deleted_ms IS NULL OR category_id IS NOT NULL)
+              + EXISTS(SELECT 1 FROM transaction_splits WHERE category_id IS NOT NULL)",
         [],
         |r| r.get(0),
     )?;
