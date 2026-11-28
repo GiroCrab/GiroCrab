@@ -208,7 +208,6 @@ final class AdvanziaWorkflow {
                 model.logSync(connectionID: connection.id, source: .statements, outcome: completed ? outcome : .cancelled,
                               message: statementResult(added: added, failed: failed))
                 if added > 0 { model.documentsVersion += 1 }
-                model.mirrorDocumentsIfEnabled()
             }
         }
         do {
