@@ -29,8 +29,8 @@ Rectangle {
     Keys.onPressed: e => {
         if (AppModel.screenshotMode || AppModel.selectedBooking === null) return
         const b = AppModel.selectedBooking
-        // Strg+C copies the selected booking (Bearbeiten › Kopieren)
-        if (e.matches(StandardKey.Copy)) { AppModel.copyToClipboard(AppModel.clipboardLine(b)); e.accepted = true; return }
+        // Strg+C copies the selected booking (Bearbeiten › Kopieren); not in privacy mode (039a8b97)
+        if (e.matches(StandardKey.Copy)) { if (AppModel.allowsBookingCopy) AppModel.copyToClipboard(AppModel.clipboardLine(b)); e.accepted = true; return }
         if (e.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
         // C: categorise, R: rule for this merchant
         if (e.key === Qt.Key_C) { AppModel.showCategorizer = true; e.accepted = true }
@@ -716,8 +716,8 @@ Rectangle {
                    onTriggered: AppModel.openTransferFrom(stream.menuBooking) }
         AppMenuItem { text: qsTr("Als Dauerauftrag anlegen …"); icon.name: SF.icon("repeat"); enabled: Payments.canMakeStandingOrder(stream.menuBooking)
                    onTriggered: Payments.openStandingOrder("fromBooking", stream.menuBooking) }
-        AppMenuItem { text: qsTr("Umsatz kopieren"); icon.name: SF.icon("doc.on.doc")
-                   onTriggered: AppModel.copyToClipboard(AppModel.clipboardLine(stream.menuBooking)) }
+        AppMenuItem { text: qsTr("Umsatz kopieren"); icon.name: SF.icon("doc.on.doc"); enabled: AppModel.allowsBookingCopy
+                   onTriggered: if (AppModel.allowsBookingCopy) AppModel.copyToClipboard(AppModel.clipboardLine(stream.menuBooking)) }
         // exportMenuButton(for:)
         AppMenuItem {
             readonly property int count: AppModel.isMultiSelection && stream.menuBooking !== null && !!AppModel.selectedBookingIDs[stream.menuBooking.id]

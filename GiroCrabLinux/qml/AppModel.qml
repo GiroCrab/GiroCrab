@@ -1475,12 +1475,16 @@ QtObject {
         return d === "" ? a.name : a.name + " · " + d
     }
     /// Combo box entries: "Alle Konten", then each section title and its accounts (`label(a)`).
+    /// `withoutAccount` ("Belege & Postbox", documentsAccountSections): archived accounts are left
+    /// out (#2015), except the one currently selected (`documentsAccountFilter`).
     function accountMenuOptions(label, withoutAccount) {
         const out = [{ id: null, title: qsTr("Alle Konten") }]
         if (withoutAccount) out.push({ id: documentsWithoutAccount, title: qsTr("Ohne Konto") })
         for (const s of accountMenuSections) {
+            const accounts = withoutAccount ? s.accounts.filter(a => a.id === documentsAccountFilter || a.archived_unix === null) : s.accounts
+            if (!accounts.length) continue
             out.push({ id: undefined, title: s.title, header: true })
-            for (const a of s.accounts) out.push({ id: a.id, title: label(a) })
+            for (const a of accounts) out.push({ id: a.id, title: label(a) })
         }
         return out
     }
@@ -4233,6 +4237,9 @@ QtObject {
     readonly property int redaction: reportRedaction | launchRedaction | PrivacyMode.redaction
     /// `ReportRedaction.effective`: what is actually hidden, `.personal` implies `.amounts`.
     readonly property int effectiveRedaction: (redaction & redactPersonal) !== 0 ? redaction | redactAmounts : redaction
+    /// `ReportRedaction.allowsBookingCopy`: the booking list's copy commands export the original
+    /// values, so they are off while anything is hidden (privacy mode, bug report screenshot).
+    readonly property bool allowsBookingCopy: redaction === 0
     /// `ReportRedaction.masking(_:_:)`: `text`, or the placeholder while `kind` (default
     /// personal) is hidden – for tooltips and other parameter texts with names or amounts.
     function masking(text, kind) {
