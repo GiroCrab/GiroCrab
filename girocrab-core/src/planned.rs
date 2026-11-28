@@ -14,7 +14,7 @@ use crate::vault::Vault;
 
 /// Step 17: scheduled transfers sent to the bank. `end_to_end_id` is the merge
 /// key. Rows stay until the execution date has passed or a fetched booking
-/// settles them ([`drop_booked`], #1881). Idempotent like the steps before.
+/// settles them ([`drop_booked`], #1881; marked in `settled_ms` since step 43, #1900). Idempotent like the steps before.
 pub(crate) fn planned_transfers(conn: &Connection) -> CoreResult<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS planned_transfers (
@@ -207,7 +207,7 @@ impl Vault {
             "SELECT p.id, p.account_id, a.name, p.execution_date, p.recipient_name,
                     p.recipient_iban, p.amount_cents, p.purpose, p.kind
              FROM planned_transfers p JOIN accounts a ON a.id = p.account_id
-             WHERE a.deleted_ms IS NULL AND p.execution_date >= ?1
+             WHERE a.deleted_ms IS NULL AND p.settled_ms IS NULL AND p.execution_date >= ?1
                AND (?2 IS NULL OR p.execution_date <= ?2)
              ORDER BY p.execution_date, p.id",
         )?;
@@ -263,7 +263,7 @@ impl Vault {
         let db = self.db()?;
         let n: i64 = db.query_row(
             "SELECT count(*) FROM planned_transfers p JOIN accounts a ON a.id = p.account_id
-             WHERE a.deleted_ms IS NULL AND p.execution_date >= ?1",
+             WHERE a.deleted_ms IS NULL AND p.settled_ms IS NULL AND p.execution_date >= ?1",
             [today()],
             |r| r.get(0),
         )?;
@@ -295,7 +295,7 @@ impl Vault {
                     coalesce(sum(CASE WHEN p.kind = 'debit' THEN 0 ELSE p.amount_cents END), 0),
                     coalesce(sum(CASE WHEN p.kind = 'debit' THEN p.amount_cents ELSE 0 END), 0)
              FROM planned_transfers p JOIN accounts a ON a.id = p.account_id
-             WHERE a.deleted_ms IS NULL AND p.execution_date >= ?1
+             WHERE a.deleted_ms IS NULL AND p.settled_ms IS NULL AND p.execution_date >= ?1
                AND (?2 IS NULL OR p.execution_date <= ?2){filter}"
         );
         let db = self.db()?;
@@ -327,7 +327,8 @@ impl Vault {
     }
 }
 
-/// Removes the planned payments of `account_id` the bank has booked by now (#1881): the
+/// Marks the planned payments of `account_id` the bank has booked by now as settled (#1881,
+/// #1900; `settled_ms`, the row stays so a vault merge cannot bring the order back): the
 /// same amount, booked on or after the day the order was placed. Only orders with an
 /// execution date from today on are matched; among those the earliest execution date goes
 /// first, so an order already past its date cannot take the booking of a listed one.
@@ -359,7 +360,8 @@ pub(crate) fn drop_booked(
         "SELECT id, recipient_iban, amount_cents, kind,
                 date(created_ms / 1000, 'unixepoch', 'localtime'),
                 COALESCE(end_to_end_id, '')
-         FROM planned_transfers WHERE account_id = ?1 AND execution_date >= ?2
+         FROM planned_transfers
+         WHERE account_id = ?1 AND settled_ms IS NULL AND execution_date >= ?2
          ORDER BY execution_date, id",
     )?;
     let orders: Vec<Order> = q
@@ -378,6 +380,7 @@ pub(crate) fn drop_booked(
     if orders.is_empty() {
         return Ok(());
     }
+    let now_ms = crate::dates::now_ms();
     let norm = |s: &str| s.split_whitespace().collect::<String>().to_uppercase();
     // SEPA's placeholder for "no end-to-end id" counts as none
     let ref_id = |s: &str| {
@@ -429,7 +432,10 @@ pub(crate) fn drop_booked(
             });
             if let Some((tid, _, _)) = hit {
                 used.insert(*tid);
-                db.execute("DELETE FROM planned_transfers WHERE id = ?1", [order.id])?;
+                db.execute(
+                    "UPDATE planned_transfers SET settled_ms = ?2 WHERE id = ?1",
+                    params![order.id, now_ms],
+                )?;
             } else {
                 left.push(order);
             }
@@ -440,7 +446,8 @@ pub(crate) fn drop_booked(
 }
 
 /// Vault merge: adds the other vault's scheduled transfers we do not have yet
-/// (by `end_to_end_id`); account ids are mapped.
+/// (by `end_to_end_id`); account ids are mapped. Settled wins (#1900): an order either side
+/// has settled stays settled, so it does not come back from the other vault.
 pub(crate) fn merge_attached(
     conn: &Connection,
     acc_map: &std::collections::HashMap<i64, i64>,
@@ -449,6 +456,11 @@ pub(crate) fn merge_attached(
         return Ok(());
     }
     let has_kind = has_column(conn, "other", "planned_transfers", "kind")?;
+    let settled_col = if has_column(conn, "other", "planned_transfers", "settled_ms")? {
+        "settled_ms"
+    } else {
+        "NULL"
+    };
     let rows: Vec<(
         i64,
         String,
@@ -459,16 +471,14 @@ pub(crate) fn merge_attached(
         String,
         i64,
         String,
+        Option<i64>,
     )> = {
-        let mut q = conn.prepare(if has_kind {
+        let kind_col = if has_kind { "kind" } else { "'transfer'" };
+        let mut q = conn.prepare(&format!(
             "SELECT account_id, end_to_end_id, execution_date, recipient_name, recipient_iban,
-                    amount_cents, purpose, created_ms, kind
+                    amount_cents, purpose, created_ms, {kind_col}, {settled_col}
              FROM other.planned_transfers"
-        } else {
-            "SELECT account_id, end_to_end_id, execution_date, recipient_name, recipient_iban,
-                    amount_cents, purpose, created_ms, 'transfer'
-             FROM other.planned_transfers"
-        })?;
+        ))?;
         let it = q.query_map([], |r| {
             Ok((
                 r.get(0)?,
@@ -480,19 +490,25 @@ pub(crate) fn merge_attached(
                 r.get(6)?,
                 r.get(7)?,
                 r.get(8)?,
+                r.get(9)?,
             ))
         })?;
         it.collect::<Result<_, _>>()?
     };
-    for (acc, e2e, date, name, iban, cents, purpose, created, kind) in rows {
+    for (acc, e2e, date, name, iban, cents, purpose, created, kind, settled) in rows {
         let Some(&mine) = acc_map.get(&acc) else {
             continue;
         };
         conn.execute(
-            "INSERT OR IGNORE INTO planned_transfers(account_id, end_to_end_id, execution_date,
-                    recipient_name, recipient_iban, amount_cents, purpose, created_ms, kind)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![mine, e2e, date, name, iban, cents, purpose, created, kind],
+            "INSERT INTO planned_transfers(account_id, end_to_end_id, execution_date,
+                    recipient_name, recipient_iban, amount_cents, purpose, created_ms, kind,
+                    settled_ms)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+             ON CONFLICT(end_to_end_id) DO UPDATE SET
+                settled_ms = coalesce(planned_transfers.settled_ms, excluded.settled_ms)",
+            params![
+                mine, e2e, date, name, iban, cents, purpose, created, kind, settled
+            ],
         )?;
     }
     Ok(())
