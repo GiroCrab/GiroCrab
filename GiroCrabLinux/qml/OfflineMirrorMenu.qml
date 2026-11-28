@@ -2,12 +2,13 @@ import QtQuick
 import QtQuick.Controls
 
 // OfflineAccountsUI.swift › OfflineBookingMenu: "In Offline-Konto spiegeln" – one entry per offline
-// account other than the booking's own (#679). A one-time copy with the amount reversed, no category.
+// account other than the booking's own (#679). A one-time copy with the amount reversed, no category;
+// an offline loan (#1981) only for an outgoing booking in its currency, via "Tilgung übernehmen".
 AppMenu {
     id: menu
     property var booking: null
     /// The offline accounts the booking can go to; the context menu leaves the submenu out without any.
-    readonly property var targets: booking ? OfflineAccounts.offlineAccounts.filter(a => a.id !== booking.account_id) : []
+    readonly property var targets: OfflineAccounts.mirrorTargets(booking)
     title: qsTr("In Offline-Konto spiegeln")
     icon.name: SF.icon("arrow.left.arrow.right")
 

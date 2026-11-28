@@ -1873,6 +1873,9 @@ vault_methods! {
     save_manual_booking(account_id, booking_id, setup) delete_manual_booking(booking_id)
     mirror_booking_to_offline_account(booking_id, account_id)
     correct_offline_balance(account_id, target_cents)
+    // Offline-Darlehen mit manueller Tilgung (#1981)
+    create_offline_loan(name, currency, original_cents, remaining_cents)
+    mirror_offline_loan_payment(booking_id, account_id, principal_cents)
     // --- Geplante Zahlungen (AppModel+Planned, PlannedPaymentsView) ---
     list_planned_payments(from, to, account_ids) planned_payment_totals(from, to, account_ids)
     // --- Daueraufträge (AppModel+StandingOrders, StandingOrderSheet) ---
@@ -3250,6 +3253,90 @@ mod tests {
         );
         call("delete_manual_booking", json!({ "booking_id": booking }));
         assert_eq!(balance(&id), 10400);
+        drop(v);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Offline-Darlehen (#1981, OfflineAccounts.qml): create a loan with original amount and
+    /// remaining debt, take over the principal of a payment once – the debt goes down by it.
+    #[test]
+    fn offline_loan_calls() {
+        let path = std::env::temp_dir().join(format!(
+            "girocrab-offline-loan-{}.girocrab",
+            std::process::id()
+        ));
+        let v = Vault::open(path.display().to_string(), vec![6; 32]).unwrap();
+        v.seed_demo_data().unwrap();
+        let call = |m: &str, a: Value| {
+            dispatch_vault(&v, m, &a)
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{m}: {e}"))
+        };
+        let account = |id: &Value| {
+            call("list_accounts", json!({}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| &a["id"] == id)
+                .unwrap()
+                .clone()
+        };
+        let id = call(
+            "create_offline_loan",
+            json!({ "name": "Autokredit", "currency": "EUR", "original_cents": 2_000_000,
+                    "remaining_cents": 1_500_000 }),
+        );
+        assert!(
+            call("list_offline_account_ids", json!({}))
+                .as_array()
+                .unwrap()
+                .contains(&id)
+        );
+        let loan = account(&id);
+        assert_eq!(loan["kind"], json!("Loan"));
+        assert_eq!(loan["balance_cents"], json!(-1_500_000));
+        assert_eq!(loan["initial_balance_cents"], json!(2_000_000));
+        // an outgoing EUR booking of another account: only the principal lowers the debt
+        let payment = call(
+            "list_transactions",
+            json!({ "filter": {
+            "account_ids": [], "category_id": null, "include_subcategories": true,
+            "uncategorized_only": false, "search": null, "date_from": null, "date_to": null,
+            "limit": 50, "offset": 0, "scope": "All", "merchant_key": null, "direction": "Expense",
+            "checked": null, "whole_days": true, "amount_min_cents": null,
+            "amount_max_cents": null, "with_balances": false } }),
+        )["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| {
+                t["amount_cents"].as_i64().unwrap() <= -100
+                    && matches!(t["currency"].as_str(), Some("" | "EUR") | None)
+                    && account(&t["account_id"])["currency"] == json!("EUR")
+            })
+            .unwrap()
+            .clone();
+        let args = json!({ "booking_id": payment["id"], "account_id": id, "principal_cents": 100 });
+        assert!(call("mirror_offline_loan_payment", args.clone()).is_i64());
+        assert_eq!(account(&id)["balance_cents"], json!(-1_499_900));
+        // the same payment counts once per loan
+        assert!(
+            dispatch_vault(&v, "mirror_offline_loan_payment", &args)
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(account(&id)["balance_cents"], json!(-1_499_900));
+        // more than the payment is refused
+        let too_much = -payment["amount_cents"].as_i64().unwrap() + 1;
+        assert!(
+            dispatch_vault(
+                &v,
+                "mirror_offline_loan_payment",
+                &json!({ "booking_id": payment["id"], "account_id": id, "principal_cents": too_much }),
+            )
+            .unwrap()
+            .is_err()
+        );
         drop(v);
         let _ = std::fs::remove_file(&path);
     }
