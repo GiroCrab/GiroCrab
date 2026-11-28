@@ -262,6 +262,7 @@ final class ConnectionAutoSyncTests: XCTestCase {
         }
         model.useVault(vault, demo: true)
         model.demoActive = false
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
         let connection = try XCTUnwrap(model.connections.first { $0.id == id })
         let challenge = Challenge(kind: .decoupledPush, title: "Freigabe", message: "Bitte freigeben",
                                   methodName: "App", redirectUrl: nil, image: nil,
