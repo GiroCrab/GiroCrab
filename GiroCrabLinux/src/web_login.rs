@@ -72,6 +72,9 @@ pub fn handles(method: &str) -> bool {
             | "import_equateplus_document"
             | "advanzia_profile"
             | "import_advanzia_capture"
+            | "advanzia_statements_enabled"
+            | "pending_advanzia_statements"
+            | "import_advanzia_statement"
     )
 }
 
@@ -293,6 +296,34 @@ pub fn call(method: &str, a: &Value, vault: fn() -> Result<Arc<Vault>, String>) 
                 arg(a, "target_account_id")?,
             )
             .map_err(|e| invalid_input_json(&e))?),
+        "advanzia_statements_enabled" => ok(vault()?
+            .advanzia_statements_enabled(
+                id()?,
+                arg(a, "bank_account_id")?,
+                arg(a, "profile_id")?,
+                arg(a, "target_account_id")?,
+            )
+            .map_err(err)?),
+        "pending_advanzia_statements" => ok(vault()?
+            .pending_advanzia_statements(
+                id()?,
+                arg(a, "bank_account_id")?,
+                arg(a, "profile_id")?,
+                arg(a, "target_account_id")?,
+                arg(a, "listing")?,
+                arg(a, "months")?,
+            )
+            .map_err(err)?),
+        "import_advanzia_statement" => ok(vault()?
+            .import_advanzia_statement(
+                id()?,
+                arg(a, "bank_account_id")?,
+                arg(a, "profile_id")?,
+                arg(a, "target_account_id")?,
+                arg(a, "statement")?,
+                arg(a, "pdf")?,
+            )
+            .map_err(err)?),
         _ => Err(format!("unknown core method `{method}`")),
     }
 }

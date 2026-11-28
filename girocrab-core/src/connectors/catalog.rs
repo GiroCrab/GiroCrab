@@ -514,9 +514,13 @@ pub const BANK_MATRIX: &[MatrixEntry] = &[
         kind: Some(ConnectorKind::Advanzia),
         interface: Interface::WebPortal,
         official: Some(false),
-        capabilities: &[Capability::Transactions, Capability::Balances],
+        capabilities: &[
+            Capability::Transactions,
+            Capability::Balances,
+            Capability::Documents,
+        ],
         status: Status::TestingWanted,
-        issues: &[177],
+        issues: &[177, 1975],
     },
     MatrixEntry {
         name: "Volksbank Kassel Göttingen",

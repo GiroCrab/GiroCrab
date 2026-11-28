@@ -46,6 +46,7 @@ struct AdvanziaPrompt: View {
         case .app: return String(localized: "Bitte die Anmeldung in der Advanzia-App bestätigen. Danach läuft der Abruf automatisch weiter.")
         case .authorizing: return String(localized: "Die SMS-Freigabe wird geprüft …")
         case .importing: return String(localized: "Advanzia-Umsätze und Bankkontostand werden übernommen …")
+        case .statements: return String(localized: "Kontoauszüge werden geladen …")
         case .failed: return String(localized: "Der Advanzia-Abruf benötigt Ihre Aufmerksamkeit.")
         case .finished: return String(localized: "Advanzia-Abruf abgeschlossen.")
         }
@@ -89,7 +90,7 @@ struct AdvanziaPrompt: View {
                 AdvanziaWebHost(browser: browser).sensitive().macFrame(minWidth: 760, minHeight: 480)
                 Text("Zugangsdaten und Freigabeverfahren ändern Sie unter „Bankzugang bearbeiten“.")
                     .appFont(.caption).foregroundStyle(.secondary)
-            } else if flow.phase == .app || flow.phase == .authorizing || flow.phase == .importing {
+            } else if flow.phase == .app || flow.phase == .authorizing || flow.phase == .importing || flow.phase == .statements {
                 ProgressView().controlSize(.small)
             }
             HStack {

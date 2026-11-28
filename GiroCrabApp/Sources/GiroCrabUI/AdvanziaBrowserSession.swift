@@ -117,6 +117,21 @@ final class AdvanziaBrowserSession: AdvanziaSessionDriving {
         browser.webView.evaluateJavaScript("window.__gcAdvanzia?.cancel()", completionHandler: nil)
         browser.teardown()
     }
+    static let statementScript = "if(location.origin !== 'https://mein.advanzia.com' || !window.__gcAdvanzia) return {error:'AUTH'}; return await window.__gcAdvanzia.statement(account, statementID || null);"
+
+    static func statementResponse(browser: PortalBrowser, account: String, document: String = "") async throws -> String {
+        guard AdvanziaSecurity.isPortalURL(browser.currentURL) else { throw AdvanziaBrowserError(code: "AUTH") }
+        let value = try await browser.webView.callAsyncJavaScript(statementScript,
+            arguments: ["account": account, "statementID": document], in: nil, contentWorld: .page)
+        try Task.checkCancellation()
+        guard let fields = value as? [String: Any] else { throw AdvanziaBrowserError(code: "SCHEMA") }
+        if let code = fields["error"] as? String { throw AdvanziaBrowserError(code: code) }
+        guard let response = fields[document.isEmpty ? "listing" : "pdf"] as? String else {
+            throw AdvanziaBrowserError(code: "SCHEMA")
+        }
+        return response
+    }
+
     func collect() async throws -> AdvanziaCapture {
         guard ready, !accountConflict, let accountID, AdvanziaSecurity.isPortalURL(browser.currentURL) else { throw AdvanziaBrowserError(code: "ACCOUNT") }
         let script = "if(location.origin !== 'https://mein.advanzia.com' || !window.__gcAdvanzia) return {error:'AUTH'}; return await window.__gcAdvanzia.collect(account);"

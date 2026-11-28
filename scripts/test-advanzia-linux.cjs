@@ -24,6 +24,7 @@ test('the Linux flow runs exactly the scripts of the Swift files', () => {
     discover: session.match(/let script = "([^"\n]*discover\(\)[^"\n]*)"/)[1],
     openTransactions: session.match(/callAsyncJavaScript\("([^"\n]*openTransactions\(\)[^"\n]*)"/)[1],
     collect: session.match(/let script = "([^"\n]*\.collect\(account\);)"/)[1],
+    statementScript: session.match(/static let statementScript = "([^"\n]*)"/)[1],
     cancelScript: session.match(/evaluateJavaScript\("([^"\n]*cancel\(\))"/)[1],
   };
   assert.deepEqual(Object.keys(linux).sort(), Object.keys(expected).sort());
@@ -83,4 +84,40 @@ test('the hook stays out of other origins, and inspect reports only a state', as
     {location: {origin}, document: {querySelectorAll: s => s === 'input' ? [field] : []}});
   assert.equal(inspect('https://id.advanzia.com'), 'sms');
   assert.equal(inspect('https://evil.invalid'), 'unknown');
+});
+
+test('PDF failures do not replace a successful capture or prevent saving the next PDF', async () => {
+  const recorded = [];
+  const ctx = {
+    generation: 1, phase: 'importing', accountID: id,
+    connection: {id: 42}, profile: {profile_id: 'fictional'},
+    statementRequest: null, statementScript: linux.statementScript,
+    qsTr: s => ({arg: n => s.replace('%1', n), toString: () => s}),
+    close: success => recorded.push(['close', success]),
+    browser: {
+      async runAsync(script, args) {
+        recorded.push(['browser', args.account, args.statementID]);
+        return args.statementID === 'bad' ? {error:'SCHEMA'}
+          : args.statementID === '' ? {listing:'fictional list'} : {pdf:'fictional PDF'};
+      }
+    },
+    AppModel: {
+      documentsVersion: 0,
+      async corePromise(method, args) {
+        assert.equal(args.connection_id, 42);
+        assert.equal(args.bank_account_id, id);
+        recorded.push([method, args.months ?? args.statement?.id]);
+        if (method === 'pending_advanzia_statements') return [{id:'bad'}, {id:'good'}];
+        return true;
+      }
+    }
+  };
+  const finish = qml.slice(qml.indexOf('    function finishStatements('), qml.indexOf('    function fail(message)'));
+  await vm.runInNewContext(finish + '\nfinishStatements("Umsätze übernommen")', ctx);
+  assert.equal(ctx.AppModel.documentsVersion, 1);
+  assert.match(ctx.AppModel.toast, /^Umsätze übernommen .*1 neue Kontoauszüge .*1 Kontoauszüge konnten nicht geladen werden/);
+  assert.deepEqual(recorded.filter(r => r[0] !== 'browser'), [
+    ['advanzia_statements_enabled', undefined], ['pending_advanzia_statements', 24],
+    ['import_advanzia_statement', 'good'], ['close', true],
+  ]);
 });

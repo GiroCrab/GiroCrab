@@ -6,13 +6,15 @@ const source = fs.readFileSync('GiroCrabApp/Sources/GiroCrabUI/AdvanziaScripts.s
 const hook = source.match(/static let hook = #"""\n([\s\S]*?)\n    """#/)[1];
 const id = '00000000-0000-4000-8000-000000000001';
 const base = '/api/accounts/' + id;
-function environment({origin='https://mein.advanzia.com',status=200,balance=-12.34,accountId=id,currency='EUR'}={}) {
+function environment({origin='https://mein.advanzia.com',status=200,balance=-12.34,accountId=id,currency='EUR',statementResponse}={}) {
     const calls = [];
-    const context = {location:{origin,href:origin+'/'}, URL,Request,Response,TextDecoder,AbortController,setTimeout,clearTimeout,
+    const context = {location:{origin,href:origin+'/'}, URL,Request,Response,TextDecoder,AbortController,btoa,setTimeout,clearTimeout,
         performance:{getEntriesByType:()=>[{name:'https://mein.advanzia.com'+base+'/transactions'}]},
         XMLHttpRequest:class {open() {}},
         fetch:async (url,options)=>{
             calls.push([url,options]);
+            if (url.startsWith(base + '/statements') && statementResponse)
+                return statementResponse(url, options);
             const data=String(url).endsWith('/details')?{balance,accountId,currency,privateField:'invented-private-value'}:{transactions:[]};
             return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
         }};
@@ -52,6 +54,58 @@ function environment({origin='https://mein.advanzia.com',status=200,balance=-12.
     for(const origin of ['https://id.advanzia.com','https://mein.advanzia.com.evil.invalid','http://mein.advanzia.com']) {
         e=environment({origin});assert.equal(e.context.__gcAdvanzia,undefined);assert.equal(e.calls.length,0);
     }
+
+    const documentID = '00000000-0000-4000-8000-000000000022';
+    const statementPath = base + '/statements';
+    const pdf = Buffer.concat([Buffer.from('%PDF-1.7'), Buffer.alloc(50000, 0xf1)]);
+    const jsonHeaders = {'content-type':'application/json; charset=utf-8'};
+    const pdfHeaders = {'content-type':'application/pdf'};
+    const listed = {statementId:documentID,fileReference:'fictional.pdf',forYear:2025,forMonth:2};
+    e=environment({statementResponse:url => url === statementPath
+        ? new Response(JSON.stringify([{...listed,other:'not exported'}]),{headers:jsonHeaders})
+        : new Response(pdf,{headers:pdfHeaders})});
+    let result = await e.context.__gcAdvanzia.statement(id, null);
+    assert.deepEqual(JSON.parse(result.listing), [listed]);
+    result = await e.context.__gcAdvanzia.statement(id, documentID);
+    assert.deepEqual(Buffer.from(result.pdf,'base64'), pdf);
+    assert.deepEqual(e.calls.map(x=>x[0]), [statementPath, statementPath+'/'+documentID]);
+    for (const [,options] of e.calls) {
+        assert.equal(options.method,'GET');
+        assert.equal(options.credentials,'same-origin');
+        assert.equal(options.redirect,'error');
+        assert.equal(options.cache,'no-store');
+        assert.equal(options.headers,undefined);
+    }
+    for (const [body,options,code] of [
+        ['HTML',{headers:{'content-type':'text/html'}},'SCHEMA'],
+        ['HTML',{headers:pdfHeaders},'SCHEMA'],
+        [pdf,{status:206,headers:pdfHeaders},'HTTP'],
+        [pdf,{status:403,headers:pdfHeaders},'AUTH'],
+        [pdf,{headers:{...pdfHeaders,'content-length':String(9*1024*1024)}},'SIZE'],
+        [Buffer.alloc(8*1024*1024+1),{headers:pdfHeaders},'SIZE'],
+    ]) {
+        e=environment({statementResponse:()=>new Response(body,options)});
+        assert.equal((await e.context.__gcAdvanzia.statement(id,documentID)).error,code);
+    }
+    for (const body of ['invalid json','{}',JSON.stringify([{...listed,statementId:'../statement'}])]) {
+        e=environment({statementResponse:()=>new Response(body,{headers:jsonHeaders})});
+        assert.equal((await e.context.__gcAdvanzia.statement(id,null)).listing,undefined);
+    }
+    e=environment({statementResponse:()=>new Response('[]',{headers:jsonHeaders})});
+    e.context.performance.getEntriesByType=()=>[
+        {name:'https://mein.advanzia.com'+base+'/details'},
+        {name:'https://mein.advanzia.com/api/accounts/'+documentID+'/details'},
+    ];
+    assert.equal((await e.context.__gcAdvanzia.statement(id,'../pdf')).error,'ACCOUNT');
+    e.context.__gcAdvanzia.discover();
+    assert.equal((await e.context.__gcAdvanzia.statement(id,null)).error,'ACCOUNT');
+    assert.equal(e.calls.length,0);
+    e=environment({statementResponse:(_,options)=>new Promise((_,reject)=>
+        options.signal.addEventListener('abort',()=>reject(Error('cancelled')),{once:true}))});
+    const outstanding=e.context.__gcAdvanzia.statement(id,documentID);
+    e.context.__gcAdvanzia.cancel();
+    assert.equal((await outstanding).error,'TIMEOUT');
+
     const loginSource=fs.readFileSync('GiroCrabApp/Sources/GiroCrabUI/AdvanziaLoginAutomation.swift','utf8');
     const methodScript=loginSource.match(/static let method = #"""\n([\s\S]*?)\n    """#/)[1];
     function option(text) {return {textContent:text,children:[],disabled:false,clicked:0,

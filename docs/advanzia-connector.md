@@ -18,9 +18,11 @@ auf der Karte. Andere Advanzia-Portale sind nicht abgedeckt.
 - Explizit zugeordnetes Kreditkartenkonto, Bankkontostand und Kartenumsätze.
 - Stabile Buchungskennungen und konservative Behandlung von Vormerkungen.
 
-PDF-Monatsabrechnungen und mehrere Karten innerhalb eines Logins gehören nicht
-zu diesem Stand. Die Browseroberfläche ist für macOS und iOS implementiert;
-die übrigen Oberflächen bekommen dadurch noch keinen Advanzia-Anmeldeablauf.
+- PDF-Monatsabrechnungen beim regulären Abruf und manuell unter
+  „Dokumente / Kontoauszüge“ auf macOS, iOS und Linux.
+
+Der Zugang unterstützt eine Karte pro Login. macOS und iOS nutzen WebKit,
+Linux das sichtbare Qt-WebEngine-Fenster mit manueller Bank-Anmeldung.
 Der Konnektor bleibt in der Bankmatrix als `TestingWanted` gekennzeichnet.
 
 ## Architektur und Sicherheitsgrenzen
@@ -76,6 +78,37 @@ zusammengeführt. Eine bestehende Kategorie der gebuchten Zeile wird nicht
 überschrieben. Splits oder Dokumente verhindern die automatische Ablösung.
 Mehrdeutige Fälle bleiben zur Prüfung sichtbar. Alle Änderungen erfolgen in
 derselben Importtransaktion.
+
+## PDF-Monatsabrechnungen (#1975)
+
+Der reguläre Abruf übernimmt nach Saldo und Umsätzen fehlende PDFs aus dem
+aktuellen Kalendermonat und den 23 Vormonaten. Manuell stehen „Letzte 12 Monate“
+und „Alle Kontoauszüge laden“ zur Auswahl. Die Historie endet beim ältesten
+vom Portal gelieferten Dokument. Die Einstellung zum Dokumentenabruf des
+Bankzugangs gilt auch für Advanzia.
+
+Die Abrechnungsliste kommt aus `/api/accounts/{accountId}/statements`.
+Einzelne PDFs kommen aus demselben Pfad mit angehängter `statementId`.
+Beide Anfragen laufen in der vorhandenen Sitzung als Same-Origin-GET ohne
+Redirects. Die Browser-Bridge begrenzt die Liste auf 512 KiB bzw. 600 Einträge,
+und jedes PDF auf 8 MiB. Sie prüft HTTP-Status, MIME-Typ und PDF-Signatur.
+Der Core validiert die Daten erneut vor der Ablage. Der Abruf verwendet
+das bestätigte Konto und die vorhandene Dokumentenablage des Tresors.
+
+Jahr und Monat werden als letzter Kalendertag des Abrechnungsmonats gespeichert.
+Die Bank liefert keinen genauen Abschlusstag. Der Core erkennt vorhandene PDFs
+am Hash aus Konto-UUID, Abrechnungsmonat und Dateireferenz. So bleiben mehrere
+Dateireferenzen pro Monat erhalten und wechselnde Download-UUIDs verursachen
+keinen erneuten Download. Bei einer geänderten Dateireferenz kann das Portal
+dieselbe Abrechnung erneut liefern. Die Dateireferenz wird nur zur Wiedererkennung
+verwendet. Einzelne PDF-Fehler lassen bereits gespeicherte Abrechnungen sowie
+den Umsatz- und Saldoimport verfügbar.
+
+Die inoffizielle API wurde in einer angemeldeten Edge-Sitzung geprüft.
+Dabei waren 23 Monatsabrechnungen verfügbar und beide Stichproben hatten die
+erwartete PDF-Signatur. Maximale Historie, langfristige Stabilität der
+Dateireferenz und vollständige PDF-Integrität sind offen. Bank-Live-Tests
+in WebKit und Qt WebEngine stehen aus.
 
 ## Tests ohne Bankverbindung
 
