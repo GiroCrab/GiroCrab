@@ -84,6 +84,11 @@ final class DepotMetricsTests: XCTestCase {
         // asset class unknown (wealth view): a bond would be taken per unit, 100 × too large, so no basis
         XCTAssertEqual(HoldingFigures.priceBasis(share, isBond: nil), .unknown)
         XCTAssertNil(WealthPosition.aggregate([[share]]).first?.gainCents)
+        // in the depot an unclassified position counts as a share: single shares usually stay unclassified,
+        // and the worthless share must keep "Einstandskurs bearbeiten …" (a bond is set via the classification)
+        XCTAssertEqual(DepotPosition.make([asset(share, .unclassified)]).first?.basis, .perUnit)
+        XCTAssertEqual(HoldingFigures.gain(asset(share, .unclassified))?.cents, -120_00)
+        XCTAssertEqual(DepotPosition.make([asset(bond, .bond)]).first?.basis, .percentOfNominal)
         // nothing held: no basis
         var sold = share
         sold.quantity = 0
