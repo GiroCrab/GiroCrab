@@ -396,6 +396,7 @@ mod tests {
             id,
             parent_id: None,
             name: format!("c{id}"),
+            edit_name: format!("c{id}"),
             sf_symbol: String::new(),
             color_hex: String::new(),
             sort_order: 0,
