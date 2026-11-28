@@ -3735,7 +3735,7 @@ QtObject {
             accounts: accounts, banks: banks, category_paths: categories,
             total_bookings: accounts.reduce((s, a) => s + a.booking_count, 0),
             pending_bookings: 5, notes_count: 312, split_parts: 14,
-            date_range_start: "2009-04-01", date_range_end: "2026-11-09", replaces_starter_categories: true,
+            date_range_start: "2009-04-01", date_range_end: "2026-11-09", replaces_starter_categories: true, ambiguous_category_paths: [],
             database_path: "Finanzdaten.sqlite", statement_count: statements, statements_dir: "Statements",
             statements_found: statements, statements_bytes: 38400000, transfer_template_count: 4
         }

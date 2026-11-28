@@ -1022,6 +1022,33 @@ pub(crate) fn match_bank_without_counterparty(
     }
 }
 
+/// Live categories under `parent` named `name`, ignoring case for every
+/// letter (like the import's path keys, not only ASCII as SQLite's NOCASE);
+/// the exact spelling first, then by id. More than one is an ambiguous path
+/// (#1992).
+pub(crate) fn categories_named(
+    conn: &Connection,
+    parent: Option<i64>,
+    name: &str,
+) -> CoreResult<Vec<i64>> {
+    let want = name.to_lowercase();
+    let mut st = conn.prepare_cached(
+        "SELECT id, name FROM categories WHERE parent_id IS ?1 AND deleted_ms IS NULL
+          ORDER BY name = ?2 DESC, id",
+    )?;
+    let rows = st.query_map(params![parent, name], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, n) = row?;
+        if n.to_lowercase() == want {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn find_or_create_category(
     conn: &Connection,
     path: &[String],
@@ -1037,13 +1064,7 @@ pub(crate) fn find_or_create_category(
             parent = Some(*id);
             continue;
         }
-        let found: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM categories WHERE parent_id IS ?1 AND name = ?2 COLLATE NOCASE AND deleted_ms IS NULL",
-                params![parent, part],
-                |r| r.get(0),
-            )
-            .optional()?;
+        let found = categories_named(conn, parent, part)?.first().copied();
         let id = match found {
             Some(id) => {
                 // An imported path is user-owned even when it reuses a starter

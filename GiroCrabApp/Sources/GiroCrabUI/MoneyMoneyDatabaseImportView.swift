@@ -216,8 +216,15 @@ struct MoneyMoneyDatabaseImportView: View {
         switch step {
         case .source: return fileURL != nil && !loading
         case .accounts: return choices.values.contains(where: \.selected)
+        // the "Daten" section with the categories toggle is on this step
+        case .banks: return !categoriesAmbiguous
         default: return true
         }
+    }
+
+    /// Categories are to be imported, but some paths name no single category.
+    private var categoriesAmbiguous: Bool {
+        importCategories && !(preview?.ambiguousCategoryPaths.isEmpty ?? true)
     }
 
     private func next() {
@@ -391,8 +398,15 @@ struct MoneyMoneyDatabaseImportView: View {
         } header: {
             Text("Daten").appSectionHeader()
         } footer: {
-            if p.replacesStarterCategories && importCategories {
-                footerText("Die Kategorien ersetzen die GiroCrab-Startkategorien – Ihr Tresor enthält noch keine Buchungen.")
+            VStack(alignment: .leading, spacing: 6) {
+                if categoriesAmbiguous {
+                    // the import refuses them (#1992); category names are labels
+                    footerText("Nicht eindeutige Kategorien: \(p.ambiguousCategoryPaths.joined(separator: ", ")). Dort haben mehrere Kategorien denselben Namen, auch bei anderer Groß- und Kleinschreibung. Benennen Sie sie in GiroCrab oder in dem Programm, das die Datenbank erstellt hat, eindeutig um, oder übernehmen Sie die Kategorien nicht.")
+                        .sensitive(.labels)
+                }
+                if p.replacesStarterCategories && importCategories {
+                    footerText("Die Kategorien ersetzen die GiroCrab-Startkategorien – Ihr Tresor enthält noch keine Buchungen.")
+                }
             }
         }
     }
@@ -1173,7 +1187,7 @@ extension AppModel {
                                    totalBookings: accounts.reduce(0) { $0 + $1.bookingCount },
                                    pendingBookings: 5, notesCount: 312, splitParts: 14,
                                    dateRangeStart: "2009-04-01", dateRangeEnd: "2026-11-09", replacesStarterCategories: true,
-                                   databasePath: "Import.sqlite",
+                                   ambiguousCategoryPaths: [], databasePath: "Import.sqlite",
                                    statementCount: accounts.reduce(0) { $0 + $1.statementCount }, statementsDir: "Statements",
                                    statementsFound: accounts.reduce(0) { $0 + $1.statementCount }, statementsBytes: 38_400_000,
                                    transferTemplateCount: 4, ownedAccountIds: [], connectedAccountIds: [])
