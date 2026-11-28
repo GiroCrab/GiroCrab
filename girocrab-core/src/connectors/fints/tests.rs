@@ -360,6 +360,67 @@ async fn sync_dialog_9040_explains_the_refused_login() {
     assert_eq!(seen.lock().unwrap().len(), 1);
 }
 
+/// BW-Bank's warning on a locked access (#2084): no error code, the dialog stays open.
+const LOCKED_3938: &str = "+3938::Ihr Zugang ist vorläufig gesperrt - Bitte PIN-Sperre aufheben.";
+
+fn assert_access_locked(result: CoreResult<impl std::fmt::Debug>) {
+    let Err(CoreError::Bank { code, message }) = result else {
+        panic!("expected a bank error, got {result:?}");
+    };
+    assert_eq!(code, "3938");
+    assert!(
+        message.contains("PIN-Sperre im Online-Banking"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Ihr Zugang ist vorläufig gesperrt"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn sync_dialog_3938_reports_the_locked_access_and_sends_nothing_more() {
+    // BW-Bank's answer to a new login (#2084): HKSYN done, chipTAN allowed, access locked.
+    // Neither HKTAB nor HKEND may follow (both carry the PIN), nor the two-step init.
+    let reply: &'static str = format!(
+        "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+3060::Bitte beachten Sie die enthaltenen Warnungen/Hinweise.'HIRMS:3:2:5+0020::Auftrag ausgeführt.'HIRMS:4:2:4+3920::Zugelassene Zwei-Schritt-Verfahren für den Benutzer.:913:912:911:910{LOCKED_3938}'HISYN:5:4:5+NEWSYS'HITABS:6:4:4+1+1+0+N'"
+    )
+    .leak();
+    let (url, seen) = mock_bank(vec![reply, ACCEPT, ACCEPT]);
+    let state = serde_json::json!({"system_id": "", "sec_func": "", "tan_method_name": "", "tan_medium": "", "versions": {}, "tan_required": {}});
+    let mut c = two_step_connector(&url, state);
+    assert_access_locked(c.login(&test_ctx()).await);
+    c.finish(&test_ctx()).await;
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn dialog_init_3938_reports_the_locked_access_and_is_not_retried() {
+    // a saved login skips the sync: the init answer carries the warning, alone or with a 9110
+    // for the HKTAN, or only the answer to the first HKTAN fallback does
+    let warned: &'static str = format!(
+        "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+3060::Bitte beachten Sie die enthaltenen Warnungen/Hinweise.'HIRMS:3:2:4+0020::Auftrag ausgeführt.{LOCKED_3938}'"
+    )
+    .leak();
+    let refused_and_locked: &'static str = format!("{REJECT_9110}HIRMS:3:2:4{LOCKED_3938}'").leak();
+    for (replies, sent) in [
+        (vec![warned, ACCEPT, ACCEPT], 1),
+        (vec![refused_and_locked, ACCEPT, ACCEPT], 1),
+        (vec![REJECT_9110, warned, ACCEPT, ACCEPT], 2),
+    ] {
+        let (url, seen) = mock_bank(replies);
+        let state =
+            state_with_functions("913", &[("913", "chipTAN-QR"), ("911", "chipTAN optisch")]);
+        let mut c = two_step_connector(&url, state);
+        assert_access_locked(c.open_dialog(&test_ctx()).await);
+        c.finish(&test_ctx()).await;
+        assert_eq!(seen.lock().unwrap().len(), sent, "{sent}");
+        // the function the bank answered with the lock is not taken over
+        assert_eq!(c.st.sec_func, "913");
+        assert!(!c.st.init_without_hktan);
+    }
+}
+
 /// Answer to HKSYN: a dialog, a new system ID and HKTAB in the BPD.
 const SYNCED: &str = "HNHBK:1:3+000000000000+300+DIALOG1+1'HIRMG:2:2+0010::Nachricht entgegengenommen.'HISYN:3:4:5+NEWSYS'HITABS:4:4:4+1+1+0+N'";
 
