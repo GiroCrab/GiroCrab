@@ -2954,9 +2954,13 @@ QtObject {
     /// „Dokumente abrufen“ is offered only then) and whether its syncs fetch them (default on).
     function documentsFetchSupported(id) { return coreOrNull("documents_fetch_supported", { connection_id: id }) === true }
     function documentsFetchEnabled(id) { return coreOrNull("documents_fetch_enabled", { connection_id: id }) !== false }
+    /// False when the switch was not stored (the error is shown), like `setFullHistory`.
     function setDocumentsFetch(id, on) {
-        run(() => core("set_documents_fetch", { connection_id: id, enabled: on }))
+        let ok = true
+        try { core("set_documents_fetch", { connection_id: id, enabled: on }) }
+        catch (e) { errorMessage = e.message; ok = false }
         refreshDocumentsOff()
+        return ok
     }
     /// Connections whose bank delivers documents but whose retrieval is switched off. Read once on
     /// a change of the connections and of the switch, so views never ask the core while they render.

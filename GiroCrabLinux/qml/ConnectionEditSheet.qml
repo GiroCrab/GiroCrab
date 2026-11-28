@@ -158,11 +158,12 @@ Sheet {
         initialFullHistory = fullHistory
         return true
     }
-    /// False when the period of the next fetch was not stored (the error is shown, nothing else saved).
+    /// False when the period of the next fetch or the document retrieval was not stored (the error
+    /// is shown, nothing else saved): „Speichern & abrufen“ must not fetch with the previous switch.
     function save() {
         if (!saveFullHistoryIfChanged(false)) return false
         if (documentsSupported && documentsFetch !== initialDocumentsFetch) {
-            AppModel.setDocumentsFetch(connection.id, documentsFetch)
+            if (!AppModel.setDocumentsFetch(connection.id, documentsFetch)) return false
             initialDocumentsFetch = documentsFetch
         }
         const l = isTR ? AppModel.core("normalize_phone_number", { input: login }) : login.trim()
