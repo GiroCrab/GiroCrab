@@ -186,20 +186,23 @@ fn merging_preserves_roles_and_custom_provenance() {
     with_language(Lang::En, || {
         let cats = a.list_categories(None, None).unwrap();
         assert!(cats.iter().any(|c| c.name == "Freizeit"));
-        assert!(!cats.iter().any(|c| c.name == "Leisure"));
+        assert!(cats.iter().any(|c| c.name == "Leisure"));
         assert!(cats.iter().any(|c| c.name == "Income"));
+        assert!(cats.iter().any(|c| c.name == "Transfers"));
         assert!(cats.iter().any(|c| c.name == "Umbuchungen"));
     });
     let db = a.db().unwrap();
-    assert_eq!(
-        db.query_row(
-            "SELECT builtin_role FROM categories WHERE name='Umbuchungen' AND deleted_ms IS NULL",
-            [],
-            |r| r.get::<_, String>(0)
+    let transfer_provenance = db
+        .prepare(
+            "SELECT builtin_role FROM categories
+             WHERE name = 'Umbuchungen' AND deleted_ms IS NULL ORDER BY builtin_role",
         )
-        .unwrap(),
-        "import:transfers"
-    );
+        .unwrap()
+        .query_map([], |r| r.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(transfer_provenance, ["Umbuchungen", "import:transfers"]);
     let groups: Vec<(String, Option<String>)> = db
         .prepare("SELECT name,builtin_role FROM account_groups ORDER BY id")
         .unwrap()

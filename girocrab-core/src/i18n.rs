@@ -2022,6 +2022,7 @@ fn english(de: &str) -> Option<&'static str> {
         "Der Vorlagenbetrag muss größer als 0 sein." => {
             "The template amount must be greater than 0."
         }
+        "Der Kategorienpfad „{0}“ ist mehrdeutig." => "The category path “{0}” is ambiguous.",
         "Der Kategoriename ist leer." => "The category name is empty.",
         "Eine Kategorie kann nicht in sich selbst verschoben werden." => {
             "A category can’t be moved into itself."

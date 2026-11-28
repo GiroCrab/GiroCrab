@@ -461,8 +461,8 @@ impl Vault {
         )?;
         db.execute(
             "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order,
-                    name_ms, parent_ms, symbol_ms, color_ms, order_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?6, ?6)",
+                    name_ms, parent_ms, symbol_ms, color_ms, order_ms, uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6, ?6, ?6, ?7)",
             params![
                 parent_id,
                 name,
@@ -473,12 +473,11 @@ impl Vault {
                 },
                 color_hex,
                 order,
-                crate::dates::now_ms()
+                crate::dates::now_ms(),
+                uuid::Uuid::new_v4().to_string(),
             ],
         )?;
-        let id = db.last_insert_rowid();
-        crate::sync_merge::fill_missing_uuids(&db)?;
-        Ok(id)
+        Ok(db.last_insert_rowid())
     }
 
     pub fn update_category(
