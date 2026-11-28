@@ -34,7 +34,7 @@
 ## Sichtbare UI-Änderung (nur bei Oberflächen-Änderungen – sonst streichen)
 
 - **Was ändert sich konkret?** 
-- [ ] Vorher- und Nachher-Screenshots (mit `--demo-seed`, ohne echte Kontodaten) sind angehängt:
+- [ ] Vorher- und Nachher-Screenshots (Demo-Daten: macOS/Linux `--demo-seed`, Windows `GIROCRAB_DEMO_SEED=1`, Android „Demo-Bank ausprobieren“; ohne echte Kontodaten) sind angehängt:
 
 | Vorher | Nachher |
 | --- | --- |

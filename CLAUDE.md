@@ -277,6 +277,6 @@ whenever `README.md`, `docs/screenshots/**`, `docs/assets/**` or a release chang
 
 ### UI-Änderungen in Pull Requests (Pflicht: Vorher / Nachher)
 
-- Jeder PR, der sichtbare Oberflächen ändert (`GiroCrabApp/**/*.swift`, `GiroCrabLinux/qml/**`, `GiroCrabWindows/ui/**`, `android/**`), **muss** in der PR-Beschreibung:
+- Jeder PR, der sichtbare Oberflächen ändert (`GiroCrabApp/**/*.swift`, `GiroCrabLinux/qml/**`, `GiroCrabWindows/ui/**`, `GiroCrabAndroid/**`), **muss** in der PR-Beschreibung:
   1. **konkret beschreiben**, was sich sichtbar und im Verhalten ändert (Ansicht, Element, Vorher vs. Nachher),
-  2. **Vorher- und Nachher-Screenshots** nebeneinander zeigen (ausschließlich mit Demo-Daten via `--demo-seed`, niemals echte Bank-/Personendaten).
+  2. **Vorher- und Nachher-Screenshots** nebeneinander zeigen (ausschließlich mit Demo-Daten – macOS/Linux `--demo-seed`, Windows `GIROCRAB_DEMO_SEED=1`, Android „Demo-Bank ausprobieren“ –, niemals echte Bank-/Personendaten).
