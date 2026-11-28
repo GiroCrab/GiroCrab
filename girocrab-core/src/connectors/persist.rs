@@ -1047,14 +1047,15 @@ pub(crate) fn store_fetch(
                 }
                 // FinTS card holds stored as bookings by older versions (#2113): the
                 // ones still open came again above as holds, the rest are booked or gone.
+                // Only the purpose tells them apart: a counterparty "Vorgemerkt …" may be
+                // the merchant of a booked payment, which must never go.
                 if prefix == super::fints::camt::HOLD_PREFIX {
                     let legacy: Vec<i64> = {
                         let mut q = tx.prepare(
                             "SELECT id FROM transactions
                              WHERE account_id = ?1 AND deleted_ms IS NULL
                                AND external_id NOT LIKE 'pending-%'
-                               AND booking_text = 'Kartenumsatz'
-                               AND (purpose LIKE 'Vorgemerkt%' OR counterparty LIKE 'Vorgemerkt%')",
+                               AND booking_text = 'Kartenumsatz' AND purpose LIKE 'Vorgemerkt%'",
                         )?;
                         let rows = q.query_map(params![acc_id], |r| r.get(0))?;
                         rows.collect::<Result<_, _>>()?

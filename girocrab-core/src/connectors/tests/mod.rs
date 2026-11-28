@@ -1226,10 +1226,15 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
             ..Default::default()
         };
     let legacy = card("Vorgemerkt 1 MUSTERSTADT DEU", "Kartenumsatz", "", -4_50);
-    // without a merchant the marker line became the counterparty
-    let legacy_unnamed = RemoteTransaction {
-        counterparty: "Vorgemerkt 3 MUSTERSTADT DEU".into(),
-        ..card("", "Kartenumsatz", "", -2_00)
+    // a booked payment whose merchant happens to start with "Vorgemerkt" stays
+    let merchant = RemoteTransaction {
+        counterparty: "Vorgemerkt SHOP".into(),
+        ..card(
+            "Kreditkartenumsatz 4 MUSTERSTADT, DEU",
+            "Kartenumsatz",
+            "",
+            -2_00,
+        )
     };
     let booked = card(
         "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
@@ -1268,7 +1273,7 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         &v,
         ConnectorKind::FinTsGeneric,
         conn,
-        fetch(vec![legacy.clone(), legacy_unnamed], false),
+        fetch(vec![legacy.clone(), merchant], false),
     )
     .unwrap();
     // an incomplete fetch leaves it alone
@@ -1292,6 +1297,7 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         purposes(),
         vec![
             "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
+            "Kreditkartenumsatz 4 MUSTERSTADT, DEU",
             "Vorgemerkt 2 MUSTERSTADT DEU"
         ]
     );
@@ -1303,7 +1309,13 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         fetch(vec![booked], true),
     )
     .unwrap();
-    assert_eq!(purposes(), vec!["Kreditkartenumsatz 1 MUSTERSTADT, DEU"]);
+    assert_eq!(
+        purposes(),
+        vec![
+            "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
+            "Kreditkartenumsatz 4 MUSTERSTADT, DEU"
+        ]
+    );
     std::fs::remove_file(path).ok();
 }
 
