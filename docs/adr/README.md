@@ -54,3 +54,4 @@ and test results in audits. Use issues for plans and open questions.
 | [0002 – Challenges during a fetch](0002-challenges-during-fetch.md) | Proposed |
 | [0003 – Category roles](0003-category-roles.md) | Proposed |
 | [0004 – Refund links and stable split identities](0004-refund-links.md) | Proposed |
+| [0006 – Localized monetary input and exact amounts](0006-monetary-input.md) | Proposed |
