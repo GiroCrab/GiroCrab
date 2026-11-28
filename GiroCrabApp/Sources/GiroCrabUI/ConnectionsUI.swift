@@ -565,6 +565,11 @@ struct ConnectionEditSheet: View {
                                 Text(AutoSync.label(syncSchedule)).tag(syncSchedule)
                             }
                         }
+                        if let hint = model.autoSyncHint(connection) {
+                            Text(hint)
+                                .appFont(.caption).foregroundStyle(Theme.secondary)
+                                .leadingFooter()
+                        }
                     } header: { Text("Abruf").appSectionHeader() }
                 }
                 Section {

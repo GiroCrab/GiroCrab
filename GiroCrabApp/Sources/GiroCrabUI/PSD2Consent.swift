@@ -110,6 +110,24 @@ extension AppModel {
         }
     }
 
+    /// Why the automatic fetch of this connection is not running although an
+    /// interval is set (#1997); nil when nothing blocks it. The consent state
+    /// itself is shown separately in the connection view (`consentRows`).
+    func autoSyncHint(_ connection: BankConnection, now: Date = Date()) -> String? {
+        guard !connection.allAccountsArchived, supportsSyncSchedule(connection),
+              syncSchedule(connection.id) > 0 else { return nil }
+        // Logins without their own secret (Bitcoin Core) are not blocked by a
+        // missing PIN; the hint would only mislead there.
+        let needsSecret = !(bankCatalog().first { $0.kind == connection.connector }?.secretLabel.hasPrefix("(") ?? false)
+        if needsSecret, let status = connectionStatus(connection.id), !status.hasPin, !status.hasSession {
+            return String(localized: "Der automatische Abruf braucht die gespeicherte PIN. Ohne sie ruft GiroCrab diese Verbindung nur manuell ab.")
+        }
+        if AutoSync.scaBackOffActive(connectionID: connection.id, defaults: AppDefaults.store, now: now) {
+            return String(localized: "Diese Bank verlangt für den Abruf eine Freigabe in der Banking-App, die ein Abruf im Hintergrund nicht geben kann. GiroCrab versucht den automatischen Abruf für diese Verbindung deshalb nur noch einmal am Tag; einen selbst gestarteten Abruf gib in der App frei.")
+        }
+        return nil
+    }
+
     func startAutoSync() {
         autoSyncTask?.cancel()
         guard !isDemo else { return }
@@ -162,6 +180,10 @@ extension AppModel {
         let attempt = AppDefaults.store.double(forKey: AutoSync.attemptKey(connection.id))
         guard AutoSync.decide(hours: hours, isUnlocked: true, lastSyncUnix: connection.lastSyncUnix,
                               lastAttemptUnix: attempt > 0 ? Int64(attempt) : nil, now: now) == .run else { return false }
+        // The last scheduled fetch of this login failed on a demanded approval
+        // (FinTS TAN / app approval, #1997): retrying at every interval would
+        // only log into the bank again, so it waits a day.
+        guard !AutoSync.scaBackOffActive(connectionID: connection.id, defaults: AppDefaults.store, now: now) else { return false }
         // A scheduled fetch can only start with a current consent, PIN or session.
         if connection.connector == .enableBanking {
             return consentEnd(connection).map { $0 > now } ?? false

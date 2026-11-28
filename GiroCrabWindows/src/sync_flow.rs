@@ -367,6 +367,7 @@ mod tests {
             history_remaining: 0,
             history_total: 0,
             documents_off: false,
+            approval_skipped: false,
         }
     }
 

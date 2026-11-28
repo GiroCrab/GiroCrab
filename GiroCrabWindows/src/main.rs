@@ -3564,6 +3564,7 @@ mod tests {
             history_remaining: 0,
             history_total: 0,
             documents_off: false,
+            approval_skipped: false,
         };
         log_file_import(&vault, 1, &Ok(None));
         let none = SyncLogFilter::default();

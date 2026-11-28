@@ -1322,6 +1322,7 @@ pub(crate) fn store_fetch(
             history_remaining: data.history_remaining,
             history_total: data.history_total,
             documents_off,
+            approval_skipped: data.approval_skipped,
         })
     }
 }

@@ -6,6 +6,9 @@ enum AutoSync {
     static let hoursKey = "autoSync.hours"
     /// Last automatic attempt per connection (`autoSync.attempt.<id>`, Unix seconds).
     static let attemptKeyPrefix = "autoSync.attempt."
+    /// Last scheduled fetch that failed because the bank demanded a fresh
+    /// approval (`autoSync.sca_block.<id>`, Unix seconds, #1997).
+    static let scaBlockKeyPrefix = "autoSync.sca_block."
     /// Offered in the picker; 0 = manual only.
     static let hourOptions = [0, 1, 2, 4, 6, 12, 24]
 
@@ -28,6 +31,35 @@ enum AutoSync {
 
     /// Stored hours: a missing, negative or unparsable value means off.
     static func hours(stored: Int?) -> Int { max(0, stored ?? 0) }
+
+    /// A bank that demands a fresh approval (TAN / app confirmation) for every
+    /// fetch can never be fetched quietly (#1997): the scheduled sync stops
+    /// before any booking is read, and `sca_seen` keeps the connector skipping
+    /// those jobs until a manual sync approved them. Retrying at every interval
+    /// would only log into the bank over and over, so the next attempt waits a
+    /// day.
+    static let scaBackOffHours = 24
+
+    static func scaBackOffKey(_ connectionID: Int64) -> String { scaBlockKeyPrefix + String(connectionID) }
+
+    /// Still backing off after the scheduled fetch of `connectionID` was
+    /// blocked by a demanded approval (within `scaBackOffHours`).
+    static func scaBackOffActive(connectionID: Int64, defaults: UserDefaults, now: Date) -> Bool {
+        let blocked = defaults.double(forKey: scaBackOffKey(connectionID))
+        guard blocked > 0 else { return false }
+        return now.timeIntervalSince1970 - blocked < TimeInterval(scaBackOffHours) * 3600
+    }
+
+    /// Remembers a scheduled fetch blocked by a demanded approval; the next
+    /// automatic attempt for this connection waits `scaBackOffHours`.
+    static func recordScaBlock(connectionID: Int64, defaults: UserDefaults, now: Date) {
+        defaults.set(now.timeIntervalSince1970, forKey: scaBackOffKey(connectionID))
+    }
+
+    /// A scheduled fetch succeeded: the bank no longer blocks quiet fetches.
+    static func clearScaBlock(connectionID: Int64, defaults: UserDefaults) {
+        defaults.removeObject(forKey: scaBackOffKey(connectionID))
+    }
 
     /// Due when no fetch or attempt is known, or the newer of the two is at
     /// least `hours` ago. The attempt counts too: a login that needs a TAN
