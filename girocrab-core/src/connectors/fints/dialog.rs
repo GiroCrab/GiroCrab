@@ -172,6 +172,18 @@ pub(super) fn is_comdirect(blz: &str) -> bool {
     COMDIRECT_BLZ.contains(&blz)
 }
 
+/// How the dialog ID in a reply's HNHBK relates to the one the message carried, for the
+/// step trace (#2048): "new", "same" or "none" (no ID or "0"). The ID itself is never logged.
+pub(super) fn dialog_trace(sent: &str, reply: &str) -> &'static str {
+    if reply.is_empty() || reply == "0" {
+        "none"
+    } else if reply == sent {
+        "same"
+    } else {
+        "new"
+    }
+}
+
 fn clean_challenge(s: &str) -> String {
     s.replace("<br>", "\n")
         .replace("<br/>", "\n")
@@ -367,16 +379,21 @@ impl FinTsConnector {
                 }
             }
         }
+        let reply_dialog = segments
+            .iter()
+            .find(|s| s.id() == "HNHBK")
+            .map_or("", |h| h.get(3, 0));
         if crate::depot_debug::enabled() {
             // Step trace: segment names and return codes only, no texts or data.
             crate::depot_debug::log(&format!(
-                "fints msg: sec={} profile={} sent={:?} codes={:?}",
+                "fints msg: sec={} profile={} dialog={} sent={:?} codes={:?}",
                 if sec_func == "999" {
                     "one-step"
                 } else {
                     "two-step"
                 },
                 Self::security_profile(sec_func),
+                dialog_trace(&self.dialog_id, reply_dialog),
                 payload
                     .iter()
                     .map(|p| {
@@ -418,11 +435,8 @@ impl FinTsConnector {
                 ));
             }
         }
-        if let Some(h) = segments.iter().find(|s| s.id() == "HNHBK") {
-            let did = h.get(3, 0);
-            if !did.is_empty() && did != "0" {
-                self.dialog_id = did.to_string();
-            }
+        if !reply_dialog.is_empty() && reply_dialog != "0" {
+            self.dialog_id = reply_dialog.to_string();
         }
         Ok(BankReply {
             segments,
@@ -583,6 +597,7 @@ impl FinTsConnector {
 
     pub(super) async fn sync_dialog(&mut self, ctx: &ConnectContext) -> CoreResult<()> {
         self.reset_dialog();
+        let opened_with = self.st.system_id.clone();
         let payload = vec![
             self.hkidn(ctx, 3),
             self.hkvvb(4),
@@ -595,6 +610,10 @@ impl FinTsConnector {
         }
         reply.check()?;
         self.learn_bpd(&reply);
+        // The system ID from HISYN is for the next dialog: HKTAB and HKEND keep the one this
+        // dialog was opened with. A Sparkasse refused an HKTAB that carried the new one with
+        // 9010 "Bankreferenz/Dialog-ID ist nicht gültig" (#2048).
+        let assigned = std::mem::replace(&mut self.st.system_id, opened_with);
         // Optional: TAN media list (needed by some banks for HKTAN).
         let tab_v = self.version("HKTAB");
         if self.bank_supports("HKTAB")
@@ -615,6 +634,7 @@ impl FinTsConnector {
             self.learn_bpd(&r);
         }
         self.end_dialog(ctx, "999").await;
+        self.st.system_id = assigned;
         if self.st.system_id.is_empty() {
             return Err(CoreError::protocol(
                 "bank did not assign a customer system ID (HISYN)",
