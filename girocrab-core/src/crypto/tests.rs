@@ -679,3 +679,55 @@ fn a_partial_balance_is_not_carried_back_in_the_balance_history() {
         "no value of earlier days from a partial balance"
     );
 }
+
+#[test]
+fn an_unpriced_ticker_keeps_the_last_total_in_the_balance_history_without_coverage() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    price(&v, "BTC", 80_000.0);
+    v.save_crypto_position(acc, None, "BTC".into(), 1.0, None)
+        .unwrap();
+    let yesterday = crate::dates::iso(crate::dates::today() - crate::dates::days(1));
+    v.db()
+        .unwrap()
+        .execute("UPDATE depot_values SET value_date = ?1", [&yesterday])
+        .unwrap();
+    v.save_crypto_position(acc, None, "ETH".into(), 1.0, None)
+        .unwrap();
+    // the balance chart does not drop to 0 …
+    let b = v.balance_history(vec![acc], 30).unwrap();
+    assert_eq!(b.last().unwrap().balance_cents, 80_000_00);
+    // … while the depot history does not count today as valued
+    let d = v.depot_value_history(vec![acc], 30).unwrap();
+    assert_eq!(
+        d.iter()
+            .find(|p| p.date == today_iso())
+            .unwrap()
+            .covered_depots,
+        0
+    );
+}
+
+#[test]
+fn cash_words_are_no_tickers_and_an_unchanged_quantity_may_stay() {
+    let (v, _p) = temp_vault();
+    let acc = v.create_crypto_account("Wallet".into()).unwrap();
+    for t in ["CASH", "liquidity", "Liquiditaet"] {
+        assert!(
+            v.save_crypto_position(acc, None, t.into(), 1.0, None)
+                .is_err(),
+            "{t}"
+        );
+    }
+    // a newer price makes the position unvaluable: its purchase price can still be edited
+    v.save_crypto_position(acc, None, "BTC".into(), 1e9, None)
+        .unwrap();
+    price(&v, "BTC", 1e7);
+    v.save_crypto_position(acc, Some("BTC".into()), "BTC".into(), 1e9, Some(100))
+        .unwrap();
+    assert!(
+        v.save_crypto_position(acc, Some("BTC".into()), "BTC".into(), 2e9, None)
+            .is_err(),
+        "a changed quantity must give a value"
+    );
+}

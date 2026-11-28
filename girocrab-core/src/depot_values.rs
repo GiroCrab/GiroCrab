@@ -212,11 +212,16 @@ pub(crate) struct Series {
     pub firsts: Vec<(i64, String, i64)>,
 }
 
+///
+/// `carry_unknown`: after the last point of a crypto holding with an unpriced ticker its value is
+/// unknown. It never counts as covered; with `carry_unknown` (a chart without coverage, the
+/// balance history) its last total stays in `values` instead of dropping to 0.
 pub(crate) fn series(
     conn: &Connection,
     ids: &[i64],
     start: Date,
     end: Date,
+    carry_unknown: bool,
 ) -> CoreResult<Option<Series>> {
     if ids.is_empty() || end < start {
         return Ok(None);
@@ -271,12 +276,12 @@ pub(crate) fn series(
                 current = Some(points[next].1);
                 next += 1;
             }
-            if open_end.as_ref().is_some_and(|last| day > last) {
-                continue;
-            }
-            if let Some(v) = current {
+            let unknown = open_end.as_ref().is_some_and(|last| day > last);
+            if let Some(v) = current
+                && (!unknown || carry_unknown)
+            {
                 total[i] += v;
-                covered_days[i] += 1;
+                covered_days[i] += u32::from(!unknown);
             }
         }
     }
@@ -445,7 +450,7 @@ mod tests {
         )
         .unwrap();
         record_fetch(&db, id, Some(&[]), &[], true, 2).unwrap();
-        let s = series(&db, &[id], day("2026-03-02"), day("2026-03-07"))
+        let s = series(&db, &[id], day("2026-03-02"), day("2026-03-07"), false)
             .unwrap()
             .unwrap();
         assert_eq!(s.values, vec![50_000, 50_000, 50_000, 0, 0, 0]);
@@ -460,7 +465,7 @@ mod tests {
         observe(&db, id, "2026-03-03", 100_000, 1);
         observe(&db, id, "2026-03-07", 110_000, 2);
         observe(&db, id, "2026-03-10", 130_000, 3);
-        let s = series(&db, &[id], day("2026-03-01"), day("2026-03-10"))
+        let s = series(&db, &[id], day("2026-03-01"), day("2026-03-10"), false)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -473,7 +478,7 @@ mod tests {
         assert_eq!(s.total_depots, 1);
         assert_eq!(s.firsts.iter().map(|f| f.0).collect::<Vec<_>>(), vec![id]);
         assert!(
-            series(&db, &[id + 99], day("2026-03-01"), day("2026-03-10"))
+            series(&db, &[id + 99], day("2026-03-01"), day("2026-03-10"), false)
                 .unwrap()
                 .is_none()
         );
@@ -488,9 +493,15 @@ mod tests {
         let db = v.db().unwrap();
         observe(&db, a, "2026-03-01", 100, 1);
         observe(&db, b, "2026-03-03", 40, 1);
-        let s = series(&db, &[a, b, none], day("2026-03-01"), day("2026-03-04"))
-            .unwrap()
-            .unwrap();
+        let s = series(
+            &db,
+            &[a, b, none],
+            day("2026-03-01"),
+            day("2026-03-04"),
+            false,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(s.values, vec![100, 100, 140, 140]);
         assert_eq!(s.covered, vec![1, 1, 2, 2]);
         assert_eq!(
@@ -525,7 +536,7 @@ mod tests {
         let b = depot(&v, 40, "2026-03-04");
         let db = v.db().unwrap();
         observe(&db, b, "2026-03-01", 40, 1);
-        let s = series(&db, &[a, b], day("2026-03-01"), day("2026-03-05"))
+        let s = series(&db, &[a, b], day("2026-03-01"), day("2026-03-05"), false)
             .unwrap()
             .unwrap();
         // before the 4th only the recorded depot is known; today's balance is not carried back
@@ -619,7 +630,7 @@ mod tests {
         derived(&db, id, "2026-03-01", 900, "prices", "estimated");
         derived(&db, id, "2026-03-02", 970, "prices", "reconstructed");
         derived(&db, id, "2026-03-02", 960, "prices", "estimated");
-        let s = series(&db, &[id], day("2026-03-01"), day("2026-03-03"))
+        let s = series(&db, &[id], day("2026-03-01"), day("2026-03-03"), false)
             .unwrap()
             .unwrap();
         // observed beats reconstructed beats estimated; a fetch beats an import of the same quality

@@ -117,6 +117,17 @@ fn normalize_symbol(symbol: &str) -> CoreResult<String> {
             "Bitte ein Kürzel aus Buchstaben und Ziffern angeben (z. B. BTC).",
         )));
     }
+    // the depot history keys a position by its name and folds these into the cash position
+    // (`observations::position_key`): as tickers they would share one series
+    if !matches!(
+        crate::depot_values::observations::position_key("", &s),
+        Some(k) if k.starts_with("name:")
+    ) {
+        return Err(CoreError::invalid(trf(
+            "„{0}“ ist als Kürzel nicht möglich.",
+            &[&s],
+        )));
+    }
     Ok(s)
 }
 
@@ -448,10 +459,6 @@ impl Vault {
                 |r| r.get(0),
             )
             .optional()?;
-        // a price that gives no per-unit value counts as none (see `load`)
-        if let Some(price) = known.filter(|p| valid_price(*p)) {
-            value_cents(quantity, price)?;
-        }
         let previous = match previous_symbol {
             Some(p) => {
                 let id = position_id(&tx, account_id, &p)?;
@@ -460,6 +467,21 @@ impl Vault {
             }
             None => None,
         };
+        let old_quantity: Option<f64> = match previous {
+            Some(id) => Some(tx.query_row(
+                "SELECT quantity FROM crypto_positions WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )?),
+            None => None,
+        };
+        // a new or changed quantity must give a value (a price that gives no per-unit value
+        // counts as none, see `load`); an unchanged one may stay, e.g. to edit the purchase price
+        if old_quantity != Some(quantity)
+            && let Some(price) = known.filter(|p| valid_price(*p))
+        {
+            value_cents(quantity, price)?;
+        }
         let taken: bool = tx.query_row(
             &format!(
                 "SELECT EXISTS(SELECT 1 FROM crypto_positions p WHERE account_id = ?1 AND symbol = ?2
