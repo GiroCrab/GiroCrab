@@ -117,7 +117,11 @@ ColumnLayout {
     readonly property var visibleSteps: needsEnableBankingSetup ? ["source", "accounts", "banks", "enableBanking"] : ["source", "accounts", "banks"]
     readonly property bool isLastStep: visibleSteps[visibleSteps.length - 1] === step
     readonly property bool canContinue: step === "source" ? (filePath !== "" && !loading)
-        : step === "accounts" ? Object.keys(choices).some(k => choices[k].selected) : true
+        : step === "accounts" ? Object.keys(choices).some(k => choices[k].selected)
+        : step === "banks" ? !categoriesAmbiguous : true
+    // categories are to be imported, but some paths name no single category (#1992)
+    readonly property bool categoriesAmbiguous: importCategories && preview !== null
+        && preview.ambiguous_category_paths.length > 0
 
     function next() {
         error = ""
@@ -586,7 +590,10 @@ ColumnLayout {
                     id: dataSection
                     visible: v.preview !== null
                     title: qsTr("Daten")
-                    footers: [v.preview && v.preview.replaces_starter_categories && v.importCategories
+                    footers: [v.categoriesAmbiguous
+                              ? qsTr("Nicht eindeutige Kategorien: %1. Dort haben mehrere Kategorien denselben Namen, auch bei anderer Groß- und Kleinschreibung. Benennen Sie sie in GiroCrab oder in dem Programm, das die Datenbank erstellt hat, eindeutig um, oder übernehmen Sie die Kategorien nicht.")
+                                .arg(v.preview.ambiguous_category_paths.join(", ")) : "",
+                              v.preview && v.preview.replaces_starter_categories && v.importCategories
                               ? qsTr("Die Kategorien ersetzen die GiroCrab-Startkategorien – Ihr Tresor enthält noch keine Buchungen.") : ""]
                     readonly property int groupCount: v.preview ? new Set(v.preview.accounts.map(a => a.group_name).filter(g => g !== "")).size : 0
                     FormRow { label: qsTr("Kategorien und Regeln (%1)").arg(v.preview ? v.preview.category_paths.length : 0)

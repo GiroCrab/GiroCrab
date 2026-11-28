@@ -5930,3 +5930,142 @@ fn suggests_time_deposit_for_festgeld_names() {
     );
     assert_eq!(kind("Girokonto"), AccountKind::Checking);
 }
+
+/// Two categories of the database on one path (also when only the case
+/// differs) name no single category: the preview lists the path, the import
+/// with categories stores nothing, and one without them works (#1992).
+#[test]
+fn ambiguous_database_categories_stop_the_import() {
+    let path = fake_db_with(
+        false,
+        "INSERT INTO categories (rowid, name, type, group_key, sort) VALUES
+           (6, 'supermarkt', 1, 1, 2),  -- Haushalt › Supermarkt in other case
+           (7, 'Strom', 1, 3, 2);       -- Wohnen › Nebenkosten › Strom again",
+    );
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert_eq!(
+        p.ambiguous_category_paths,
+        ["Haushalt › Supermarkt", "Wohnen › Nebenkosten › Strom"]
+    );
+    let err = v
+        .import_moneymoney_database(path.clone(), PW.into(), options_from(&p, false))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("Kategorien: Haushalt › Supermarkt, Wohnen › Nebenkosten › Strom."),
+        "{err}"
+    );
+    assert!(v.list_accounts().unwrap().is_empty(), "nothing is stored");
+    assert!(v.list_categories(None, None).unwrap().is_empty());
+
+    let mut o = options_from(&p, false);
+    o.import_categories = false;
+    let r = v.import_moneymoney_database(path, PW.into(), o).unwrap();
+    assert!(r.bookings_new > 0);
+}
+
+/// Vault categories whose names differ only in case: the import cannot tell
+/// which one a path means while the vault keeps its tree (#1992).
+#[test]
+fn case_only_twins_in_the_vault_are_ambiguous() {
+    let v = vault();
+    // bookings first, so the vault keeps its tree
+    let p = v
+        .preview_moneymoney_database(fake_db(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, false);
+    o.import_categories = false;
+    v.import_moneymoney_database(fake_db(), PW.into(), o)
+        .unwrap();
+    let own = v
+        .create_category("haushalt".into(), None, "tag".into(), "#123456".into())
+        .unwrap();
+    let twin = v
+        .create_category("HAUSHALT".into(), None, "tag".into(), "#123456".into())
+        .unwrap();
+
+    let p = v
+        .preview_moneymoney_database(fake_db(), PW.into(), None)
+        .unwrap();
+    assert!(!p.replaces_starter_categories);
+    assert_eq!(p.ambiguous_category_paths, ["Haushalt"]);
+    let err = v
+        .import_moneymoney_database(fake_db(), PW.into(), options_from(&p, false))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Kategorien: Haushalt."), "{err}");
+    assert_eq!(v.list_categories(None, None).unwrap().len(), 2);
+
+    // a distinct name resolves it: the path finds the one category left
+    v.update_category(
+        twin,
+        "Haushalt 2".into(),
+        None,
+        "tag".into(),
+        "#123456".into(),
+    )
+    .unwrap();
+    let p = v
+        .preview_moneymoney_database(fake_db(), PW.into(), None)
+        .unwrap();
+    assert!(p.ambiguous_category_paths.is_empty());
+    v.import_moneymoney_database(fake_db(), PW.into(), options_from(&p, false))
+        .unwrap();
+    let cats = v.list_categories(None, None).unwrap();
+    let supermarkt = cats.iter().find(|c| c.name == "Supermarkt").unwrap();
+    assert_eq!(supermarkt.parent_id, Some(own));
+}
+
+/// Twins that differ in a non-ASCII letter's case, and twins of the transfer
+/// category that uncategorised own-account bookings go to, are ambiguous too;
+/// the transfer category only when some booking goes there (#1992).
+#[test]
+fn unicode_and_transfer_twins_are_ambiguous() {
+    let v = vault();
+    let p = v
+        .preview_moneymoney_database(fake_db(), PW.into(), None)
+        .unwrap();
+    let mut o = options_from(&p, false);
+    o.import_categories = false;
+    v.import_moneymoney_database(fake_db(), PW.into(), o)
+        .unwrap();
+    for name in ["Ärzte", "ärzte", "Umbuchungen", "UMBUCHUNGEN"] {
+        v.create_category(name.into(), None, "tag".into(), "#123456".into())
+            .unwrap();
+    }
+    let doctors = "INSERT INTO categories (rowid, name, type, group_key, sort)
+                   VALUES (6, 'Ärzte', 1, 0, 4);";
+    let p = v
+        .preview_moneymoney_database(fake_db_with(false, doctors), PW.into(), None)
+        .unwrap();
+    assert_eq!(p.ambiguous_category_paths, ["Ärzte"]);
+
+    // a transfer from the card to the own current account, without a category
+    let transfer = |booked: u8| {
+        format!(
+            "{doctors}
+         INSERT INTO transactions (rowid, local_account_key, account, amount, currency, timestamp,
+           booked, unformatted_purpose, name, splitted, split_key, category_key)
+         VALUES (10, 2, 'DE89370400440532013000', -50.0, 'EUR', 1772712000,
+           {booked}, 'Ausgleich', 'Max Mustermann', 0, 10, 1);"
+        )
+    };
+    // still pending: the import skips it, so nothing goes to the transfer category
+    let p = v
+        .preview_moneymoney_database(fake_db_with(false, &transfer(0)), PW.into(), None)
+        .unwrap();
+    assert_eq!(p.ambiguous_category_paths, ["Ärzte"]);
+    let path = fake_db_with(false, &transfer(1));
+    let p = v
+        .preview_moneymoney_database(path.clone(), PW.into(), None)
+        .unwrap();
+    assert_eq!(p.ambiguous_category_paths, ["Ärzte", "Umbuchungen"]);
+    assert!(
+        v.import_moneymoney_database(path, PW.into(), options_from(&p, false))
+            .is_err()
+    );
+    assert_eq!(v.list_categories(None, None).unwrap().len(), 4);
+}
