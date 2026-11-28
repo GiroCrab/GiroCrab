@@ -224,7 +224,12 @@ QtObject {
         try { return core("literal_search_term", { text: searchText }) } catch (e) { return searchText }
     }
     property Timer searchTimer: Timer { interval: 250; onTriggered: model.reloadBookings() }
-    onSearchTextChanged: searchTimer.restart()
+    onSearchTextChanged: {
+        // AppModel+Loading.swift › reloadListInBackground: a Strg+A still loading the rest of the
+        // list waits for the search's list instead, its reload would drop the append (#1696)
+        if (isSelectingAllBookings) { isSelectingAllBookings = false; selectAllAfterReload = true }
+        searchTimer.restart()
+    }
     /// AccountSidebarMode (byGroup | byBank | byKind): the explicit choice, else "Nach Gruppe" once a group exists.
     /// Set it with `setAccountView` (AccountGroupsModel.swift › accountView).
     readonly property string accountView: defaults.accountView !== "" ? defaults.accountView : (hasUserGroups ? "byGroup" : "byKind")
@@ -631,6 +636,8 @@ QtObject {
             afterAccountsQueue = []
             for (const e of queue) e.fn()
         }, err => {
+            // no new list: a Strg+A waiting for a reload queued here ends with the error (#1696)
+            if (afterAccountsQueue.some(e => e.key === "bookings" || e.key === "selection")) selectAllAfterReload = false
             afterAccountsQueue = []
             if (failed) failed(err); else errorMessage = parseCoreError(err).message
         })
@@ -773,7 +780,7 @@ QtObject {
     /// contains falls back to the first row, unless it is sticky. `filter`: the one it was
     /// loaded with, further pages continue with it (#1696).
     function publish(p, filter) {
-        shownListFilter = filter
+        shownListFilter = filter || null
         // taken first: the fallback selection below would otherwise cancel it
         const selectAll = selectAllAfterReload
         selectAllAfterReload = false
@@ -789,7 +796,9 @@ QtObject {
             selectedBookingID = bookings.length && sidebarSelection !== "newBookings" ? bookings[0].id : null
         pruneMultiSelection()
         rebuildStream()
-        if (selectAll) selectAllShownBookings()
+        // a newer list is still on its way (search typed meanwhile): the Strg+A waits for that one,
+        // set after the selection changes above, whose handlers clear it (#1696)
+        if (selectAll) { if (isReloadingList()) selectAllAfterReload = true; else selectAllShownBookings() }
     }
     /// The lingering booking (checked while selected) at its old place in a
     /// new page that no longer contains it: before the row that followed it.
@@ -907,7 +916,7 @@ QtObject {
     /// Appends up to `limit` further bookings in the background, then runs `done` with the
     /// error, if any (only when the page belongs to the list still on screen). False: nothing to fetch.
     function appendBookings(limit, done) {
-        if (!isUnlocked || !hasMoreBookings || selectionLoadRunning || shownListFilter === null) return false
+        if (!isUnlocked || !hasMoreBookings || selectionLoadRunning || !shownListFilter) return false
         // a page still on its way would only fetch part of the rest again
         if (isLoadingMoreBookings) listGeneration++
         // the offset counts the list on screen: page on with its filter, never with a newer one
@@ -1726,6 +1735,9 @@ QtObject {
     /// to the previous filter, so Strg+A must neither select them nor append to them.
     function isReloadingList() {
         return selectionLoadRunning || searchTimer.running || isLoadPending("bookings")
+            // a list reload queued behind the accounts load (whenAccountsLoaded); the queue is
+            // emptied when that load publishes or fails
+            || afterAccountsQueue.some(e => e.key === "bookings" || e.key === "selection")
     }
     /// Bearbeiten › Alles auswählen (Strg+A) in the booking list: every booking matching the
     /// filter, not only the loaded pages (#1696). The rest loads in the background first,
@@ -1746,6 +1758,9 @@ QtObject {
                 // superseded by a newer selection or a reload
                 if (!isSelectingAllBookings) return
                 isSelectingAllBookings = false
+                // a reload started meanwhile owns the list: never select the old rows, wait for
+                // the new list like a Strg+A pressed during the reload
+                if (isReloadingList()) { selectAllAfterReload = true; return }
                 // never a partial selection: the user would act on only some bookings
                 if (err) {
                     errorTitle = qsTr("Nicht alle Buchungen konnten ausgewählt werden")
@@ -4387,6 +4402,9 @@ QtObject {
         property var bookingID: null
         onTriggered: {
             const b = model.selectedBooking
+            // setChecked reloads the list, which would end a running Strg+A without a word (#1696):
+            // try again afterwards, by then it is a multiple selection or failed
+            if (model.isSelectingAllBookings) { interval = Math.max(interval, 250); restart(); return }
             if (model.selectedBookingID === bookingID && !model.isMultiSelection && b && !b.checked) model.setChecked(true, b)
         }
     }
@@ -4419,11 +4437,16 @@ QtObject {
     /// Switches to the user-defined period; swaps the dates if needed (ISO strings).
     function applyCustomPeriod(from, to) {
         const a = from <= to ? from : to, b = from <= to ? to : from
+        const datesChanged = customPeriodFrom !== a || customPeriodTo !== b
         customPeriodFrom = a
         customPeriodTo = b
         defaults.setValue("period/customFrom", a)
         defaults.setValue("period/customTo", b)
-        if (period === "custom") { listLimit = defaultListLimit; reloadSelection(true) } else period = "custom"
+        if (period === "custom") {
+            // new bounds are another period, like onPeriodChanged (AppModel+Selection.swift › applyCustomPeriod, #1696)
+            if (datesChanged) dropMultiSelection()
+            listLimit = defaultListLimit; reloadSelection(true)
+        } else period = "custom"
         ListFilters.rememberPeriod()
     }
 
