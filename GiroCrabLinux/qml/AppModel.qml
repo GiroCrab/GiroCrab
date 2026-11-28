@@ -3788,6 +3788,33 @@ QtObject {
     property bool transferBusy: false
     /// Handle of the running TransferSession (src/sessions.rs).
     property var activeTransfer: null
+    onActiveTransferChanged: activeTransferComparison = null
+    /// TanComparisonHint.swift › TanComparison (#949): amount and recipient IBAN as sent to the
+    /// bank, frozen when the order was sent: { iban, ibanPrefix, endCharacters, amount }.
+    property var activeTransferComparison: null
+    /// What the TAN sheet asks the user to compare (#949): only for the TAN of a single transfer or
+    /// of a standing order that was sent (#1475), never for its login SCA, a batch, a direct debit
+    /// or a sync's challenge.
+    readonly property var tanComparison: activeChallenge !== null && activeChallenge.orderApproval === true
+        && !activeTransferIsBatch && !activeTransferIsDebit ? activeTransferComparison : null
+    /// `TanComparison(iban:amountCents:)`: null for an IBAN shorter than its compared end.
+    function makeTanComparison(iban, cents) {
+        const grouped = groupedIBAN(iban)
+        const compact = grouped.replace(/ /g, "")
+        if (compact.length < 4) return null
+        // the grouped IBAN without its last four characters (spaces do not count)
+        let remaining = 4, prefix = grouped
+        while (remaining > 0 && prefix.length) {
+            if (prefix[prefix.length - 1] !== " ") remaining--
+            prefix = prefix.slice(0, -1)
+        }
+        return { iban: grouped, ibanPrefix: prefix.trimEnd(), endCharacters: compact.slice(-4), amount: Fmt.money(cents) }
+    }
+    /// TransferSession.awaitsOrderApproval: the session waits for the TAN of the order itself.
+    function transferAwaitsOrderApproval() {
+        if (activeTransfer === null) return false
+        try { return core("transfer_awaits_order_approval", { session: activeTransfer }) === true } catch (e) { return false }
+    }
     /// Name check (Verification of Payee) awaiting the user's decision: { connection, check, busy }.
     property var payeeCheck: null
     /// The running session is a Sammelüberweisung / a Dauerauftrag (Payments.qml), not the
@@ -3913,7 +3940,8 @@ QtObject {
     }
     /// Sammelüberweisung / Dauerauftrag (Payments.qml): the TransferSession `session` of the
     /// core runs through the same steps as a single transfer. `kind` = "batch" | "standing".
-    function runPaymentSession(session, connection, kind) {
+    /// `comparison`: a standing order's amount and IBAN for the TAN sheet (#949, #1475).
+    function runPaymentSession(session, connection, kind, comparison) {
         transferError = ""
         transferInstantDeclined = null
         transferBusy = true
@@ -3921,6 +3949,7 @@ QtObject {
         activeTransferIsStanding = kind === "standing"
         activeTransferIsDebit = kind === "debit"
         activeTransfer = session
+        activeTransferComparison = comparison || null
         coreAsync("session_start", { session: session }, step => { if (activeTransfer === session) handleTransfer(step, connection) },
                   err => { if (activeTransfer === session) finishTransfer(err) })
     }
@@ -3963,6 +3992,8 @@ QtObject {
         transferBusy = true
         showTransferSheet = false
         activeTransfer = session
+        // the TAN sheet asks to compare what was sent: amount and the end of the recipient IBAN (#949)
+        activeTransferComparison = makeTanComparison(request.recipient_iban, cents)
         coreAsync("session_start", { session: session }, step => { if (activeTransfer === session) handleTransfer(step, connection) },
                   err => { if (activeTransfer === session) finishTransfer(err) })
     }
@@ -3975,12 +4006,14 @@ QtObject {
             payeeCheck = { connection: connection, check: step.NeedsPayeeConfirmation.check, busy: false }
         } else if (step.NeedsChallenge) {
             const c = step.NeedsChallenge.challenge
-            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "" }
+            activeChallenge = { connection: connection, challenge: c, waiting: false, busy: false, error: "",
+                                orderApproval: transferAwaitsOrderApproval() }
             if (c.kind === "DecoupledPush" || c.kind === "Progress") schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.StillWaiting) {
             const c = step.StillWaiting.challenge
-            if (activeChallenge === null) activeChallenge = { connection: connection, challenge: c, waiting: true, busy: false, error: "" }
-            else activeChallenge = Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false })
+            const orderApproval = transferAwaitsOrderApproval()
+            if (activeChallenge === null) activeChallenge = { connection: connection, challenge: c, waiting: true, busy: false, error: "", orderApproval: orderApproval }
+            else activeChallenge = Object.assign({}, activeChallenge, { challenge: c, waiting: true, busy: false, orderApproval: orderApproval })
             schedulePoll(connection, c.poll_interval_seconds)
         } else if (step.Finished) {
             pollTimer.stop()
