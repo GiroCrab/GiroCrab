@@ -24,4 +24,33 @@ final class ToastTextTests: XCTestCase {
     func testAmountsOnlyRedactionKeepsTheToast() {
         XCTAssertEqual(ToastText.shown(toast, redaction: [.amounts]), toast)
     }
+
+    // MARK: Checked toasts (#1998)
+
+    func testCheckedToastWithoutNamesStaysReadableInPrivacyMode() {
+        XCTAssertEqual(ToastText.shown("Zuordnung aufgehoben", hiding: [], redaction: [.personal]), "Zuordnung aufgehoben")
+    }
+
+    func testPersonalRedactionMasksOnlyTheNamedAccount() {
+        let shown = ToastText.shown(toast, hiding: ["Girokonto Muster"], redaction: [.personal])
+        XCTAssertEqual(shown, "Kein passender Umsatz gefunden – beim Konto „•••“ abgelegt")
+    }
+
+    func testLabelRedactionMasksTheNamesToo() {
+        let shown = ToastText.shown(toast, hiding: ["Girokonto Muster"], redaction: [.labels])
+        XCTAssertFalse(shown.contains("Girokonto Muster"))
+    }
+
+    func testLongerNameIsMaskedWholeWhenItContainsAShorterOne() {
+        let shown = ToastText.shown("2 Belege an „Muster GmbH“ angehängt", hiding: ["Muster", "Muster GmbH"], redaction: [.personal])
+        XCTAssertEqual(shown, "2 Belege an „•••“ angehängt")
+    }
+
+    func testEmptyNameDoesNotChangeTheText() {
+        XCTAssertEqual(ToastText.shown("Beleg zugeordnet: ", hiding: [""], redaction: [.personal]), "Beleg zugeordnet: ")
+    }
+
+    func testAmountsOnlyRedactionKeepsCheckedNames() {
+        XCTAssertEqual(ToastText.shown(toast, hiding: ["Girokonto Muster"], redaction: [.amounts]), toast)
+    }
 }
