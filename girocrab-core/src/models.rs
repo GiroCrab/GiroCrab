@@ -94,6 +94,9 @@ pub enum ConnectorKind {
     /// Go & Grow (formerly Bondora Go & Grow) via the investor web app's JSON API
     /// behind its Keycloak login (unofficial).
     GoAndGrow,
+    /// Ayvens Bank (formerly LeasePlan Bank) savings accounts via the web app's JSON API
+    /// (unofficial, SMS code).
+    AyvensBank,
     /// AirPlus Corporate Card (#1143): booked card bookings via the business travel portal,
     /// authenticated inside the embedded browser (SMS TAN).
     AirPlus,
@@ -141,6 +144,7 @@ impl ConnectorKind {
             ConnectorKind::Monefit => "monefit",
             ConnectorKind::GoAndGrow => "goandgrow",
             ConnectorKind::AirPlus => "airplus",
+            ConnectorKind::AyvensBank => "ayvens",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -214,6 +218,7 @@ impl ConnectorKind {
             ConnectorKind::Bitcoin,
             ConnectorKind::GoAndGrow,
             ConnectorKind::AirPlus,
+            ConnectorKind::AyvensBank,
         ]
     }
 }

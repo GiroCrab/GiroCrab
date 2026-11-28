@@ -102,6 +102,16 @@ impl BankConnector for DemoConnector {
                 expires_in_seconds: Some(300),
                 poll_interval_seconds: 0,
             },
+            ConnectorKind::AyvensBank => Challenge {
+                kind: ChallengeKind::Code,
+                title: "SMS-Code".into(),
+                message: tr("Demo: beliebigen 6-stelligen Code eingeben.").into(),
+                method_name: "SMS (Demo)".into(),
+                redirect_url: None,
+                image: None,
+                expires_in_seconds: Some(300),
+                poll_interval_seconds: 0,
+            },
             ConnectorKind::Bhw => Challenge {
                 kind: ChallengeKind::Code,
                 title: "myBHW".into(),

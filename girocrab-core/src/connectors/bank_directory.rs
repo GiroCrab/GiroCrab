@@ -223,6 +223,11 @@ fn own_api() -> Vec<(ConnectorKind, &'static str, &'static str)> {
             "monefit smartsaver creditstar sparkonto tagesgeld",
         ),
         (
+            ConnectorKind::AyvensBank,
+            "Ayvens Bank",
+            "ayvens bank leaseplan lease plan sparkonto tagesgeld",
+        ),
+        (
             ConnectorKind::GoAndGrow,
             "Go & Grow",
             "go and grow goandgrow bondora sparkonto tagesgeld",
