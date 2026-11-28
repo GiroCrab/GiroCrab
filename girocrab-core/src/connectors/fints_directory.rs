@@ -82,7 +82,30 @@ static COMDIRECT: [Bank; 8] = [
     (COMDIRECT_BLZ[7], "comdirect", COMDIRECT_FINTS_URL),
 ];
 
+/// flatexDEGIRO Bank SE (the direct bank "flatex", BLZ 10130800, plus the two
+/// branch codes of the same institute). The DK institute table still carries the
+/// superseded "biw Bank" address for 10130800 and knows neither branch code, so
+/// the institute is pinned here and wins over the generated table.
+/// Checked 2026-11: `https://banking.flatexdegiro.com/hbci` answers a FinTS
+/// kickoff (HNHBK, return codes 9110/9800) – it is the address the bank uses
+/// today; the old `konto.biw-bank.de/hbci/` still responds.
+pub(crate) const FLATEX_FINTS_URL: &str = "https://banking.flatexdegiro.com/hbci";
+static FLATEX: [Bank; 3] = [
+    ("10130800", "flatexDEGIRO Bank (flatex)", FLATEX_FINTS_URL),
+    ("30330800", "flatexDEGIRO Bank", FLATEX_FINTS_URL),
+    ("76030800", "flatexDEGIRO Bank", FLATEX_FINTS_URL),
+];
+
+/// Generated rows a pinned institute replaces – they must not show up twice in
+/// the picker.
+fn is_overridden(blz: &str) -> bool {
+    FLATEX.iter().any(|e| e.0 == blz)
+}
+
 fn find(blz: &str) -> Option<&'static Bank> {
+    if let Some(e) = FLATEX.iter().find(|e| e.0 == blz) {
+        return Some(e);
+    }
     let banks = banks();
     banks
         .binary_search_by(|e| e.0.cmp(blz))
@@ -110,12 +133,15 @@ pub fn url_for_blz(blz: &str) -> Option<&'static str> {
     find(blz).map(|e| e.2)
 }
 
-/// Endpoints earlier directory versions handed out that the bank no longer serves
-/// (apoBank left Atruvia in 2020, #1385; the Sparkassen host hs5 of 1822direkt
-/// no longer resolves).
+/// Endpoints earlier directory versions handed out that the bank has moved on from
+/// (apoBank left Atruvia in 2020, #1385; the Sparkassen host hs5 of 1822direkt no
+/// longer resolves; flatex switched from its former "biw Bank" host to
+/// `https://banking.flatexdegiro.com/hbci` – the old address still answers, but is
+/// not the one the directory offers today).
 const RETIRED_URLS: &[(&str, &str)] = &[
     ("30060601", "https://fints1.atruvia.de/cgi-bin/hbciservlet"),
     ("50050201", "https://banking-hs5.s-fints-pt-hs.de/fints30"),
+    ("10130800", "https://konto.biw-bank.de/hbci/"),
 ];
 
 /// Current directory URL when a connection stored a retired endpoint for `blz`.
@@ -157,17 +183,24 @@ pub fn search(query: &str, limit: usize) -> Vec<FinTsBankInfo> {
         if d.len() < 3 {
             return vec![];
         }
-        return banks()
+        // the pinned rows are not part of the sorted generated table: collect and
+        // order them, otherwise a small `limit` can drop a pinned institute
+        let mut hits = banks()
             .iter()
-            .filter(|e| e.0.starts_with(&d))
-            .take(limit)
-            .map(info)
-            .collect();
+            .filter(|e| !is_overridden(e.0) && e.0.starts_with(&d))
+            .chain(FLATEX.iter().filter(|e| e.0.starts_with(&d)))
+            .collect::<Vec<_>>();
+        hits.sort_by(|a, b| a.0.cmp(b.0));
+        return hits.into_iter().take(limit).map(info).collect();
     }
     let words: Vec<&str> = q.split(' ').collect();
     let mut prefix = vec![];
     let mut rest = vec![];
-    for e in banks() {
+    for e in banks()
+        .iter()
+        .filter(|e| !is_overridden(e.0))
+        .chain(FLATEX.iter())
+    {
         let name = fold(e.1);
         if words.iter().all(|w| name.contains(w)) {
             if name.starts_with(&q) {
@@ -424,6 +457,52 @@ mod tests {
         assert!(search("comdirect", 10).is_empty());
         assert!(search("2004111", 10).is_empty());
         assert!(banks().iter().all(|e| !COMDIRECT_BLZ.contains(&e.0)));
+    }
+
+    #[test]
+    fn flatex_degiro_resolves_to_the_pinned_server() {
+        for (blz, name, url) in FLATEX {
+            let b = lookup(blz).unwrap_or_else(|| panic!("{blz} missing"));
+            assert_eq!(
+                (b.name.as_str(), b.url.as_str()),
+                (name, FLATEX_FINTS_URL),
+                "{blz}"
+            );
+            assert_eq!(url_for_blz(blz), Some(url), "{blz}");
+        }
+        // the superseded "biw Bank" row of the DK table is replaced, not doubled
+        assert_eq!(
+            lookup("10130800").unwrap().name,
+            "flatexDEGIRO Bank (flatex)"
+        );
+        assert_eq!(
+            search("flatex", 50)
+                .iter()
+                .filter(|b| b.blz == "10130800")
+                .count(),
+            1
+        );
+        assert!(search("flatex", 20).iter().any(|b| b.blz == "76030800"));
+        assert!(search("degiro", 20).iter().any(|b| b.blz == "10130800"));
+        assert!(search("1013", 20).iter().any(|b| b.blz == "10130800"));
+        // pinned institutes keep the BLZ order: for the short prefix "760" the flatex
+        // row is within the first ten instead of behind the 40 generated rows
+        let top = search("760", 10);
+        assert!(
+            top.iter().any(|b| b.blz == "76030800"),
+            "760 with limit 10: {:?}",
+            top.iter().map(|b| b.blz.clone()).collect::<Vec<_>>()
+        );
+        let blz = top.iter().map(|b| b.blz.clone()).collect::<Vec<_>>();
+        let mut sorted = blz.clone();
+        sorted.sort();
+        assert_eq!(blz, sorted);
+        // the DK table still carries the superseded biw address; the pinned one wins
+        assert!(
+            banks()
+                .iter()
+                .any(|e| e.0 == "10130800" && e.2 != FLATEX_FINTS_URL)
+        );
     }
 
     #[test]
