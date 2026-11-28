@@ -70,6 +70,12 @@ keine Vormerkung. Die automatische Ablösung setzt eine eindeutige Zuordnung in
 beiden Richtungen voraus; Datum, Betrag und normalisierter Händler dienen hierbei
 nur der konservativen Ablösung einer Vormerkung, nicht als Buchungsidentität.
 
+Bei einem gemeinsamen Erstabruf werden taggleiche Vormerkungen vor den
+endgültigen Buchungen gespeichert. Bei bereits in umgekehrter Reihenfolge
+gespeicherten Zeilen wird eine taggleiche Buchung für den Abgleich
+berücksichtigt, wenn der gespeicherte Importzeitpunkt übereinstimmt und ein
+weiterer Abruf die endgültige Buchung meldet.
+
 Bei der Ablösung bleiben Kategorie, Notiz und Prüfmarkierung erhalten, soweit
 die gebuchte Zeile noch keinen entsprechenden Wert besitzt. Tags werden
 zusammengeführt. Eine bestehende Kategorie der gebuchten Zeile wird nicht
@@ -93,7 +99,8 @@ Vor Swift-Tests müssen die generierten UniFFI-Bindings zum Rust-Stand passen
 lokale Testseiten. Abgedeckt sind unter anderem Ursprungskontrolle,
 Anmeldezustände, manuelle SMS-Übergabe, App-Auswahl, automatische Übernahme,
 Schlüsselbundfehler, Profiltrennung, explizite Kontozuordnung, Nullsaldo,
-Kennungskompatibilität, Tombstones und Metadaten bei der Ablösung von Vormerkungen.
+Kennungskompatibilität, Tombstones, gemeinsam importierte Vormerkungen und
+Buchungen sowie Metadaten bei der Ablösung von Vormerkungen.
 
 Die Offline-Tests beweisen keine dauerhafte Kompatibilität mit dem Bankportal.
 Änderungen am Portal können Anpassungen an Erkennung und Skripten erfordern.

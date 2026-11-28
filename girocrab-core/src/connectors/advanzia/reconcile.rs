@@ -5,6 +5,7 @@ struct Row {
     id: i64,
     ext: String,
     day: i32,
+    imported_unix: i64,
     cents: i64,
     merchant: String,
     protected: bool,
@@ -12,6 +13,15 @@ struct Row {
 type Key = (i32, i64, String);
 fn key(row: &Row, day: i32) -> Key {
     (day, row.cents, row.merchant.clone())
+}
+fn could_settle(hold: &Row, post: &Row, reported: &HashSet<&str>) -> bool {
+    // Older versions inserted same-day postings first when both arrived
+    // together. Require the same import timestamp and a re-reported posting
+    // before considering a match in that order.
+    post.id > hold.id
+        || (post.day == hold.day
+            && post.imported_unix == hold.imported_unix
+            && reported.contains(post.ext.as_str()))
 }
 fn buckets<'a>(
     rows: &'a [Row],
@@ -32,15 +42,15 @@ pub(crate) fn settle_holds(
     data: &mut FetchResult,
 ) -> CoreResult<()> {
     let mut state = decode_state(data.state.as_ref())?;
-    let current: HashSet<_> = data
+    let reported: HashSet<_> = data
         .transactions
         .iter()
-        .filter(|t| compatibility::is_hold(&t.external_id))
         .map(|t| t.external_id.as_str())
         .collect();
     for id in accounts.values() {
         let mut q=db.prepare("SELECT t.id,t.external_id,t.booking_date,t.amount_cents,t.counterparty,
-            EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=t.id) OR EXISTS(SELECT 1 FROM booking_documents WHERE booking_id=t.id)
+            EXISTS(SELECT 1 FROM transaction_splits WHERE transaction_id=t.id) OR EXISTS(SELECT 1 FROM booking_documents WHERE booking_id=t.id),
+            t.imported_unix
             FROM transactions t WHERE t.account_id=?1 AND t.deleted_ms IS NULL AND t.currency='EUR'
             AND (t.external_id LIKE 'pending-hold-portal-advanzia-%' OR t.external_id LIKE 'advanzia-hold-%' OR t.external_id LIKE 'advanzia-post-%') ORDER BY t.id")?;
         let rows = q
@@ -52,6 +62,7 @@ pub(crate) fn settle_holds(
                     ext: r.get(1)?,
                     day: jiff::civil::Date::strptime("%Y-%m-%d", &date)
                         .map_or(i32::MIN, crate::dates::day_number),
+                    imported_unix: r.get(6)?,
                     cents: r.get(3)?,
                     merchant: merchant
                         .split_whitespace()
@@ -69,14 +80,15 @@ pub(crate) fn settle_holds(
                 && !h.protected
                 && !h.merchant.is_empty()
                 && h.day != i32::MIN
-                && !current.contains(h.ext.as_str())
+                && !reported.contains(h.ext.as_str())
         }) {
             let matches: Vec<_> = (-1..=5)
                 .filter_map(|offset| posts.get(&key(hold, hold.day + offset)))
                 .flat_map(|bucket| {
-                    let start = bucket.partition_point(|p| p.id <= hold.id);
+                    let start = bucket.partition_point(|p| p.day != hold.day && p.id <= hold.id);
                     bucket[start..].iter().copied()
                 })
+                .filter(|post| could_settle(hold, post, &reported))
                 .take(2)
                 .collect();
             if matches.len() != 1 {
@@ -90,9 +102,10 @@ pub(crate) fn settle_holds(
             let reverse: Vec<_> = (-5..=1)
                 .filter_map(|offset| holds.get(&key(post, post.day + offset)))
                 .flat_map(|bucket| {
-                    let end = bucket.partition_point(|h| h.id < post.id);
+                    let end = bucket.partition_point(|h| h.day == post.day || h.id < post.id);
                     bucket[..end].iter().copied()
                 })
+                .filter(|hold| could_settle(hold, post, &reported))
                 .take(2)
                 .collect();
             if reverse.len() == 1 && reverse[0].id == hold.id {

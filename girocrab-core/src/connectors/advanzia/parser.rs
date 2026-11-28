@@ -138,6 +138,13 @@ pub(super) fn parse_captures(bodies: &[String]) -> CoreResult<Vec<Entry>> {
         }
     }
     let mut result: Vec<_> = entries.into_values().collect();
-    result.sort_by(|a, b| a.date.cmp(&b.date).then(a.id.cmp(&b.id)));
+    // The reconciler expects holds to precede their postings in storage. Put
+    // same-day holds first when the bank supplies both in a single capture.
+    result.sort_by(|a, b| {
+        a.date
+            .cmp(&b.date)
+            .then(b.pending.cmp(&a.pending))
+            .then(a.id.cmp(&b.id))
+    });
     Ok(result)
 }
