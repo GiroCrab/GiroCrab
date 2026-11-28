@@ -144,8 +144,8 @@ rg -n 'withAnimation\(|\.animation\(' "$TARGET"              # Bewegung reduzier
 Immer mit Demo-Daten und ohne Banner aufnehmen. In der Demo-App unter „Einstellungen › Allgemein ›
 Mitteilungen“ die Projektmitteilungen ausstellen. `--screenshot` blendet den Demo-Hinweis aus. `--pick <Text>`
 wählt die erste Buchung, deren Händler oder Gegenpartei den Text enthält, `--select <Konto>` ein Konto.
-Einzelaufnahmen des Ausgangszustands können in der Beschreibung des Audit-PRs stehen. Im jeweiligen Fix-PR
-die Vorher/Nachher-Paare direkt als Bilder in der Beschreibung einbetten und den Befund-IDs zuordnen. Die Berichte
+Einzelaufnahmen des Ausgangszustands können in der Beschreibung des Audit-PRs stehen. Vorher/Nachher-Paare
+gehören in die Beschreibung des jeweiligen Fix-PRs. Die Aufnahmen dort den Befund-IDs zuordnen. Die Berichte
 halten die Reproduktion und das beobachtete Ergebnis fest. Links zu zuständigen Issues und Fix-PRs bleiben beim Befund.
 
 Für Fixes gehören **Vorher/Nachher-Paare** in den PR: dieselbe Ansicht mit denselben Einstellungen, „nachher“ mit dem
