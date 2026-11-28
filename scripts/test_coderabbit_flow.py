@@ -127,6 +127,23 @@ class FlowTests(unittest.TestCase):
         )
         self.assertEqual(coderabbit_flow.extract_ai_prompt(no_code_in_details), "")
 
+        unclosed_fence_in_details = (
+            "<details><summary>Prompt to fix issue</summary>\n"
+            "```\nUnclosed prompt body\n</details>\n"
+            "Outside text\n```\n"
+        )
+        self.assertEqual(coderabbit_flow.extract_ai_prompt(unclosed_fence_in_details), "")
+
+    def test_preserves_inline_code_and_comparisons_when_stripping_html(self):
+        body = (
+            '**<picture><img src="https://example.com/amber.svg" alt=""></picture> Minor** · **Correctness**\n\n'
+            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b and c > d.**\n"
+        )
+        self.assertEqual(
+            coderabbit_flow.summarize_comment(body),
+            "**Keep `a < b`, `c > d` and `Option<T>` consistent when a < b and c > d.**",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,21 +53,29 @@ SEVERITY_BADGE_RE = re.compile(
     r"^\*{0,2}\s*(?:Critical|Major|Minor|Trivial|Nitpick|Potential issue|Refactor suggestion|Warning)\s*\*{0,2}\s*·",
     re.IGNORECASE,
 )
+INLINE_CODE_OR_HTML_RE = re.compile(r"(`+)(?:(?!\1)[\s\S])*\1|</?[a-zA-Z][^>]*>")
+
+
+def strip_html_outside_code(text: str) -> str:
+    return INLINE_CODE_OR_HTML_RE.sub(lambda m: m.group(0) if m.group(1) else "", text)
 
 
 def extract_ai_prompt(body: str) -> str:
-    m = re.search(
+    details = re.search(
         r"<summary>(?:(?!</summary>)[\s\S])*?Prompt (?:for (?:AI Agents|all issues)|to fix (?:issue|all issues))</summary>"
-        r"(?:(?!</details>)[\s\S])*?```[^\n]*\n([\s\S]*?)\n```",
+        r"([\s\S]*?)</details>",
         body or "",
     )
-    return m.group(1).strip() if m else ""
+    if not details:
+        return ""
+    fence = re.search(r"```[^\n]*\n([\s\S]*?)\n```", details.group(1))
+    return fence.group(1).strip() if fence else ""
 
 
 def summarize_comment(body: str) -> str:
     cleaned = re.sub(r"<!--[\s\S]*?-->", "", body or "")
     cleaned = cleaned.split("<details>")[0]
-    cleaned = re.sub(r"<[^>]+>", "", cleaned).strip()
+    cleaned = strip_html_outside_code(cleaned).strip()
     lines = []
     for ln in cleaned.splitlines():
         normalized = re.sub(r"\s+", " ", ln).strip()
