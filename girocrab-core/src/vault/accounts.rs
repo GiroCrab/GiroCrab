@@ -665,18 +665,31 @@ impl Vault {
         let start = today - crate::dates::days(days.max(1) as i64 - 1);
         // Securities depots with a valuation history (`depot_values`) take their course from it;
         // the walk back over bookings is only for the other accounts, so nothing counts twice.
-        let depot_series = crate::depot_values::series(&*self.db()?, &ids, start, today)?;
+        let depot_series = crate::depot_values::series(&*self.db()?, &ids, start, today, true)?;
+        // a crypto holding (#1836) has no bookings: its course is its value history only, and
+        // without one its balance (maybe a partial sum) is no value of the days before
+        let crypto: Vec<i64> = {
+            let db = self.db()?;
+            let mut out = Vec::new();
+            for id in &ids {
+                if crate::crypto::is_crypto(&db, *id)? {
+                    out.push(*id);
+                }
+            }
+            out
+        };
         let book_ids: Vec<i64> = ids
             .iter()
             .copied()
             .filter(|id| {
-                depot_series
-                    .as_ref()
-                    .is_none_or(|s| s.firsts.iter().all(|f| f.0 != *id))
+                !crypto.contains(id)
+                    && depot_series
+                        .as_ref()
+                        .is_none_or(|s| s.firsts.iter().all(|f| f.0 != *id))
             })
             .collect();
         // the depots with a history enter with their values of each day, not with today's balance
-        if depot_series.is_some() {
+        if depot_series.is_some() || !crypto.is_empty() {
             balance = chosen
                 .iter()
                 .filter(|a| book_ids.contains(&a.id))
@@ -781,7 +794,8 @@ impl Vault {
             .collect();
         let today = crate::dates::today();
         let start = today - crate::dates::days(days.max(1) as i64 - 1);
-        let Some(series) = crate::depot_values::series(&*self.db()?, &ids, start, today)? else {
+        let Some(series) = crate::depot_values::series(&*self.db()?, &ids, start, today, false)?
+        else {
             return Ok(vec![]);
         };
         let Some(first) = series.covered.iter().position(|&c| c > 0) else {
