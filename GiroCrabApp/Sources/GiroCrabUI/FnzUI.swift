@@ -265,6 +265,9 @@ struct FnzWebSheet: View {
                 progress = String(localized: "Konten, Fondspositionen und Umsatzhistorie abrufen …")
                 let snapshot = try await run(FnzScripts.snapshot)
                 let summary = try await pin.run { try $0.importFnzSnapshot(connectionId: connectionId, snapshotJson: snapshot) }
+                // "Alle abrufen": committed now, whatever fails later; the sync window counts
+                // this login as fetched once the browser window closes
+                model.webLoginImportedInSyncRun(connectionId, imported: Int(summary.transactionsImported))
                 let totalsOnly = snapshot.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["totalsOnly"] as? Int ?? 0
                 var downloaded = 0
                 var failed = 0
@@ -308,8 +311,6 @@ struct FnzWebSheet: View {
                 }
                 let message = String(localized: "FNZ: \(summary.accountsUpdated) Konten/Depots aktualisiert, \(summary.transactionsImported) neue Buchungen, \(downloaded) neue PDFs.")
                 model.toast = message
-                // "Alle abrufen": the sync window counts this login as fetched once the window closes
-                model.webLoginImportedInSyncRun(connectionId, imported: Int(summary.transactionsImported))
                 if failed == 0 && totalsOnly == 0 { close() }
                 else {
                     notice = message

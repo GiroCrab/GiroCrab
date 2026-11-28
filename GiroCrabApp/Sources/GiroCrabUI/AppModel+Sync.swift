@@ -75,6 +75,8 @@ extension AppModel {
 
     private func requestSyncChecked(_ connection: BankConnection) {
         syncRun?.start(connection.id)
+        // a new attempt: an import an earlier browser window reported does not count for it
+        syncRunBrowserImports[connection.id] = nil
         // Bitcoin Core on a Mac without a node (the vault came over iCloud): not fetched here,
         // its balance comes from the Mac running the node
         if connection.connector == .bitcoinCore, !isDemo,
@@ -321,6 +323,7 @@ extension AppModel {
         guard syncRunActive, activeTransfer == nil else { cancelSync(); return }
         if let id = activeChallenge?.connection.id ?? syncingConnectionID {
             syncRun?.skip(id, reason: Self.skippedByUser)
+            syncRunBrowserImports[id] = nil
         }
         pollTask?.cancel()
         let s = activeSession
@@ -386,7 +389,10 @@ extension AppModel {
         // sync – it would send that login's PIN for another bank's account.
         clearSyncTargets()
         guard syncRunActive else { resetSyncBatch(); return }
-        if let id = connection?.id { syncRun?.skip(id, reason: Self.skippedByUser) }
+        if let id = connection?.id {
+            syncRun?.skip(id, reason: Self.skippedByUser)
+            syncRunBrowserImports[id] = nil
+        }
         syncNextInQueue()
     }
 
@@ -416,6 +422,7 @@ extension AppModel {
         guard run.retry(id) else { return }
         syncRun = run
         syncRunActions[id] = nil
+        syncRunBrowserImports[id] = nil
         syncQueue.append(c)
         if idle { syncNextInQueue() }
     }
@@ -856,6 +863,7 @@ extension AppModel {
         syncQueue = []
         let inRun = syncRunActive
         syncRun?.skipRemaining(reason: Self.syncRunCancelled)
+        syncRunBrowserImports = [:]
         guard inRun, s != nil else {
             syncingConnectionID = nil
             Task { await s?.cancel() }

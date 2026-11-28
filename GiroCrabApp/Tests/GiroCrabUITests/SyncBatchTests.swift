@@ -317,6 +317,26 @@ final class SyncBatchTests: XCTestCase {
         XCTAssertEqual(imported, 7)
     }
 
+    /// An import reported by an earlier attempt never counts for a retry of the login.
+    func testABrowserImportOfAnEarlierAttemptIsNotCountedForARetry() async throws {
+        let logins = batch
+        try XCTSkipIf(logins.count < 2, "demo vault needs at least two logins")
+        model.requestSyncAll()
+        try await waitForChallenge(of: logins[0])
+        model.finishSync(error: CoreError.BrowserLoginRequired(message: "Bitte im Browser anmelden"))
+        model.webLoginImportedInSyncRun(logins[0].id, imported: 7)
+        model.cancelAllSync()
+        XCTAssertTrue(model.syncRunBrowserImports.isEmpty)
+        try await waitUntil("run over") { model.syncRun?.isFinished == true && model.syncingConnectionID == nil }
+
+        model.retryInSyncRun(logins[0].id)
+        try await waitForChallenge(of: logins[0])
+        model.finishSync(error: CoreError.BrowserLoginRequired(message: "Bitte im Browser anmelden"))
+        model.webLoginConnection = nil   // closed without an import this time
+        try await waitUntil("retry ended") { model.syncRun?.isFinished == true }
+        XCTAssertEqual(model.syncRun?.status(of: logins[0].id), .skipped(reason: AppModel.browserClosed))
+    }
+
     /// "Alle abbrechen" ends the bank dialog before the window lets another login start:
     /// a retry right after it waits for that, then runs.
     func testRetryRightAfterCancelAllWaitsForTheClosingDialog() async throws {
