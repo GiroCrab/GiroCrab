@@ -1120,6 +1120,78 @@ fn incomplete_fints_hold_list_keeps_old_holds() {
     std::fs::remove_file(path).ok();
 }
 
+/// #2113: equal holds of two cards in one login share a content-based id; a complete
+/// fetch drops a card's hold when only the other card still lists it.
+#[test]
+fn card_holds_are_matched_per_account() {
+    let (v, path) = demo_vault();
+    let conn = v
+        .add_bank_connection(ConnectorKind::FinTsGeneric, String::new(), "u".into())
+        .unwrap();
+    let prefix = crate::connectors::fints::camt::HOLD_PREFIX;
+    let acc = |r: &str| RemoteAccount {
+        external_ref: r.into(),
+        name: r.into(),
+        owner: String::new(),
+        iban: String::new(),
+        account_number: String::new(),
+        currency: "EUR".into(),
+        kind: AccountKind::CreditCard,
+        balance_cents: 0,
+        balance_date: "2026-11-10".into(),
+    };
+    // invented data
+    let hold = |r: &str| RemoteTransaction {
+        account_ref: r.into(),
+        external_id: format!("{prefix}c1"),
+        booking_date: "2026-11-05".into(),
+        value_date: "2026-11-05".into(),
+        amount_cents: -7_00,
+        currency: "EUR".into(),
+        counterparty: "KAFFEEBAR".into(),
+        purpose: "Vorgemerkt 1 MUSTERSTADT DEU".into(),
+        booking_text: "Vorgemerkt".into(),
+        ..Default::default()
+    };
+    let fetch = |txs: Vec<RemoteTransaction>| FetchResult {
+        accounts: vec![acc("f:a"), acc("f:b")],
+        transactions: txs,
+        hold_prefix: Some(prefix.into()),
+        ..Default::default()
+    };
+    let holds = || -> Vec<String> {
+        let db = v.db().unwrap();
+        let mut q = db
+            .prepare(
+                "SELECT a.external_ref FROM transactions t JOIN accounts a ON a.id = t.account_id
+                 WHERE t.deleted_ms IS NULL AND t.external_id LIKE 'pending-hold-fints-%'
+                 ORDER BY a.external_ref",
+            )
+            .unwrap();
+        q.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        fetch(vec![hold("f:a"), hold("f:b")]),
+    )
+    .unwrap();
+    assert_eq!(holds(), vec!["f:a", "f:b"]);
+    store_fetch(
+        &v,
+        ConnectorKind::FinTsGeneric,
+        conn,
+        fetch(vec![hold("f:b")]),
+    )
+    .unwrap();
+    assert_eq!(holds(), vec!["f:b"]);
+    std::fs::remove_file(path).ok();
+}
+
 /// #2113: card holds ("Vorgemerkt …") that older versions stored as bookings go once
 /// a complete FinTS fetch lists the holds itself; open holds stay only while listed.
 #[test]
@@ -1154,6 +1226,11 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
             ..Default::default()
         };
     let legacy = card("Vorgemerkt 1 MUSTERSTADT DEU", "Kartenumsatz", "", -4_50);
+    // without a merchant the marker line became the counterparty
+    let legacy_unnamed = RemoteTransaction {
+        counterparty: "Vorgemerkt 3 MUSTERSTADT DEU".into(),
+        ..card("", "Kartenumsatz", "", -2_00)
+    };
     let booked = card(
         "Kreditkartenumsatz 1 MUSTERSTADT, DEU",
         "Kartenumsatz",
@@ -1191,7 +1268,7 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         &v,
         ConnectorKind::FinTsGeneric,
         conn,
-        fetch(vec![legacy.clone()], false),
+        fetch(vec![legacy.clone(), legacy_unnamed], false),
     )
     .unwrap();
     // an incomplete fetch leaves it alone
@@ -1202,7 +1279,7 @@ fn fints_card_holds_replace_legacy_vorgemerkt_bookings() {
         fetch(vec![booked.clone()], false),
     )
     .unwrap();
-    assert_eq!(purposes().len(), 2);
+    assert_eq!(purposes().len(), 3);
     // a complete fetch: the old row goes, the booking and the listed hold stay
     store_fetch(
         &v,

@@ -29,7 +29,7 @@
 //! persist keeps only while a complete fetch still reports them.
 
 use super::syntax::{Segment, Value};
-use crate::connectors::RemoteTransaction;
+use crate::connectors::{ContentIds, RemoteTransaction};
 use crate::money::{cents, decimal};
 
 /// Booked balance of the card account.
@@ -200,16 +200,16 @@ fn is_hold_text(line: &str) -> bool {
 }
 
 /// Bookings and balance of all HIKKU / DIKKU segments of one reply. The balance is
-/// taken from the first segment that carries one.
-pub fn parse<'a>(
+/// taken from the first segment that carries one. `hold_ids` numbers equal holds:
+/// one per card fetch, so equal holds on different pages stay distinct.
+pub(crate) fn parse<'a>(
     segments: impl Iterator<Item = &'a Segment>,
     account_ref: &str,
     fallback_currency: &str,
+    hold_ids: &mut ContentIds,
 ) -> (Vec<RemoteTransaction>, Option<CardBalance>) {
     let mut txs = Vec::new();
     let mut balance = None;
-    // equal holds (same day, amount, merchant, text) get distinct ids
-    let mut seen_holds: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     for s in segments {
         if balance.is_none()
             && let Some(cents) = signed(s.get(3, 1), s.get(3, 0))
@@ -225,13 +225,7 @@ pub fn parse<'a>(
             let c = components(el);
             if let Some(mut t) = booking(l, &c, account_ref, fallback_currency) {
                 if !t.external_id.is_empty() {
-                    let key = format!(
-                        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
-                        t.booking_date, t.amount_cents, t.counterparty, t.purpose
-                    );
-                    let n = seen_holds.entry(key).or_insert(0);
-                    t.external_id = format!("{}{}", super::camt::HOLD_PREFIX, t.content_id(*n));
-                    *n += 1;
+                    t.external_id = format!("{}{}", super::camt::HOLD_PREFIX, hold_ids.next(&t));
                 }
                 txs.push(t);
             }
@@ -299,7 +293,12 @@ mod tests {
 
     fn parsed(raw: &str) -> (Vec<RemoteTransaction>, Option<CardBalance>) {
         let segs = parse_response(raw.as_bytes()).unwrap();
-        parse(segs.iter().filter(|s| s.id() == "HIKKU"), "card", "EUR")
+        parse(
+            segs.iter().filter(|s| s.id() == "HIKKU"),
+            "card",
+            "EUR",
+            &mut ContentIds::default(),
+        )
     }
 
     /// One booking group of 25 components from (position, value) pairs.
@@ -421,6 +420,20 @@ mod tests {
     }
 
     #[test]
+    fn equal_holds_on_different_pages_get_distinct_ids() {
+        let mut ids = ContentIds::default();
+        let mut page = || {
+            let segs = parse_response(segment(&[hold("1")]).as_bytes()).unwrap();
+            parse(segs.iter(), "card", "EUR", &mut ids)
+                .0
+                .remove(0)
+                .external_id
+        };
+        let (first, second) = (page(), page());
+        assert_ne!(first, second);
+    }
+
+    #[test]
     fn hold_text_is_recognised_only_at_the_start() {
         assert!(is_hold_text("Vorgemerkt 1 MUSTERSTADT DEU"));
         assert!(is_hold_text("VORGEMERKT 1 MUSTERSTADT"));
@@ -532,7 +545,7 @@ mod tests {
     fn dikku_v2_bookings_and_balance() {
         let raw = dikku_v2();
         let segs = parse_response(raw.as_bytes()).unwrap();
-        let (txs, balance) = parse(segs.iter(), "card", "EUR");
+        let (txs, balance) = parse(segs.iter(), "card", "EUR", &mut ContentIds::default());
         assert_eq!(txs.len(), 2);
         assert_eq!(txs[0].amount_cents, -2390);
         assert_eq!(txs[0].booking_date, "2026-09-07");
@@ -560,7 +573,7 @@ mod tests {
             purchase()
         );
         let segs = parse_response(raw.as_bytes()).unwrap();
-        let (txs, _) = parse(segs.iter(), "card", "EUR");
+        let (txs, _) = parse(segs.iter(), "card", "EUR", &mut ContentIds::default());
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].amount_cents, -1250);
         assert_eq!(txs[0].counterparty, "KAFFEEBAR");

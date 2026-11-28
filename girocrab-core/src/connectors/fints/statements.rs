@@ -335,6 +335,7 @@ impl FinTsConnector {
         let mut touchdown: Option<String> = None;
         let mut txs = Vec::new();
         let mut balance = None;
+        let mut hold_ids = crate::connectors::ContentIds::default();
         for page in 0..50 {
             let seg = Self::card_request(
                 tx,
@@ -346,7 +347,7 @@ impl FinTsConnector {
                 touchdown.as_deref(),
             );
             let r = self.request(ctx, tx, seg).await?;
-            let (t, bal) = kku::parse(r.all(&reply_id), label, currency);
+            let (t, bal) = kku::parse(r.all(&reply_id), label, currency, &mut hold_ids);
             if crate::depot_debug::enabled() {
                 let groups: Vec<usize> = r
                     .all(&reply_id)
