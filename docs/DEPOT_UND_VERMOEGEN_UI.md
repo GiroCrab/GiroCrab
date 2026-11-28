@@ -41,7 +41,8 @@ gleich anfühlen:
    jeder Zeile bieten „Position bearbeiten …“ und „Position löschen …“ (statt „Einstandskurs bearbeiten …“: der
    Einstandskurs gehört zur Position). Vor dem Speichern wird der Euro-Kurs des Kürzels abgerufen
    (`api.coinbase.com`, nur das Kürzel wird gesendet): ein unbekanntes Kürzel wird abgelehnt, ohne Netz wird die
-   Position ohne Kurs gespeichert und ein Hinweis erscheint. Kurse werden nie automatisch abgerufen; jeder Abruf steht
+   Position ohne neuen Kurs gespeichert (ein schon gespeicherter Kurs des Kürzels bleibt in Gebrauch) und ein
+   Hinweis erscheint. Kurse werden nie automatisch abgerufen; jeder Abruf steht
    im Abruf-Protokoll (nur Anzahlen, keine Kürzel).
 
 **Reihenfolge:** Kopf → Kennzahlen → Zusammensetzung → Tabelle gilt für Einzeldepot und Sachwerte-Konto. In `Vermögen › Wertpapiere / Sachwerte` steht die Zusammensetzung direkt unter dem Kopf, die Kennzahlen folgen darunter; bei Wertpapieren kommt vor der Tabelle die Depotübersicht (Karte „Wertpapiere“, jede Zeile öffnet das Depot, Chevron `›`). Im Kopf von `Wertpapiere` wählt ein Zeitraum-Picker den Zeitraum von Ausschüttungen sowie Gebühren & Steuern.

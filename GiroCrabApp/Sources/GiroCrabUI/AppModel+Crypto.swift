@@ -45,13 +45,13 @@ extension AppModel {
                 self.cryptoPricesLogged()
                 guard self.isCurrent(pin) else { return }
                 self.cryptoChanged()
+                // an unknown ticker and a failed fetch can come together: both are named
+                var problems: [String] = []
                 if !r.unknown.isEmpty {
-                    self.toast = String(localized: "Kein Euro-Kurs für \(r.unknown.joined(separator: ", "))")
-                } else if let e = r.error {
-                    self.toast = String(localized: "Kurse konnten nicht geladen werden: \(e)")
-                } else {
-                    self.toast = String(localized: "Kurse aktualisiert")
+                    problems.append(String(localized: "Kein Euro-Kurs für \(r.unknown.joined(separator: ", "))"))
                 }
+                if let e = r.error { problems.append(String(localized: "Kurse konnten nicht geladen werden: \(e)")) }
+                self.toast = problems.isEmpty ? String(localized: "Kurse aktualisiert") : problems.joined(separator: " · ")
             } catch {
                 if self.isCurrent(pin) { self.toast = describe(error) }
             }
