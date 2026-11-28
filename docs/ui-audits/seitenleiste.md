@@ -9,8 +9,8 @@
 
 | ID | Priorität | Kriterium | Plattform | Beobachtung | Weg | Status |
 |---|---|---|---|---|---|---|
-| SEI-1 | P2 | Orientierung | macOS, iPhone | Bei großer Schrift sind mehrere Konten fast nur am Saldo zu unterscheiden. Auf dem iPhone bleibt vom „Musterbank Girokonto“ ein „M“, bei der Kreditkarte nur das Kürzungszeichen | Issue | `open` |
-| SEI-2 | P2 | Adaptivität | iPhone | Bei „Accessibility XL“ ragen die Symbole in „Neue Umsätze“ und „Vermögen“ in den Text | Issue | `open` |
+| SEI-1 | P2 | Orientierung | macOS, iPhone | Bei großer Schrift sind mehrere Konten fast nur am Saldo zu unterscheiden. Auf dem iPhone bleibt vom „Musterbank Girokonto“ ein „M“, bei der Kreditkarte nur das Kürzungszeichen | Fix | `fixed` |
+| SEI-2 | P2 | Adaptivität | iPhone | Bei „Accessibility XL“ ragen die Symbole in „Neue Umsätze“ und „Vermögen“ in den Text | Fix | `fixed` |
 
 ## Impeccable-Bewertung
 
@@ -24,16 +24,4 @@
 
 - **Demo-Einstieg:** `--demo-seed`, Konten nach Gruppen. Auf dem iPhone von „Alle Konten“ mit dem Zurück-Pfeil zur Seitenleiste wechseln. Standard und „Accessibility XL“ vergleichen.
 
-#### SEI-1 · Kontonamen werden auf einzelne Zeichen gekürzt
-
-- **Ort:** `SidebarView.swift` (`AccountRow`) und `AllAccountsRoot.swift` (`AllAccountsRow`).
-- **Beobachtung:** Auf dem schmalen Mac werden Tagesgeldnamen gekürzt. Am iPhone bleibt bei „Accessibility XL“ vom Girokonto „M“ und bei der Kreditkarte nur das Kürzungszeichen.
-- **Vorschlag:** Bei Platzmangel Namen und Saldo untereinander anordnen oder dem Namen eine zweite Zeile geben.
-- **Prüfung:** Auf Mac und iPhone die ersten Konten bei großer Schrift vergleichen und das Girokonto auswählen. Namen und Salden bleiben zuordenbar.
-
-#### SEI-2 · Seitensymbole ragen in den Text
-
-- **Ort:** `SidebarView.swift`, Navigationszeilen mit 20-pt-Symbolspalte.
-- **Beobachtung:** Auf dem iPhone bei „Accessibility XL“ ragen die Symbole in „Neue Umsätze“ und „Vermögen“ in die Beschriftung.
-- **Vorschlag:** Die reservierte Symbolspalte mit der Schrift skalieren und einen festen sichtbaren Abstand zum Text vorsehen.
-- **Prüfung:** Dieselben Navigationspunkte bei Standard und „Accessibility XL“ vergleichen. Beide Symbole bleiben vom Text getrennt.
+- **Nachprüfung (27.11.2026):** SEI-1 und SEI-2 mit dem Fix auf Basis von `bfc5c262` verglichen. Auf macOS 27.2.1 bei „Sehr groß“ und schmalem Fenster sowie auf dem iPhone 18 Pro (iOS 27.2) bei „Accessibility XL“ sind Kontonamen und Salden lesbar. Auf dem iPhone bleiben die Symbole von „Neue Umsätze“ und „Vermögen“ vom Text getrennt. Das Girokonto ließ sich bei „Accessibility XL“ öffnen. Standardgröße auf beiden Plattformen sowie Dunkelmodus mit Schwärzung auf macOS geprüft.

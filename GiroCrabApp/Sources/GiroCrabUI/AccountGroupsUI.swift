@@ -195,7 +195,7 @@ struct UserGroupHeader: View {
                 // the group's colour, like an account's icon (white when selected)
                 .foregroundStyle(selected || group.colorHex.isEmpty
                                  ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.readable(hex: group.colorHex)))
-                .frame(width: 20)
+                .modifier(SidebarIconColumn())
             Text(group.name).lineLimit(2).fixedSize(horizontal: false, vertical: true).sensitive(.labels)
             if !group.inTotal {
                 Image(systemName: "eye.slash")
