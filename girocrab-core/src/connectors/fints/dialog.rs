@@ -113,10 +113,36 @@ fn init_rejected_as_malformed(reply: &BankReply) -> bool {
     reply.has("9010") && !stale_system_id(reply)
 }
 
+/// 3938 "Ihr Zugang ist vorläufig gesperrt – Bitte PIN-Sperre aufheben" (BW-Bank, #2084). Only a
+/// warning: the bank keeps the dialog open, but the login cannot go on until the user lifts the
+/// lock at the bank.
+fn access_locked(reply: &BankReply) -> bool {
+    reply.has("3938")
+}
+
+/// 9040 or 3938: `login_refused` reports it, and no request may carry the PIN again (not even
+/// an HKEND).
+fn ends_login(reply: &BankReply) -> bool {
+    reply.has("9040") || access_locked(reply)
+}
+
 /// 9040: the bank refused the login name or the PIN/password. Explains it, warns
 /// about the lock and keeps the bank's text. No fallback may send the refused
-/// credentials again: every attempt counts towards the lock.
+/// credentials again: every attempt counts towards the lock. 3938: the access is
+/// locked already; says how to lift the lock.
 fn login_refused(reply: &BankReply) -> Option<CoreError> {
+    if let Some(locked) = reply.code("3938") {
+        return Some(CoreError::Bank {
+            code: "3938".into(),
+            message: format!(
+                "{} ({})",
+                tr(
+                    "Die Bank meldet Ihren Zugang als vorläufig gesperrt. Heben Sie die PIN-Sperre im Online-Banking oder in der App Ihrer Bank auf (oder wenden Sie sich an die Bank) und rufen Sie danach erneut ab."
+                ),
+                reply.describe(locked)
+            ),
+        });
+    }
     if !reply.has("9040") {
         return None;
     }
@@ -142,7 +168,7 @@ fn stale_system_id(reply: &BankReply) -> bool {
 
 /// An answer to a retry that no other variant can improve: its error is the one to report.
 fn ends_hktan_retry(reply: &BankReply) -> bool {
-    reply.has("9930") || stale_system_id(reply) || reply.has("9040")
+    reply.has("9930") || stale_system_id(reply) || ends_login(reply)
 }
 
 /// Dialog init refused with 9110 ("Falsche Segmentzusammenstellung", #1641) or 9200 ("Zwei-Schritt-
@@ -604,7 +630,8 @@ impl FinTsConnector {
             SegmentBuilder::new("HKSYN", 5, 3).raw("0").build(),
         ];
         let reply = self.send(ctx, payload, "999", None).await?;
-        self.blz_rejected = blz_mismatch(&reply);
+        // a locked access is locked under every bank code of the login
+        self.blz_rejected = blz_mismatch(&reply) && !access_locked(&reply);
         if let Some(e) = self.refused_login(&reply) {
             return Err(e);
         }
@@ -880,8 +907,8 @@ impl FinTsConnector {
         let mut sec = self.sec();
         let mut reply = self.send_dialog_init(ctx, &sec).await?;
         // wrong bank code for this login: nothing below can help (`login` may
-        // try another one)
-        if blz_mismatch(&reply) {
+        // try another one), unless the access is locked (3938, reported below)
+        if blz_mismatch(&reply) && !access_locked(&reply) {
             self.blz_rejected = true;
             reply.check()?;
         }
@@ -1059,8 +1086,8 @@ impl FinTsConnector {
         self.init_attempt(ctx, refused_code).await
     }
 
-    /// A fresh dialog init and whether it was accepted (no errors and a dialog opened);
-    /// if not, the dialog is ended unless the bank already aborted it.
+    /// A fresh dialog init and whether it was accepted (no errors, no locked access and a
+    /// dialog opened); if not, the dialog is ended unless the bank already aborted it.
     async fn init_attempt(
         &mut self,
         ctx: &ConnectContext,
@@ -1068,11 +1095,12 @@ impl FinTsConnector {
     ) -> CoreResult<(BankReply, bool)> {
         self.reset_dialog();
         let reply = self.send_dialog_init(ctx, sec).await?;
-        if reply.errors().is_empty() && self.dialog_id != "0" {
+        if reply.errors().is_empty() && !access_locked(&reply) && self.dialog_id != "0" {
             return Ok((reply, true));
         }
-        // HKEND carries the PIN: a refused login (9040) drops the dialog without it
-        if reply.has("9040") {
+        // HKEND carries the PIN: a refused login (9040) or a locked access (3938) drops the
+        // dialog without it
+        if ends_login(&reply) {
             self.reset_dialog();
         } else if !reply.has("9800") {
             self.end_dialog(ctx, sec).await;

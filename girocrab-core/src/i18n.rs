@@ -1005,6 +1005,9 @@ fn english(de: &str) -> Option<&'static str> {
         "Anmeldename oder PIN wurden abgelehnt. Bei manchen Banken ist die PIN das Kennwort des Online-Bankings (z. B. Deutsche Bank: Kennwort der Deutsche Bank ID). Bitte prüfen, bevor Sie es erneut versuchen: Nach mehreren Fehlversuchen sperrt die Bank den Zugang." => {
             "Login name or PIN was refused. At some banks the PIN is the online banking password (e.g. Deutsche Bank: the password of the Deutsche Bank ID). Please check before trying again: after several failed attempts the bank locks the access."
         }
+        "Die Bank meldet Ihren Zugang als vorläufig gesperrt. Heben Sie die PIN-Sperre im Online-Banking oder in der App Ihrer Bank auf (oder wenden Sie sich an die Bank) und rufen Sie danach erneut ab." => {
+            "The bank reports your access as temporarily locked. Lift the PIN lock in your bank's online banking or app (or contact the bank), then fetch again."
+        }
         "Die Bank verlangt den Namen Ihres TAN-Mediums (z. B. den Gerätenamen aus der BestSign-Verwaltung). Tragen Sie ihn im Bankzugang unter „TAN-Medium“ ein und rufen Sie erneut ab." => {
             "The bank requires the name of your TAN medium (e.g. the device name from your BestSign management). Enter it under “TAN medium” in the bank connection and fetch again."
         }
