@@ -1031,7 +1031,8 @@ pub(crate) fn find_or_create_category(
     let mut parent: Option<i64> = None;
     let mut key = String::new();
     for part in path {
-        let folded = part.trim().to_lowercase();
+        let trimmed = part.trim();
+        let folded = trimmed.to_lowercase();
         key.push('\u{1}');
         key.push_str(&folded);
         if let Some(id) = cache.get(&key) {
@@ -1070,7 +1071,7 @@ pub(crate) fn find_or_create_category(
                 conn.execute(
                     "INSERT INTO categories(parent_id, name, sf_symbol, color_hex, sort_order, name_ms, parent_ms, symbol_ms, color_ms, order_ms, uuid)
                      VALUES (?1, ?2, 'tag', '#8E8E93', ?3, ?4, ?4, ?4, ?4, ?4, ?5)",
-                    params![parent, part, order, now_ms(), uuid::Uuid::new_v4().to_string()],
+                    params![parent, trimmed, order, now_ms(), uuid::Uuid::new_v4().to_string()],
                 )?;
                 *created += 1;
                 conn.last_insert_rowid()
@@ -1079,7 +1080,7 @@ pub(crate) fn find_or_create_category(
         // Preserve the importer's established transfer semantics explicitly;
         // this role never grants localisation of an imported name.
         if matches!(
-            part.trim().to_lowercase().as_str(),
+            folded.as_str(),
             "umbuchung" | "umbuchungen" | "geldtransit" | "transfer" | "transfers"
         ) {
             conn.execute(
