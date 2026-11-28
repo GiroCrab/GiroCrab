@@ -5592,6 +5592,17 @@
         }
       }
     },
+    "Ansichtsfilter in der Mitte anzeigen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show View Filter in the Middle"
+          }
+        }
+      }
+    },
     "Anteil" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16226,6 +16237,17 @@
         }
       }
     },
+    "Flexibler Zwischenraum" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flexible Space"
+          }
+        }
+      }
+    },
     "Flugzeug" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24964,6 +24986,17 @@
         }
       }
     },
+    "Nach links" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move to the Left"
+          }
+        }
+      }
+    },
     "Nach oben" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -25219,6 +25252,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Natural search"
+          }
+        }
+      }
+    },
+    "Neben die Suche" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next to Search"
           }
         }
       }
@@ -31519,6 +31563,17 @@
         }
       }
     },
+    "Standard wiederherstellen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore Default"
+          }
+        }
+      }
+    },
     "Standard-Reihenfolge wiederherstellen und alle Bereiche einblenden" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32412,6 +32467,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search Symbols"
+          }
+        }
+      }
+    },
+    "Symbolleiste anpassen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Customize Toolbar"
+          }
+        }
+      }
+    },
+    "Symbolleiste anpassen …" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Customize Toolbar…"
+          }
+        }
+      }
+    },
+    "Symbolleiste ausblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Toolbar"
+          }
+        }
+      }
+    },
+    "Symbolleiste einblenden" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Toolbar"
           }
         }
       }
@@ -36946,6 +37045,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Drag rectangles with the mouse over areas that should also be painted black."
+          }
+        }
+      }
+    },
+    "Ziehen oder Kontextmenü zum Sortieren." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag or use the context menu to reorder."
+          }
+        }
+      }
+    },
+    "Ziehen oder Kontextmenü zum Sortieren. Was unter „Flexibler Zwischenraum“ steht, erscheint neben der Suche." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drag or use the context menu to reorder. Items below “Flexible Space” appear next to the search field."
           }
         }
       }
