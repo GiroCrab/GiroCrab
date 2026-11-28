@@ -228,10 +228,13 @@ extension AppModel {
     }
 
     /// The account menu of "Belege & Postbox", narrowed to the chosen bank connection (#1042).
+    /// Archived (hidden) accounts are left out (#2015), except the one currently selected.
     var documentsAccountSections: [AccountMenuSection] {
-        guard let cid = documentsConnectionFilter, cid != Self.documentsWithoutAccount else { return accountMenuSections }
+        let cid = documentsConnectionFilter.flatMap { $0 == Self.documentsWithoutAccount ? nil : $0 }
         return accountMenuSections.compactMap { section in
-            let accounts = section.accounts.filter { $0.connectionId == cid }
+            let accounts = section.accounts.filter {
+                ($0.id == documentsAccountFilter || !$0.isArchived) && (cid == nil || $0.connectionId == cid)
+            }
             return accounts.isEmpty ? nil : AccountMenuSection(id: section.id, title: section.title, accounts: accounts)
         }
     }
